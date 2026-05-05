@@ -21,7 +21,7 @@ from app.execution.order_router import OrderRoutingResult, route_order
 from app.market.base import Interval, MarketDataAdapter
 from app.market.cache import BarCache
 from app.risk.risk_manager import RiskDecision, RiskManager
-from app.strategies.concrete import build_strategy
+from app.strategies.concrete import build_strategy, describe_all_strategies
 from app.strategies.live_engine import LiveStrategyEngine
 
 router = APIRouter(prefix="/strategies", tags=["live-engine"])
@@ -72,6 +72,20 @@ class StatusResponse(BaseModel):
     holding:    bool = False
 
 
+class StrategyParamSchema(BaseModel):
+    name:     str
+    type:     str
+    default:  int | float | str | bool | None = None
+    required: bool
+
+
+class StrategyDescription(BaseModel):
+    name:        str
+    class_name:  str
+    description: str
+    params:      list[StrategyParamSchema]
+
+
 class RoutingOut(BaseModel):
     decision:     str
     reasons:      list[str]
@@ -104,6 +118,16 @@ def _to_routing_out(r: OrderRoutingResult) -> RoutingOut:
         approval_id=r.approval.id if r.approval is not None else None,
         order_result=r.result,
     )
+
+
+@router.get("/registry", response_model=list[StrategyDescription])
+def get_registry() -> list[StrategyDescription]:
+    """List all registered strategies + their constructor param schema.
+
+    Frontend uses this to render config forms without hardcoding param names.
+    Pure introspection — no engine state, no broker calls.
+    """
+    return [StrategyDescription(**d) for d in describe_all_strategies()]
 
 
 @router.get("/status", response_model=StatusResponse)
