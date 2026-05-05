@@ -257,3 +257,41 @@ def test_history_limit_caps_results(client, monkeypatch):
 
     res = client.get("/api/approvals/history?limit=3").json()
     assert len(res) == 3
+
+
+# ---------- reasons (056) ----------
+
+def test_pending_list_includes_reasons_from_audit_join(client, monkeypatch):
+    """결재 행에 RiskManager가 NEEDS_APPROVAL로 분류한 사유가 함께 노출돼야
+    운영자가 모달을 열기 전부터 컨텍스트를 본다."""
+    _enable_manual_approval(monkeypatch)
+    _submit_buy(client)
+    pending = client.get("/api/approvals").json()
+    assert len(pending) == 1
+    assert isinstance(pending[0]["reasons"], list)
+    assert any("manual approval" in r for r in pending[0]["reasons"])
+
+
+def test_get_single_approval_includes_reasons(client, monkeypatch):
+    _enable_manual_approval(monkeypatch)
+    submit = _submit_buy(client).json()
+    res = client.get(f"/api/approvals/{submit['approval_id']}").json()
+    assert isinstance(res["reasons"], list)
+    assert any("manual approval" in r for r in res["reasons"])
+
+
+def test_history_includes_reasons(client, monkeypatch):
+    _enable_manual_approval(monkeypatch)
+    submit = _submit_buy(client).json()
+    client.post(f"/api/approvals/{submit['approval_id']}/cancel")
+    history = client.get("/api/approvals/history").json()
+    assert len(history) == 1
+    assert any("manual approval" in r for r in history[0]["reasons"])
+
+
+def test_approve_response_includes_reasons(client, monkeypatch):
+    _enable_manual_approval(monkeypatch)
+    submit = _submit_buy(client).json()
+    res = client.post(f"/api/approvals/{submit['approval_id']}/approve").json()
+    assert isinstance(res["approval"]["reasons"], list)
+    assert any("manual approval" in r for r in res["approval"]["reasons"])

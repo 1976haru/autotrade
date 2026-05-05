@@ -19,6 +19,22 @@ const ACTION_META = {
 };
 
 
+// RiskManager 사유 표시 — PENDING/HistoryRow에서 공유. 운영자가 결정 전 컨텍스트
+// (예: "max_order_notional 초과", "manual approval required")를 즉시 본다.
+export function ReasonsLine({ reasons }) {
+  if (!reasons || reasons.length === 0) return null;
+  return (
+    <div style={{
+      fontSize: 9, color: "#94a3b8", marginTop: 4, lineHeight: 1.4,
+      paddingLeft: 6, borderLeft: "2px solid #1a3a5c",
+    }}>
+      <span style={{ color: "#64748b", marginRight: 4 }}>사유:</span>
+      {reasons.join(" / ")}
+    </div>
+  );
+}
+
+
 export function HistoryRow({ a }) {
   const color = STATUS_COLOR[a.status] || "#475569";
   return (
@@ -50,6 +66,7 @@ export function HistoryRow({ a }) {
         {a.decided_by ? ` · by ${a.decided_by}` : ""}
         {a.note ? ` · ${a.note}` : ""}
       </div>
+      <ReasonsLine reasons={a.reasons} />
     </div>
   );
 }
@@ -191,7 +208,9 @@ export function Approvals({ approvals, operatorName = "" }) {
               {a.mode} · {new Date(a.created_at).toLocaleString("ko-KR")}
             </div>
 
-            <div style={{ display: "flex", gap: 6 }}>
+            <ReasonsLine reasons={a.reasons} />
+
+            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
               <Btn color="#22c55e" onClick={() => setDecisionTarget({ action: "approve", approval: a })} disabled={busy} small>
                 ✓ 승인
               </Btn>

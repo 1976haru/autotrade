@@ -3,10 +3,12 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_broker
 from app.brokers.base import BrokerAdapter, OrderResult
+from app.db.models import OrderAuditLog
 from app.db.session import get_db
 from app.permission.gate import (
     STATUS_APPROVED,
@@ -34,6 +36,9 @@ class ApprovalOut(BaseModel):
     decided_at:  datetime | None = None
     decided_by:  str | None = None
     note:        str | None = None
+    # RiskManager가 NEEDS_APPROVAL로 분류한 사유. 운영자가 승인/거부 결정 전
+    # 컨텍스트를 즉시 보도록 audit row의 reasons를 join해 노출한다.
+    reasons:     list[str] = []
 
 
 class ApprovalDecision(BaseModel):
@@ -46,7 +51,7 @@ class ApproveResponse(BaseModel):
     result:   OrderResult
 
 
-def _to_out(approval) -> ApprovalOut:
+def _to_out(approval, reasons: list[str] | None = None) -> ApprovalOut:
     return ApprovalOut(
         id=approval.id,
         created_at=approval.created_at,
@@ -61,12 +66,30 @@ def _to_out(approval) -> ApprovalOut:
         decided_at=approval.decided_at,
         decided_by=approval.decided_by,
         note=approval.note,
+        reasons=list(reasons or []),
     )
+
+
+def _load_reasons(db: Session, approvals: list) -> dict[int, list]:
+    """결재 목록의 audit_id를 IN으로 한 번에 조회해 dict로 돌려준다.
+
+    N+1을 피하기 위함 — pending은 보통 적지만 history는 50건까지 갈 수 있다.
+    """
+    if not approvals:
+        return {}
+    audit_ids = [a.audit_id for a in approvals]
+    rows = db.execute(
+        select(OrderAuditLog.id, OrderAuditLog.reasons)
+        .where(OrderAuditLog.id.in_(audit_ids))
+    ).all()
+    return {row[0]: list(row[1] or []) for row in rows}
 
 
 @router.get("", response_model=list[ApprovalOut])
 def list_pending(db: Session = Depends(get_db)) -> list[ApprovalOut]:
-    return [_to_out(a) for a in PermissionGate(db).list_pending()]
+    approvals = PermissionGate(db).list_pending()
+    reasons_by_audit = _load_reasons(db, approvals)
+    return [_to_out(a, reasons_by_audit.get(a.audit_id)) for a in approvals]
 
 
 _DECIDED_STATUSES = {STATUS_APPROVED, STATUS_REJECTED, STATUS_CANCELLED}
@@ -88,15 +111,18 @@ def list_history(
     if status is not None and status not in _DECIDED_STATUSES:
         raise HTTPException(status_code=400, detail=f"unsupported status: {status}")
     rows = PermissionGate(db).list_decided(limit=limit, offset=offset, status=status)
-    return [_to_out(a) for a in rows]
+    reasons_by_audit = _load_reasons(db, rows)
+    return [_to_out(a, reasons_by_audit.get(a.audit_id)) for a in rows]
 
 
 @router.get("/{approval_id}", response_model=ApprovalOut)
 def get_approval(approval_id: int, db: Session = Depends(get_db)) -> ApprovalOut:
     try:
-        return _to_out(PermissionGate(db).get(approval_id))
+        approval = PermissionGate(db).get(approval_id)
     except ApprovalNotFoundError:
         raise HTTPException(status_code=404, detail="approval not found")
+    reasons = _load_reasons(db, [approval]).get(approval.audit_id)
+    return _to_out(approval, reasons)
 
 
 @router.post("/{approval_id}/approve", response_model=ApproveResponse)
@@ -116,7 +142,8 @@ async def approve_route(
         raise HTTPException(status_code=404, detail="approval not found")
     except ApprovalAlreadyDecidedError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    return ApproveResponse(approval=_to_out(approval), result=result)
+    reasons = _load_reasons(db, [approval]).get(approval.audit_id)
+    return ApproveResponse(approval=_to_out(approval, reasons), result=result)
 
 
 @router.post("/{approval_id}/reject", response_model=ApprovalOut)
