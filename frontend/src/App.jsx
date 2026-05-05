@@ -12,6 +12,7 @@ import { AISignal }     from "./components/tabs/AISignal";
 import { LiveEngine }   from "./components/tabs/LiveEngine";
 import { Futures }      from "./components/tabs/Futures";
 import { Settings }     from "./components/tabs/Settings";
+import { useApprovals }  from "./store/useApprovals";
 import { usePortfolio }  from "./store/usePortfolio";
 import { useBot }        from "./store/useBot";
 import { useStrategy }   from "./store/useStrategy";
@@ -27,13 +28,16 @@ export default function App() {
   const riskPolicy = useRiskPolicy();
   const bot        = useBot();
   const settings   = useSettings();
+  // 결재 큐는 App에서 한 번만 인스턴스화 — Approvals 탭의 입력 폼과 BottomNav의
+  // PENDING 배지가 같은 폴링 결과를 공유한다 (5s 폴러가 두 번 돌지 않도록).
+  const approvals  = useApprovals();
 
   const renderTab = () => {
     switch (tab) {
       case "dash":   return <Dashboard portfolio={portfolio} bot={bot} botControls={{ start: bot.start, stop: bot.stop }} />;
       case "strat":  return <StrategyRisk strategyOn={strategy.strategyOn} toggle={strategy.toggle} strategyParams={strategy.strategyParams} updateParam={strategy.updateParam} risk={risk} updateRisk={updateRisk} riskPolicy={riskPolicy} operatorName={settings.operatorName} />;
       case "bot":      return <BotControl bot={bot} />;
-      case "approve":  return <Approvals operatorName={settings.operatorName} />;
+      case "approve":  return <Approvals approvals={approvals} operatorName={settings.operatorName} />;
       case "chart":    return <MarketChart />;
       case "backtest": return <Backtest />;
       case "audit":    return <AuditLog />;
@@ -51,7 +55,7 @@ export default function App() {
       <div style={{ flex:1, overflowY:"auto", padding:"14px 14px 90px", scrollbarWidth:"thin" }}>
         {renderTab()}
       </div>
-      <BottomNav active={tab} onChange={setTab} />
+      <BottomNav active={tab} onChange={setTab} badges={{ approve: approvals.pending.length }} />
       <style>{`
         @keyframes blink{50%{opacity:0}}
         ::-webkit-scrollbar{width:3px;height:3px}

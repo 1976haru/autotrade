@@ -2,7 +2,6 @@ import { useState } from "react";
 
 import { Btn, Card, Inp, SectionLabel } from "../common";
 import { fmtKRW } from "../../utils/format";
-import { useApprovals } from "../../store/useApprovals";
 
 
 const STATUS_COLOR = {
@@ -133,9 +132,11 @@ export function ApprovalDecisionModal({
 }
 
 
-export function Approvals({ operatorName = "" }) {
+export function Approvals({ approvals, operatorName = "" }) {
+  // useApprovals는 App에서 lift되어 prop으로 전달된다 — BottomNav 배지가 같은
+  // 폴링 결과를 공유하기 위해서. 테스트는 모킹 없이 prop만 직접 주입.
   const { pending, history, loading, error, busy,
-          approve, reject, cancel } = useApprovals();
+          approve, reject, cancel } = approvals;
   // 결재 모달 대상: { action, approval } | null. 같은 모달 컴포넌트를 세 액션에서
   // 공유하고, 액션은 ACTION_META에서 분기한다.
   const [decisionTarget, setDecisionTarget] = useState(null);
