@@ -90,6 +90,47 @@ def _ensure_utc(ts: datetime | None) -> datetime | None:
     return ts
 
 
+def _validate_bars(bars: list[Bar]) -> None:
+    """Reject crooked bar lists before they reach the engine.
+
+    Caller-supplied bars only — market-mode bars come from BarCache/Adapter
+    and are trusted. Rules: single symbol, strictly ascending timestamps, OHLC
+    consistency (high>=low and open/close inside [low, high]), positive prices,
+    non-negative volume.
+    """
+    if not bars:
+        raise ValueError("bars must not be empty")
+
+    symbol = bars[0].symbol
+    prev_ts: datetime | None = None
+    for i, bar in enumerate(bars):
+        if bar.symbol != symbol:
+            raise ValueError(
+                f"bars must all share one symbol; got {bar.symbol!r} at index {i}, "
+                f"expected {symbol!r}"
+            )
+        if prev_ts is not None and bar.timestamp <= prev_ts:
+            raise ValueError(
+                f"bars must be strictly ascending by timestamp; index {i} "
+                f"({bar.timestamp.isoformat()}) <= previous ({prev_ts.isoformat()})"
+            )
+        if bar.open <= 0 or bar.high <= 0 or bar.low <= 0 or bar.close <= 0:
+            raise ValueError(f"bar {i}: prices must be positive")
+        if bar.high < bar.low:
+            raise ValueError(f"bar {i}: high ({bar.high}) < low ({bar.low})")
+        if not (bar.low <= bar.open <= bar.high):
+            raise ValueError(
+                f"bar {i}: open ({bar.open}) outside [low={bar.low}, high={bar.high}]"
+            )
+        if not (bar.low <= bar.close <= bar.high):
+            raise ValueError(
+                f"bar {i}: close ({bar.close}) outside [low={bar.low}, high={bar.high}]"
+            )
+        if bar.volume < 0:
+            raise ValueError(f"bar {i}: volume must be >= 0; got {bar.volume}")
+        prev_ts = bar.timestamp
+
+
 def _build_response(run: BacktestRun, win_rate: float) -> BacktestResponse:
     return BacktestResponse(
         run_id=run.id,
@@ -129,6 +170,10 @@ async def _resolve_bars(
         if not req.bars:
             raise HTTPException(status_code=400, detail="bars must not be empty")
         bars = [Bar(**b.model_dump()) for b in req.bars]
+        try:
+            _validate_bars(bars)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
         return bars, "bars", None, None, None, None
 
     if req.start > req.end:

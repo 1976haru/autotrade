@@ -102,6 +102,107 @@ def test_empty_bars_returns_400(client):
     assert res.status_code == 400
 
 
+# ---------- bar validation (bars mode only) ----------
+
+def _full_bar(i: int, *, symbol="X", o=100, h=110, low=95, c=105, v=1000) -> dict:
+    return {
+        "symbol":    symbol,
+        "timestamp": (_BASE + timedelta(days=i)).isoformat(),
+        "open": o, "high": h, "low": low, "close": c, "volume": v,
+    }
+
+
+def test_bars_with_mixed_symbols_returns_400(client):
+    body = {
+        "strategy": "sma_crossover",
+        "bars": [_full_bar(0, symbol="A"), _full_bar(1, symbol="B")],
+    }
+    res = client.post("/api/backtest/run", json=body)
+    assert res.status_code == 400
+    assert "share one symbol" in res.json()["detail"]
+
+
+def test_bars_with_non_increasing_timestamps_returns_400(client):
+    body = {
+        "strategy": "sma_crossover",
+        "bars": [_full_bar(0), _full_bar(0)],  # duplicate timestamp
+    }
+    res = client.post("/api/backtest/run", json=body)
+    assert res.status_code == 400
+    assert "ascending" in res.json()["detail"]
+
+
+def test_bars_with_descending_timestamps_returns_400(client):
+    body = {
+        "strategy": "sma_crossover",
+        "bars": [_full_bar(1), _full_bar(0)],
+    }
+    res = client.post("/api/backtest/run", json=body)
+    assert res.status_code == 400
+
+
+def test_bars_with_high_below_low_returns_400(client):
+    body = {
+        "strategy": "sma_crossover",
+        "bars": [_full_bar(0, h=80, low=120)],
+    }
+    res = client.post("/api/backtest/run", json=body)
+    assert res.status_code == 400
+    assert "high" in res.json()["detail"] and "low" in res.json()["detail"]
+
+
+def test_bars_with_open_outside_high_low_returns_400(client):
+    body = {
+        "strategy": "sma_crossover",
+        "bars": [_full_bar(0, o=200, h=110, low=95, c=105)],
+    }
+    res = client.post("/api/backtest/run", json=body)
+    assert res.status_code == 400
+    assert "open" in res.json()["detail"]
+
+
+def test_bars_with_close_outside_high_low_returns_400(client):
+    body = {
+        "strategy": "sma_crossover",
+        "bars": [_full_bar(0, o=100, h=110, low=95, c=200)],
+    }
+    res = client.post("/api/backtest/run", json=body)
+    assert res.status_code == 400
+    assert "close" in res.json()["detail"]
+
+
+def test_bars_with_zero_price_returns_400(client):
+    body = {
+        "strategy": "sma_crossover",
+        "bars": [_full_bar(0, o=0, h=10, low=0, c=5)],
+    }
+    res = client.post("/api/backtest/run", json=body)
+    assert res.status_code == 400
+    assert "positive" in res.json()["detail"]
+
+
+def test_bars_with_negative_volume_returns_400(client):
+    body = {
+        "strategy": "sma_crossover",
+        "bars": [_full_bar(0, v=-1)],
+    }
+    res = client.post("/api/backtest/run", json=body)
+    assert res.status_code == 400
+    assert "volume" in res.json()["detail"]
+
+
+def test_well_formed_bars_pass_validation(client):
+    """Sanity check that the validator does not reject reasonable bars."""
+    body = {
+        "strategy": "sma_crossover",
+        "params":   {"short": 2, "long": 4},
+        "bars": [_full_bar(i, o=100+i, h=110+i, low=95+i, c=105+i, v=1000)
+                 for i in range(5)],
+    }
+    res = client.post("/api/backtest/run", json=body)
+    assert res.status_code == 200
+
+
 def test_run_with_bars_records_data_source_bars(client):
     body = {
         "strategy": "sma_crossover",
