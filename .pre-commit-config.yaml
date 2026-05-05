@@ -1,0 +1,37 @@
+# Run on `git commit`. Tests stay in CI — keep commits fast.
+# Setup:
+#   pip install pre-commit
+#   pre-commit install
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^.*\.md$
+      - id: end-of-file-fixer
+        exclude: ^frontend/package-lock\.json$
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=1024']
+      - id: check-merge-conflict
+      # mixed-line-ending intentionally omitted — git core.autocrlf
+      # already handles CRLF/LF on Windows checkouts; running it here
+      # creates a loop where the hook fixes LF and the next checkout
+      # converts back to CRLF.
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.0
+    hooks:
+      - id: ruff
+        files: ^backend/.*\.py$
+        args: [--fix]
+
+  - repo: local
+    hooks:
+      - id: frontend-lint
+        name: frontend eslint
+        language: system
+        entry: npm run lint --prefix frontend
+        pass_filenames: false
+        files: ^frontend/.*\.(js|jsx)$

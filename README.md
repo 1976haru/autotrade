@@ -109,6 +109,26 @@ alembic downgrade -1
 
 `main`, `develop`, `feature/**` 푸시와 `main`/`develop` 대상 PR에서 자동 실행됩니다.
 
+## Pre-commit hooks (선택)
+
+로컬 커밋 시점에 lint와 파일 hygiene 검사를 자동화하려면 한 번만 셋업하세요.
+
+```bash
+pip install pre-commit       # 1회
+pre-commit install           # 1회 (각 clone마다)
+
+# 모든 파일에 대해 수동 실행
+python -m pre_commit run --all-files
+```
+
+활성 훅:
+
+- 파일 hygiene — trailing whitespace, EOF, YAML 검사, 1MB 초과 파일 차단, merge conflict marker 검사
+- `ruff` (backend Python 변경 시)
+- frontend `eslint` (frontend `*.js` / `*.jsx` 변경 시)
+
+테스트는 commit 시 실행되지 않습니다(느림). CI가 동일한 lint + tests를 다시 검증합니다.
+
 ## 폴더 구조
 
 ```text

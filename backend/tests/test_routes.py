@@ -82,5 +82,3 @@ def test_mock_broker_order_rejected_by_risk(client):
         assert audit.executed is False
         assert audit.broker_order_id is None
         assert any("max_order_notional" in r for r in audit.reasons)
-
-
