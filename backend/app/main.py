@@ -13,6 +13,7 @@ from app.api.routes_risk import router as risk_router
 from app.api.routes_status import router as status_router
 from app.core.config import get_settings
 from app.db.session import apply_migrations
+from app.execution.fill_poller import FillPoller
 
 settings = get_settings()
 
@@ -20,7 +21,24 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     apply_migrations()
-    yield
+
+    poller: FillPoller | None = None
+    cfg = get_settings()
+    if cfg.enable_fill_polling:
+        from app.api.deps import get_broker
+        from app.db.session import SessionLocal
+        poller = FillPoller(
+            broker_factory=get_broker,
+            session_factory=SessionLocal,
+            interval=cfg.fill_polling_interval_seconds,
+        )
+        poller.start()
+
+    try:
+        yield
+    finally:
+        if poller is not None:
+            await poller.stop()
 
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)

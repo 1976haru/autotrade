@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/auto_trader.db"
     market_data_provider: Literal["mock", "yfinance"] = "mock"
 
+    enable_fill_polling:           bool = False
+    fill_polling_interval_seconds: int  = 5
+
     kis_app_key: str = ""
     kis_app_secret: str = ""
     kis_account_no: str = ""
