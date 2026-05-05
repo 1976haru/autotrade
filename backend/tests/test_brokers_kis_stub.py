@@ -12,13 +12,27 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def _stub_kis_client(price: str = "75000") -> KisClient:
-    """Build a KisClient backed by an httpx MockTransport returning a fixed quote."""
+def _stub_kis_client(
+    price: str = "75000",
+    balance_response: dict | None = None,
+) -> KisClient:
+    """Build a KisClient backed by httpx MockTransport returning fixed responses."""
+    default_balance = {
+        "output1": [
+            {"pdno": "005930", "hldg_qty": "10", "pchs_avg_pric": "75100.0",  "prpr": "75500"},
+            {"pdno": "000660", "hldg_qty":  "5", "pchs_avg_pric": "182000.0", "prpr": "180500"},
+        ],
+        "output2": [{"dnca_tot_amt": "5234800", "tot_evlu_amt": "10000000"}],
+    }
+    response = balance_response if balance_response is not None else default_balance
+
     def handler(request):
         if request.url.path.endswith("/oauth2/tokenP"):
             return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
         if request.url.path.endswith("/quotations/inquire-price"):
             return httpx.Response(200, json={"output": {"stck_prpr": price}})
+        if request.url.path.endswith("/inquire-balance"):
+            return httpx.Response(200, json=response)
         return httpx.Response(404)
     return KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
 
@@ -66,14 +80,56 @@ def test_get_price_raises_when_no_credentials():
         run(a.get_price("005930"))
 
 
-def test_get_balance_still_stub():
-    with pytest.raises(NotImplementedError, match="follow-up"):
-        run(KisBrokerAdapter().get_balance())
+def test_get_balance_returns_cash_and_equity():
+    a = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801",
+                         client=_stub_kis_client())
+    bal = run(a.get_balance())
+    assert bal.cash == 5_234_800
+    assert bal.equity == 10_000_000
+    assert bal.buying_power == 5_234_800
+    assert bal.currency == "KRW"
 
 
-def test_get_positions_still_stub():
-    with pytest.raises(NotImplementedError, match="follow-up"):
-        run(KisBrokerAdapter().get_positions())
+def test_get_balance_raises_when_account_no_too_short():
+    a = KisBrokerAdapter(app_key="k", app_secret="s", account_no="123",
+                         client=_stub_kis_client())
+    with pytest.raises(RuntimeError, match="at least 10 chars"):
+        run(a.get_balance())
+
+
+def test_get_positions_maps_kis_fields_and_filters_zero_qty():
+    response = {
+        "output1": [
+            {"pdno": "005930", "hldg_qty": "10", "pchs_avg_pric": "75100.0", "prpr": "75500"},
+            {"pdno": "000660", "hldg_qty":  "0", "pchs_avg_pric":     "0.0", "prpr":     "0"},
+            {"pdno": "035420", "hldg_qty":  "3", "pchs_avg_pric": "194000.5", "prpr": "197000"},
+        ],
+        "output2": [{"dnca_tot_amt": "1000000", "tot_evlu_amt": "5000000"}],
+    }
+    a = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801",
+                         client=_stub_kis_client(balance_response=response))
+    positions = run(a.get_positions())
+    assert len(positions) == 2
+    assert positions[0].symbol == "005930"
+    assert positions[0].quantity == 10
+    assert positions[0].avg_price == 75_100
+    assert positions[0].market_price == 75_500
+    assert positions[1].symbol == "035420"
+    assert positions[1].avg_price == 194_000  # truncated from 194000.5
+    assert positions[1].quantity == 3
+
+
+def test_get_positions_empty_when_no_holdings():
+    response = {"output1": [], "output2": [{"dnca_tot_amt": "0", "tot_evlu_amt": "0"}]}
+    a = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801",
+                         client=_stub_kis_client(balance_response=response))
+    assert run(a.get_positions()) == []
+
+
+def test_account_no_split_uses_last_two_chars_as_product_code():
+    a = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567899",
+                         client=_stub_kis_client())
+    assert a._split_account() == ("12345678", "99")
 
 
 def test_place_order_explicitly_disabled_in_shadow():

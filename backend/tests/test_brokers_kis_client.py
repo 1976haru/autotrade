@@ -119,3 +119,79 @@ def test_get_price_endpoint_failure_raises_api_error():
     c = KisClient("k", "s", is_paper=True, transport=transport)
     with pytest.raises(KisApiError, match="503"):
         run(c.get_price("005930"))
+
+
+_BALANCE_RESPONSE = {
+    "output1": [
+        {
+            "pdno": "005930",
+            "prdt_name": "삼성전자",
+            "hldg_qty": "10",
+            "pchs_avg_pric": "75100.0000",
+            "prpr": "75500",
+        },
+        {
+            "pdno": "000660",
+            "prdt_name": "SK하이닉스",
+            "hldg_qty": "5",
+            "pchs_avg_pric": "182000.0000",
+            "prpr": "180500",
+        },
+    ],
+    "output2": [
+        {
+            "dnca_tot_amt":  "5234800",
+            "tot_evlu_amt": "10000000",
+        },
+    ],
+    "rt_cd": "0",
+    "msg1": "정상처리되었습니다.",
+}
+
+
+def _balance_handler(seen: list, response: dict | None = None):
+    response = response or _BALANCE_RESPONSE
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append({
+            "method":  request.method,
+            "path":    request.url.path,
+            "params":  dict(request.url.params),
+            "headers": dict(request.headers),
+        })
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        if request.url.path.endswith("/inquire-balance"):
+            return httpx.Response(200, json=response)
+        return httpx.Response(404)
+    return handler
+
+
+def test_inquire_balance_paper_uses_paper_tr_id():
+    seen = []
+    c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(_balance_handler(seen)))
+    raw = run(c.inquire_balance("12345678", "01"))
+    assert raw == _BALANCE_RESPONSE
+
+    bal = [s for s in seen if s["path"].endswith("/inquire-balance")][0]
+    assert bal["headers"]["tr_id"] == "VTTC8434R"
+    assert bal["params"]["CANO"] == "12345678"
+    assert bal["params"]["ACNT_PRDT_CD"] == "01"
+    assert bal["params"]["INQR_DVSN"] == "02"
+
+
+def test_inquire_balance_live_uses_live_tr_id():
+    seen = []
+    c = KisClient("k", "s", is_paper=False, transport=httpx.MockTransport(_balance_handler(seen)))
+    run(c.inquire_balance("12345678", "01"))
+    bal = [s for s in seen if s["path"].endswith("/inquire-balance")][0]
+    assert bal["headers"]["tr_id"] == "TTTC8434R"
+
+
+def test_inquire_balance_endpoint_failure_raises_api_error():
+    def handler(request):
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        return httpx.Response(500, text="internal error")
+    c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    with pytest.raises(KisApiError, match="500"):
+        run(c.inquire_balance("12345678", "01"))

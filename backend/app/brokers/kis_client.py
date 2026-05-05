@@ -20,9 +20,9 @@ class KisApiError(RuntimeError):
 class KisClient:
     """Token-managing async HTTP client for KIS REST API.
 
-    Scope is intentionally narrow — currently only quote (get_price) is
-    implemented. Balance/position/order calls land in follow-up PRs once
-    SHADOW-mode read paths are validated.
+    SHADOW-mode read paths are wired: `get_price` (quote) and `inquire_balance`
+    (cash + positions in one call). Order placement is intentionally absent —
+    that lives behind PermissionGate in a separate PR and is never AI-executed.
 
     Tests inject a custom httpx transport via the `transport` kwarg.
     """
@@ -97,4 +97,42 @@ class KisClient:
             )
         if r.status_code != 200:
             raise KisApiError(f"KIS quote endpoint returned {r.status_code}: {r.text[:200]}")
+        return r.json()
+
+    def _balance_tr_id(self) -> str:
+        return "VTTC8434R" if self.is_paper else "TTTC8434R"
+
+    async def inquire_balance(self, cano: str, prdt_cd: str) -> dict:
+        """Single-call balance + positions endpoint.
+
+        Returns raw JSON with `output1` (positions) and `output2` (cash, equity).
+        cano/prdt_cd are the 8-digit / 2-digit halves of the KIS account number.
+        """
+        token = await self._ensure_token()
+        async with self._client() as client:
+            r = await client.get(
+                "/uapi/domestic-stock/v1/trading/inquire-balance",
+                params={
+                    "CANO":                   cano,
+                    "ACNT_PRDT_CD":           prdt_cd,
+                    "AFHR_FLPR_YN":           "N",
+                    "OFL_YN":                 "",
+                    "INQR_DVSN":              "02",
+                    "UNPR_DVSN":              "01",
+                    "FUND_STTL_ICLD_YN":      "N",
+                    "FNCG_AMT_AUTO_RDPT_YN":  "N",
+                    "PRCS_DVSN":              "00",
+                    "CTX_AREA_FK100":         "",
+                    "CTX_AREA_NK100":         "",
+                },
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "appkey":        self.app_key,
+                    "appsecret":     self.app_secret,
+                    "tr_id":         self._balance_tr_id(),
+                    "custtype":      "P",
+                },
+            )
+        if r.status_code != 200:
+            raise KisApiError(f"KIS balance endpoint returned {r.status_code}: {r.text[:200]}")
         return r.json()

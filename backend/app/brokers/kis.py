@@ -13,19 +13,20 @@ from app.core.config import get_settings
 
 
 _STUB_MESSAGE = (
-    "Not yet wired in SHADOW mode. balance / positions / cancel / order_status "
-    "land in follow-up PRs. Real LIVE order routing is gated by RiskManager + "
-    "PermissionGate and is never AI-executed (CLAUDE.md)."
+    "Not yet wired in SHADOW mode. cancel / order_status land in follow-up PRs. "
+    "Real LIVE order routing is gated by RiskManager + PermissionGate and is "
+    "never AI-executed (CLAUDE.md)."
 )
 
 
 class KisBrokerAdapter(BrokerAdapter):
     """한국투자증권(KIS) 브로커 어댑터.
 
-    현재 단계 (LIVE_SHADOW 첫 슬라이스):
-    - `get_price`만 실 API 호출 (read-only quote)
-    - `balance`, `positions`, `cancel_order`, `get_order_status`: NotImplementedError
-    - `place_order`: 절대 SHADOW에서 실 broker로 가지 않음 — 명시적 거부
+    현재 단계 (LIVE_SHADOW read-only):
+    - `get_price` — 실 API 호출 (quote)
+    - `get_balance` / `get_positions` — KIS inquire-balance 한 번 호출에서 분리
+    - `cancel_order` / `get_order_status` — NotImplementedError (다음 PR)
+    - `place_order` — SHADOW 모드에서 실 broker로 절대 가지 않음 (명시적 거부)
 
     실 라이브 주문 라우팅은 RiskManager → PermissionGate → OrderExecutor를
     거치는 별도 PR에서만 다룬다.
@@ -73,11 +74,37 @@ class KisBrokerAdapter(BrokerAdapter):
             source="kis",
         )
 
+    def _split_account(self) -> tuple[str, str]:
+        if not self.account_no or len(self.account_no) < 10:
+            raise RuntimeError(
+                "KIS account number must be at least 10 chars (8 + 2 split); "
+                f"got {self.account_no!r}"
+            )
+        return self.account_no[:-2], self.account_no[-2:]
+
     async def get_balance(self) -> Balance:
-        raise NotImplementedError(_STUB_MESSAGE)
+        cano, prdt = self._split_account()
+        raw = await self.client.inquire_balance(cano, prdt)
+        output2 = (raw.get("output2") or [{}])[0]
+        cash   = int(output2.get("dnca_tot_amt", "0"))
+        equity = int(output2.get("tot_evlu_amt", "0"))
+        return Balance(cash=cash, equity=equity, buying_power=cash, currency="KRW")
 
     async def get_positions(self) -> list[Position]:
-        raise NotImplementedError(_STUB_MESSAGE)
+        cano, prdt = self._split_account()
+        raw = await self.client.inquire_balance(cano, prdt)
+        positions: list[Position] = []
+        for item in raw.get("output1") or []:
+            qty = int(item.get("hldg_qty", "0") or "0")
+            if qty <= 0:
+                continue
+            positions.append(Position(
+                symbol=item.get("pdno", ""),
+                quantity=qty,
+                avg_price=int(float(item.get("pchs_avg_pric", "0") or "0")),
+                market_price=int(item.get("prpr", "0") or "0"),
+            ))
+        return positions
 
     async def place_order(self, order: OrderRequest) -> OrderResult:
         raise NotImplementedError(
