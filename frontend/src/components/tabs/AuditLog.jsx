@@ -175,6 +175,73 @@ export function setEventKindFilter(kind) {
 }
 
 
+// Time-bucket filter — narrows the timeline by recency. Kind/symbol scope by
+// what kind of event it is or which ticker; the bucket scopes by when. With
+// 067 paginated history a 24h or 7d bucket is the typical "what happened
+// during last night's session" cut.
+const TIME_BUCKETS = [
+  { id: "all", label: "전 기간", color: "#7dd3fc" },
+  { id: "1h",  label: "1시간",   color: "#7dd3fc" },
+  { id: "24h", label: "24시간",  color: "#7dd3fc" },
+  { id: "7d",  label: "7일",     color: "#7dd3fc" },
+];
+
+const TIME_BUCKET_MS = {
+  "1h":  60 * 60 * 1000,
+  "24h": 24 * 60 * 60 * 1000,
+  "7d":  7 * 24 * 60 * 60 * 1000,
+};
+
+const TIME_BUCKET_STORAGE_KEY = "autotrade.eventTimeBucket";
+const _VALID_BUCKETS = new Set(TIME_BUCKETS.map((b) => b.id));
+
+function _readTimeBucket() {
+  try {
+    const v = localStorage.getItem(TIME_BUCKET_STORAGE_KEY);
+    return _VALID_BUCKETS.has(v) ? v : "all";
+  } catch {
+    return "all";
+  }
+}
+
+function _writeTimeBucket(value) {
+  try {
+    localStorage.setItem(TIME_BUCKET_STORAGE_KEY, value);
+  } catch {
+    // session-only fallback
+  }
+}
+
+
+export function TimeBucketBar({ active, onChange }) {
+  return (
+    <div role="radiogroup" aria-label="시간 범위 필터"
+         style={{ display: "flex", gap: 4 }}>
+      {TIME_BUCKETS.map((b) => {
+        const isActive = active === b.id;
+        return (
+          <button
+            key={b.id}
+            role="radio"
+            aria-checked={isActive}
+            onClick={() => onChange(b.id)}
+            style={{
+              padding: "5px 10px", borderRadius: 12, cursor: "pointer",
+              fontFamily: "inherit", fontSize: 10, fontWeight: 700,
+              background: isActive ? `${b.color}22` : "transparent",
+              border:     `1px solid ${isActive ? b.color : "#1a3a5c"}`,
+              color:      isActive ? b.color : "#475569",
+            }}
+          >
+            {b.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+
 export function KindFilterBar({ active, onChange }) {
   return (
     <div role="radiogroup" aria-label="이벤트 종류 필터"
@@ -214,6 +281,16 @@ export function EventTimelineView() {
   // unlike the kind filter which the operator picks for a session.
   const [symbolFilter, setSymbolFilter] = useState("");
   const symbolNeedle = symbolFilter.trim().toLowerCase();
+  // Time-bucket filter persists like kind: operator typically wants the same
+  // window across page refreshes during an investigation session.
+  const [timeBucket, _setTimeBucket] = useState(_readTimeBucket);
+  const setTimeBucket = (v) => { _setTimeBucket(v); _writeTimeBucket(v); };
+  const _bucketWindowMs = TIME_BUCKET_MS[timeBucket]; // undefined for "all"
+  const _now = Date.now();
+  const _matchesBucket = (r) =>
+    _bucketWindowMs === undefined
+      ? true
+      : _now - new Date(r.created_at).getTime() < _bucketWindowMs;
 
   // 필터를 mergeEvents *전에* 적용 — top-50 cap 안에서 한쪽 종류가 밀려나
   // 사라지는 일을 방지한다 ("긴급정지만" 선택 시 가장 최근 50건의 stop이
@@ -221,10 +298,11 @@ export function EventTimelineView() {
   // Symbol 필터는 주문 행에만 적용 — 긴급정지는 mode-wide 이벤트라 종목 검색의
   // 의미상 매칭 대상이 아니지만, 검색 중에도 그 시점에 무엇이 있었는지 보여주는
   // 컨텍스트로서 유지된다 (kind 필터로 명시적으로 끌 수 있음).
-  const filteredOrders = (kind === "stop" ? [] : orders.items).filter((r) =>
-    !symbolNeedle || r.symbol.toLowerCase().includes(symbolNeedle)
-  );
-  const filteredStops  = kind === "order" ? [] : stops.items;
+  // 시간 bucket은 universal — 주문/긴급정지 모두에 적용.
+  const filteredOrders = (kind === "stop" ? [] : orders.items)
+    .filter((r) => !symbolNeedle || r.symbol.toLowerCase().includes(symbolNeedle))
+    .filter(_matchesBucket);
+  const filteredStops = (kind === "order" ? [] : stops.items).filter(_matchesBucket);
   // 064: 페이징 누적 결과 전부 보여줌 (기본 Infinity).
   const events = mergeEvents(filteredOrders, filteredStops);
 
@@ -269,6 +347,10 @@ export function EventTimelineView() {
             placeholder="🔍 종목 (예: 005930)"
           />
         </div>
+      </div>
+
+      <div style={{ marginBottom: 8 }}>
+        <TimeBucketBar active={timeBucket} onChange={setTimeBucket} />
       </div>
 
       {error && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>}
