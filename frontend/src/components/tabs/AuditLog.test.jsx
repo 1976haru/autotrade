@@ -13,8 +13,14 @@ import {
 
 // EventTimelineView 통합 테스트는 두 개의 audit 훅을 모킹한다 — 네트워크/상태
 // 흐름 자체는 useAuditLogs.test.js에서 별도로 검증.
-const _orderHook = { items: [], loading: false, error: "", refresh: vi.fn() };
-const _stopHook  = { items: [], loading: false, error: "", refresh: vi.fn() };
+const _orderHook = {
+  items: [], loading: false, loadingMore: false, hasMore: false,
+  error: "", refresh: vi.fn(), loadMore: vi.fn(),
+};
+const _stopHook  = {
+  items: [], loading: false, loadingMore: false, hasMore: false,
+  error: "", refresh: vi.fn(), loadMore: vi.fn(),
+};
 
 vi.mock("../../store/useAuditLogs", () => ({
   useOrderAudits:          () => _orderHook,
@@ -25,8 +31,18 @@ vi.mock("../../store/useAuditLogs", () => ({
 
 
 function _resetHooks(orderOverrides = {}, stopOverrides = {}) {
-  Object.assign(_orderHook, { items: [], loading: false, error: "", ...orderOverrides });
-  Object.assign(_stopHook,  { items: [], loading: false, error: "", ...stopOverrides });
+  Object.assign(_orderHook, {
+    items: [], loading: false, loadingMore: false, hasMore: false,
+    error: "", ...orderOverrides,
+  });
+  Object.assign(_stopHook,  {
+    items: [], loading: false, loadingMore: false, hasMore: false,
+    error: "", ...stopOverrides,
+  });
+  _orderHook.loadMore = vi.fn();
+  _stopHook.loadMore  = vi.fn();
+  _orderHook.refresh  = vi.fn();
+  _stopHook.refresh   = vi.fn();
 }
 
 
@@ -71,6 +87,15 @@ describe("mergeEvents", () => {
     expect(events).toHaveLength(50);
     // Most recent = highest second value (id 59)
     expect(events[0].row.id).toBe(59);
+  });
+
+  it("with no limit (default), returns every row sorted desc", () => {
+    const orders = Array.from({ length: 80 }, (_, i) =>
+      _ORDER({ id: i, created_at: new Date(2026, 4, 5, 12, 0, i).toISOString() }),
+    );
+    const events = mergeEvents(orders, []);
+    expect(events).toHaveLength(80);
+    expect(events[0].row.id).toBe(79);
   });
 
   it("returns an empty list when both sources are empty", () => {
@@ -270,6 +295,68 @@ describe("<EventTimelineView> kind filter", () => {
     expect(container.textContent).toContain("(2)");
     fireEvent.click(getByRole("radio", { name: "전체" }));
     expect(container.textContent).toContain("(3)");
+  });
+});
+
+
+describe("<EventTimelineView> load-more", () => {
+  beforeEach(() => {
+    // Direct describes write to localStorage; clear so leakage doesn't make
+    // EventTimelineView mount with kind="stop" and skip the orders we set up.
+    localStorage.clear();
+    _resetHooks(
+      { items: [_ORDER({ id: 10, created_at: "2026-05-05T12:00:00+00:00" })],
+        hasMore: true },
+      { items: [], hasMore: false },
+    );
+  });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  it("renders 더 보기 button when at least one source has more", () => {
+    const { getByText } = render(<EventTimelineView />);
+    expect(getByText(/더 보기/)).toBeTruthy();
+  });
+
+  it("clicking 더 보기 calls loadMore on sources that still have more", () => {
+    const { getByText } = render(<EventTimelineView />);
+    fireEvent.click(getByText(/더 보기/));
+    expect(_orderHook.loadMore).toHaveBeenCalled();
+    expect(_stopHook.loadMore).not.toHaveBeenCalled();
+  });
+
+  it("hides 더 보기 and shows end marker when both sources are exhausted", () => {
+    _resetHooks(
+      { items: [_ORDER({ id: 10, created_at: "2026-05-05T12:00:00+00:00" })],
+        hasMore: false },
+      { items: [], hasMore: false },
+    );
+    const { getByText, queryByText } = render(<EventTimelineView />);
+    expect(queryByText(/더 보기/)).toBeNull();
+    expect(getByText(/모든 이벤트를 불러왔습니다/)).toBeTruthy();
+  });
+
+  it("kind=stop only requests more from stops, even if orders still have more", () => {
+    _resetHooks(
+      { items: [_ORDER({ id: 10, created_at: "2026-05-05T12:00:00+00:00" })],
+        hasMore: true },
+      { items: [_STOP({ id: 1, created_at: "2026-05-05T12:05:00+00:00" })],
+        hasMore: true },
+    );
+    const { getByRole, getByText } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "긴급정지" }));
+    fireEvent.click(getByText(/더 보기/));
+    expect(_orderHook.loadMore).not.toHaveBeenCalled();
+    expect(_stopHook.loadMore).toHaveBeenCalled();
+  });
+
+  it("button shows loading text while a load is in flight", () => {
+    _resetHooks(
+      { items: [_ORDER({ id: 10, created_at: "2026-05-05T12:00:00+00:00" })],
+        hasMore: true, loadingMore: true },
+      { items: [], hasMore: false },
+    );
+    const { getByText } = render(<EventTimelineView />);
+    expect(getByText(/불러오는 중/)).toBeTruthy();
   });
 });
 
