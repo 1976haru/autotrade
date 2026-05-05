@@ -67,8 +67,12 @@ export function useLiveEngine() {
       setLastResult(result);
       setStatus((prev) => prev ? {
         ...prev,
-        bars_seen: result.bars_seen,
-        holding:   result.holding,
+        bars_seen:          result.bars_seen,
+        holding:            result.holding,
+        entry_price:        result.entry_price        ?? null,
+        last_price:         result.last_price         ?? null,
+        unrealized_pnl:     result.unrealized_pnl     ?? null,
+        unrealized_pnl_pct: result.unrealized_pnl_pct ?? null,
       } : prev);
       setError("");
     } catch (e) {
@@ -100,8 +104,12 @@ export function useLiveEngine() {
       setReplaySummary(summary);
       setStatus((prev) => prev ? {
         ...prev,
-        bars_seen: summary.bars_seen,
-        holding:   summary.holding,
+        bars_seen:          summary.bars_seen,
+        holding:            summary.holding,
+        entry_price:        summary.entry_price        ?? null,
+        last_price:         summary.last_price         ?? null,
+        unrealized_pnl:     summary.unrealized_pnl     ?? null,
+        unrealized_pnl_pct: summary.unrealized_pnl_pct ?? null,
       } : prev);
       setError("");
     } catch (e) {

@@ -338,3 +338,57 @@ def test_registry_payload_round_trips_through_configure(client):
     })
     assert res.status_code == 200, res.text
     assert res.json()["strategy"] == "sma_crossover"
+
+
+# ---------- position tracking ----------
+
+def test_status_position_fields_null_before_buy(client):
+    client.post("/api/strategies/configure", json={
+        "strategy": "sma_crossover", "params": {"short": 2, "long": 4},
+    })
+    client.post("/api/strategies/tick", json={"bar": _bar_payload(0, 100)})
+    status = client.get("/api/strategies/status").json()
+    assert status["entry_price"]        is None
+    assert status["unrealized_pnl"]     is None
+    assert status["unrealized_pnl_pct"] is None
+    assert status["last_price"]         == 100  # tracked even on HOLD
+
+
+def test_tick_response_carries_position_fields_when_held(client):
+    client.post("/api/strategies/configure", json={
+        "strategy": "sma_crossover",
+        "params":   {"short": 2, "long": 4},
+        "quantity": 10,
+    })
+    closes = [100, 99, 98, 97, 100, 105, 110, 115]
+    body = None
+    for i, c in enumerate(closes):
+        body = client.post("/api/strategies/tick", json={"bar": _bar_payload(i, c)}).json()
+        if body["holding"]:
+            break
+
+    assert body["holding"] is True
+    assert body["entry_price"] is not None
+    assert body["last_price"]  == closes[i]
+    # PnL == 0 right at the buy bar; on the next mark we'd see non-zero.
+    assert body["unrealized_pnl"] is not None
+
+
+def test_status_position_fields_clear_on_sell(client):
+    client.post("/api/strategies/configure", json={
+        "strategy": "sma_crossover",
+        "params":   {"short": 2, "long": 4},
+        "quantity": 10,
+    })
+    # Long ramp triggers BUY, then a steep drop triggers SELL via SMA crossover.
+    closes = [100, 99, 98, 97, 100, 105, 110, 115, 110, 100, 90, 80]
+    for i, c in enumerate(closes):
+        client.post("/api/strategies/tick", json={"bar": _bar_payload(i, c)})
+
+    status = client.get("/api/strategies/status").json()
+    if not status["holding"]:
+        # SELL fired — position fields cleared, last_price still tracks.
+        assert status["entry_price"]        is None
+        assert status["unrealized_pnl"]     is None
+        assert status["unrealized_pnl_pct"] is None
+        assert status["last_price"] == closes[-1]

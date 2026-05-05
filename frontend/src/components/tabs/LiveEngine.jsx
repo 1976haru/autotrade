@@ -45,7 +45,47 @@ function StatusCard({ status, busy, onReset }) {
         <Field label="처리 봉 수" value={String(status?.bars_seen ?? 0)} />
         <Field label="포지션"    value={status?.holding ? "보유 중" : "없음"} />
       </div>
+      {status?.holding && status?.entry_price != null && (
+        <PositionBlock status={status} />
+      )}
     </Card>
+  );
+}
+
+
+export function PositionBlock({ status }) {
+  const { entry_price, last_price, unrealized_pnl, unrealized_pnl_pct } = status;
+  const pnlColor =
+    unrealized_pnl == null ? "#94a3b8" :
+    unrealized_pnl > 0 ? "#22c55e" :
+    unrealized_pnl < 0 ? "#ef4444" : "#94a3b8";
+  const pctSigned =
+    unrealized_pnl_pct == null ? null :
+    `${unrealized_pnl_pct >= 0 ? "+" : ""}${(unrealized_pnl_pct * 100).toFixed(2)}%`;
+  const pnlSigned =
+    unrealized_pnl == null ? "—" :
+    `${unrealized_pnl >= 0 ? "+" : ""}${fmtKRW(unrealized_pnl)}`;
+
+  return (
+    <div
+      data-testid="position-block"
+      style={{ marginTop: 10, paddingTop: 8, borderTop: "1px solid #0c2035",
+                display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}
+    >
+      <Field label="진입가"     value={`${fmtKRW(entry_price)}원`} />
+      <Field label="현재가"     value={last_price != null ? `${fmtKRW(last_price)}원` : "—"} />
+      <div>
+        <div style={{ fontSize: 9, color: "#475569", marginBottom: 2 }}>평가손익</div>
+        <div style={{ fontSize: 12, fontWeight: 700, color: pnlColor }}>
+          {pnlSigned}
+          {pctSigned != null && (
+            <span style={{ fontSize: 10, marginLeft: 6, color: pnlColor }}>
+              ({pctSigned})
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

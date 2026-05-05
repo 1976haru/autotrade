@@ -230,3 +230,94 @@ def test_submit_tick_explicit_requested_by_ai_propagates():
         )
         result = run(eng.submit_tick(_bar(0, 75_000), requested_by_ai=True))
         assert result.routing.audit.requested_by_ai is True
+
+
+# ---------- position tracking ----------
+
+def test_position_fields_are_none_before_any_tick():
+    eng = LiveStrategyEngine(SmaCrossoverStrategy())
+    assert eng.entry_price        is None
+    assert eng.last_price         is None
+    assert eng.unrealized_pnl     is None
+    assert eng.unrealized_pnl_pct is None
+
+
+def test_last_price_updates_every_tick_even_on_hold():
+    eng = LiveStrategyEngine(_FixedSignals([Signal.HOLD, Signal.HOLD]))
+    eng.run_tick(_bar(0, 75_000))
+    assert eng.last_price == 75_000
+    eng.run_tick(_bar(1, 76_500))
+    assert eng.last_price == 76_500
+    # Still flat — position-derived fields stay None
+    assert eng.entry_price        is None
+    assert eng.unrealized_pnl     is None
+    assert eng.unrealized_pnl_pct is None
+
+
+def test_buy_sets_entry_price_and_initial_pnl_is_zero():
+    eng = LiveStrategyEngine(_FixedSignals([Signal.BUY]), quantity=10)
+    eng.run_tick(_bar(0, 75_000))
+    assert eng.holding is True
+    assert eng.entry_price    == 75_000
+    assert eng.last_price     == 75_000
+    assert eng.unrealized_pnl == 0   # bought at the same bar's close
+    assert eng.unrealized_pnl_pct == 0.0
+
+
+def test_unrealized_pnl_marks_at_latest_close():
+    eng = LiveStrategyEngine(_FixedSignals([Signal.BUY, Signal.HOLD, Signal.HOLD]),
+                              quantity=10)
+    eng.run_tick(_bar(0, 75_000))
+    eng.run_tick(_bar(1, 76_000))   # +1000 per share
+    assert eng.unrealized_pnl == 10_000
+    assert abs(eng.unrealized_pnl_pct - (1_000 / 75_000)) < 1e-9
+    eng.run_tick(_bar(2, 73_500))   # -1500 per share
+    assert eng.unrealized_pnl == -15_000
+    assert eng.unrealized_pnl_pct < 0
+
+
+def test_sell_clears_entry_price_and_unrealized_fields():
+    eng = LiveStrategyEngine(_FixedSignals([Signal.BUY, Signal.SELL]), quantity=10)
+    eng.run_tick(_bar(0, 75_000))
+    eng.run_tick(_bar(1, 78_000))
+    assert eng.holding is False
+    assert eng.entry_price        is None
+    assert eng.unrealized_pnl     is None
+    assert eng.unrealized_pnl_pct is None
+    # last_price still tracks current mark
+    assert eng.last_price == 78_000
+
+
+def test_rollback_buy_clears_entry_price():
+    """Mirror of holding rollback — entry_price must be reset symmetrically."""
+    eng = LiveStrategyEngine(_FixedSignals([Signal.BUY]))
+    result = eng.run_tick(_bar(0, 75_000))
+    assert eng.entry_price == 75_000
+    assert eng.holding is True
+    eng.rollback_intent(result.intended_order)
+    assert eng.holding is False
+    assert eng.entry_price is None
+
+
+def test_rollback_sell_restores_prior_entry_price():
+    """A rejected SELL should leave the engine still holding at the original
+    entry price — not stuck in 'holding but no entry_price' which would break
+    PnL forever."""
+    eng = LiveStrategyEngine(_FixedSignals([Signal.BUY, Signal.SELL]))
+    eng.run_tick(_bar(0, 75_000))
+    sell_result = eng.run_tick(_bar(1, 78_000))
+    assert eng.entry_price is None  # cleared by SELL signal
+    eng.rollback_intent(sell_result.intended_order)
+    assert eng.holding is True
+    assert eng.entry_price == 75_000  # restored from snapshot
+
+
+def test_unrealized_pnl_scales_with_quantity():
+    eng_small = LiveStrategyEngine(_FixedSignals([Signal.BUY]), quantity=1)
+    eng_big   = LiveStrategyEngine(_FixedSignals([Signal.BUY]), quantity=100)
+    for eng in (eng_small, eng_big):
+        eng.run_tick(_bar(0, 75_000))
+        eng.run_tick(_bar(1, 76_000))
+    assert eng_big.unrealized_pnl == eng_small.unrealized_pnl * 100
+    # Pct return is independent of quantity
+    assert eng_big.unrealized_pnl_pct == eng_small.unrealized_pnl_pct
