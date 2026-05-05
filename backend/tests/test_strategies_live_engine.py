@@ -1,12 +1,34 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.backtest.strategy import Strategy
 from app.backtest.strategies.sma_crossover import SmaCrossoverStrategy
 from app.backtest.types import Bar, Signal
 from app.brokers.base import OrderSide, OrderType
+from app.brokers.mock_broker import MockBrokerAdapter
+from app.core.modes import OperationMode
+from app.db.base import Base
+from app.risk.risk_manager import RiskDecision, RiskManager, RiskPolicy
 from app.strategies.live_engine import LiveStrategyEngine, TickResult
+
+
+def _make_session():
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=engine)
+    return sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+
+def run(coro):
+    return asyncio.run(coro)
 
 
 _BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -117,3 +139,94 @@ def test_works_with_real_sma_strategy_after_warmup():
     has_buy = any(r.intended_order is not None and r.intended_order.side == OrderSide.BUY
                   for r in results)
     assert has_buy, "expected at least one BUY signal once SMA crosses"
+
+
+# ---------- submit_tick: pipeline integration ----------
+
+def test_submit_tick_without_dependencies_raises():
+    eng = LiveStrategyEngine(_FixedSignals([Signal.BUY]), quantity=1)
+    with pytest.raises(RuntimeError, match="broker, risk, db, and mode"):
+        run(eng.submit_tick(_bar(0, 75_000)))
+
+
+def test_submit_tick_passes_through_when_signal_is_hold():
+    Session = _make_session()
+    with Session() as db:
+        eng = LiveStrategyEngine(
+            _FixedSignals([Signal.HOLD]),
+            broker=MockBrokerAdapter(), risk=RiskManager(RiskPolicy()),
+            db=db, mode=OperationMode.SIMULATION,
+        )
+        result = run(eng.submit_tick(_bar(0, 75_000)))
+        assert result.signal == Signal.HOLD
+        assert result.intended_order is None
+        assert result.routing is None
+        assert eng.holding is False
+
+
+def test_submit_tick_simulation_mode_executes_order():
+    Session = _make_session()
+    with Session() as db:
+        eng = LiveStrategyEngine(
+            _FixedSignals([Signal.BUY]), quantity=1,
+            broker=MockBrokerAdapter(), risk=RiskManager(RiskPolicy()),
+            db=db, mode=OperationMode.SIMULATION,
+        )
+        result = run(eng.submit_tick(_bar(0, 75_000)))
+        assert result.intended_order is not None
+        assert result.routing is not None
+        assert result.routing.decision == RiskDecision.APPROVED
+        assert result.routing.result.status.value == "FILLED"
+        assert eng.holding is True
+
+
+def test_submit_tick_shadow_mode_rejection_rolls_back_position_state():
+    Session = _make_session()
+    with Session() as db:
+        eng = LiveStrategyEngine(
+            _FixedSignals([Signal.BUY]),
+            broker=MockBrokerAdapter(), risk=RiskManager(RiskPolicy()),
+            db=db, mode=OperationMode.LIVE_SHADOW,
+        )
+        result = run(eng.submit_tick(_bar(0, 75_000)))
+        assert result.routing.decision == RiskDecision.REJECTED
+        # Position state was rolled back so the next BUY signal can fire again
+        assert eng.holding is False
+
+
+def test_submit_tick_manual_approval_mode_enqueues():
+    Session = _make_session()
+    with Session() as db:
+        eng = LiveStrategyEngine(
+            _FixedSignals([Signal.BUY]),
+            broker=MockBrokerAdapter(), risk=RiskManager(RiskPolicy()),
+            db=db, mode=OperationMode.LIVE_MANUAL_APPROVAL,
+        )
+        result = run(eng.submit_tick(_bar(0, 75_000)))
+        assert result.routing.decision == RiskDecision.NEEDS_APPROVAL
+        assert result.routing.approval is not None
+        assert result.routing.approval.status == "PENDING"
+
+
+def test_submit_tick_default_requested_by_ai_is_false():
+    Session = _make_session()
+    with Session() as db:
+        eng = LiveStrategyEngine(
+            _FixedSignals([Signal.BUY]),
+            broker=MockBrokerAdapter(), risk=RiskManager(RiskPolicy()),
+            db=db, mode=OperationMode.SIMULATION,
+        )
+        result = run(eng.submit_tick(_bar(0, 75_000)))
+        assert result.routing.audit.requested_by_ai is False
+
+
+def test_submit_tick_explicit_requested_by_ai_propagates():
+    Session = _make_session()
+    with Session() as db:
+        eng = LiveStrategyEngine(
+            _FixedSignals([Signal.BUY]),
+            broker=MockBrokerAdapter(), risk=RiskManager(RiskPolicy()),
+            db=db, mode=OperationMode.SIMULATION,
+        )
+        result = run(eng.submit_tick(_bar(0, 75_000), requested_by_ai=True))
+        assert result.routing.audit.requested_by_ai is True
