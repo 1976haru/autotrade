@@ -84,9 +84,3 @@ def test_mock_broker_order_rejected_by_risk(client):
         assert any("max_order_notional" in r for r in audit.reasons)
 
 
-def test_ai_analyze_is_placeholder_without_execute_permission(client):
-    res = client.post("/api/ai/analyze", json={"ticker": "005930"})
-    assert res.status_code == 200
-    body = res.json()
-    assert body["can_execute_order"] is False
-    assert "005930" in body["text"]

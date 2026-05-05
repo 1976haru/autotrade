@@ -25,6 +25,7 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     anthropic_api_key: str = ""
+    anthropic_model: str = "claude-sonnet-4-6"
 
     @property
     def cors_origin_list(self) -> list[str]:

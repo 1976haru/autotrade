@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -65,6 +65,27 @@ class BacktestRun(Base):
     data_interval:  Mapped[str | None]       = mapped_column(String(8), nullable=True)
 
     trades_json:    Mapped[list]     = mapped_column(JSON, default=list)
+
+
+class AiAnalysisLog(Base):
+    """AI 분석 요청과 응답을 한 행에 기록. 호출 실패도 audit 목적으로 남긴다."""
+
+    __tablename__ = "ai_analysis_log"
+
+    id:            Mapped[int]            = mapped_column(primary_key=True)
+    created_at:    Mapped[datetime]       = mapped_column(DateTime, default=_utcnow, index=True)
+
+    ticker:        Mapped[str]            = mapped_column(String(32), index=True)
+    extra:         Mapped[str]            = mapped_column(String(512), default="")
+    active_strats: Mapped[list]           = mapped_column(JSON, default=list)
+    risk_params:   Mapped[dict]           = mapped_column(JSON, default=dict)
+
+    text:          Mapped[str | None]     = mapped_column(Text, nullable=True)
+    model:         Mapped[str | None]     = mapped_column(String(64), nullable=True)
+    input_tokens:  Mapped[int]            = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int]            = mapped_column(Integer, default=0)
+    score:         Mapped[dict | None]    = mapped_column(JSON, nullable=True)
+    error:         Mapped[str | None]     = mapped_column(String(500), nullable=True)
 
 
 class MarketBar(Base):

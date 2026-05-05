@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from app.ai.client import AiClient
 from app.brokers.mock_broker import MockBrokerAdapter
 from app.core.config import get_settings
 from app.market.base import MarketDataAdapter
@@ -23,3 +24,8 @@ def get_market_data() -> MarketDataAdapter:
         from app.market.yfinance_adapter import YfinanceMarketData
         return YfinanceMarketData()
     return MockMarketData()
+
+
+@lru_cache
+def get_ai_client() -> AiClient:
+    return AiClient()
