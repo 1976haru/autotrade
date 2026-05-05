@@ -9,24 +9,26 @@ import { MarketChart }  from "./components/tabs/MarketChart";
 import { Backtest }     from "./components/tabs/Backtest";
 import { AISignal }     from "./components/tabs/AISignal";
 import { Settings }     from "./components/tabs/Settings";
-import { usePortfolio } from "./store/usePortfolio";
-import { useBot }       from "./store/useBot";
-import { useStrategy }  from "./store/useStrategy";
-import { useRisk }      from "./store/useRisk";
-import { useSettings }  from "./store/useSettings";
+import { usePortfolio }  from "./store/usePortfolio";
+import { useBot }        from "./store/useBot";
+import { useStrategy }   from "./store/useStrategy";
+import { useRisk }       from "./store/useRisk";
+import { useRiskPolicy } from "./store/useRiskPolicy";
+import { useSettings }   from "./store/useSettings";
 
 export default function App() {
   const [tab, setTab] = useState("dash");
-  const portfolio = usePortfolio();
-  const strategy  = useStrategy();
+  const portfolio  = usePortfolio();
+  const strategy   = useStrategy();
   const { risk, update: updateRisk } = useRisk();
-  const bot       = useBot();
-  const settings  = useSettings();
+  const riskPolicy = useRiskPolicy();
+  const bot        = useBot();
+  const settings   = useSettings();
 
   const renderTab = () => {
     switch (tab) {
       case "dash":   return <Dashboard portfolio={portfolio} bot={bot} botControls={{ start: bot.start, stop: bot.stop }} />;
-      case "strat":  return <StrategyRisk strategyOn={strategy.strategyOn} toggle={strategy.toggle} strategyParams={strategy.strategyParams} updateParam={strategy.updateParam} risk={risk} updateRisk={updateRisk} />;
+      case "strat":  return <StrategyRisk strategyOn={strategy.strategyOn} toggle={strategy.toggle} strategyParams={strategy.strategyParams} updateParam={strategy.updateParam} risk={risk} updateRisk={updateRisk} riskPolicy={riskPolicy} />;
       case "bot":      return <BotControl bot={bot} />;
       case "approve":  return <Approvals />;
       case "chart":    return <MarketChart />;

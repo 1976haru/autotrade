@@ -1,10 +1,85 @@
 import { STRATEGIES } from "../../config/strategies";
-import { Card, SectionLabel, Toggle, Slider } from "../common";
+import { Btn, Card, SectionLabel, Toggle, Slider } from "../common";
+import { fmtKRW } from "../../utils/format";
 
-export function StrategyRisk({ strategyOn, toggle, strategyParams, updateParam, risk, updateRisk }) {
+
+function PolicyRow({ label, value }) {
+  return (
+    <div>
+      <div style={{ fontSize: 9, color: "#475569", marginBottom: 2 }}>{label}</div>
+      <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>{value}</div>
+    </div>
+  );
+}
+
+
+function BackendPolicyCard({ riskPolicy }) {
+  const { policy, loading, error, emergencyStop, busy, toggleEmergency } = riskPolicy;
+
+  return (
+    <Card accentColor={emergencyStop ? "#ef444455" : "#7dd3fc22"}>
+      <SectionLabel>백엔드 리스크 정책</SectionLabel>
+
+      {error && (
+        <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>
+      )}
+
+      {loading ? (
+        <div style={{ color: "#475569", fontSize: 11, padding: 8 }}>로딩 중…</div>
+      ) : policy ? (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <PolicyRow label="주문당 최대 명목" value={`${fmtKRW(policy.max_order_notional)}원`} />
+          <PolicyRow label="일일 최대 손실"   value={`${fmtKRW(policy.max_daily_loss)}원`} />
+          <PolicyRow label="최대 보유 종목"   value={String(policy.max_positions)} />
+          <PolicyRow label="종목 노출 한도"   value={`${fmtKRW(policy.max_symbol_exposure)}원`} />
+          <PolicyRow
+            label="실거래 활성화"
+            value={policy.enable_live_trading ? "ON" : "OFF"}
+          />
+          <PolicyRow
+            label="AI 실행 활성화"
+            value={policy.enable_ai_execution ? "ON" : "OFF"}
+          />
+        </div>
+      ) : (
+        <div style={{ color: "#475569", fontSize: 11 }}>정책 정보 없음</div>
+      )}
+
+      <div style={{
+        marginTop: 14, paddingTop: 12, borderTop: "1px solid #0c2035",
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+      }}>
+        <div>
+          <div style={{
+            fontSize: 11, fontWeight: 700,
+            color: emergencyStop ? "#ef4444" : "#94a3b8",
+          }}>
+            긴급 정지 {emergencyStop ? "● ACTIVE" : "○ OFF"}
+          </div>
+          <div style={{ fontSize: 9, color: "#475569", marginTop: 2 }}>
+            ON 시 RiskManager가 모든 신규 주문 차단
+          </div>
+        </div>
+        <Btn
+          color={emergencyStop ? "#22c55e" : "#ef4444"}
+          onClick={toggleEmergency}
+          disabled={busy}
+          small
+        >
+          {emergencyStop ? "해제" : "긴급 정지"}
+        </Btn>
+      </div>
+    </Card>
+  );
+}
+
+
+export function StrategyRisk({ strategyOn, toggle, strategyParams, updateParam, risk, updateRisk, riskPolicy }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <div style={{ fontSize: 11, color: "#475569", marginBottom: 2 }}>
+      <BackendPolicyCard riskPolicy={riskPolicy} />
+
+      <div style={{ fontSize: 11, color: "#475569", marginBottom: 2, marginTop: 8 }}>
         복수 전략 동시 활성화 → 신호 합류(Confluence) 시 진입
       </div>
 
