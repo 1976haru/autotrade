@@ -1,7 +1,31 @@
 import { cleanup, fireEvent, render } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { StatusPin, StatusSummaryCard } from "./Dashboard";
+import {
+  Activity24hCard,
+  StatusPin,
+  StatusSummaryCard,
+  computeActivity24h,
+} from "./Dashboard";
+
+
+// Activity24hCard용 audit hook 모킹 — 네트워크/상태 흐름 자체는
+// useAuditLogs.test.js에서 별도로 검증.
+const _orderHook = { items: [], loading: false, error: "", refresh: vi.fn() };
+const _stopHook  = { items: [], loading: false, error: "", refresh: vi.fn() };
+
+vi.mock("../../store/useAuditLogs", () => ({
+  useOrderAudits:         () => _orderHook,
+  useAiAudits:            () => ({ items: [], loading: false, error: "", refresh: vi.fn() }),
+  useBacktestRuns:        () => ({ items: [], loading: false, error: "", refresh: vi.fn() }),
+  useEmergencyStopAudits: () => _stopHook,
+}));
+
+
+function _resetAuditHooks(orderOverrides = {}, stopOverrides = {}) {
+  Object.assign(_orderHook, { items: [], loading: false, error: "", ...orderOverrides });
+  Object.assign(_stopHook,  { items: [], loading: false, error: "", ...stopOverrides });
+}
 
 
 describe("<StatusPin>", () => {
@@ -142,5 +166,124 @@ describe("<StatusSummaryCard>", () => {
     );
     // Should not throw
     fireEvent.click(getByTestId("status-pin-bot"));
+  });
+});
+
+
+describe("computeActivity24h", () => {
+  // Anchor "now" so the cutoff math is predictable. Anything older than
+  // 2026-05-04T12:00 should be excluded; anything from then forward should
+  // be included.
+  const NOW = new Date("2026-05-05T12:00:00Z").getTime();
+
+  function _o(decision, hoursAgo) {
+    return {
+      id: Math.random(), decision,
+      created_at: new Date(NOW - hoursAgo * 3600_000).toISOString(),
+    };
+  }
+  function _s(enabled, hoursAgo) {
+    return {
+      id: Math.random(), enabled,
+      created_at: new Date(NOW - hoursAgo * 3600_000).toISOString(),
+    };
+  }
+
+  it("returns all-zero counts when both lists are empty", () => {
+    expect(computeActivity24h([], [], NOW)).toEqual({
+      orders: 0, approved: 0, rejected: 0, pending: 0,
+      stops:  0, stopsOn: 0, stopsOff: 0,
+    });
+  });
+
+  it("counts decisions within the last 24 hours and excludes older rows", () => {
+    const orders = [
+      _o("APPROVED",        1),  // 1h ago — included
+      _o("APPROVED",        12), // 12h ago — included
+      _o("REJECTED",        20), // 20h ago — included
+      _o("NEEDS_APPROVAL",  23), // 23h ago — included
+      _o("APPROVED",        25), // 25h ago — excluded
+      _o("REJECTED",        100),
+    ];
+    const a = computeActivity24h(orders, [], NOW);
+    expect(a.orders).toBe(4);
+    expect(a.approved).toBe(2);
+    expect(a.rejected).toBe(1);
+    expect(a.pending).toBe(1);
+  });
+
+  it("counts stop toggles within the window and splits ON/OFF", () => {
+    const stops = [
+      _s(true,  2),  // included
+      _s(false, 8),  // included
+      _s(true,  18), // included
+      _s(false, 30), // excluded
+    ];
+    const a = computeActivity24h([], stops, NOW);
+    expect(a.stops).toBe(3);
+    expect(a.stopsOn).toBe(2);
+    expect(a.stopsOff).toBe(1);
+  });
+
+  it("uses Date.now() when now is omitted", () => {
+    // Just verify the call shape — exact value depends on real clock.
+    const a = computeActivity24h([], []);
+    expect(a).toEqual({
+      orders: 0, approved: 0, rejected: 0, pending: 0,
+      stops:  0, stopsOn: 0, stopsOff: 0,
+    });
+  });
+});
+
+
+describe("<Activity24hCard>", () => {
+  beforeEach(() => { _resetAuditHooks(); });
+  afterEach(cleanup);
+
+  it("renders zero-state copy when there is no recent activity", () => {
+    const { container } = render(<Activity24hCard />);
+    expect(container.textContent).toContain("최근 24시간");
+    expect(container.textContent).toContain("주문");
+    expect(container.textContent).toContain("0건");
+  });
+
+  it("shows loading state when either source is loading", () => {
+    _resetAuditHooks({ loading: true }, {});
+    const { getByText } = render(<Activity24hCard />);
+    expect(getByText(/로딩 중/)).toBeTruthy();
+  });
+
+  it("surfaces error from either source", () => {
+    _resetAuditHooks({}, { error: "stops broke" });
+    const { getByText } = render(<Activity24hCard />);
+    expect(getByText("stops broke")).toBeTruthy();
+  });
+
+  it("renders aggregated counts when data is present", () => {
+    // Pin time so our test data falls inside the 24h window deterministically.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-05T12:00:00Z"));
+    const minutesAgo = (m) => new Date(Date.now() - m * 60_000).toISOString();
+    _resetAuditHooks(
+      { items: [
+        { id: 1, decision: "APPROVED",       created_at: minutesAgo(10) },
+        { id: 2, decision: "APPROVED",       created_at: minutesAgo(20) },
+        { id: 3, decision: "REJECTED",       created_at: minutesAgo(30) },
+        { id: 4, decision: "NEEDS_APPROVAL", created_at: minutesAgo(60) },
+      ]},
+      { items: [
+        { id: 1, enabled: true,  created_at: minutesAgo(40) },
+        { id: 2, enabled: false, created_at: minutesAgo(35) },
+      ]},
+    );
+    const { container } = render(<Activity24hCard />);
+    expect(container.textContent).toContain("4건");
+    expect(container.textContent).toContain("승인 2");
+    expect(container.textContent).toContain("거부 1");
+    expect(container.textContent).toContain("대기 1");
+    expect(container.textContent).toContain("긴급정지 토글");
+    expect(container.textContent).toContain("ON 1");
+    expect(container.textContent).toContain("OFF 1");
+    vi.useRealTimers();
   });
 });

@@ -1,5 +1,29 @@
 import { Card, SectionLabel, StatBox } from "../common";
 import { fmtKRW, fmtPct, pnlColor } from "../../utils/format";
+import { useEmergencyStopAudits, useOrderAudits } from "../../store/useAuditLogs";
+
+
+const _DAY_MS = 24 * 60 * 60 * 1000;
+
+// 시간 필터 + 카운팅을 컴포넌트에서 분리해 vi.setSystemTime 없이도 단위 테스트
+// 가능하도록. NEEDS_APPROVAL은 BottomNav 배지/StatusSummaryCard와 중복되지만,
+// 24h 활동 요약에서는 "어제 N건이 결재 단계로 갔는지" 자체가 의미 있는 신호라
+// 별도로 카운트한다.
+export function computeActivity24h(orders, stops, now = Date.now()) {
+  const since = now - _DAY_MS;
+  const within = (r) => new Date(r.created_at).getTime() >= since;
+  const recentOrders = orders.filter(within);
+  const recentStops  = stops.filter(within);
+  return {
+    orders:   recentOrders.length,
+    approved: recentOrders.filter((r) => r.decision === "APPROVED").length,
+    rejected: recentOrders.filter((r) => r.decision === "REJECTED").length,
+    pending:  recentOrders.filter((r) => r.decision === "NEEDS_APPROVAL").length,
+    stops:    recentStops.length,
+    stopsOn:  recentStops.filter((r) => r.enabled).length,
+    stopsOff: recentStops.filter((r) => !r.enabled).length,
+  };
+}
 
 
 // 운영자가 대시보드 진입 즉시 봐야 하는 3가지 위험/상태 신호.
@@ -76,6 +100,61 @@ export function StatusSummaryCard({ emergencyStop, pendingCount, running, onJump
 }
 
 
+export function Activity24hCard() {
+  const orders = useOrderAudits();
+  const stops  = useEmergencyStopAudits();
+  const a = computeActivity24h(orders.items, stops.items);
+  const loading = orders.loading || stops.loading;
+  const error   = orders.error || stops.error;
+
+  return (
+    <Card>
+      <SectionLabel>최근 24시간</SectionLabel>
+
+      {error && (
+        <div style={{ color: "#f87171", fontSize: 11, marginBottom: 6 }}>{error}</div>
+      )}
+
+      {loading ? (
+        <div style={{ color: "#475569", fontSize: 11, padding: 8, textAlign: "center" }}>
+          로딩 중…
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
+            <span style={{ fontSize: 11, color: "#94a3b8" }}>주문</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: "#7dd3fc" }}>{a.orders}건</span>
+            <span style={{ fontSize: 10, color: "#475569" }}>
+              {" · "}
+              <span style={{ color: "#22c55e", fontWeight: 700 }}>승인 {a.approved}</span>
+              {" · "}
+              <span style={{ color: "#ef4444", fontWeight: 700 }}>거부 {a.rejected}</span>
+              {" · "}
+              <span style={{ color: "#f59e0b", fontWeight: 700 }}>대기 {a.pending}</span>
+            </span>
+          </div>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+            <span style={{ fontSize: 11, color: "#94a3b8" }}>긴급정지 토글</span>
+            <span style={{
+              fontSize: 14, fontWeight: 700,
+              color: a.stops > 0 ? "#fbbf24" : "#475569",
+            }}>{a.stops}건</span>
+            {a.stops > 0 && (
+              <span style={{ fontSize: 10, color: "#475569" }}>
+                {" · "}
+                <span style={{ color: "#ef4444", fontWeight: 700 }}>ON {a.stopsOn}</span>
+                {" · "}
+                <span style={{ color: "#22c55e", fontWeight: 700 }}>OFF {a.stopsOff}</span>
+              </span>
+            )}
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
+
 export function Dashboard({ portfolio, bot, botControls, emergencyStop, pendingCount = 0, onJumpTab }) {
   const { totalAsset, totalPnL, totalPnLPct, cash, positions } = portfolio;
   const { stats, winRate, trades, running } = bot;
@@ -116,6 +195,9 @@ export function Dashboard({ portfolio, bot, botControls, emergencyStop, pendingC
           <div style={{ fontSize: 10, color: "#334155", marginTop: 2 }}>승률 {winRate}%</div>
         </Card>
       </div>
+
+      {/* 24시간 활동 요약 */}
+      <Activity24hCard />
 
       {/* 봇 컨트롤 */}
       <Card accentColor={running ? "#22c55e33" : undefined}>
