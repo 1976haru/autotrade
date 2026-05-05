@@ -65,9 +65,11 @@ cd backend
 ruff check app tests
 pytest -q
 
-# frontend lint + 프로덕션 빌드
+# frontend lint + 단위 테스트 + 프로덕션 빌드
 cd frontend
 npm run lint
+npm test           # 일회 실행 (CI에서 동일 명령 사용)
+npm run test:watch # 개발 중 watch 모드
 npm run build
 ```
 
@@ -103,7 +105,7 @@ alembic downgrade -1
 ## CI
 
 - **Backend CI** (`.github/workflows/backend-ci.yml`) — `backend/` 변경시 ruff + pytest
-- **Frontend CI** (`.github/workflows/frontend-ci.yml`) — `frontend/` 변경시 eslint + vite build
+- **Frontend CI** (`.github/workflows/frontend-ci.yml`) — `frontend/` 변경시 eslint + vitest + vite build
 
 `main`, `develop`, `feature/**` 푸시와 `main`/`develop` 대상 PR에서 자동 실행됩니다.
 
