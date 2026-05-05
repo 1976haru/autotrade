@@ -36,6 +36,10 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify(decision || {}),
   }),
+  cancelApproval: (id, decision) => backendFetch(`/api/approvals/${id}/cancel`, {
+    method: "POST",
+    body: JSON.stringify(decision || {}),
+  }),
   runBacktest: (req) => backendFetch("/api/backtest/run", {
     method: "POST",
     body: JSON.stringify(req),

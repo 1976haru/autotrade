@@ -57,5 +57,17 @@ export function useApprovals() {
     }
   }, [refresh]);
 
-  return { pending, loading, error, busy, refresh, approve, reject };
+  const cancel = useCallback(async (id, note) => {
+    setBusy(true);
+    try {
+      await backendApi.cancelApproval(id, note ? { note } : null);
+      await refresh();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }, [refresh]);
+
+  return { pending, loading, error, busy, refresh, approve, reject, cancel };
 }

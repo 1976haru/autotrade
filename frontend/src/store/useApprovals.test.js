@@ -10,6 +10,7 @@ vi.mock("../services/backend/client", () => ({
     listApprovals:    vi.fn(),
     approveApproval:  vi.fn(),
     rejectApproval:   vi.fn(),
+    cancelApproval:   vi.fn(),
   },
 }));
 
@@ -19,6 +20,7 @@ describe("useApprovals", () => {
     backendApi.listApprovals.mockReset();
     backendApi.approveApproval.mockReset();
     backendApi.rejectApproval.mockReset();
+    backendApi.cancelApproval.mockReset();
   });
 
   it("fetches the pending list on mount", async () => {
@@ -84,5 +86,35 @@ describe("useApprovals", () => {
     });
 
     expect(backendApi.approveApproval).toHaveBeenCalledWith(42, null);
+  });
+
+  it("cancel calls the API with the note and refreshes the list", async () => {
+    backendApi.listApprovals.mockResolvedValueOnce([{ id: 9, status: "PENDING" }]);
+    backendApi.cancelApproval.mockResolvedValueOnce({ id: 9, status: "CANCELLED" });
+    backendApi.listApprovals.mockResolvedValueOnce([]);
+
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.cancel(9, "stale signal");
+    });
+
+    expect(backendApi.cancelApproval).toHaveBeenCalledWith(9, { note: "stale signal" });
+    expect(backendApi.listApprovals).toHaveBeenCalledTimes(2);
+    expect(result.current.pending).toEqual([]);
+  });
+
+  it("cancel passes null when no note is given", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    backendApi.cancelApproval.mockResolvedValue({});
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.cancel(7);
+    });
+
+    expect(backendApi.cancelApproval).toHaveBeenCalledWith(7, null);
   });
 });

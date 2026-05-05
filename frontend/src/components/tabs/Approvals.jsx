@@ -3,7 +3,7 @@ import { fmtKRW } from "../../utils/format";
 import { useApprovals } from "../../store/useApprovals";
 
 export function Approvals() {
-  const { pending, loading, error, busy, approve, reject } = useApprovals();
+  const { pending, loading, error, busy, approve, reject, cancel } = useApprovals();
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -60,6 +60,9 @@ export function Approvals() {
               <Btn color="#ef4444" onClick={() => reject(a.id)} disabled={busy} small>
                 ✗ 거부
               </Btn>
+              <Btn color="#94a3b8" onClick={() => cancel(a.id)} disabled={busy} small>
+                ⊘ 취소
+              </Btn>
             </div>
           </div>
         ))}
@@ -68,6 +71,9 @@ export function Approvals() {
       <div style={{ fontSize: 10, color: "#1e3a5c", lineHeight: 1.6, padding: "0 4px" }}>
         ⚠ 승인 시 백엔드 RiskManager 평가는 이미 끝난 상태이며, 승인 즉시 브로커 어댑터로 주문이 전송됩니다.
         제출 시점과 승인 시점 사이의 잔고·가격 변동은 직접 확인하세요.
+        <br />
+        거부(REJECTED)는 "이 주문은 안 된다"는 능동적 판단, 취소(CANCELLED)는 "신호가
+        오래됐거나 더 이상 의미 없다"는 중립적 폐기입니다 — 감사 내역에서 구분됩니다.
       </div>
     </div>
   );
