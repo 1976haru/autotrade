@@ -26,6 +26,8 @@ export function useApprovals() {
   }, []);
 
   useEffect(() => {
+    // refresh is async; setState happens after the awaited fetch, not synchronously.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     refresh();
     const t = setInterval(refresh, REFRESH_MS);
     return () => clearInterval(t);
