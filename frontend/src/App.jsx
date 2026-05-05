@@ -7,6 +7,7 @@ import { BotControl }   from "./components/tabs/BotControl";
 import { Approvals }    from "./components/tabs/Approvals";
 import { MarketChart }  from "./components/tabs/MarketChart";
 import { Backtest }     from "./components/tabs/Backtest";
+import { AuditLog }     from "./components/tabs/AuditLog";
 import { AISignal }     from "./components/tabs/AISignal";
 import { Settings }     from "./components/tabs/Settings";
 import { usePortfolio }  from "./store/usePortfolio";
@@ -33,6 +34,7 @@ export default function App() {
       case "approve":  return <Approvals />;
       case "chart":    return <MarketChart />;
       case "backtest": return <Backtest />;
+      case "audit":    return <AuditLog />;
       case "signal":   return <AISignal activeStratIds={strategy.activeIds} />;
       case "config":   return <Settings settings={settings} />;
       default:       return null;
