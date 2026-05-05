@@ -7,6 +7,7 @@ import {
   useEmergencyStopAudits,
   useOrderAudits,
 } from "../../store/useAuditLogs";
+import { usePersistedState } from "../../store/usePersistedState";
 
 
 const SUBTABS = [
@@ -143,35 +144,21 @@ const KIND_FILTERS = [
 
 const KIND_FILTER_STORAGE_KEY = "autotrade.eventKindFilter";
 const _VALID_KINDS = new Set(KIND_FILTERS.map((f) => f.id));
-
-// 사고 분석 도중 새로고침/탭 전환해도 운영자의 필터 선택이 유지되도록
-// localStorage에 보관. 저장된 값이 KIND_FILTERS에 없는 종류면 (예전 빌드의
-// 잔재나 외부 변조) 안전한 기본값 "all"로 폴백.
-function _readKindFilter() {
-  try {
-    const v = localStorage.getItem(KIND_FILTER_STORAGE_KEY);
-    return _VALID_KINDS.has(v) ? v : "all";
-  } catch {
-    return "all";
-  }
-}
-
-function _writeKindFilter(value) {
-  try {
-    localStorage.setItem(KIND_FILTER_STORAGE_KEY, value);
-  } catch {
-    // 영속화 실패는 사용자 경험에 직접 영향 없음 — 이 세션 한정.
-  }
-}
+const _isValidKind = (v) => _VALID_KINDS.has(v);
 
 // 다른 탭(Dashboard 24h drill-down 등)에서 AuditLog로 점프하기 직전에
 // 미리 필터를 세팅할 때 사용. EventTimelineView가 마운트 시 localStorage에서
 // 초기값을 읽으므로, 여기서 쓴 뒤 onJumpTab("audit")을 호출하면 도착 시
 // 자동으로 그 필터로 렌더된다. 잘못된 kind는 무시 — 호출자 실수로 인해
-// 사용자 환경설정이 망가지지 않도록 방어.
+// 사용자 환경설정이 망가지지 않도록 방어. usePersistedState를 우회하고
+// 직접 localStorage에 쓴다 — 호출자가 React 외부 (다른 탭의 onClick) 이라서.
 export function setEventKindFilter(kind) {
   if (!_VALID_KINDS.has(kind)) return;
-  _writeKindFilter(kind);
+  try {
+    localStorage.setItem(KIND_FILTER_STORAGE_KEY, kind);
+  } catch {
+    // session-only fallback
+  }
 }
 
 
@@ -194,23 +181,7 @@ const TIME_BUCKET_MS = {
 
 const TIME_BUCKET_STORAGE_KEY = "autotrade.eventTimeBucket";
 const _VALID_BUCKETS = new Set(TIME_BUCKETS.map((b) => b.id));
-
-function _readTimeBucket() {
-  try {
-    const v = localStorage.getItem(TIME_BUCKET_STORAGE_KEY);
-    return _VALID_BUCKETS.has(v) ? v : "all";
-  } catch {
-    return "all";
-  }
-}
-
-function _writeTimeBucket(value) {
-  try {
-    localStorage.setItem(TIME_BUCKET_STORAGE_KEY, value);
-  } catch {
-    // session-only fallback
-  }
-}
+const _isValidBucket = (v) => _VALID_BUCKETS.has(v);
 
 
 export function TimeBucketBar({ active, onChange }) {
@@ -274,17 +245,14 @@ export function KindFilterBar({ active, onChange }) {
 export function EventTimelineView() {
   const orders = useOrderAudits();
   const stops  = useEmergencyStopAudits();
-  const [kind, _setKind] = useState(_readKindFilter);
-  const setKind = (value) => { _setKind(value); _writeKindFilter(value); };
-  // Symbol filter is intentionally NOT persisted — it's a transient
-  // investigation tool ("show me everything that happened around 005930"),
-  // unlike the kind filter which the operator picks for a session.
+  // Persisted filters share the 074 usePersistedState pattern; symbol stays
+  // transient (each investigation session uses a different ticker).
+  const [kind, setKind] = usePersistedState(KIND_FILTER_STORAGE_KEY, "all", _isValidKind);
   const [symbolFilter, setSymbolFilter] = useState("");
   const symbolNeedle = symbolFilter.trim().toLowerCase();
-  // Time-bucket filter persists like kind: operator typically wants the same
-  // window across page refreshes during an investigation session.
-  const [timeBucket, _setTimeBucket] = useState(_readTimeBucket);
-  const setTimeBucket = (v) => { _setTimeBucket(v); _writeTimeBucket(v); };
+  const [timeBucket, setTimeBucket] = usePersistedState(
+    TIME_BUCKET_STORAGE_KEY, "all", _isValidBucket,
+  );
   const _bucketWindowMs = TIME_BUCKET_MS[timeBucket]; // undefined for "all"
   const _now = Date.now();
   const _matchesBucket = (r) =>
