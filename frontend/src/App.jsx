@@ -4,6 +4,7 @@ import { BottomNav }    from "./components/layout/BottomNav";
 import { Dashboard }    from "./components/tabs/Dashboard";
 import { StrategyRisk } from "./components/tabs/StrategyRisk";
 import { BotControl }   from "./components/tabs/BotControl";
+import { Approvals }    from "./components/tabs/Approvals";
 import { AISignal }     from "./components/tabs/AISignal";
 import { Settings }     from "./components/tabs/Settings";
 import { usePortfolio } from "./store/usePortfolio";
@@ -24,9 +25,10 @@ export default function App() {
     switch (tab) {
       case "dash":   return <Dashboard portfolio={portfolio} bot={bot} botControls={{ start: bot.start, stop: bot.stop }} />;
       case "strat":  return <StrategyRisk strategyOn={strategy.strategyOn} toggle={strategy.toggle} strategyParams={strategy.strategyParams} updateParam={strategy.updateParam} risk={risk} updateRisk={updateRisk} />;
-      case "bot":    return <BotControl bot={bot} />;
-      case "signal": return <AISignal activeStratIds={strategy.activeIds} />;
-      case "config": return <Settings settings={settings} />;
+      case "bot":     return <BotControl bot={bot} />;
+      case "approve": return <Approvals />;
+      case "signal":  return <AISignal activeStratIds={strategy.activeIds} />;
+      case "config":  return <Settings settings={settings} />;
       default:       return null;
     }
   };

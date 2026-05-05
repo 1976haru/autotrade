@@ -1,9 +1,10 @@
 const TABS = [
-  { id: "dash",   icon: "📊", label: "대시보드" },
-  { id: "strat",  icon: "🎯", label: "전략·리스크" },
-  { id: "bot",    icon: "🤖", label: "자동봇" },
-  { id: "signal", icon: "🧠", label: "AI시그널" },
-  { id: "config", icon: "⚙",  label: "설정" },
+  { id: "dash",    icon: "📊", label: "대시보드" },
+  { id: "strat",   icon: "🎯", label: "전략·리스크" },
+  { id: "bot",     icon: "🤖", label: "자동봇" },
+  { id: "approve", icon: "🔐", label: "승인" },
+  { id: "signal",  icon: "🧠", label: "AI시그널" },
+  { id: "config",  icon: "⚙",  label: "설정" },
 ];
 
 export function BottomNav({ active, onChange }) {

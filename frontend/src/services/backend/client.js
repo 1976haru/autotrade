@@ -27,4 +27,13 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify(order),
   }),
+  listApprovals: () => backendFetch("/api/approvals"),
+  approveApproval: (id, decision) => backendFetch(`/api/approvals/${id}/approve`, {
+    method: "POST",
+    body: JSON.stringify(decision || {}),
+  }),
+  rejectApproval: (id, decision) => backendFetch(`/api/approvals/${id}/reject`, {
+    method: "POST",
+    body: JSON.stringify(decision || {}),
+  }),
 };
