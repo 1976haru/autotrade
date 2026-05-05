@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Btn, Card, SectionLabel } from "../common";
+import { Btn, Card, Inp, SectionLabel } from "../common";
 import { fmtKRW, pnlColor } from "../../utils/format";
 import {
   useAiAudits,
@@ -178,7 +178,7 @@ export function setEventKindFilter(kind) {
 export function KindFilterBar({ active, onChange }) {
   return (
     <div role="radiogroup" aria-label="이벤트 종류 필터"
-         style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+         style={{ display: "flex", gap: 4 }}>
       {KIND_FILTERS.map((f) => {
         const isActive = active === f.id;
         return (
@@ -209,11 +209,21 @@ export function EventTimelineView() {
   const stops  = useEmergencyStopAudits();
   const [kind, _setKind] = useState(_readKindFilter);
   const setKind = (value) => { _setKind(value); _writeKindFilter(value); };
+  // Symbol filter is intentionally NOT persisted — it's a transient
+  // investigation tool ("show me everything that happened around 005930"),
+  // unlike the kind filter which the operator picks for a session.
+  const [symbolFilter, setSymbolFilter] = useState("");
+  const symbolNeedle = symbolFilter.trim().toLowerCase();
 
   // 필터를 mergeEvents *전에* 적용 — top-50 cap 안에서 한쪽 종류가 밀려나
   // 사라지는 일을 방지한다 ("긴급정지만" 선택 시 가장 최근 50건의 stop이
   // 보장되어야지, 시간상 우연히 50개 주문 사이에 끼어든 stop만 보여서는 안 됨).
-  const filteredOrders = kind === "stop"  ? [] : orders.items;
+  // Symbol 필터는 주문 행에만 적용 — 긴급정지는 mode-wide 이벤트라 종목 검색의
+  // 의미상 매칭 대상이 아니지만, 검색 중에도 그 시점에 무엇이 있었는지 보여주는
+  // 컨텍스트로서 유지된다 (kind 필터로 명시적으로 끌 수 있음).
+  const filteredOrders = (kind === "stop" ? [] : orders.items).filter((r) =>
+    !symbolNeedle || r.symbol.toLowerCase().includes(symbolNeedle)
+  );
   const filteredStops  = kind === "order" ? [] : stops.items;
   // 064: 페이징 누적 결과 전부 보여줌 (기본 Infinity).
   const events = mergeEvents(filteredOrders, filteredStops);
@@ -250,7 +260,16 @@ export function EventTimelineView() {
         "어떤 주문이 있었고 그 사이 긴급정지가 어떻게 움직였는지"를 함께 본다.
       </div>
 
-      <KindFilterBar active={kind} onChange={setKind} />
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <KindFilterBar active={kind} onChange={setKind} />
+        <div style={{ flex: 1, minWidth: 100 }}>
+          <Inp
+            value={symbolFilter}
+            onChange={setSymbolFilter}
+            placeholder="🔍 종목 (예: 005930)"
+          />
+        </div>
+      </div>
 
       {error && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>}
 
