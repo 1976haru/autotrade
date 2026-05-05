@@ -4,9 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_mock_broker
-from app.brokers.base import OrderResult
-from app.brokers.mock_broker import MockBrokerAdapter
+from app.api.deps import get_broker
+from app.brokers.base import BrokerAdapter, OrderResult
 from app.db.session import get_db
 from app.permission.gate import (
     ApprovalAlreadyDecidedError,
@@ -78,7 +77,7 @@ def get_approval(approval_id: int, db: Session = Depends(get_db)) -> ApprovalOut
 async def approve_route(
     approval_id: int,
     payload: ApprovalDecision | None = None,
-    broker:  MockBrokerAdapter = Depends(get_mock_broker),
+    broker:  BrokerAdapter = Depends(get_broker),
     db:      Session = Depends(get_db),
 ) -> ApproveResponse:
     decision = payload or ApprovalDecision()

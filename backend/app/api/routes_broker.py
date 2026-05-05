@@ -2,9 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_mock_broker, get_risk_manager
-from app.brokers.base import Balance, OrderRequest, Position, Quote
-from app.brokers.mock_broker import MockBrokerAdapter
+from app.api.deps import get_broker, get_risk_manager
+from app.brokers.base import Balance, BrokerAdapter, OrderRequest, Position, Quote
 from app.core.config import get_settings
 from app.db.models import OrderAuditLog
 from app.db.session import get_db
@@ -16,24 +15,24 @@ router = APIRouter(prefix="/broker/mock", tags=["mock-broker"])
 
 
 @router.get("/price/{symbol}")
-async def get_price(symbol: str, broker: MockBrokerAdapter = Depends(get_mock_broker)) -> Quote:
+async def get_price(symbol: str, broker: BrokerAdapter = Depends(get_broker)) -> Quote:
     return await broker.get_price(symbol)
 
 
 @router.get("/balance")
-async def get_balance(broker: MockBrokerAdapter = Depends(get_mock_broker)) -> Balance:
+async def get_balance(broker: BrokerAdapter = Depends(get_broker)) -> Balance:
     return await broker.get_balance()
 
 
 @router.get("/positions")
-async def get_positions(broker: MockBrokerAdapter = Depends(get_mock_broker)) -> list[Position]:
+async def get_positions(broker: BrokerAdapter = Depends(get_broker)) -> list[Position]:
     return await broker.get_positions()
 
 
 @router.post("/orders")
 async def place_order(
     order: OrderRequest,
-    broker: MockBrokerAdapter = Depends(get_mock_broker),
+    broker: BrokerAdapter = Depends(get_broker),
     risk: RiskManager = Depends(get_risk_manager),
     db: Session = Depends(get_db),
 ):

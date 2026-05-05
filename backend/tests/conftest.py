@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.ai.client import AiClient, AiResponse
-from app.api.deps import get_ai_client, get_market_data, get_mock_broker, get_risk_manager
+from app.api.deps import get_ai_client, get_broker, get_market_data, get_risk_manager
 from app.brokers.mock_broker import MockBrokerAdapter
 from app.db.base import Base
 from app.db.session import get_db
@@ -56,7 +56,7 @@ def client():
         finally:
             db.close()
 
-    app.dependency_overrides[get_mock_broker] = lambda: broker
+    app.dependency_overrides[get_broker] = lambda: broker
     app.dependency_overrides[get_risk_manager] = lambda: risk
     app.dependency_overrides[get_market_data] = lambda: market
     app.dependency_overrides[get_ai_client] = lambda: ai_client
