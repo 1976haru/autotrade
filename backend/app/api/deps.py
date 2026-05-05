@@ -1,6 +1,7 @@
 from functools import lru_cache
 
 from app.brokers.mock_broker import MockBrokerAdapter
+from app.core.config import get_settings
 from app.market.base import MarketDataAdapter
 from app.market.mock import MockMarketData
 from app.risk.risk_manager import RiskManager, RiskPolicy
@@ -18,4 +19,7 @@ def get_risk_manager() -> RiskManager:
 
 @lru_cache
 def get_market_data() -> MarketDataAdapter:
+    if get_settings().market_data_provider == "yfinance":
+        from app.market.yfinance_adapter import YfinanceMarketData
+        return YfinanceMarketData()
     return MockMarketData()

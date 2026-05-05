@@ -1,4 +1,6 @@
 from functools import lru_cache
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.modes import OperationMode
@@ -14,6 +16,7 @@ class Settings(BaseSettings):
     enable_ai_execution: bool = False
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     database_url: str = "sqlite:///./data/auto_trader.db"
+    market_data_provider: Literal["mock", "yfinance"] = "mock"
 
     kis_app_key: str = ""
     kis_app_secret: str = ""
