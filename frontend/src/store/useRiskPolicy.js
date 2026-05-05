@@ -62,8 +62,10 @@ export function useRiskPolicy() {
       );
       setEmergencyStop(res.emergency_stop);
       await refreshHistory();
+      return { ok: true };
     } catch (e) {
       setError(e.message);
+      return { ok: false, message: e.message };
     } finally {
       setBusy(false);
     }

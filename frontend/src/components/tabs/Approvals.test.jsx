@@ -618,6 +618,23 @@ describe("<Approvals> button → modal flow", () => {
     expect(approvals.reject).not.toHaveBeenCalled();
   });
 
+  it("modal stays open and renders error inline when approve returns {ok:false}", async () => {
+    const approvals = _makeApprovals({ pending: [_PENDING] });
+    approvals.approve.mockResolvedValue({ ok: false, message: "재평가 거부됨: emergency stop" });
+    const { getByText, getByRole, getByTestId, queryByRole } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    fireEvent.click(getByText(/✓ 승인/));
+    const dialog = within(getByRole("dialog"));
+    await act(async () => {
+      fireEvent.click(dialog.getByText(/✓ 승인/));
+    });
+    // Dialog stays open
+    expect(queryByRole("dialog")).not.toBeNull();
+    // Error block is rendered with the friendly message
+    expect(getByTestId("decision-dialog-error").textContent).toContain("재평가 거부됨");
+  });
+
   it("modal close button dismisses without calling any hook function", () => {
     const { getByText, getByRole, queryByRole } = render(
       <Approvals approvals={approvals} operatorName="" />,
