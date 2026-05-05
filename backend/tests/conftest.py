@@ -63,5 +63,6 @@ def client():
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as c:
         c.test_db_factory = TestSession
+        c.test_risk_manager = risk
         yield c
     app.dependency_overrides.clear()
