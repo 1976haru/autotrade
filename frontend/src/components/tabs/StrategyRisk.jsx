@@ -1,19 +1,45 @@
 import { STRATEGIES } from "../../config/strategies";
+import { RISK_POLICY_FIELDS } from "../../config/riskPolicy";
 import { Btn, Card, SectionLabel, Toggle, Slider } from "../common";
 import { fmtKRW } from "../../utils/format";
 
 
-function PolicyRow({ label, value }) {
+function _formatPolicyValue(value, kind) {
+  if (kind === "krw")   return `${fmtKRW(value)}원`;
+  if (kind === "bool")  return value ? "ON" : "OFF";
+  return String(value);
+}
+
+
+export function PolicyRow({ label, value, envVar, isOverridden }) {
   return (
     <div>
-      <div style={{ fontSize: 9, color: "#475569", marginBottom: 2 }}>{label}</div>
-      <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>{value}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline",
+                     fontSize: 9, color: "#475569", marginBottom: 2, gap: 4 }}>
+        <span>{label}</span>
+        <span style={{ color: "#334155", fontFamily: "monospace", fontSize: 8 }}>{envVar}</span>
+      </div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+        <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>{value}</span>
+        <span style={{
+          fontSize: 8,
+          fontWeight: 700,
+          letterSpacing: "0.06em",
+          color:      isOverridden ? "#fbbf24" : "#475569",
+          background: isOverridden ? "#fbbf2422" : "transparent",
+          border: isOverridden ? "1px solid #fbbf2455" : "1px solid #1a3a5c",
+          padding: "1px 5px",
+          borderRadius: 3,
+        }}>
+          {isOverridden ? "OVERRIDDEN" : "DEFAULT"}
+        </span>
+      </div>
     </div>
   );
 }
 
 
-function BackendPolicyCard({ riskPolicy }) {
+export function BackendPolicyCard({ riskPolicy }) {
   const { policy, loading, error, emergencyStop, busy, toggleEmergency } = riskPolicy;
 
   return (
@@ -27,20 +53,27 @@ function BackendPolicyCard({ riskPolicy }) {
       {loading ? (
         <div style={{ color: "#475569", fontSize: 11, padding: 8 }}>로딩 중…</div>
       ) : policy ? (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <PolicyRow label="주문당 최대 명목" value={`${fmtKRW(policy.max_order_notional)}원`} />
-          <PolicyRow label="일일 최대 손실"   value={`${fmtKRW(policy.max_daily_loss)}원`} />
-          <PolicyRow label="최대 보유 종목"   value={String(policy.max_positions)} />
-          <PolicyRow label="종목 노출 한도"   value={`${fmtKRW(policy.max_symbol_exposure)}원`} />
-          <PolicyRow
-            label="실거래 활성화"
-            value={policy.enable_live_trading ? "ON" : "OFF"}
-          />
-          <PolicyRow
-            label="AI 실행 활성화"
-            value={policy.enable_ai_execution ? "ON" : "OFF"}
-          />
-        </div>
+        <>
+          <div style={{ fontSize: 9, color: "#334155", marginBottom: 8, lineHeight: 1.5 }}>
+            값은 backend env 설정의 라이브 스냅샷입니다. OVERRIDDEN 배지는 해당 env가
+            기본값과 다름을 의미하므로, 운영자가 적용한 변경이 실제로 반영됐는지 즉시
+            확인할 수 있습니다.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            {RISK_POLICY_FIELDS.map((f) => {
+              const v = policy[f.key];
+              return (
+                <PolicyRow
+                  key={f.key}
+                  label={f.label}
+                  envVar={f.envVar}
+                  value={_formatPolicyValue(v, f.kind)}
+                  isOverridden={v !== f.defaultValue}
+                />
+              );
+            })}
+          </div>
+        </>
       ) : (
         <div style={{ color: "#475569", fontSize: 11 }}>정책 정보 없음</div>
       )}
