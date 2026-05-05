@@ -232,6 +232,62 @@ describe("<EmergencyStopConfirmModal>", () => {
     expect(getByText("취소").disabled).toBe(true);
     expect(getByText(/처리 중/).disabled).toBe(true);
   });
+
+  it("auto-focuses decided_by input when defaultDecidedBy is empty", () => {
+    const { getByPlaceholderText } = render(
+      <EmergencyStopConfirmModal
+        targetEnabled={true} busy={false}
+        onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    expect(document.activeElement).toBe(getByPlaceholderText(/ops1/));
+  });
+
+  it("auto-focuses note input when defaultDecidedBy is pre-filled", () => {
+    const { getByPlaceholderText } = render(
+      <EmergencyStopConfirmModal
+        targetEnabled={true} busy={false} defaultDecidedBy="ops-default"
+        onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    expect(document.activeElement).toBe(getByPlaceholderText(/vol spike/));
+  });
+
+  it("Esc dispatches onCancel", () => {
+    const onCancel = vi.fn();
+    render(
+      <EmergencyStopConfirmModal
+        targetEnabled={true} busy={false}
+        onConfirm={() => {}} onCancel={onCancel} />,
+    );
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalled();
+  });
+
+  it("Enter dispatches onConfirm with trimmed values", () => {
+    const onConfirm = vi.fn();
+    const { getByPlaceholderText } = render(
+      <EmergencyStopConfirmModal
+        targetEnabled={true} busy={false}
+        onConfirm={onConfirm} onCancel={() => {}} />,
+    );
+    fireEvent.change(getByPlaceholderText(/ops1/), { target: { value: " ops1 " } });
+    fireEvent.change(getByPlaceholderText(/vol spike/), { target: { value: " spike " } });
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(onConfirm).toHaveBeenCalledWith({ decided_by: "ops1", note: "spike" });
+  });
+
+  it("ignores Esc and Enter while busy", () => {
+    const onCancel = vi.fn();
+    const onConfirm = vi.fn();
+    render(
+      <EmergencyStopConfirmModal
+        targetEnabled={true} busy={true}
+        onConfirm={onConfirm} onCancel={onCancel} />,
+    );
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
 });
 
 

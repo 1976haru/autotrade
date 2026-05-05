@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Btn, Card, Inp, SectionLabel } from "../common";
 import { fmtKRW } from "../../utils/format";
@@ -120,8 +120,29 @@ export function ApprovalDecisionModal({
 }) {
   const [decidedBy, setDecidedBy] = useState(defaultDecidedBy);
   const [note,      setNote]      = useState("");
+  const decidedByRef = useRef(null);
+  const noteRef      = useRef(null);
 
   const meta = ACTION_META[action];
+
+  // 058 stale 알람의 짝꿍: 결재 한 사이클을 키보드만으로 끝내 처리 속도를 높인다.
+  // operatorName(048)이 이미 채워졌으면 운영자가 보통 사유부터 적으므로 노트로 점프.
+  useEffect(() => {
+    (defaultDecidedBy ? noteRef : decidedByRef).current?.focus();
+  }, [defaultDecidedBy]);
+
+  useEffect(() => {
+    if (busy) return undefined;
+    const handler = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+      else if (e.key === "Enter") {
+        e.preventDefault();
+        onConfirm({ decided_by: decidedBy.trim(), note: note.trim() });
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [busy, onCancel, onConfirm, decidedBy, note]);
 
   return (
     <div
@@ -168,11 +189,11 @@ export function ApprovalDecisionModal({
 
         <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>운영자명 (decided_by)</div>
-          <Inp value={decidedBy} onChange={setDecidedBy} placeholder="예: ops1" />
+          <Inp value={decidedBy} onChange={setDecidedBy} placeholder="예: ops1" inputRef={decidedByRef} />
         </div>
         <div style={{ marginBottom: 14 }}>
           <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>사유 (note)</div>
-          <Inp value={note} onChange={setNote} placeholder="예: 신호 노후, 잔고 부족" />
+          <Inp value={note} onChange={setNote} placeholder="예: 신호 노후, 잔고 부족" inputRef={noteRef} />
         </div>
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>

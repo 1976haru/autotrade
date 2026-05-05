@@ -319,6 +319,63 @@ describe("<ApprovalDecisionModal>", () => {
     expect(getByText("닫기").disabled).toBe(true);
     expect(getByText(/처리 중/).disabled).toBe(true);
   });
+
+  it("auto-focuses decided_by input when defaultDecidedBy is empty", () => {
+    const { getByPlaceholderText } = render(
+      <ApprovalDecisionModal
+        action="approve" approval={_PENDING} busy={false}
+        onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    expect(document.activeElement).toBe(getByPlaceholderText(/ops1/));
+  });
+
+  it("auto-focuses note input when defaultDecidedBy is pre-filled", () => {
+    const { getByPlaceholderText } = render(
+      <ApprovalDecisionModal
+        action="approve" approval={_PENDING} busy={false}
+        defaultDecidedBy="ops-default"
+        onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    expect(document.activeElement).toBe(getByPlaceholderText(/신호 노후/));
+  });
+
+  it("Esc dispatches onCancel", () => {
+    const onCancel = vi.fn();
+    render(
+      <ApprovalDecisionModal
+        action="approve" approval={_PENDING} busy={false}
+        onConfirm={() => {}} onCancel={onCancel} />,
+    );
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalled();
+  });
+
+  it("Enter dispatches onConfirm with trimmed values", () => {
+    const onConfirm = vi.fn();
+    const { getByPlaceholderText } = render(
+      <ApprovalDecisionModal
+        action="approve" approval={_PENDING} busy={false}
+        onConfirm={onConfirm} onCancel={() => {}} />,
+    );
+    fireEvent.change(getByPlaceholderText(/ops1/), { target: { value: " ops1 " } });
+    fireEvent.change(getByPlaceholderText(/신호 노후/), { target: { value: " stale " } });
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(onConfirm).toHaveBeenCalledWith({ decided_by: "ops1", note: "stale" });
+  });
+
+  it("ignores Esc and Enter while busy", () => {
+    const onCancel = vi.fn();
+    const onConfirm = vi.fn();
+    render(
+      <ApprovalDecisionModal
+        action="approve" approval={_PENDING} busy={true}
+        onConfirm={onConfirm} onCancel={onCancel} />,
+    );
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
 });
 
 

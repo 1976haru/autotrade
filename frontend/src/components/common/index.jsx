@@ -50,8 +50,9 @@ export const Btn = ({ children, onClick, disabled, color = "#7dd3fc", full, smal
   </button>
 );
 
-export const Inp = ({ value, onChange, placeholder, type = "text" }) => (
+export const Inp = ({ value, onChange, placeholder, type = "text", inputRef }) => (
   <input
+    ref={inputRef}
     type={type}
     value={value}
     onChange={(e) => onChange(e.target.value)}

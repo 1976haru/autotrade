@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { STRATEGIES } from "../../config/strategies";
 import { RISK_POLICY_FIELDS } from "../../config/riskPolicy";
@@ -91,9 +91,31 @@ export function EmergencyStopConfirmModal({
 }) {
   const [decidedBy, setDecidedBy] = useState(defaultDecidedBy);
   const [note,      setNote]      = useState("");
+  const decidedByRef = useRef(null);
+  const noteRef      = useRef(null);
 
   const action = targetEnabled ? "긴급 정지 활성화" : "긴급 정지 해제";
   const accent = targetEnabled ? "#ef4444"          : "#22c55e";
+
+  // 결재 속도가 사고 분석/방어에 직접 영향이라(058 stale 알람과 짝꿍), 키보드만으로
+  // 한 사이클 끝나도록 한다: 첫 빈 입력 자동 포커스 + Esc 취소 + Enter 확인.
+  // operatorName(048)이 이미 채워졌으면 운영자가 보통 사유부터 적으므로 노트로 점프.
+  useEffect(() => {
+    (defaultDecidedBy ? noteRef : decidedByRef).current?.focus();
+  }, [defaultDecidedBy]);
+
+  useEffect(() => {
+    if (busy) return undefined;
+    const handler = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+      else if (e.key === "Enter") {
+        e.preventDefault();
+        onConfirm({ decided_by: decidedBy.trim(), note: note.trim() });
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [busy, onCancel, onConfirm, decidedBy, note]);
 
   return (
     <div
@@ -116,11 +138,11 @@ export function EmergencyStopConfirmModal({
 
         <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>운영자명 (decided_by)</div>
-          <Inp value={decidedBy} onChange={setDecidedBy} placeholder="예: ops1" />
+          <Inp value={decidedBy} onChange={setDecidedBy} placeholder="예: ops1" inputRef={decidedByRef} />
         </div>
         <div style={{ marginBottom: 14 }}>
           <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>사유 (note)</div>
-          <Inp value={note} onChange={setNote} placeholder="예: vol spike, circuit-breaker" />
+          <Inp value={note} onChange={setNote} placeholder="예: vol spike, circuit-breaker" inputRef={noteRef} />
         </div>
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
