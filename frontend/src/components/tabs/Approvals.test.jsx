@@ -4,34 +4,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApprovalDecisionModal, Approvals, HistoryRow } from "./Approvals";
 
 
-// useApprovals 자체를 모킹해 컴포넌트가 어떤 인자로 호출하는지만 검증한다
-// (네트워크/실 상태 흐름은 useApprovals.test.js에서 별도로 다룸).
-const _hookMock = {
-  pending: [],
-  history: [],
-  loading: false,
-  error: "",
-  busy: false,
-  approve: vi.fn(),
-  reject:  vi.fn(),
-  cancel:  vi.fn(),
-  refresh: vi.fn(),
-  refreshHistory: vi.fn(),
-};
-
-vi.mock("../../store/useApprovals", () => ({
-  useApprovals: () => _hookMock,
-}));
-
-
-function _resetHook(overrides = {}) {
-  Object.assign(_hookMock, {
-    pending: [], history: [], loading: false, error: "", busy: false,
+// useApprovals는 App에서 lift돼 prop으로 들어오므로 모듈 모킹 없이 prop으로
+// 직접 주입한다 — 컴포넌트가 어떤 인자로 hook 함수를 호출하는지만 검증.
+function _makeApprovals(overrides = {}) {
+  return {
+    pending: [],
+    history: [],
+    loading: false,
+    error: "",
+    busy: false,
+    approve: vi.fn(),
+    reject:  vi.fn(),
+    cancel:  vi.fn(),
+    refresh: vi.fn(),
+    refreshHistory: vi.fn(),
     ...overrides,
-  });
-  _hookMock.approve.mockReset();
-  _hookMock.reject.mockReset();
-  _hookMock.cancel.mockReset();
+  };
 }
 
 
@@ -180,21 +168,24 @@ describe("<ApprovalDecisionModal>", () => {
 
 
 describe("<Approvals> button → modal flow", () => {
-  beforeEach(() => { _resetHook({ pending: [_PENDING] }); });
+  let approvals;
+  beforeEach(() => { approvals = _makeApprovals({ pending: [_PENDING] }); });
   afterEach(cleanup);
 
   it("clicking 승인 opens the modal without invoking approve yet", () => {
-    const { getByText, queryByRole } = render(<Approvals operatorName="" />);
+    const { getByText, queryByRole } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
     expect(queryByRole("dialog")).toBeNull();
     fireEvent.click(getByText(/✓ 승인/));
     expect(queryByRole("dialog")).not.toBeNull();
-    expect(_hookMock.approve).not.toHaveBeenCalled();
+    expect(approvals.approve).not.toHaveBeenCalled();
   });
 
   it("modal confirm forwards decision to the matching hook function", async () => {
-    _hookMock.approve.mockResolvedValue();
+    approvals.approve.mockResolvedValue();
     const { getByText, getByRole, queryByRole } = render(
-      <Approvals operatorName="ops-prefill" />,
+      <Approvals approvals={approvals} operatorName="ops-prefill" />,
     );
     fireEvent.click(getByText(/✓ 승인/));
     const dialog = within(getByRole("dialog"));
@@ -204,44 +195,50 @@ describe("<Approvals> button → modal flow", () => {
     await act(async () => {
       fireEvent.click(dialog.getByText(/✓ 승인/));
     });
-    expect(_hookMock.approve).toHaveBeenCalledWith(17, {
+    expect(approvals.approve).toHaveBeenCalledWith(17, {
       decided_by: "ops-prefill", note: "looks good",
     });
     await waitFor(() => expect(queryByRole("dialog")).toBeNull());
   });
 
   it("reject button routes through reject() hook", async () => {
-    _hookMock.reject.mockResolvedValue();
-    const { getByText, getByRole } = render(<Approvals operatorName="" />);
+    approvals.reject.mockResolvedValue();
+    const { getByText, getByRole } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
     fireEvent.click(getByText(/✗ 거부/));
     const dialog = within(getByRole("dialog"));
     await act(async () => {
       fireEvent.click(dialog.getByText(/✗ 거부/));
     });
-    expect(_hookMock.reject).toHaveBeenCalled();
-    expect(_hookMock.approve).not.toHaveBeenCalled();
-    expect(_hookMock.cancel).not.toHaveBeenCalled();
+    expect(approvals.reject).toHaveBeenCalled();
+    expect(approvals.approve).not.toHaveBeenCalled();
+    expect(approvals.cancel).not.toHaveBeenCalled();
   });
 
   it("cancel button routes through cancel() hook", async () => {
-    _hookMock.cancel.mockResolvedValue();
-    const { getByText, getByRole } = render(<Approvals operatorName="" />);
+    approvals.cancel.mockResolvedValue();
+    const { getByText, getByRole } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
     fireEvent.click(getByText(/⊘ 취소/));
     const dialog = within(getByRole("dialog"));
     await act(async () => {
       fireEvent.click(dialog.getByText(/⊘ 취소/));
     });
-    expect(_hookMock.cancel).toHaveBeenCalled();
-    expect(_hookMock.approve).not.toHaveBeenCalled();
-    expect(_hookMock.reject).not.toHaveBeenCalled();
+    expect(approvals.cancel).toHaveBeenCalled();
+    expect(approvals.approve).not.toHaveBeenCalled();
+    expect(approvals.reject).not.toHaveBeenCalled();
   });
 
   it("modal close button dismisses without calling any hook function", () => {
-    const { getByText, getByRole, queryByRole } = render(<Approvals operatorName="" />);
+    const { getByText, getByRole, queryByRole } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
     fireEvent.click(getByText(/✓ 승인/));
     const dialog = within(getByRole("dialog"));
     fireEvent.click(dialog.getByText("닫기"));
     expect(queryByRole("dialog")).toBeNull();
-    expect(_hookMock.approve).not.toHaveBeenCalled();
+    expect(approvals.approve).not.toHaveBeenCalled();
   });
 });
