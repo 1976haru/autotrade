@@ -40,6 +40,13 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify(decision || {}),
   }),
+  listApprovalHistory: ({ limit = 50, offset = 0, status } = {}) => {
+    const qs = new URLSearchParams();
+    qs.set("limit",  String(limit));
+    qs.set("offset", String(offset));
+    if (status) qs.set("status", status);
+    return backendFetch(`/api/approvals/history?${qs.toString()}`);
+  },
   runBacktest: (req) => backendFetch("/api/backtest/run", {
     method: "POST",
     body: JSON.stringify(req),

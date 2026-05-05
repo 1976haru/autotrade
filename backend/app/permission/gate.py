@@ -64,6 +64,28 @@ class PermissionGate:
             .order_by(PendingApproval.created_at)
         ).scalars().all())
 
+    def list_decided(
+        self,
+        *,
+        limit:  int = 50,
+        offset: int = 0,
+        status: str | None = None,
+    ) -> list[PendingApproval]:
+        """Return decided approvals (APPROVED / REJECTED / CANCELLED).
+
+        Most recent first by decided_at. Pending rows are excluded — that's
+        what list_pending is for. status filter narrows further when set.
+        """
+        stmt = select(PendingApproval).where(PendingApproval.status != STATUS_PENDING)
+        if status is not None:
+            stmt = stmt.where(PendingApproval.status == status)
+        stmt = (
+            stmt.order_by(PendingApproval.decided_at.desc())
+                .limit(limit)
+                .offset(offset)
+        )
+        return list(self.db.execute(stmt).scalars().all())
+
     def get(self, approval_id: int) -> PendingApproval:
         approval = self.db.execute(
             select(PendingApproval).where(PendingApproval.id == approval_id)

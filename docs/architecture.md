@@ -152,7 +152,8 @@ POST /api/broker/orders (mode=LIVE_MANUAL_APPROVAL)
    ↓ PermissionGate.submit → PendingApproval row
    → HTTP 202 + approval_id
 
-GET  /api/approvals          (운영자가 큐 확인)
+GET  /api/approvals          (운영자가 큐 확인 - PENDING만)
+GET  /api/approvals/history  (?status=APPROVED|REJECTED|CANCELLED&limit&offset)
 POST /api/approvals/{id}/approve
    → OrderExecutor → broker.place_order → audit 갱신
    → PendingApproval.status = APPROVED
