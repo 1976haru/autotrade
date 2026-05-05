@@ -106,16 +106,30 @@ describe("<StatusSummaryCard>", () => {
     expect(pin.style.color).toBe("rgb(148, 163, 184)");
   });
 
-  it("pending-approvals pin shows count when > 0 and is alarm", () => {
+  it("pending-approvals pin shows count in amber when none are stale", () => {
     const { getByTestId } = render(
       <StatusSummaryCard
-        emergencyStop={false} pendingCount={3} running={false}
+        emergencyStop={false} pendingCount={3} stalePendingCount={0} running={false}
         onJumpTab={() => {}}
       />,
     );
     const pin = getByTestId("status-pin-pending-approvals");
     expect(pin.textContent).toContain("3건");
+    expect(pin.textContent).not.toContain("stale");
     expect(pin.style.color).toBe("rgb(245, 158, 11)"); // #f59e0b
+  });
+
+  it("pending-approvals pin escalates to red when at least one is stale", () => {
+    const { getByTestId } = render(
+      <StatusSummaryCard
+        emergencyStop={false} pendingCount={3} stalePendingCount={1} running={false}
+        onJumpTab={() => {}}
+      />,
+    );
+    const pin = getByTestId("status-pin-pending-approvals");
+    expect(pin.textContent).toContain("3건");
+    expect(pin.textContent).toContain("(1 stale)");
+    expect(pin.style.color).toBe("rgb(239, 68, 68)"); // #ef4444
   });
 
   it("pending-approvals pin shows '없음' in neutral when count is 0", () => {
