@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -65,6 +65,31 @@ class BacktestRun(Base):
     data_interval:  Mapped[str | None]       = mapped_column(String(8), nullable=True)
 
     trades_json:    Mapped[list]     = mapped_column(JSON, default=list)
+
+
+class PendingApproval(Base):
+    """LIVE_MANUAL_APPROVAL/LIVE_AI_ASSIST 모드에서 사용자 승인을 기다리는 주문."""
+
+    __tablename__ = "pending_approval"
+
+    id:          Mapped[int]            = mapped_column(primary_key=True)
+    created_at:  Mapped[datetime]       = mapped_column(DateTime, default=_utcnow, index=True)
+
+    audit_id:    Mapped[int]            = mapped_column(
+        Integer, ForeignKey("order_audit_log.id"), index=True
+    )
+
+    symbol:      Mapped[str]            = mapped_column(String(16), index=True)
+    side:        Mapped[str]            = mapped_column(String(8))
+    quantity:    Mapped[int]            = mapped_column(Integer)
+    order_type:  Mapped[str]            = mapped_column(String(16))
+    limit_price: Mapped[int | None]     = mapped_column(Integer, nullable=True)
+    mode:        Mapped[str]            = mapped_column(String(32))
+
+    status:      Mapped[str]            = mapped_column(String(16), default="PENDING", index=True)
+    decided_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    decided_by:  Mapped[str | None]     = mapped_column(String(64), nullable=True)
+    note:        Mapped[str | None]     = mapped_column(String(500), nullable=True)
 
 
 class AiAnalysisLog(Base):
