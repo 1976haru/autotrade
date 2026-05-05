@@ -1,21 +1,24 @@
 """HTTP surface for LiveStrategyEngine.
 
 Exposes a single in-process engine for now: configure once, feed bars one at
-a time, query status, reset to start over. Enough to drive the engine from
-the frontend or a script without re-implementing the strategy on the client.
-
-submit=True is intentionally not wired in this PR — routing engine ticks
-through RiskManager + PermissionGate + OrderExecutor lands separately so
-the wiring decisions can be reviewed on their own.
+a time, query status, reset to start over. tick(submit=True) routes the
+intended order through RiskManager + PermissionGate + OrderExecutor; the
+engine's logical position state is rolled back when the gate rejects.
 """
 
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
+from app.api.deps import get_broker, get_risk_manager
 from app.backtest.types import Bar
-from app.brokers.base import OrderRequest
+from app.brokers.base import BrokerAdapter, OrderRequest, OrderResult
+from app.core.config import get_settings
+from app.db.session import get_db
+from app.execution.order_router import OrderRoutingResult, route_order
+from app.risk.risk_manager import RiskDecision, RiskManager
 from app.strategies.concrete import build_strategy
 from app.strategies.live_engine import LiveStrategyEngine
 
@@ -51,11 +54,19 @@ class StatusResponse(BaseModel):
     holding:    bool = False
 
 
+class RoutingOut(BaseModel):
+    decision:     str
+    reasons:      list[str]
+    approval_id:  int | None = None
+    order_result: OrderResult | None = None
+
+
 class TickResponse(BaseModel):
     signal:         str
     intended_order: OrderRequest | None = None
     bars_seen:      int
     holding:        bool
+    routing:        RoutingOut | None = None
 
 
 class _EngineState:
@@ -66,6 +77,15 @@ class _EngineState:
 def _reset_state() -> None:
     _EngineState.engine = None
     _EngineState.strategy_name = None
+
+
+def _to_routing_out(r: OrderRoutingResult) -> RoutingOut:
+    return RoutingOut(
+        decision=r.decision.value,
+        reasons=list(r.reasons),
+        approval_id=r.approval.id if r.approval is not None else None,
+        order_result=r.result,
+    )
 
 
 @router.get("/status", response_model=StatusResponse)
@@ -102,25 +122,41 @@ def reset_route() -> StatusResponse:
 
 
 @router.post("/tick", response_model=TickResponse)
-async def tick_route(req: TickRequest) -> TickResponse:
-    if _EngineState.engine is None:
+async def tick_route(
+    req:    TickRequest,
+    broker: BrokerAdapter = Depends(get_broker),
+    risk:   RiskManager   = Depends(get_risk_manager),
+    db:     Session       = Depends(get_db),
+) -> TickResponse:
+    engine = _EngineState.engine
+    if engine is None:
         raise HTTPException(
             status_code=400,
             detail="engine not configured; POST /api/strategies/configure first",
         )
-    if req.submit:
-        # The engine has a submit_tick() that routes through Risk/Permission/Executor,
-        # but the HTTP wiring (broker/risk/db dependencies) lands in a follow-up PR.
-        raise HTTPException(
-            status_code=501,
-            detail="submit=true requires HTTP wiring through broker / risk / db; "
-                   "follow-up PR — until then run_tick only",
-        )
+
     bar = Bar(**req.bar.model_dump())
-    result = _EngineState.engine.run_tick(bar)
+    result = engine.run_tick(bar)
+
+    routing_out: RoutingOut | None = None
+    if req.submit and result.intended_order is not None:
+        routing = await route_order(
+            order=result.intended_order,
+            requested_by_ai=False,
+            mode=get_settings().default_mode,
+            broker=broker,
+            risk=risk,
+            db=db,
+        )
+        # Mirror engine.submit_tick: roll back position state when rejected.
+        if routing.decision == RiskDecision.REJECTED:
+            engine.rollback_intent(result.intended_order)
+        routing_out = _to_routing_out(routing)
+
     return TickResponse(
         signal=result.signal.value,
         intended_order=result.intended_order,
-        bars_seen=_EngineState.engine.bars_seen,
-        holding=_EngineState.engine.holding,
+        bars_seen=engine.bars_seen,
+        holding=engine.holding,
+        routing=routing_out,
     )

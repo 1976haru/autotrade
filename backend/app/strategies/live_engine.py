@@ -122,12 +122,22 @@ class LiveStrategyEngine:
         # If the order was rejected, roll back the local position state so the
         # engine doesn't think it owns shares the broker never bought.
         if routing.decision == RiskDecision.REJECTED:
-            if result.intended_order.side == OrderSide.BUY:
-                self._holding = False
-            else:
-                self._holding = True
+            self.rollback_intent(result.intended_order)
 
         return replace(result, routing=routing)
+
+    def rollback_intent(self, order: OrderRequest) -> None:
+        """Revert the optimistic position state set by run_tick.
+
+        Call this when an intended order was rejected by Risk or otherwise
+        not actually placed, so the engine doesn't keep believing it holds
+        shares the broker never bought (or that it's flat after a rejected
+        sell).
+        """
+        if order.side == OrderSide.BUY:
+            self._holding = False
+        else:
+            self._holding = True
 
     @property
     def holding(self) -> bool:
