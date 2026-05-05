@@ -1,3 +1,4 @@
+import pytest
 from sqlalchemy import select
 
 from app.ai.client import AiClient, AiNotConfiguredError, AiResponse
@@ -98,6 +99,27 @@ def test_analyze_provider_error_returns_502_with_audit(client):
         log = db.execute(select(AiAnalysisLog)).scalar_one()
         assert log.error == "upstream rate limited"
         assert log.text is None
+
+
+def test_analyze_rate_limit_error_returns_429_with_audit(client):
+    """SDK가 max_retries회 backoff 후에도 풀지 못한 429는 502가 아닌 429로 매핑된다."""
+    anthropic = pytest.importorskip("anthropic")
+
+    # RateLimitError는 httpx Response를 요구한다.
+    import httpx
+    req  = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    resp = httpx.Response(429, request=req, json={"error": {"message": "rate limited"}})
+    err  = anthropic.RateLimitError("rate limited", response=resp, body=None)
+
+    _override(_ScriptedClient(raises=err))
+    res = client.post("/api/ai/analyze", json={"ticker": "005930"})
+    assert res.status_code == 429
+    assert "rate limited" in res.json()["detail"].lower()
+
+    with client.test_db_factory() as db:
+        log = db.execute(select(AiAnalysisLog)).scalar_one()
+        assert log.text is None
+        assert "rate" in (log.error or "").lower()
 
 
 def test_analyze_empty_ticker_returns_400_no_log(client):

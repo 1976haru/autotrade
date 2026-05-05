@@ -31,6 +31,23 @@ _DISABLED_NOTICE = (
 )
 
 
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Anthropic SDK가 max_retries 후에도 429를 풀지 못했을 때 True.
+
+    anthropic 패키지가 설치되지 않은 환경(테스트 등)에서도 안전하도록
+    import 실패는 False로 간주한다.
+    """
+    try:
+        from anthropic import APIStatusError, RateLimitError
+    except ImportError:
+        return False
+    if isinstance(exc, RateLimitError):
+        return True
+    if isinstance(exc, APIStatusError) and getattr(exc, "status_code", None) == 429:
+        return True
+    return False
+
+
 @router.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_route(
     payload: AnalyzeRequest,
@@ -64,6 +81,10 @@ async def analyze_route(
         log.error = str(e)[:500]
         db.add(log)
         db.commit()
+        if _is_rate_limit_error(e):
+            # SDK가 max_retries회 backoff 후에도 풀지 못한 429.
+            # 502가 아닌 429로 매핑해 호출자가 재시도 시점을 판단할 수 있게 한다.
+            raise HTTPException(status_code=429, detail=f"AI provider rate limited: {e}")
         raise HTTPException(status_code=502, detail=f"AI provider error: {e}")
 
     log.text = result.text

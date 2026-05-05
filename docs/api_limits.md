@@ -19,9 +19,10 @@
 
 | 항목 | 값 | 대응 |
 |---|---|---|
-| RPM/TPM 한도 | tier에 따라 다름 (Anthropic Console 확인) | 미구현 — 호출 빈도가 낮은 분석 라우트에서만 사용 |
+| RPM/TPM 한도 | tier에 따라 다름 (Anthropic Console 확인) | 호출 빈도가 낮은 분석 라우트에서만 사용 |
 | 요청당 max tokens | 모델별 컨텍스트 한도 | `AiClient.analyze` 기본 1024 (조정 가능) |
-| 429 backoff | 권장 exponential backoff | 미구현 — 현재는 1회 시도 후 502 반환 |
+| 429 backoff | 권장 exponential backoff | SDK 내장 retry 사용 — `ANTHROPIC_MAX_RETRIES` (기본 2) 회까지 자동 backoff. 풀리지 않으면 라우트가 HTTP 429로 매핑하여 502와 구분 |
+| 요청 timeout | 운영자 결정 | `ANTHROPIC_TIMEOUT_SECONDS` (기본 30초) — `AsyncAnthropic`에 직접 전달 |
 
 ### Yahoo Finance (yfinance)
 
@@ -56,20 +57,17 @@
 1. **실패 시 무한 재시도 금지** — 단일 시도 후 상위로 전파.
 2. **주문 API는 일반 조회 API보다 강한 제한 적용** — KIS는 별도 tr_id 사용 (`VTTC0802U`/`VTTC0801U` paper, `TTTC*` live).
 3. **429/오류코드 발생 시 신규 주문 중지** — 운영자 emergency_stop 또는 nginx 단 차단.
-4. **Exponential backoff** — 미구현 (운영 단계 추가 예정).
+4. **Exponential backoff** — Anthropic은 SDK 내장 retry로 처리. KIS는 미구현(운영 단계 추가 예정).
 5. **Audit 로그 우선** — 호출 실패도 `OrderAuditLog`/`AiAnalysisLog`에 기록.
 
 ## 코드 hooks
 
-이미 정의되어 있으나 아직 사용처가 없는 인프라:
-
-- `app/core/rate_limiter.py::SlidingWindowRateLimiter` — in-memory, max_calls/window_seconds 인자. KIS/AI 호출 wrap 용도로 추가 예정.
+- `app/core/rate_limiter.py::SlidingWindowRateLimiter` — in-memory, max_calls/window_seconds 인자. `KisClient`에 wired (5 calls/sec 기본, `KIS_RATE_LIMIT_*` 환경변수로 조정).
+- `app/ai/client.py::AiClient` — `AsyncAnthropic(max_retries, timeout)`로 SDK 내장 backoff 위임. `ANTHROPIC_MAX_RETRIES` / `ANTHROPIC_TIMEOUT_SECONDS` 환경변수로 조정.
 
 ## 향후 작업
 
 - KIS 공식 문서에서 endpoint별 정확한 RPM/TPM 매트릭스 채우기
-- `SlidingWindowRateLimiter`를 `KisClient` 호출에 적용
-- Anthropic 429 처리 + exponential backoff
 - `/api/ai/analyze`에 사용자별 호출 제한 (인증 도입 후)
 - 운영 nginx config에 IP/세션 단위 제한 추가
 
