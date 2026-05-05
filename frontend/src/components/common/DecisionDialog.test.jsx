@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DecisionDialog } from "./DecisionDialog";
@@ -118,5 +118,55 @@ describe("<DecisionDialog>", () => {
   it("title is colored with the accent prop", () => {
     const { getByText } = _render({ title: "긴급 정지", accent: "#ef4444" });
     expect(getByText("긴급 정지").style.color).toBe("rgb(239, 68, 68)");
+  });
+
+  it("renders error block when onConfirm returns {ok:false, message}", async () => {
+    const onConfirm = vi.fn().mockResolvedValue({ ok: false, message: "재평가 실패" });
+    const { getByText, getByTestId, queryByTestId } = _render({
+      onConfirm, confirmLabel: "확인",
+    });
+    expect(queryByTestId("decision-dialog-error")).toBeNull();
+    await act(async () => { fireEvent.click(getByText("확인")); });
+    await waitFor(() => {
+      expect(getByTestId("decision-dialog-error").textContent).toBe("재평가 실패");
+    });
+  });
+
+  it("clears the error on next confirm attempt (retry path)", async () => {
+    const onConfirm = vi.fn()
+      .mockResolvedValueOnce({ ok: false, message: "first failure" })
+      .mockResolvedValueOnce({ ok: true });
+    const { getByText, getByTestId, queryByTestId } = _render({
+      onConfirm, confirmLabel: "확인",
+    });
+    await act(async () => { fireEvent.click(getByText("확인")); });
+    await waitFor(() => expect(getByTestId("decision-dialog-error")).toBeTruthy());
+    // Operator retries — error should clear at the start of the next submit
+    await act(async () => { fireEvent.click(getByText("확인")); });
+    await waitFor(() => expect(queryByTestId("decision-dialog-error")).toBeNull());
+  });
+
+  it("treats undefined and {ok:true} as success (no error rendered)", async () => {
+    const onConfirm = vi.fn().mockResolvedValue(undefined);
+    const { getByText, queryByTestId } = _render({ onConfirm, confirmLabel: "확인" });
+    await act(async () => { fireEvent.click(getByText("확인")); });
+    expect(queryByTestId("decision-dialog-error")).toBeNull();
+
+    cleanup();
+    const onConfirmOk = vi.fn().mockResolvedValue({ ok: true });
+    const { getByText: g2, queryByTestId: q2 } = _render({
+      onConfirm: onConfirmOk, confirmLabel: "확인",
+    });
+    await act(async () => { fireEvent.click(g2("확인")); });
+    expect(q2("decision-dialog-error")).toBeNull();
+  });
+
+  it("Enter key path also surfaces the error message", async () => {
+    const onConfirm = vi.fn().mockResolvedValue({ ok: false, message: "via Enter" });
+    const { getByTestId } = _render({ onConfirm, confirmLabel: "확인" });
+    await act(async () => { fireEvent.keyDown(window, { key: "Enter" }); });
+    await waitFor(() => {
+      expect(getByTestId("decision-dialog-error").textContent).toBe("via Enter");
+    });
   });
 });

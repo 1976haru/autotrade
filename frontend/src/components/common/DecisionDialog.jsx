@@ -20,8 +20,14 @@ import { Btn, Card, Inp } from "./index";
  *   - accent:       hex color used for border, title, confirm button
  *   - confirmLabel: confirm button label (e.g. "✓ 승인", "⊘ 3건 취소")
  *   - busy:         disables both buttons + suppresses keyboard shortcuts
- *   - onConfirm:    ({decided_by, note}) => void
+ *   - onConfirm:    ({decided_by, note}) => void | {ok, message?} | Promise of either
  *   - onCancel:     () => void
+ *
+ * onConfirm contract: returning {ok: false, message} keeps the dialog open
+ * and shows the message inside it (072 retry-on-failure) — operator keeps
+ * what they typed and can retry without re-entering anything. Returning
+ * {ok: true} or undefined/null is treated as success; the parent unmounts
+ * the dialog as before.
  *
  * Optional:
  *   - ariaLabel:             dialog aria-label (defaults to title)
@@ -45,6 +51,10 @@ export function DecisionDialog({
 }) {
   const [decidedBy, setDecidedBy] = useState(defaultDecidedBy);
   const [note,      setNote]      = useState("");
+  // 072: when onConfirm returns {ok:false}, render the message in the
+  // dialog and stay open so the operator can retry. Local to the dialog —
+  // resets on each remount (parent re-mounts on each open).
+  const [errorMessage, setErrorMessage] = useState(null);
   const decidedByRef = useRef(null);
   const noteRef      = useRef(null);
 
@@ -55,19 +65,30 @@ export function DecisionDialog({
     (defaultDecidedBy ? noteRef : decidedByRef).current?.focus();
   }, [defaultDecidedBy]);
 
+  const _submit = async () => {
+    setErrorMessage(null);
+    const payload = { decided_by: decidedBy.trim(), note: note.trim() };
+    const result = await onConfirm(payload);
+    // null / undefined / {ok:true} are all "success" — parent closes us.
+    // Only an explicit {ok:false} keeps us open with feedback.
+    if (result && result.ok === false) {
+      setErrorMessage(result.message || "요청 실패");
+    }
+  };
+
   // Keyboard shortcuts: Esc cancels, Enter confirms with current trimmed values.
   // Suppressed while busy so a long-running confirm can't double-submit.
   useEffect(() => {
     if (busy) return undefined;
     const handler = (e) => {
       if (e.key === "Escape") { e.preventDefault(); onCancel(); }
-      else if (e.key === "Enter") {
-        e.preventDefault();
-        onConfirm({ decided_by: decidedBy.trim(), note: note.trim() });
-      }
+      else if (e.key === "Enter") { e.preventDefault(); _submit(); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
+    // _submit is recreated each render but captures latest state — listing it
+    // would re-bind every keystroke; depend on the inputs it captures instead.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, onCancel, onConfirm, decidedBy, note]);
 
   return (
@@ -104,11 +125,24 @@ export function DecisionDialog({
                 placeholder={notePlaceholder} inputRef={noteRef} />
         </div>
 
+        {errorMessage && (
+          <div
+            data-testid="decision-dialog-error"
+            style={{
+              fontSize: 11, color: "#fca5a5", marginBottom: 10, padding: "6px 8px",
+              background: "#7f1d1d33", border: "1px solid #ef444466", borderRadius: 4,
+              lineHeight: 1.4,
+            }}
+          >
+            {errorMessage}
+          </div>
+        )}
+
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <Btn color="#1a3a5c" onClick={onCancel} disabled={busy} small>{cancelLabel}</Btn>
           <Btn
             color={accent}
-            onClick={() => onConfirm({ decided_by: decidedBy.trim(), note: note.trim() })}
+            onClick={_submit}
             disabled={busy}
             small
           >

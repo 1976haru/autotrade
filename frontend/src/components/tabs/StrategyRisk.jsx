@@ -182,8 +182,9 @@ export function BackendPolicyCard({ riskPolicy, operatorName = "" }) {
           defaultDecidedBy={operatorName}
           onCancel={() => setConfirmOpen(false)}
           onConfirm={async (decision) => {
-            await toggleEmergency(decision);
-            setConfirmOpen(false);
+            const result = await toggleEmergency(decision);
+            if (result?.ok !== false) setConfirmOpen(false);
+            return result;
           }}
         />
       )}

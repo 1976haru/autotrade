@@ -60,14 +60,20 @@ export function useApprovals() {
     return Object.keys(payload).length ? payload : null;
   };
 
+  // 072: each action returns {ok, message?} so the modal can stay open with
+  // the failure message inline (typically 070 risk_check_failed_at_approve)
+  // instead of dismissing into a top-of-page error slot. The same error is
+  // also pushed to `error` for callers that don't read the return value.
   const approve = useCallback(async (id, decision) => {
     setBusy(true);
     try {
       await backendApi.approveApproval(id, _normalize(decision));
       await refresh();
       await refreshHistory();
+      return { ok: true };
     } catch (e) {
       setError(e.message);
+      return { ok: false, message: e.message };
     } finally {
       setBusy(false);
     }
@@ -79,8 +85,10 @@ export function useApprovals() {
       await backendApi.rejectApproval(id, _normalize(decision));
       await refresh();
       await refreshHistory();
+      return { ok: true };
     } catch (e) {
       setError(e.message);
+      return { ok: false, message: e.message };
     } finally {
       setBusy(false);
     }
@@ -92,8 +100,10 @@ export function useApprovals() {
       await backendApi.cancelApproval(id, _normalize(decision));
       await refresh();
       await refreshHistory();
+      return { ok: true };
     } catch (e) {
       setError(e.message);
+      return { ok: false, message: e.message };
     } finally {
       setBusy(false);
     }
@@ -105,7 +115,7 @@ export function useApprovals() {
   // 실패하면 거기서 멈추고 error만 surface — 운영자가 다시 실행하면 PENDING으로
   // 남아있는 항목만 자동으로 추려진다.
   const cancelMany = useCallback(async (ids, decision) => {
-    if (!ids || ids.length === 0) return;
+    if (!ids || ids.length === 0) return { ok: true };
     setBusy(true);
     try {
       const payload = _normalize(decision);
@@ -114,6 +124,7 @@ export function useApprovals() {
       }
       await refresh();
       await refreshHistory();
+      return { ok: true };
     } catch (e) {
       // refresh() clears `error` on its success path, so to keep the cancel
       // failure visible we have to refresh first and then re-set the error.
@@ -121,6 +132,7 @@ export function useApprovals() {
       await refresh();
       await refreshHistory();
       setError(msg);
+      return { ok: false, message: msg };
     } finally {
       setBusy(false);
     }

@@ -348,8 +348,14 @@ export function Approvals({ approvals, operatorName = "" }) {
           defaultDecidedBy={operatorName}
           onCancel={() => setDecisionTarget(null)}
           onConfirm={async (decision) => {
-            await dispatchByAction[decisionTarget.action](decisionTarget.approval.id, decision);
-            setDecisionTarget(null);
+            const result = await dispatchByAction[decisionTarget.action](
+              decisionTarget.approval.id, decision,
+            );
+            // 072: only close on success — otherwise the dialog renders the
+            // failure message inline and the operator can retry without
+            // re-typing decided_by/note.
+            if (result?.ok !== false) setDecisionTarget(null);
+            return result;
           }}
         />
       )}
@@ -361,8 +367,11 @@ export function Approvals({ approvals, operatorName = "" }) {
           defaultDecidedBy={operatorName}
           onCancel={() => setBulkOpen(false)}
           onConfirm={async (decision) => {
-            await cancelMany(staleApprovals.map((a) => a.id), decision);
-            setBulkOpen(false);
+            const result = await cancelMany(
+              staleApprovals.map((a) => a.id), decision,
+            );
+            if (result?.ok !== false) setBulkOpen(false);
+            return result;
           }}
         />
       )}

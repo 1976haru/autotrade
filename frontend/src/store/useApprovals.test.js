@@ -200,6 +200,44 @@ describe("useApprovals", () => {
     expect(backendApi.cancelApproval).not.toHaveBeenCalled();
   });
 
+  it("approve returns {ok:true} on success and {ok:false, message} on failure", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    backendApi.approveApproval
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(new Error("승인 시점 재평가에서 거부됨: emergency stop"));
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let res1, res2;
+    await act(async () => { res1 = await result.current.approve(1); });
+    await act(async () => { res2 = await result.current.approve(2); });
+
+    expect(res1).toEqual({ ok: true });
+    expect(res2.ok).toBe(false);
+    expect(res2.message).toContain("재평가");
+  });
+
+  it("cancelMany returns {ok:true} on success and {ok:false} on partial failure", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    backendApi.listApprovalHistory.mockResolvedValue([]);
+    backendApi.cancelApproval
+      .mockResolvedValueOnce({})           // call 1 → id 10 ok
+      .mockResolvedValueOnce({})           // call 1 → id 11 ok
+      .mockResolvedValueOnce({})           // call 2 → id 20 ok
+      .mockRejectedValueOnce(new Error("boom")); // call 2 → id 21 fails
+
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let res1, res2;
+    await act(async () => { res1 = await result.current.cancelMany([10, 11], { note: "stale" }); });
+    await act(async () => { res2 = await result.current.cancelMany([20, 21], { note: "stale" }); });
+
+    expect(res1).toEqual({ ok: true });
+    expect(res2.ok).toBe(false);
+    expect(res2.message).toBe("boom");
+  });
+
   it("cancelMany surfaces error and still refreshes so partial state shows up", async () => {
     backendApi.listApprovals.mockResolvedValue([]);
     backendApi.listApprovalHistory.mockResolvedValue([]);

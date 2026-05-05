@@ -109,6 +109,31 @@ describe("useRiskPolicy", () => {
     expect(backendApi.setEmergencyStop).toHaveBeenCalledWith(true, null);
   });
 
+  it("toggleEmergency returns {ok:true} on success", async () => {
+    backendApi.getRiskPolicy.mockResolvedValue(_POLICY);
+    backendApi.setEmergencyStop.mockResolvedValue({ emergency_stop: true });
+
+    const { result } = renderHook(() => useRiskPolicy());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let res;
+    await act(async () => { res = await result.current.toggleEmergency(); });
+    expect(res).toEqual({ ok: true });
+  });
+
+  it("toggleEmergency returns {ok:false, message} on backend error", async () => {
+    backendApi.getRiskPolicy.mockResolvedValue(_POLICY);
+    backendApi.setEmergencyStop.mockRejectedValue(new Error("toggle-broke"));
+
+    const { result } = renderHook(() => useRiskPolicy());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    let res;
+    await act(async () => { res = await result.current.toggleEmergency(); });
+    expect(res.ok).toBe(false);
+    expect(res.message).toBe("toggle-broke");
+  });
+
   it("history fetch failure surfaces in error without breaking policy", async () => {
     backendApi.getRiskPolicy.mockResolvedValue(_POLICY);
     backendApi.emergencyStopHistory.mockRejectedValue(new Error("history-down"));
