@@ -13,6 +13,22 @@ const DEFAULT_FORM = {
   quantity:     "1",
 };
 
+// Whitelist mirrors backend CompareSortBy Literal — keep in sync with
+// backend/app/api/routes_backtest.py::CompareSortBy.
+const COMPARE_SORT_OPTIONS = [
+  { value: "total_pnl",     label: "총 손익" },
+  { value: "sharpe_ratio",  label: "Sharpe (per-trade)" },
+  { value: "profit_factor", label: "Profit Factor" },
+  { value: "win_rate",      label: "승률" },
+];
+
+const MAX_COMPARE_ROWS = 50;
+const DEFAULT_COMPARE_ROWS = [
+  { short: "5",  long: "20" },
+  { short: "10", long: "30" },
+  { short: "5",  long: "30" },
+];
+
 
 function Field({ label, children }) {
   return (
@@ -85,9 +101,195 @@ export function EquityCurve({ trades, height = 160 }) {
 }
 
 
+function ModeToggle({ mode, onChange }) {
+  const opt = (value, label) => (
+    <button
+      key={value}
+      onClick={() => onChange(value)}
+      style={{
+        flex: 1, padding: "7px 0", borderRadius: 4,
+        border: `1px solid ${mode === value ? "#7dd3fc" : "#1a3a5c"}`,
+        background: mode === value ? "#7dd3fc" : "transparent",
+        color:      mode === value ? "#010a14" : "#64748b",
+        cursor: "pointer", fontFamily: "inherit", fontSize: 12, fontWeight: 700,
+      }}
+    >{label}</button>
+  );
+  return (
+    <div style={{ display: "flex", gap: 6 }}>
+      {opt("single",  "단일 실행")}
+      {opt("compare", "비교 (param sweep)")}
+    </div>
+  );
+}
+
+
+export function CompareTable({ comparison }) {
+  if (!comparison) return null;
+  const { sort_by, runs, bars_processed } = comparison;
+  return (
+    <Card>
+      <div style={{ display: "flex", justifyContent: "space-between",
+                     alignItems: "baseline", marginBottom: 8 }}>
+        <SectionLabel>비교 결과 ({runs.length}개)</SectionLabel>
+        <span style={{ fontSize: 10, color: "#475569" }}>
+          {bars_processed}개 봉 · 정렬: {sort_by}
+        </span>
+      </div>
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "30px 1fr 90px 70px 60px 60px 90px",
+        fontSize: 10, color: "#334155",
+        padding: "3px 0", borderBottom: "1px solid #0c2035",
+      }}>
+        {["#", "params", "총손익", "Sharpe", "PF", "승률", "MDD"]
+          .map((h) => <div key={h}>{h}</div>)}
+      </div>
+      <div data-testid="compare-rows">
+        {runs.map((r, i) => {
+          const winner = i === 0;
+          return (
+            <div
+              key={r.run_id}
+              data-testid="compare-row"
+              data-rank={i}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "30px 1fr 90px 70px 60px 60px 90px",
+                padding: "5px 0", borderBottom: "1px solid #05121f",
+                fontSize: 11,
+                background: winner ? "#7dd3fc14" : (r.total_pnl >= 0 ? "#22c55e06" : "#ef444406"),
+              }}
+            >
+              <span style={{ color: winner ? "#7dd3fc" : "#475569", fontWeight: 700 }}>
+                {i + 1}
+              </span>
+              <span style={{ color: "#94a3b8", fontFamily: "monospace", fontSize: 10 }}>
+                {JSON.stringify(r.params)}
+              </span>
+              <span style={{ color: pnlColor(r.total_pnl), fontWeight: 700 }}>
+                {r.total_pnl >= 0 ? "+" : ""}{fmtKRW(r.total_pnl)}
+              </span>
+              <span style={{ color: "#a78bfa" }}>
+                {r.sharpe_ratio == null ? "—" : r.sharpe_ratio.toFixed(2)}
+              </span>
+              <span style={{ color: "#7dd3fc" }}>
+                {r.profit_factor == null ? "—" : r.profit_factor.toFixed(2)}
+              </span>
+              <span style={{ color: "#94a3b8" }}>
+                {(r.win_rate * 100).toFixed(0)}%
+              </span>
+              <span style={{ color: "#ef4444" }}>{fmtKRW(r.max_drawdown)}</span>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+
+function CompareSetupCard({ shared, loading, onCompare }) {
+  const [rows,    setRows]    = useState(DEFAULT_COMPARE_ROWS);
+  const [sortBy,  setSortBy]  = useState("total_pnl");
+
+  const updateRow = (idx, key) => (v) => setRows((prev) => {
+    const next = [...prev];
+    next[idx] = { ...next[idx], [key]: v };
+    return next;
+  });
+  const addRow    = () => rows.length < MAX_COMPARE_ROWS && setRows((p) => [...p, { short: "5", long: "20" }]);
+  const removeRow = (idx) => setRows((p) => p.filter((_, i) => i !== idx));
+
+  const onSubmit = () => {
+    const param_sets = rows
+      .map((r) => ({ short: parseInt(r.short, 10), long: parseInt(r.long, 10) }))
+      .filter((p) => Number.isFinite(p.short) && Number.isFinite(p.long));
+    onCompare({
+      strategy:     "sma_crossover",
+      param_sets,
+      sort_by:      sortBy,
+      symbol:       shared.symbol,
+      start:        `${shared.start}T00:00:00+00:00`,
+      end:          `${shared.end}T00:00:00+00:00`,
+      interval:     "1d",
+      initial_cash: parseInt(shared.initial_cash, 10),
+      quantity:     parseInt(shared.quantity, 10),
+    });
+  };
+
+  return (
+    <Card>
+      <SectionLabel>Param sets ({rows.length}/{MAX_COMPARE_ROWS})</SectionLabel>
+      <div data-testid="compare-rows-input">
+        {rows.map((r, i) => (
+          <div key={i} style={{
+            display: "grid",
+            gridTemplateColumns: "30px 1fr 1fr 30px",
+            gap: 6, alignItems: "center", marginBottom: 6,
+          }}>
+            <span style={{ fontSize: 10, color: "#475569", textAlign: "center" }}>{i + 1}</span>
+            <Inp value={r.short} onChange={updateRow(i, "short")} type="number" />
+            <Inp value={r.long}  onChange={updateRow(i, "long")}  type="number" />
+            <button
+              onClick={() => removeRow(i)}
+              disabled={rows.length === 1}
+              style={{
+                padding: 0, height: 26, borderRadius: 4,
+                border: "1px solid #1a3a5c",
+                background: rows.length === 1 ? "transparent" : "#0c2035",
+                color: rows.length === 1 ? "#1a3a5c" : "#94a3b8",
+                cursor: rows.length === 1 ? "not-allowed" : "pointer",
+                fontFamily: "inherit", fontSize: 14,
+              }}
+            >×</button>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "30px 1fr 1fr 30px", gap: 6,
+                     fontSize: 9, color: "#334155", marginTop: 2 }}>
+        <span></span>
+        <span style={{ paddingLeft: 4 }}>short SMA</span>
+        <span style={{ paddingLeft: 4 }}>long SMA</span>
+        <span></span>
+      </div>
+
+      <Btn
+        onClick={addRow}
+        disabled={rows.length >= MAX_COMPARE_ROWS}
+        color="#475569" small
+      >
+        + 행 추가
+      </Btn>
+
+      <Field label="정렬 기준 (내림차순, None은 마지막)">
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value)}
+          style={{
+            width: "100%", background: "#010a14", border: "1px solid #1a3a5c",
+            borderRadius: 4, padding: "8px 10px", color: "#c9d6e3",
+            fontSize: 12, fontFamily: "inherit", outline: "none", boxSizing: "border-box",
+          }}
+        >
+          {COMPARE_SORT_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </Field>
+
+      <Btn onClick={onSubmit} disabled={loading || rows.length === 0} color="#a78bfa" full>
+        {loading ? "⟳ 비교 중..." : `▶ 비교 실행 (${rows.length}건)`}
+      </Btn>
+    </Card>
+  );
+}
+
+
 export function Backtest() {
   const [form, setForm] = useState(DEFAULT_FORM);
-  const { run, loading, error, submit } = useBacktest();
+  const [mode, setMode] = useState("single");
+  const { run, comparison, loading, error, submit, compare } = useBacktest();
 
   const update = (key) => (v) => setForm((prev) => ({ ...prev, [key]: v }));
 
@@ -118,6 +320,10 @@ export function Backtest() {
           결과는 결정론적이며 실제 시장 성과와 무관합니다.
         </div>
 
+        <div style={{ marginBottom: 10 }}>
+          <ModeToggle mode={mode} onChange={setMode} />
+        </div>
+
         <Field label="종목 코드">
           <Inp value={form.symbol} onChange={update("symbol")} placeholder="005930" />
         </Field>
@@ -132,15 +338,6 @@ export function Backtest() {
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <Field label="단기 SMA">
-            <Inp value={form.short} onChange={update("short")} type="number" />
-          </Field>
-          <Field label="장기 SMA">
-            <Inp value={form.long} onChange={update("long")} type="number" />
-          </Field>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <Field label="초기 자금 (원)">
             <Inp value={form.initial_cash} onChange={update("initial_cash")} type="number" />
           </Field>
@@ -149,9 +346,27 @@ export function Backtest() {
           </Field>
         </div>
 
-        <Btn onClick={onRun} disabled={loading} color="#7dd3fc" full>
-          {loading ? "⟳ 실행 중..." : "▶ 백테스트 실행"}
-        </Btn>
+        {mode === "single" ? (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <Field label="단기 SMA">
+                <Inp value={form.short} onChange={update("short")} type="number" />
+              </Field>
+              <Field label="장기 SMA">
+                <Inp value={form.long} onChange={update("long")} type="number" />
+              </Field>
+            </div>
+            <Btn onClick={onRun} disabled={loading} color="#7dd3fc" full>
+              {loading ? "⟳ 실행 중..." : "▶ 백테스트 실행"}
+            </Btn>
+          </>
+        ) : (
+          <CompareSetupCard
+            shared={form}
+            loading={loading}
+            onCompare={compare}
+          />
+        )}
       </Card>
 
       {error && (
@@ -160,7 +375,9 @@ export function Backtest() {
         </Card>
       )}
 
-      {run && (
+      {mode === "compare" && comparison && <CompareTable comparison={comparison} />}
+
+      {mode === "single" && run && (
         <>
           <Card accentColor={pnlColor(run.total_pnl) + "33"}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>

@@ -1,7 +1,7 @@
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { EquityCurve } from "./Backtest";
+import { CompareTable, EquityCurve } from "./Backtest";
 
 
 function _trade(pnl) {
@@ -83,5 +83,85 @@ describe("<EquityCurve>", () => {
     for (let i = 1; i < ys.length; i++) {
       expect(ys[i]).toBeLessThanOrEqual(ys[i - 1]);
     }
+  });
+});
+
+
+function _runRow(overrides = {}) {
+  return {
+    run_id: 1,
+    strategy: "sma_crossover",
+    params: { short: 5, long: 20 },
+    bars_processed: 30,
+    initial_cash: 10_000_000,
+    final_cash: 10_050_000,
+    total_pnl: 50_000,
+    win_count: 3, loss_count: 2,
+    win_rate: 0.6, max_drawdown: 5_000,
+    avg_win: 30_000, avg_loss: -10_000,
+    profit_factor: 3.0, sharpe_ratio: 1.5,
+    data_source: "bars",
+    trades: [],
+    ...overrides,
+  };
+}
+
+
+describe("<CompareTable>", () => {
+  afterEach(cleanup);
+
+  it("returns null when comparison is null", () => {
+    const { container } = render(<CompareTable comparison={null} />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("renders one row per run with rank starting at 1", () => {
+    const { container, getAllByTestId } = render(
+      <CompareTable comparison={{
+        sort_by: "total_pnl", bars_processed: 30,
+        runs: [_runRow({ run_id: 1 }), _runRow({ run_id: 2 }), _runRow({ run_id: 3 })],
+      }} />,
+    );
+    const rows = getAllByTestId("compare-row");
+    expect(rows).toHaveLength(3);
+    expect(rows[0].getAttribute("data-rank")).toBe("0");
+    expect(rows[2].getAttribute("data-rank")).toBe("2");
+    // Rank label visible
+    expect(container.textContent).toContain("1");
+    expect(container.textContent).toContain("3");
+  });
+
+  it("highlights the winner (rank 0) with a different background", () => {
+    const { getAllByTestId } = render(
+      <CompareTable comparison={{
+        sort_by: "total_pnl", bars_processed: 30,
+        runs: [_runRow({ run_id: 1, total_pnl: 80_000 }),
+               _runRow({ run_id: 2, total_pnl: 20_000 })],
+      }} />,
+    );
+    const rows = getAllByTestId("compare-row");
+    expect(rows[0].style.background).not.toBe(rows[1].style.background);
+  });
+
+  it("renders sharpe and profit_factor as em-dashes when null", () => {
+    const { container } = render(
+      <CompareTable comparison={{
+        sort_by: "total_pnl", bars_processed: 30,
+        runs: [_runRow({ sharpe_ratio: null, profit_factor: null })],
+      }} />,
+    );
+    // Two em-dashes for the two null fields
+    const dashCount = (container.textContent.match(/—/g) || []).length;
+    expect(dashCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it("shows the sort_by label in the header line", () => {
+    const { container } = render(
+      <CompareTable comparison={{
+        sort_by: "sharpe_ratio", bars_processed: 30,
+        runs: [_runRow()],
+      }} />,
+    );
+    expect(container.textContent).toContain("sharpe_ratio");
   });
 });
