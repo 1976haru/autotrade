@@ -15,6 +15,7 @@ def run(coro):
 def _stub_kis_client(
     price: str = "75000",
     balance_response: dict | None = None,
+    daily_ccld_response: dict | None = None,
 ) -> KisClient:
     """Build a KisClient backed by httpx MockTransport returning fixed responses."""
     default_balance = {
@@ -24,7 +25,8 @@ def _stub_kis_client(
         ],
         "output2": [{"dnca_tot_amt": "5234800", "tot_evlu_amt": "10000000"}],
     }
-    response = balance_response if balance_response is not None else default_balance
+    bal = balance_response if balance_response is not None else default_balance
+    ccld = daily_ccld_response if daily_ccld_response is not None else {"output1": []}
 
     def handler(request):
         if request.url.path.endswith("/oauth2/tokenP"):
@@ -32,7 +34,9 @@ def _stub_kis_client(
         if request.url.path.endswith("/quotations/inquire-price"):
             return httpx.Response(200, json={"output": {"stck_prpr": price}})
         if request.url.path.endswith("/inquire-balance"):
-            return httpx.Response(200, json=response)
+            return httpx.Response(200, json=bal)
+        if request.url.path.endswith("/inquire-daily-ccld"):
+            return httpx.Response(200, json=ccld)
         return httpx.Response(404)
     return KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
 
@@ -139,10 +143,113 @@ def test_place_order_explicitly_disabled_in_shadow():
 
 
 def test_cancel_order_still_stub():
-    with pytest.raises(NotImplementedError, match="follow-up"):
+    with pytest.raises(NotImplementedError, match="LIVE_MANUAL_APPROVAL"):
         run(KisBrokerAdapter().cancel_order("any-id"))
 
 
-def test_get_order_status_still_stub():
-    with pytest.raises(NotImplementedError, match="follow-up"):
-        run(KisBrokerAdapter().get_order_status("any-id"))
+def test_get_order_status_returns_filled_result():
+    response = {
+        "output1": [
+            {
+                "odno":             "20260505-001",
+                "pdno":             "005930",
+                "sll_buy_dvsn_cd":  "02",  # buy
+                "ord_qty":          "10",
+                "tot_ccld_qty":     "10",
+                "avg_prvs":         "75100.5",
+                "cncl_yn":          "N",
+                "ord_dvsn_name":    "시장가",
+            },
+            {
+                "odno":             "OTHER-ID",
+                "pdno":             "000660",
+                "sll_buy_dvsn_cd":  "01",  # sell
+                "ord_qty":          "5",
+                "tot_ccld_qty":     "0",
+                "avg_prvs":         "",
+                "cncl_yn":          "N",
+            },
+        ],
+    }
+    a = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801",
+                         client=_stub_kis_client(daily_ccld_response=response))
+    result = run(a.get_order_status("20260505-001"))
+    assert result.order_id == "20260505-001"
+    assert result.status.value == "FILLED"
+    assert result.symbol == "005930"
+    assert result.side.value == "BUY"
+    assert result.quantity == 10
+    assert result.filled_quantity == 10
+    assert result.avg_fill_price == 75_100  # truncated from 75100.5
+
+
+def test_get_order_status_returns_partially_filled():
+    response = {
+        "output1": [
+            {
+                "odno":           "P-001",
+                "pdno":           "005930",
+                "sll_buy_dvsn_cd": "02",
+                "ord_qty":        "10",
+                "tot_ccld_qty":   "4",
+                "avg_prvs":       "75000",
+                "cncl_yn":        "N",
+            },
+        ],
+    }
+    a = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801",
+                         client=_stub_kis_client(daily_ccld_response=response))
+    result = run(a.get_order_status("P-001"))
+    assert result.status.value == "PARTIALLY_FILLED"
+    assert result.filled_quantity == 4
+
+
+def test_get_order_status_returns_canceled():
+    response = {
+        "output1": [
+            {
+                "odno":           "C-001",
+                "pdno":           "005930",
+                "sll_buy_dvsn_cd": "02",
+                "ord_qty":        "10",
+                "tot_ccld_qty":   "0",
+                "avg_prvs":       "",
+                "cncl_yn":        "Y",
+            },
+        ],
+    }
+    a = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801",
+                         client=_stub_kis_client(daily_ccld_response=response))
+    result = run(a.get_order_status("C-001"))
+    assert result.status.value == "CANCELED"
+
+
+def test_get_order_status_returns_received_when_no_fills():
+    response = {
+        "output1": [
+            {
+                "odno":           "R-001",
+                "pdno":           "005930",
+                "sll_buy_dvsn_cd": "02",
+                "ord_qty":        "10",
+                "tot_ccld_qty":   "0",
+                "avg_prvs":       "",
+                "cncl_yn":        "N",
+            },
+        ],
+    }
+    a = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801",
+                         client=_stub_kis_client(daily_ccld_response=response))
+    result = run(a.get_order_status("R-001"))
+    assert result.status.value == "RECEIVED"
+    assert result.filled_quantity == 0
+    assert result.avg_fill_price is None
+
+
+def test_get_order_status_unknown_id_returns_not_found_rejected():
+    a = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801",
+                         client=_stub_kis_client(daily_ccld_response={"output1": []}))
+    result = run(a.get_order_status("does-not-exist"))
+    assert result.status.value == "REJECTED"
+    assert "not found" in result.message
+    assert result.symbol == "UNKNOWN"

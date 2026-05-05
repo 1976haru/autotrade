@@ -102,6 +102,9 @@ class KisClient:
     def _balance_tr_id(self) -> str:
         return "VTTC8434R" if self.is_paper else "TTTC8434R"
 
+    def _daily_ccld_tr_id(self) -> str:
+        return "VTTC8001R" if self.is_paper else "TTTC8001R"
+
     async def inquire_balance(self, cano: str, prdt_cd: str) -> dict:
         """Single-call balance + positions endpoint.
 
@@ -135,4 +138,50 @@ class KisClient:
             )
         if r.status_code != 200:
             raise KisApiError(f"KIS balance endpoint returned {r.status_code}: {r.text[:200]}")
+        return r.json()
+
+    async def inquire_daily_ccld(
+        self,
+        cano:    str,
+        prdt_cd: str,
+        *,
+        start_date: str | None = None,
+        end_date:   str | None = None,
+    ) -> dict:
+        """Daily order/fill inquiry. Returns today's orders by default.
+
+        KIS does not support lookup-by-id directly — callers fetch the day's
+        list and filter client-side by ODNO.
+        """
+        today = datetime.now(timezone.utc).strftime("%Y%m%d")
+        token = await self._ensure_token()
+        async with self._client() as client:
+            r = await client.get(
+                "/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+                params={
+                    "CANO":            cano,
+                    "ACNT_PRDT_CD":    prdt_cd,
+                    "INQR_STRT_DT":    start_date or today,
+                    "INQR_END_DT":     end_date or today,
+                    "SLL_BUY_DVSN_CD": "00",
+                    "INQR_DVSN":       "00",
+                    "PDNO":            "",
+                    "CCLD_DVSN":       "00",
+                    "ORD_GNO_BRNO":    "",
+                    "ODNO":            "",
+                    "INQR_DVSN_3":     "00",
+                    "INQR_DVSN_1":     "",
+                    "CTX_AREA_FK100":  "",
+                    "CTX_AREA_NK100":  "",
+                },
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "appkey":        self.app_key,
+                    "appsecret":     self.app_secret,
+                    "tr_id":         self._daily_ccld_tr_id(),
+                    "custtype":      "P",
+                },
+            )
+        if r.status_code != 200:
+            raise KisApiError(f"KIS daily-ccld endpoint returned {r.status_code}: {r.text[:200]}")
         return r.json()

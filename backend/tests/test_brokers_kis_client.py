@@ -195,3 +195,62 @@ def test_inquire_balance_endpoint_failure_raises_api_error():
     c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
     with pytest.raises(KisApiError, match="500"):
         run(c.inquire_balance("12345678", "01"))
+
+
+_DAILY_CCLD_RESPONSE = {
+    "output1": [
+        {
+            "odno": "0001", "pdno": "005930",
+            "sll_buy_dvsn_cd": "02",
+            "ord_qty": "1", "tot_ccld_qty": "1",
+            "avg_prvs": "75000", "cncl_yn": "N",
+        },
+    ],
+}
+
+
+def _ccld_handler(seen: list):
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append({
+            "method":  request.method,
+            "path":    request.url.path,
+            "params":  dict(request.url.params),
+            "headers": dict(request.headers),
+        })
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        if request.url.path.endswith("/inquire-daily-ccld"):
+            return httpx.Response(200, json=_DAILY_CCLD_RESPONSE)
+        return httpx.Response(404)
+    return handler
+
+
+def test_inquire_daily_ccld_paper_uses_paper_tr_id():
+    seen = []
+    c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(_ccld_handler(seen)))
+    raw = run(c.inquire_daily_ccld("12345678", "01"))
+    assert raw == _DAILY_CCLD_RESPONSE
+    call = [s for s in seen if s["path"].endswith("/inquire-daily-ccld")][0]
+    assert call["headers"]["tr_id"] == "VTTC8001R"
+    assert call["params"]["CANO"] == "12345678"
+    assert call["params"]["ACNT_PRDT_CD"] == "01"
+    assert call["params"]["INQR_STRT_DT"]
+    assert call["params"]["INQR_END_DT"]
+
+
+def test_inquire_daily_ccld_live_uses_live_tr_id():
+    seen = []
+    c = KisClient("k", "s", is_paper=False, transport=httpx.MockTransport(_ccld_handler(seen)))
+    run(c.inquire_daily_ccld("12345678", "01"))
+    call = [s for s in seen if s["path"].endswith("/inquire-daily-ccld")][0]
+    assert call["headers"]["tr_id"] == "TTTC8001R"
+
+
+def test_inquire_daily_ccld_endpoint_failure_raises():
+    def handler(request):
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        return httpx.Response(503, text="upstream down")
+    c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    with pytest.raises(KisApiError, match="503"):
+        run(c.inquire_daily_ccld("12345678", "01"))

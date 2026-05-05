@@ -5,6 +5,8 @@ from app.brokers.base import (
     BrokerAdapter,
     OrderRequest,
     OrderResult,
+    OrderSide,
+    OrderStatus,
     Position,
     Quote,
 )
@@ -13,10 +15,45 @@ from app.core.config import get_settings
 
 
 _STUB_MESSAGE = (
-    "Not yet wired in SHADOW mode. cancel / order_status land in follow-up PRs. "
-    "Real LIVE order routing is gated by RiskManager + PermissionGate and is "
-    "never AI-executed (CLAUDE.md)."
+    "Not yet wired in SHADOW mode. cancel_order is a write operation that lands "
+    "with LIVE_MANUAL_APPROVAL routing in a follow-up PR. Real LIVE order "
+    "routing is gated by RiskManager + PermissionGate and is never AI-executed "
+    "(CLAUDE.md)."
 )
+
+
+def _kis_side_to_order_side(code: str) -> OrderSide:
+    """KIS sll_buy_dvsn_cd: 01 = sell, 02 = buy."""
+    return OrderSide.SELL if code == "01" else OrderSide.BUY
+
+
+def _row_to_order_result(row: dict, order_id: str) -> OrderResult:
+    ord_qty = int(row.get("ord_qty", "0") or "0")
+    filled  = int(row.get("tot_ccld_qty", "0") or "0")
+    canceled = (row.get("cncl_yn") or "").upper() == "Y"
+
+    if canceled:
+        status = OrderStatus.CANCELED
+    elif filled >= ord_qty and ord_qty > 0:
+        status = OrderStatus.FILLED
+    elif 0 < filled < ord_qty:
+        status = OrderStatus.PARTIALLY_FILLED
+    else:
+        status = OrderStatus.RECEIVED
+
+    avg_fill_str = row.get("avg_prvs") or row.get("ccld_avg_prvs") or ""
+    avg_fill = int(float(avg_fill_str)) if avg_fill_str.strip() else None
+
+    return OrderResult(
+        order_id=order_id,
+        status=status,
+        symbol=row.get("pdno", ""),
+        side=_kis_side_to_order_side(row.get("sll_buy_dvsn_cd", "02")),
+        quantity=ord_qty,
+        filled_quantity=filled,
+        avg_fill_price=avg_fill,
+        message=row.get("ord_dvsn_name", "") or "",
+    )
 
 
 class KisBrokerAdapter(BrokerAdapter):
@@ -25,7 +62,8 @@ class KisBrokerAdapter(BrokerAdapter):
     현재 단계 (LIVE_SHADOW read-only):
     - `get_price` — 실 API 호출 (quote)
     - `get_balance` / `get_positions` — KIS inquire-balance 한 번 호출에서 분리
-    - `cancel_order` / `get_order_status` — NotImplementedError (다음 PR)
+    - `get_order_status` — KIS inquire-daily-ccld로 오늘자 주문 조회 후 ODNO 필터
+    - `cancel_order` — write op이므로 NotImplementedError 유지 (LIVE_MANUAL_APPROVAL PR)
     - `place_order` — SHADOW 모드에서 실 broker로 절대 가지 않음 (명시적 거부)
 
     실 라이브 주문 라우팅은 RiskManager → PermissionGate → OrderExecutor를
@@ -117,4 +155,16 @@ class KisBrokerAdapter(BrokerAdapter):
         raise NotImplementedError(_STUB_MESSAGE)
 
     async def get_order_status(self, order_id: str) -> OrderResult:
-        raise NotImplementedError(_STUB_MESSAGE)
+        cano, prdt = self._split_account()
+        raw = await self.client.inquire_daily_ccld(cano, prdt)
+        for row in (raw.get("output1") or []):
+            if row.get("odno") == order_id:
+                return _row_to_order_result(row, order_id)
+        return OrderResult(
+            order_id=order_id,
+            status=OrderStatus.REJECTED,
+            symbol="UNKNOWN",
+            side=OrderSide.BUY,
+            quantity=0,
+            message="order not found in today's KIS daily-ccld",
+        )
