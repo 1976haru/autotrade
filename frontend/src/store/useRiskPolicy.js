@@ -47,12 +47,18 @@ export function useRiskPolicy() {
     return () => { cancelled = true; };
   }, [refreshHistory]);
 
-  const toggleEmergency = useCallback(async (note) => {
+  const toggleEmergency = useCallback(async (decision) => {
+    // decision: { decided_by?, note? } | null | undefined.
+    // Only forward keys with non-empty values so the audit row records null
+    // for fields the operator left blank rather than "".
+    const payload = {};
+    if (decision?.decided_by) payload.decided_by = decision.decided_by;
+    if (decision?.note)       payload.note       = decision.note;
     setBusy(true);
     try {
       const res = await backendApi.setEmergencyStop(
         !emergencyStop,
-        note ? { note } : null,
+        Object.keys(payload).length ? payload : null,
       );
       setEmergencyStop(res.emergency_stop);
       await refreshHistory();

@@ -44,27 +44,44 @@ describe("useRiskPolicy", () => {
     expect(backendApi.emergencyStopHistory).toHaveBeenCalledTimes(1);
   });
 
-  it("toggleEmergency forwards optional note and refreshes history", async () => {
+  it("toggleEmergency forwards decided_by + note and refreshes history", async () => {
     backendApi.getRiskPolicy.mockResolvedValue(_POLICY);
     backendApi.setEmergencyStop.mockResolvedValueOnce({ emergency_stop: true });
     backendApi.emergencyStopHistory.mockResolvedValue([
-      { id: 1, enabled: true, note: "vol spike", created_at: "2026-05-05T12:00:00+00:00" },
+      { id: 1, enabled: true, decided_by: "ops1", note: "vol spike",
+        created_at: "2026-05-05T12:00:00+00:00" },
     ]);
 
     const { result } = renderHook(() => useRiskPolicy());
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     await act(async () => {
-      await result.current.toggleEmergency("vol spike");
+      await result.current.toggleEmergency({ decided_by: "ops1", note: "vol spike" });
     });
 
-    expect(backendApi.setEmergencyStop).toHaveBeenCalledWith(true, { note: "vol spike" });
+    expect(backendApi.setEmergencyStop).toHaveBeenCalledWith(true, {
+      decided_by: "ops1", note: "vol spike",
+    });
     // Mount + post-toggle = 2 history fetches
     expect(backendApi.emergencyStopHistory).toHaveBeenCalledTimes(2);
     expect(result.current.emergencyStop).toBe(true);
   });
 
-  it("toggleEmergency without note passes null decision", async () => {
+  it("toggleEmergency drops empty fields so backend records null instead of \"\"", async () => {
+    backendApi.getRiskPolicy.mockResolvedValue(_POLICY);
+    backendApi.setEmergencyStop.mockResolvedValue({ emergency_stop: true });
+
+    const { result } = renderHook(() => useRiskPolicy());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.toggleEmergency({ decided_by: "", note: "vol spike" });
+    });
+
+    expect(backendApi.setEmergencyStop).toHaveBeenCalledWith(true, { note: "vol spike" });
+  });
+
+  it("toggleEmergency with no decision passes null", async () => {
     backendApi.getRiskPolicy.mockResolvedValue(_POLICY);
     backendApi.setEmergencyStop.mockResolvedValue({ emergency_stop: true });
 
@@ -73,6 +90,20 @@ describe("useRiskPolicy", () => {
 
     await act(async () => {
       await result.current.toggleEmergency();
+    });
+
+    expect(backendApi.setEmergencyStop).toHaveBeenCalledWith(true, null);
+  });
+
+  it("toggleEmergency with empty decision object passes null", async () => {
+    backendApi.getRiskPolicy.mockResolvedValue(_POLICY);
+    backendApi.setEmergencyStop.mockResolvedValue({ emergency_stop: true });
+
+    const { result } = renderHook(() => useRiskPolicy());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.toggleEmergency({ decided_by: "", note: "" });
     });
 
     expect(backendApi.setEmergencyStop).toHaveBeenCalledWith(true, null);
