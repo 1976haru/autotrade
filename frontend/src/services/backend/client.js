@@ -48,4 +48,14 @@ export const backendApi = {
   listOrderAudits: (limit = 50) => backendFetch(`/api/audit/orders?limit=${limit}`),
   listAiAudits:    (limit = 50) => backendFetch(`/api/audit/ai?limit=${limit}`),
   listBacktestRuns:(limit = 50) => backendFetch(`/api/audit/backtests?limit=${limit}`),
+  engineStatus:    () => backendFetch("/api/strategies/status"),
+  engineConfigure: (req) => backendFetch("/api/strategies/configure", {
+    method: "POST",
+    body:   JSON.stringify(req),
+  }),
+  engineTick:      (req) => backendFetch("/api/strategies/tick", {
+    method: "POST",
+    body:   JSON.stringify(req),
+  }),
+  engineReset:     () => backendFetch("/api/strategies/reset", { method: "POST" }),
 };

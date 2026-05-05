@@ -7,6 +7,7 @@ const TABS = [
   { id: "backtest", icon: "🧪", label: "백테스트" },
   { id: "audit",    icon: "📜", label: "로그" },
   { id: "signal",   icon: "🧠", label: "AI시그널" },
+  { id: "engine",   icon: "🚀", label: "엔진" },
   { id: "futures",  icon: "🪙", label: "선물" },
   { id: "config",   icon: "⚙",  label: "설정" },
 ];
