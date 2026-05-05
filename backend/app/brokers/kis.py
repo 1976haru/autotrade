@@ -27,6 +27,38 @@ def _kis_side_to_order_side(code: str) -> OrderSide:
     return OrderSide.SELL if code == "01" else OrderSide.BUY
 
 
+def _kis_order_response_to_result(raw: dict, order: "OrderRequest") -> OrderResult:
+    """Map KIS order-cash response to OrderResult.
+
+    KIS only acknowledges receipt synchronously (rt_cd='0' + ODNO). It does
+    not return fill state — that requires a follow-up inquire-daily-ccld
+    call. We surface the order as RECEIVED on success, REJECTED on failure.
+    """
+    rt_cd = raw.get("rt_cd")
+    msg = raw.get("msg1", "") or ""
+    output = raw.get("output") or {}
+    odno = output.get("ODNO") or ""
+
+    if rt_cd != "0":
+        return OrderResult(
+            order_id=odno,
+            status=OrderStatus.REJECTED,
+            symbol=order.symbol,
+            side=order.side,
+            quantity=order.quantity,
+            message=msg,
+        )
+
+    return OrderResult(
+        order_id=odno,
+        status=OrderStatus.RECEIVED,
+        symbol=order.symbol,
+        side=order.side,
+        quantity=order.quantity,
+        message=msg,
+    )
+
+
 def _row_to_order_result(row: dict, order_id: str) -> OrderResult:
     ord_qty = int(row.get("ord_qty", "0") or "0")
     filled  = int(row.get("tot_ccld_qty", "0") or "0")
@@ -59,12 +91,13 @@ def _row_to_order_result(row: dict, order_id: str) -> OrderResult:
 class KisBrokerAdapter(BrokerAdapter):
     """한국투자증권(KIS) 브로커 어댑터.
 
-    현재 단계 (LIVE_SHADOW read-only):
+    현재 단계 (PAPER + LIVE_SHADOW read-only):
     - `get_price` — 실 API 호출 (quote)
     - `get_balance` / `get_positions` — KIS inquire-balance 한 번 호출에서 분리
     - `get_order_status` — KIS inquire-daily-ccld로 오늘자 주문 조회 후 ODNO 필터
-    - `cancel_order` — write op이므로 NotImplementedError 유지 (LIVE_MANUAL_APPROVAL PR)
-    - `place_order` — SHADOW 모드에서 실 broker로 절대 가지 않음 (명시적 거부)
+    - `place_order` — `is_paper=True`(KIS 모의투자)일 때만 실 라우팅. False면 명시적 거부.
+      LIVE 라우팅(`is_paper=False`)은 LIVE_MANUAL_APPROVAL PR에서 별도 wire.
+    - `cancel_order` — write op, NotImplementedError 유지 (LIVE_MANUAL_APPROVAL PR)
 
     실 라이브 주문 라우팅은 RiskManager → PermissionGate → OrderExecutor를
     거치는 별도 PR에서만 다룬다.
@@ -145,11 +178,27 @@ class KisBrokerAdapter(BrokerAdapter):
         return positions
 
     async def place_order(self, order: OrderRequest) -> OrderResult:
-        raise NotImplementedError(
-            "place_order is intentionally disabled for KIS. SHADOW mode never "
-            "places real orders; LIVE order routing requires PermissionGate "
-            "approval and lands in a separate PR — never AI-executed."
-        )
+        if not self.is_paper:
+            raise NotImplementedError(
+                "KIS live (real-money) place_order is not implemented. Live "
+                "order routing requires LIVE_MANUAL_APPROVAL flow with "
+                "PermissionGate approval, in a follow-up PR. Set "
+                "KIS_IS_PAPER=true to use the KIS paper server."
+            )
+        cano, prdt = self._split_account()
+        is_buy = order.side == OrderSide.BUY
+        order_type = "market" if order.order_type.value == "MARKET" else "limit"
+        try:
+            raw = await self.client.place_order(
+                cano, prdt, order.symbol,
+                is_buy=is_buy,
+                quantity=order.quantity,
+                order_type=order_type,
+                limit_price=order.limit_price,
+            )
+        except KisApiError as e:
+            raise e
+        return _kis_order_response_to_result(raw, order)
 
     async def cancel_order(self, order_id: str) -> OrderResult:
         raise NotImplementedError(_STUB_MESSAGE)

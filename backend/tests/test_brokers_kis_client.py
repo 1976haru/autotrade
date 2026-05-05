@@ -254,3 +254,85 @@ def test_inquire_daily_ccld_endpoint_failure_raises():
     c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
     with pytest.raises(KisApiError, match="503"):
         run(c.inquire_daily_ccld("12345678", "01"))
+
+
+def _order_handler(seen: list):
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append({
+            "method":  request.method,
+            "path":    request.url.path,
+            "headers": dict(request.headers),
+            "body":    request.content.decode() if request.content else "",
+        })
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        if request.url.path.endswith("/order-cash"):
+            return httpx.Response(200, json={
+                "rt_cd": "0",
+                "msg1":  "정상처리되었습니다.",
+                "output": {"ODNO": "0000777", "ORD_TMD": "094530"},
+            })
+        return httpx.Response(404)
+    return handler
+
+
+def test_place_order_paper_buy_uses_paper_buy_tr_id_and_market_dvsn():
+    seen = []
+    c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(_order_handler(seen)))
+    raw = run(c.place_order("12345678", "01", "005930",
+                            is_buy=True, quantity=1, order_type="market"))
+    assert raw["output"]["ODNO"] == "0000777"
+
+    call = [s for s in seen if s["path"].endswith("/order-cash")][0]
+    assert call["method"] == "POST"
+    assert call["headers"]["tr_id"] == "VTTC0802U"  # paper buy
+    assert '"ORD_DVSN":"01"' in call["body"]        # market
+    assert '"ORD_UNPR":"0"'  in call["body"]
+    assert '"ORD_QTY":"1"'   in call["body"]
+    assert '"PDNO":"005930"' in call["body"]
+
+
+def test_place_order_paper_sell_uses_paper_sell_tr_id():
+    seen = []
+    c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(_order_handler(seen)))
+    run(c.place_order("12345678", "01", "005930",
+                      is_buy=False, quantity=2, order_type="market"))
+    call = [s for s in seen if s["path"].endswith("/order-cash")][0]
+    assert call["headers"]["tr_id"] == "VTTC0801U"  # paper sell
+
+
+def test_place_order_live_buy_uses_live_buy_tr_id():
+    seen = []
+    c = KisClient("k", "s", is_paper=False, transport=httpx.MockTransport(_order_handler(seen)))
+    run(c.place_order("12345678", "01", "005930",
+                      is_buy=True, quantity=1, order_type="market"))
+    call = [s for s in seen if s["path"].endswith("/order-cash")][0]
+    assert call["headers"]["tr_id"] == "TTTC0802U"
+
+
+def test_place_order_limit_uses_zero_zero_dvsn_with_price():
+    seen = []
+    c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(_order_handler(seen)))
+    run(c.place_order("12345678", "01", "005930",
+                      is_buy=True, quantity=1, order_type="limit", limit_price=75_000))
+    call = [s for s in seen if s["path"].endswith("/order-cash")][0]
+    assert '"ORD_DVSN":"00"'    in call["body"]
+    assert '"ORD_UNPR":"75000"' in call["body"]
+
+
+def test_place_order_limit_without_price_raises():
+    c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(_order_handler([])))
+    with pytest.raises(ValueError, match="limit_price"):
+        run(c.place_order("12345678", "01", "005930",
+                          is_buy=True, quantity=1, order_type="limit"))
+
+
+def test_place_order_endpoint_failure_raises():
+    def handler(request):
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        return httpx.Response(500, text="server down")
+    c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    with pytest.raises(KisApiError, match="500"):
+        run(c.place_order("12345678", "01", "005930",
+                          is_buy=True, quantity=1, order_type="market"))

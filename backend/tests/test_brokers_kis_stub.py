@@ -136,10 +136,50 @@ def test_account_no_split_uses_last_two_chars_as_product_code():
     assert a._split_account() == ("12345678", "99")
 
 
-def test_place_order_explicitly_disabled_in_shadow():
+def _stub_kis_client_with_order(rt_cd: str = "0", odno: str = "0000123") -> KisClient:
+    def handler(request):
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        if request.url.path.endswith("/order-cash"):
+            return httpx.Response(200, json={
+                "rt_cd": rt_cd,
+                "msg1":  "정상처리되었습니다." if rt_cd == "0" else "잔고부족",
+                "output": {"ODNO": odno, "ORD_TMD": "094530"},
+            })
+        return httpx.Response(404)
+    return KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+
+
+def test_place_order_paper_returns_received_with_kis_order_id():
     order = OrderRequest(symbol="005930", side=OrderSide.BUY, quantity=1)
-    with pytest.raises(NotImplementedError, match="intentionally disabled"):
-        run(KisBrokerAdapter().place_order(order))
+    a = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801",
+                         is_paper=True, client=_stub_kis_client_with_order(odno="0000999"))
+    result = run(a.place_order(order))
+    assert result.order_id == "0000999"
+    assert result.status.value == "RECEIVED"
+    assert result.symbol == "005930"
+    assert result.side.value == "BUY"
+    assert result.quantity == 1
+    assert "정상처리" in result.message
+
+
+def test_place_order_paper_kis_failure_returns_rejected():
+    order = OrderRequest(symbol="005930", side=OrderSide.BUY, quantity=1)
+    a = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801",
+                         is_paper=True, client=_stub_kis_client_with_order(rt_cd="1"))
+    result = run(a.place_order(order))
+    assert result.status.value == "REJECTED"
+    assert "잔고부족" in result.message
+
+
+def test_place_order_live_mode_explicitly_disabled():
+    """is_paper=False blocks place_order even though credentials might be valid.
+    Live order routing requires LIVE_MANUAL_APPROVAL flow in a follow-up PR."""
+    order = OrderRequest(symbol="005930", side=OrderSide.BUY, quantity=1)
+    a = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801",
+                         is_paper=False, client=_stub_kis_client_with_order())
+    with pytest.raises(NotImplementedError, match="LIVE_MANUAL_APPROVAL"):
+        run(a.place_order(order))
 
 
 def test_cancel_order_still_stub():

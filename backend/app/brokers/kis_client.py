@@ -105,6 +105,11 @@ class KisClient:
     def _daily_ccld_tr_id(self) -> str:
         return "VTTC8001R" if self.is_paper else "TTTC8001R"
 
+    def _order_tr_id(self, *, is_buy: bool) -> str:
+        if self.is_paper:
+            return "VTTC0802U" if is_buy else "VTTC0801U"
+        return "TTTC0802U" if is_buy else "TTTC0801U"
+
     async def inquire_balance(self, cano: str, prdt_cd: str) -> dict:
         """Single-call balance + positions endpoint.
 
@@ -184,4 +189,49 @@ class KisClient:
             )
         if r.status_code != 200:
             raise KisApiError(f"KIS daily-ccld endpoint returned {r.status_code}: {r.text[:200]}")
+        return r.json()
+
+    async def place_order(
+        self,
+        cano:       str,
+        prdt_cd:    str,
+        symbol:     str,
+        *,
+        is_buy:     bool,
+        quantity:   int,
+        order_type: str,        # "market" or "limit"
+        limit_price: int | None = None,
+    ) -> dict:
+        """Submit a stock order to the KIS order-cash endpoint.
+
+        Returns raw JSON. tr_id selects buy/sell + paper/live combination.
+        Caller maps the response (rt_cd / msg1 / output.ODNO) to OrderResult.
+        """
+        if order_type == "limit" and not limit_price:
+            raise ValueError("limit orders require a limit_price")
+        ord_dvsn = "01" if order_type == "market" else "00"
+        ord_unpr = "0" if order_type == "market" else str(limit_price)
+
+        token = await self._ensure_token()
+        async with self._client() as client:
+            r = await client.post(
+                "/uapi/domestic-stock/v1/trading/order-cash",
+                json={
+                    "CANO":         cano,
+                    "ACNT_PRDT_CD": prdt_cd,
+                    "PDNO":         symbol,
+                    "ORD_DVSN":     ord_dvsn,
+                    "ORD_QTY":      str(quantity),
+                    "ORD_UNPR":     ord_unpr,
+                },
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "appkey":        self.app_key,
+                    "appsecret":     self.app_secret,
+                    "tr_id":         self._order_tr_id(is_buy=is_buy),
+                    "custtype":      "P",
+                },
+            )
+        if r.status_code != 200:
+            raise KisApiError(f"KIS order-cash endpoint returned {r.status_code}: {r.text[:200]}")
         return r.json()

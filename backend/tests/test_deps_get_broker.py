@@ -24,9 +24,18 @@ def test_simulation_mode_returns_mock(monkeypatch):
     assert isinstance(get_broker(), MockBrokerAdapter)
 
 
-def test_paper_mode_returns_mock(monkeypatch):
+def test_paper_mode_returns_kis_when_kis_is_paper_true(monkeypatch):
     _set_mode(monkeypatch, OperationMode.PAPER)
-    assert isinstance(get_broker(), MockBrokerAdapter)
+    monkeypatch.setattr(get_settings(), "kis_is_paper", True)
+    broker = get_broker()
+    assert isinstance(broker, KisBrokerAdapter)
+
+
+def test_paper_mode_refuses_to_start_when_kis_is_paper_false(monkeypatch):
+    _set_mode(monkeypatch, OperationMode.PAPER)
+    monkeypatch.setattr(get_settings(), "kis_is_paper", False)
+    with pytest.raises(RuntimeError, match="KIS_IS_PAPER=true"):
+        get_broker()
 
 
 def test_live_manual_approval_returns_mock(monkeypatch):
