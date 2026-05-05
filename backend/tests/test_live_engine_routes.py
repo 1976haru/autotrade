@@ -299,3 +299,42 @@ def test_replay_appends_to_existing_engine_state(client):
     assert res.status_code == 200
     assert res.json()["bars_processed"] == 5
     assert res.json()["bars_seen"] == 6  # 1 manual + 5 replay
+
+
+# ---------- registry ----------
+
+def test_registry_lists_sma_crossover_with_param_schema(client):
+    res = client.get("/api/strategies/registry")
+    assert res.status_code == 200
+    body = res.json()
+    assert isinstance(body, list)
+
+    by_name = {s["name"]: s for s in body}
+    assert "sma_crossover" in by_name
+
+    sma = by_name["sma_crossover"]
+    assert sma["class_name"] == "SmaCrossoverStrategy"
+    assert sma["description"]  # docstring exists
+    assert "이동평균" in sma["description"] or "SMA" in sma["description"].upper()
+
+    by_param = {p["name"]: p for p in sma["params"]}
+    assert by_param["short"]["type"]    == "int"
+    assert by_param["short"]["default"] == 5
+    assert by_param["short"]["required"] is False
+    assert by_param["long"]["type"]    == "int"
+    assert by_param["long"]["default"] == 20
+    assert by_param["long"]["required"] is False
+
+
+def test_registry_payload_round_trips_through_configure(client):
+    """A frontend can build a configure body using only registry defaults."""
+    registry = client.get("/api/strategies/registry").json()
+    sma = next(s for s in registry if s["name"] == "sma_crossover")
+    params = {p["name"]: p["default"] for p in sma["params"] if p["default"] is not None}
+
+    res = client.post("/api/strategies/configure", json={
+        "strategy": sma["name"],
+        "params":   params,
+    })
+    assert res.status_code == 200, res.text
+    assert res.json()["strategy"] == "sma_crossover"
