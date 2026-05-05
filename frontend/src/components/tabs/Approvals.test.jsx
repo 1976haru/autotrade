@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   ApprovalDecisionModal,
+  ApproveAttemptFailureBadge,
   Approvals,
   BulkCancelStaleModal,
   HistoryRow,
@@ -22,6 +23,7 @@ function _makeApprovals(overrides = {}) {
     loading: false,
     error: "",
     busy: false,
+    lastFailures: {},
     approve: vi.fn(),
     reject:  vi.fn(),
     cancel:  vi.fn(),
@@ -401,6 +403,53 @@ describe("<Approvals> stale bulk-cancel button", () => {
       decided_by: "ops-prefill", note: "스테일 정리",
     });
     await waitFor(() => expect(queryByRole("dialog")).toBeNull());
+  });
+});
+
+
+describe("<ApproveAttemptFailureBadge>", () => {
+  afterEach(cleanup);
+
+  it("renders nothing when failure is undefined", () => {
+    const { queryByTestId } = render(<ApproveAttemptFailureBadge />);
+    expect(queryByTestId("approve-attempt-failure-badge")).toBeNull();
+  });
+
+  it("renders the relative time + message when failure is set", () => {
+    const NOW = new Date("2026-05-06T12:00:00Z").getTime();
+    const failure = { at: NOW - 5 * 60_000, message: "재평가 거부됨" };
+    const { getByTestId } = render(
+      <ApproveAttemptFailureBadge failure={failure} now={NOW} />,
+    );
+    const badge = getByTestId("approve-attempt-failure-badge");
+    expect(badge.textContent).toContain("5분 전");
+    expect(badge.textContent).toContain("재평가 거부됨");
+  });
+});
+
+
+describe("<Approvals> approve-attempt failure badge on PENDING row", () => {
+  afterEach(cleanup);
+
+  it("renders the badge when lastFailures has an entry for the row", () => {
+    const approvals = _makeApprovals({
+      pending: [_PENDING],
+      lastFailures: {
+        [_PENDING.id]: { at: Date.now(), message: "승인 시점 재평가에서 거부됨" },
+      },
+    });
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(getByTestId("approve-attempt-failure-badge").textContent)
+      .toContain("승인 시점 재평가에서 거부됨");
+  });
+
+  it("does not render the badge when no failure recorded for the row", () => {
+    const approvals = _makeApprovals({
+      pending: [_PENDING],
+      lastFailures: {}, // empty — no row should get the badge
+    });
+    const { queryByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(queryByTestId("approve-attempt-failure-badge")).toBeNull();
   });
 });
 
