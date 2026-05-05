@@ -19,6 +19,49 @@ const ACTION_META = {
 };
 
 
+// 단타 운영에서 결재 지연은 기회 손실로 직결. PENDING 행에 상대 시간 배지를
+// 붙여 신호 노후화를 즉시 인지시킨다 — 10분 이상이면 stale로 간주해 강조.
+// useApprovals가 5초마다 폴링하며 리렌더하므로 별도 타이머 없이 자동 갱신.
+const PENDING_STALE_THRESHOLD_MS = 10 * 60 * 1000;
+const _MIN  = 60_000;
+const _HOUR = 60 * _MIN;
+const _DAY  = 24 * _HOUR;
+
+export function formatPendingAge(createdAtIso, now = Date.now()) {
+  const elapsed = Math.max(0, now - new Date(createdAtIso).getTime());
+  if (elapsed < 30_000) return "방금";
+  if (elapsed < _HOUR)  return `${Math.floor(elapsed / _MIN)}분 전`;
+  if (elapsed < _DAY)   return `${Math.floor(elapsed / _HOUR)}시간 전`;
+  return `${Math.floor(elapsed / _DAY)}일 전`;
+}
+
+export function isPendingStale(createdAtIso, now = Date.now()) {
+  return (now - new Date(createdAtIso).getTime()) >= PENDING_STALE_THRESHOLD_MS;
+}
+
+export function PendingAgeBadge({ createdAt, now }) {
+  const stale = isPendingStale(createdAt, now);
+  return (
+    <span
+      data-testid="pending-age-badge"
+      data-stale={stale ? "true" : "false"}
+      style={{
+        fontSize:     9,
+        fontWeight:   700,
+        marginLeft:   6,
+        padding:      "1px 5px",
+        borderRadius: 3,
+        color:        stale ? "#f59e0b" : "#64748b",
+        border:       `1px solid ${stale ? "#f59e0b55" : "#1a3a5c"}`,
+        background:   stale ? "#f59e0b15" : "transparent",
+      }}
+    >
+      {stale ? "⚠ " : ""}{formatPendingAge(createdAt, now)}
+    </span>
+  );
+}
+
+
 // RiskManager 사유 표시 — PENDING/HistoryRow에서 공유. 운영자가 결정 전 컨텍스트
 // (예: "max_order_notional 초과", "manual approval required")를 즉시 본다.
 export function ReasonsLine({ reasons }) {
@@ -201,7 +244,10 @@ export function Approvals({ approvals, operatorName = "" }) {
                   {a.limit_price ? ` · ${fmtKRW(a.limit_price)}원` : ""}
                 </span>
               </div>
-              <span style={{ color: "#475569", fontSize: 9 }}>#{a.id}</span>
+              <div style={{ display: "flex", alignItems: "baseline" }}>
+                <span style={{ color: "#475569", fontSize: 9 }}>#{a.id}</span>
+                <PendingAgeBadge createdAt={a.created_at} />
+              </div>
             </div>
 
             <div style={{ fontSize: 10, color: "#475569", marginBottom: 8 }}>
