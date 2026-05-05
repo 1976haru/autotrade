@@ -185,3 +185,75 @@ def test_live_ai_execution_approved_when_both_flags_on():
     )
     assert result.decision == RiskDecision.APPROVED
     assert result.allowed is True
+
+
+# ---------- RiskPolicy.from_settings ----------
+
+def _settings(**overrides):
+    """Stand-in for app.core.config.Settings — only the fields RiskPolicy reads."""
+    from types import SimpleNamespace
+    base = dict(
+        risk_max_order_notional   = 1_000_000,
+        risk_max_daily_loss       = 200_000,
+        risk_max_positions        = 5,
+        risk_max_symbol_exposure  = 1_500_000,
+        enable_live_trading       = False,
+        enable_ai_execution       = False,
+    )
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def test_policy_from_settings_at_defaults_matches_dataclass_defaults():
+    """Unset env vars must preserve current behavior — no silent threshold change."""
+    fs   = RiskPolicy.from_settings(_settings())
+    bare = RiskPolicy()
+    assert fs.max_order_notional   == bare.max_order_notional
+    assert fs.max_daily_loss       == bare.max_daily_loss
+    assert fs.max_positions        == bare.max_positions
+    assert fs.max_symbol_exposure  == bare.max_symbol_exposure
+    assert fs.enable_live_trading  == bare.enable_live_trading
+    assert fs.enable_ai_execution  == bare.enable_ai_execution
+
+
+def test_policy_from_settings_propagates_threshold_overrides():
+    p = RiskPolicy.from_settings(_settings(
+        risk_max_order_notional   = 50_000,
+        risk_max_daily_loss       = 75_000,
+        risk_max_positions        = 2,
+        risk_max_symbol_exposure  = 100_000,
+    ))
+    assert p.max_order_notional   == 50_000
+    assert p.max_daily_loss       == 75_000
+    assert p.max_positions        == 2
+    assert p.max_symbol_exposure  == 100_000
+
+
+def test_policy_from_settings_propagates_safety_flags():
+    """Previously, ENABLE_LIVE_TRADING / ENABLE_AI_EXECUTION env flags were
+    not wired into the runtime RiskPolicy (the dependency built RiskPolicy()
+    with no args, falling back to dataclass defaults False/False). Wiring is
+    asserted here so that regression doesn't recur."""
+    p = RiskPolicy.from_settings(_settings(
+        enable_live_trading = True,
+        enable_ai_execution = True,
+    ))
+    assert p.enable_live_trading is True
+    assert p.enable_ai_execution is True
+
+
+def test_lowered_notional_threshold_rejects_orders_that_default_would_approve():
+    """End-to-end sanity: tunable threshold actually changes evaluation."""
+    risk = RiskManager(RiskPolicy.from_settings(_settings(
+        risk_max_order_notional = 100_000,
+    )))
+    # 75_000 * 10 = 750_000 > 100_000 (configured limit)
+    result = risk.evaluate_order(
+        order=_buy(10),
+        mode=OperationMode.SIMULATION,
+        balance=_balance(),
+        positions=[],
+        latest_price=75_000,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert "order notional exceeds max_order_notional" in result.reasons

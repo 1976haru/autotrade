@@ -20,6 +20,24 @@ class RiskPolicy:
     enable_live_trading: bool = False
     enable_ai_execution: bool = False
 
+    @classmethod
+    def from_settings(cls, settings) -> "RiskPolicy":
+        """Build a policy from app.core.config.Settings.
+
+        Wires the four operator-tunable thresholds (RISK_MAX_*) plus the global
+        safety flags (ENABLE_LIVE_TRADING / ENABLE_AI_EXECUTION) into the
+        runtime policy. Direct instantiation `RiskPolicy(max_order_notional=...)`
+        is preserved for tests that need targeted overrides.
+        """
+        return cls(
+            max_order_notional  = settings.risk_max_order_notional,
+            max_daily_loss      = settings.risk_max_daily_loss,
+            max_positions       = settings.risk_max_positions,
+            max_symbol_exposure = settings.risk_max_symbol_exposure,
+            enable_live_trading = settings.enable_live_trading,
+            enable_ai_execution = settings.enable_ai_execution,
+        )
+
 
 @dataclass
 class RiskCheckResult:
