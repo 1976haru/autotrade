@@ -24,6 +24,67 @@ function Field({ label, children }) {
 }
 
 
+/** Cumulative PnL across trades. trades[0] before any trade = 0; subsequent
+ *  points add each trade's pnl. Renders a dashed 0-baseline so green/red
+ *  zones read instantly even when the curve never crosses zero.
+ */
+export function EquityCurve({ trades, height = 160 }) {
+  if (!trades || trades.length === 0) return null;
+
+  const series = [0];
+  let running = 0;
+  for (const t of trades) {
+    running += t.pnl;
+    series.push(running);
+  }
+
+  const width = 480;
+  const padding = { top: 12, right: 60, bottom: 8, left: 8 };
+  const w = width  - padding.left - padding.right;
+  const h = height - padding.top  - padding.bottom;
+
+  // Always include 0 in the y-range so the baseline is visible.
+  const minPnl = Math.min(0, ...series);
+  const maxPnl = Math.max(0, ...series);
+  const range  = maxPnl - minPnl || 1;
+  const denom  = series.length - 1 || 1;
+
+  const finalPnl  = series[series.length - 1];
+  const lineColor = finalPnl >= 0 ? "#22c55e" : "#ef4444";
+
+  const pointsStr = series.map((pnl, i) => {
+    const x = padding.left + (i / denom) * w;
+    const y = padding.top  + (1 - (pnl - minPnl) / range) * h;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+
+  const zeroY = padding.top + (1 - (0 - minPnl) / range) * h;
+
+  return (
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      style={{ width: "100%", display: "block" }}
+      data-testid="equity-curve"
+      data-final-pnl={finalPnl}
+    >
+      <line
+        x1={padding.left} y1={zeroY} x2={padding.left + w} y2={zeroY}
+        stroke="#1e3a5c" strokeWidth="0.5" strokeDasharray="2,3"
+      />
+      <polyline points={pointsStr} fill="none" stroke={lineColor} strokeWidth="1.5" />
+
+      <text x={width - 4} y={padding.top + 8} textAnchor="end" fontSize="9" fill="#94a3b8">
+        {fmtKRW(maxPnl)}
+      </text>
+      <text x={width - 4} y={padding.top + h + 2} textAnchor="end" fontSize="9" fill="#94a3b8">
+        {fmtKRW(minPnl)}
+      </text>
+      <text x={width - 4} y={zeroY + 3} textAnchor="end" fontSize="9" fill="#475569">0</text>
+    </svg>
+  );
+}
+
+
 export function Backtest() {
   const [form, setForm] = useState(DEFAULT_FORM);
   const { run, loading, error, submit } = useBacktest();
@@ -133,6 +194,15 @@ export function Backtest() {
                 color="#a78bfa"
               />
             </div>
+            {run.trades.length > 0 && (
+              <div style={{ paddingTop: 12, marginTop: 12, borderTop: "1px solid #0c2035" }}>
+                <div style={{ fontSize: 10, color: "#475569", marginBottom: 6,
+                               letterSpacing: "0.12em", textTransform: "uppercase" }}>
+                  누적 손익 곡선
+                </div>
+                <EquityCurve trades={run.trades} />
+              </div>
+            )}
           </Card>
 
           <Card>
