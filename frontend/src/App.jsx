@@ -17,7 +17,7 @@ export default function App() {
   const portfolio = usePortfolio();
   const strategy  = useStrategy();
   const { risk, update: updateRisk } = useRisk();
-  const bot       = useBot(strategy.strategyOn);
+  const bot       = useBot();
   const settings  = useSettings();
 
   const renderTab = () => {

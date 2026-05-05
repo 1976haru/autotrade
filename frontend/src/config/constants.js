@@ -2,7 +2,7 @@
 export const APP_VERSION = "2.1.0";
 export const APP_NAME    = "AI 단타 자동매매";
 
-/** 모의투자용 종목 풀 */
+/** 종목 코드 → 한글명 매핑 (백엔드 응답에는 종목명이 없어 프론트에서 보강) */
 export const MOCK_STOCKS = [
   { code: "005930", name: "삼성전자",   sector: "반도체" },
   { code: "000660", name: "SK하이닉스",sector: "반도체" },
@@ -13,16 +13,6 @@ export const MOCK_STOCKS = [
   { code: "006400", name: "삼성SDI",   sector: "배터리" },
   { code: "028260", name: "삼성물산",  sector: "건설"   },
 ];
-
-/** 기본 포트폴리오 (시뮬레이션) */
-export const DEFAULT_PORTFOLIO = {
-  cash: 5_234_800,
-  positions: [
-    { code: "005930", name: "삼성전자",   qty: 10, avg: 76_000, cur: 78_200 },
-    { code: "000660", name: "SK하이닉스",qty:  5, avg: 182_000,cur: 179_500 },
-    { code: "035420", name: "NAVER",      qty:  3, avg: 194_000,cur: 197_800 },
-  ],
-};
 
 /** 기본 리스크 설정 */
 export const DEFAULT_RISK = {
@@ -56,5 +46,3 @@ export const CLAUDE_MAX_TOK = 1000;
 
 /** 가격 갱신 주기 (ms) */
 export const PRICE_TICK_MS  = 2000;
-/** 봇 매매 주기 (ms) */
-export const BOT_INTERVAL_MS = 3800;

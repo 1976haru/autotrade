@@ -21,7 +21,7 @@ export function BotControl({ bot }) {
             onClick={running ? stop : start}
             full
           >
-            {running ? "⏹  봇 정지" : "▶  봇 시작 (시뮬레이션)"}
+            {running ? "⏹  봇 정지" : "▶  봇 시작 (전략 엔진 대기)"}
           </Btn>
           <Btn color="#334155" onClick={reset} disabled={running} small>
             초기화
@@ -81,7 +81,7 @@ export function BotControl({ bot }) {
         <div ref={logRef} style={{ maxHeight: 360, overflowY: "auto" }}>
           {trades.length === 0 ? (
             <div style={{ color: "#1e3a5c", textAlign: "center", padding: 24, fontSize: 12 }}>
-              봇을 시작하면 체결 내역이 실시간으로 표시됩니다
+              전략 엔진 미연동 — 백엔드 체결 스트림이 연결되면 표시됩니다
             </div>
           ) : trades.map((t) => (
             <div

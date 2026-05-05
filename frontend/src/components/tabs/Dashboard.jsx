@@ -102,7 +102,7 @@ export function Dashboard({ portfolio, bot, botControls }) {
         <SectionLabel>RECENT TRADES {running && <span style={{ color: "#22c55e" }}>● LIVE</span>}</SectionLabel>
         {trades.length === 0 ? (
           <div style={{ color: "#1e3a5c", textAlign: "center", padding: 16, fontSize: 12 }}>
-            봇 시작 후 체결 내역 표시
+            전략 엔진 미연동 (백엔드 체결 스트림 대기)
           </div>
         ) : trades.slice(0, 8).map((t) => (
           <div key={t.id} style={{
