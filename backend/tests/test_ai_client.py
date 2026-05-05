@@ -22,6 +22,19 @@ def test_explicit_key_overrides_settings():
     assert c.model == "claude-haiku-4-5"
 
 
+def test_retry_and_timeout_default_to_settings():
+    """Settings의 ANTHROPIC_MAX_RETRIES / ANTHROPIC_TIMEOUT_SECONDS 기본값을 따른다."""
+    c = AiClient(api_key="x")
+    assert c.max_retries     == 2
+    assert c.timeout_seconds == 30.0
+
+
+def test_explicit_retry_and_timeout_override_settings():
+    c = AiClient(api_key="x", max_retries=7, timeout_seconds=12.5)
+    assert c.max_retries     == 7
+    assert c.timeout_seconds == 12.5
+
+
 def test_analyze_returns_response_from_sdk():
     pytest.importorskip("anthropic")
 
@@ -37,7 +50,7 @@ def test_analyze_returns_response_from_sdk():
         c = AiClient(api_key="test-key", model="claude-sonnet-4-6")
         result = run(c.analyze(system="sys", prompt="p", max_tokens=512))
 
-    MockAnthropic.assert_called_once_with(api_key="test-key")
+    MockAnthropic.assert_called_once_with(api_key="test-key", max_retries=2, timeout=30.0)
     create_kwargs = fake_async_client.messages.create.await_args.kwargs
     assert create_kwargs["model"] == "claude-sonnet-4-6"
     assert create_kwargs["system"] == "sys"
@@ -48,3 +61,22 @@ def test_analyze_returns_response_from_sdk():
     assert result.model == "claude-sonnet-4-6"
     assert result.input_tokens == 42
     assert result.output_tokens == 17
+
+
+def test_analyze_passes_explicit_retry_and_timeout_to_sdk():
+    """SDK에 max_retries/timeout이 전달되면 SDK 내장 exponential backoff가 동작한다."""
+    pytest.importorskip("anthropic")
+
+    fake_msg = MagicMock()
+    fake_msg.content = [MagicMock(text="ok")]
+    fake_msg.model = "claude-sonnet-4-6"
+    fake_msg.usage = MagicMock(input_tokens=1, output_tokens=1)
+
+    fake_async_client = MagicMock()
+    fake_async_client.messages.create = AsyncMock(return_value=fake_msg)
+
+    with patch("anthropic.AsyncAnthropic", return_value=fake_async_client) as MockAnthropic:
+        c = AiClient(api_key="k", max_retries=5, timeout_seconds=7.5)
+        run(c.analyze(system="s", prompt="p"))
+
+    MockAnthropic.assert_called_once_with(api_key="k", max_retries=5, timeout=7.5)

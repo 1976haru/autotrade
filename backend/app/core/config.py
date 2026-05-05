@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-6"
+    anthropic_max_retries:    int   = 2
+    anthropic_timeout_seconds: float = 30.0
 
     @property
     def cors_origin_list(self) -> list[str]:

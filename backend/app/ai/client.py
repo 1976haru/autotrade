@@ -22,10 +22,20 @@ class AiClient:
     AiClient 객체 자체는 생성할 수 있어야 테스트와 의존성 그래프가 깨지지 않는다.
     """
 
-    def __init__(self, api_key: str | None = None, model: str | None = None):
+    def __init__(
+        self,
+        api_key:         str   | None = None,
+        model:           str   | None = None,
+        max_retries:     int   | None = None,
+        timeout_seconds: float | None = None,
+    ):
         settings = get_settings()
         self.api_key = api_key if api_key is not None else settings.anthropic_api_key
-        self.model = model or settings.anthropic_model
+        self.model   = model or settings.anthropic_model
+        # SDK 자체에 exponential backoff retry가 내장되어 있다. 429 / 5xx /
+        # connection error 시 max_retries회까지 자동 재시도한다.
+        self.max_retries     = max_retries     if max_retries     is not None else settings.anthropic_max_retries
+        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else settings.anthropic_timeout_seconds
 
     async def analyze(self, *, system: str, prompt: str, max_tokens: int = 1024) -> AiResponse:
         if not self.api_key:
@@ -33,7 +43,11 @@ class AiClient:
 
         from anthropic import AsyncAnthropic
 
-        client = AsyncAnthropic(api_key=self.api_key)
+        client = AsyncAnthropic(
+            api_key=self.api_key,
+            max_retries=self.max_retries,
+            timeout=self.timeout_seconds,
+        )
         msg = await client.messages.create(
             model=self.model,
             max_tokens=max_tokens,
