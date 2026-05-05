@@ -36,3 +36,26 @@ class OrderAuditLog(Base):
     filled_quantity: Mapped[int]            = mapped_column(Integer, default=0)
     avg_fill_price:  Mapped[int | None]     = mapped_column(Integer, nullable=True)
     message:         Mapped[str]            = mapped_column(String(255), default="")
+
+
+class BacktestRun(Base):
+    """단일 백테스트 실행에 대한 입력, 결과 지표, 체결 내역을 한 행에 저장."""
+
+    __tablename__ = "backtest_run"
+
+    id:             Mapped[int]      = mapped_column(primary_key=True)
+    created_at:     Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+
+    strategy:       Mapped[str]      = mapped_column(String(64), index=True)
+    params:         Mapped[dict]     = mapped_column(JSON, default=dict)
+    initial_cash:   Mapped[int]      = mapped_column(Integer)
+    quantity:       Mapped[int]      = mapped_column(Integer)
+    bars_processed: Mapped[int]      = mapped_column(Integer)
+
+    final_cash:     Mapped[int]      = mapped_column(Integer)
+    total_pnl:      Mapped[int]      = mapped_column(Integer)
+    win_count:      Mapped[int]      = mapped_column(Integer, default=0)
+    loss_count:     Mapped[int]      = mapped_column(Integer, default=0)
+    max_drawdown:   Mapped[int]      = mapped_column(Integer, default=0)
+
+    trades_json:    Mapped[list]     = mapped_column(JSON, default=list)

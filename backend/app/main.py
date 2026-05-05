@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes_ai import router as ai_router
+from app.api.routes_backtest import router as backtest_router
 from app.api.routes_broker import router as broker_router
 from app.api.routes_risk import router as risk_router
 from app.api.routes_status import router as status_router
@@ -33,6 +34,7 @@ app.include_router(status_router, prefix="/api")
 app.include_router(risk_router, prefix="/api")
 app.include_router(broker_router, prefix="/api")
 app.include_router(ai_router, prefix="/api")
+app.include_router(backtest_router, prefix="/api")
 
 
 @app.get("/")
