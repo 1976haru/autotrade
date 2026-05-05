@@ -11,14 +11,14 @@ from app.api.routes_market import router as market_router
 from app.api.routes_risk import router as risk_router
 from app.api.routes_status import router as status_router
 from app.core.config import get_settings
-from app.db.session import init_db
+from app.db.session import apply_migrations
 
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    init_db()
+    apply_migrations()
     yield
 
 

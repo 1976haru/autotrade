@@ -34,9 +34,17 @@ def get_db() -> Iterator[Session]:
         db.close()
 
 
-def init_db() -> None:
-    """Create all tables defined on Base.metadata. Safe to call repeatedly."""
-    from app.db import models  # noqa: F401  ensure mappers registered
-    from app.db.base import Base
+def apply_migrations() -> None:
+    """Run `alembic upgrade head` against the configured database.
 
-    Base.metadata.create_all(bind=engine)
+    Schema evolution lives in alembic/versions/ — call this on startup so
+    the production DB picks up new columns/tables without manual steps.
+    """
+    from pathlib import Path
+
+    from alembic import command
+    from alembic.config import Config
+
+    alembic_ini = Path(__file__).resolve().parents[2] / "alembic.ini"
+    cfg = Config(str(alembic_ini))
+    command.upgrade(cfg, "head")
