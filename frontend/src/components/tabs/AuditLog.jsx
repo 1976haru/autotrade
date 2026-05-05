@@ -139,6 +139,29 @@ const KIND_FILTERS = [
   { id: "stop",  label: "긴급정지", color: "#fbbf24" },
 ];
 
+const KIND_FILTER_STORAGE_KEY = "autotrade.eventKindFilter";
+const _VALID_KINDS = new Set(KIND_FILTERS.map((f) => f.id));
+
+// 사고 분석 도중 새로고침/탭 전환해도 운영자의 필터 선택이 유지되도록
+// localStorage에 보관. 저장된 값이 KIND_FILTERS에 없는 종류면 (예전 빌드의
+// 잔재나 외부 변조) 안전한 기본값 "all"로 폴백.
+function _readKindFilter() {
+  try {
+    const v = localStorage.getItem(KIND_FILTER_STORAGE_KEY);
+    return _VALID_KINDS.has(v) ? v : "all";
+  } catch {
+    return "all";
+  }
+}
+
+function _writeKindFilter(value) {
+  try {
+    localStorage.setItem(KIND_FILTER_STORAGE_KEY, value);
+  } catch {
+    // 영속화 실패는 사용자 경험에 직접 영향 없음 — 이 세션 한정.
+  }
+}
+
 
 export function KindFilterBar({ active, onChange }) {
   return (
@@ -172,7 +195,8 @@ export function KindFilterBar({ active, onChange }) {
 export function EventTimelineView() {
   const orders = useOrderAudits();
   const stops  = useEmergencyStopAudits();
-  const [kind, setKind] = useState("all");
+  const [kind, _setKind] = useState(_readKindFilter);
+  const setKind = (value) => { _setKind(value); _writeKindFilter(value); };
 
   // 필터를 mergeEvents *전에* 적용 — top-50 cap 안에서 한쪽 종류가 밀려나
   // 사라지는 일을 방지한다 ("긴급정지만" 선택 시 가장 최근 50건의 stop이

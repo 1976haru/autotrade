@@ -271,3 +271,45 @@ describe("<EventTimelineView> kind filter", () => {
     expect(container.textContent).toContain("(3)");
   });
 });
+
+
+describe("<EventTimelineView> kind filter persistence", () => {
+  const STORAGE_KEY = "autotrade.eventKindFilter";
+
+  beforeEach(() => {
+    localStorage.clear();
+    _resetHooks(
+      { items: [
+          _ORDER({ id: 10, created_at: "2026-05-05T12:00:00+00:00" }),
+          _ORDER({ id: 11, created_at: "2026-05-05T12:10:00+00:00" }),
+      ]},
+      { items: [_STOP({ id: 7, created_at: "2026-05-05T12:05:00+00:00" })] },
+    );
+  });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  it("defaults to 전체 when localStorage is empty", () => {
+    const { getByRole } = render(<EventTimelineView />);
+    expect(getByRole("radio", { name: "전체" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("hydrates the chip from localStorage on mount", () => {
+    localStorage.setItem(STORAGE_KEY, "stop");
+    const { container, getByRole } = render(<EventTimelineView />);
+    expect(getByRole("radio", { name: "긴급정지" }).getAttribute("aria-checked")).toBe("true");
+    // Filter is actually applied to the rendered list, not just the chip
+    expect(container.textContent).toContain("이벤트 타임라인 (1)");
+  });
+
+  it("persists the new selection on click", () => {
+    const { getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "주문" }));
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("order");
+  });
+
+  it("falls back to 전체 when the stored value is unknown (forward-compat)", () => {
+    localStorage.setItem(STORAGE_KEY, "garbage-from-future-build");
+    const { getByRole } = render(<EventTimelineView />);
+    expect(getByRole("radio", { name: "전체" }).getAttribute("aria-checked")).toBe("true");
+  });
+});
