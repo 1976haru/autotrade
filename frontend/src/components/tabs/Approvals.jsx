@@ -1,4 +1,6 @@
-import { Btn, Card, SectionLabel } from "../common";
+import { useState } from "react";
+
+import { Btn, Card, Inp, SectionLabel } from "../common";
 import { fmtKRW } from "../../utils/format";
 import { useApprovals } from "../../store/useApprovals";
 
@@ -7,6 +9,14 @@ const STATUS_COLOR = {
   APPROVED:  "#22c55e",
   REJECTED:  "#ef4444",
   CANCELLED: "#94a3b8",
+};
+
+
+// 결재 액션별 라벨/색상. 모달과 dispatch 분기에서 함께 쓴다.
+const ACTION_META = {
+  approve: { label: "주문 승인", confirmLabel: "✓ 승인", color: "#22c55e" },
+  reject:  { label: "주문 거부", confirmLabel: "✗ 거부", color: "#ef4444" },
+  cancel:  { label: "주문 취소", confirmLabel: "⊘ 취소", color: "#94a3b8" },
 };
 
 
@@ -46,9 +56,91 @@ export function HistoryRow({ a }) {
 }
 
 
-export function Approvals() {
+export function ApprovalDecisionModal({
+  action, approval, busy, defaultDecidedBy = "", onConfirm, onCancel,
+}) {
+  const [decidedBy, setDecidedBy] = useState(defaultDecidedBy);
+  const [note,      setNote]      = useState("");
+
+  const meta = ACTION_META[action];
+
+  return (
+    <div
+      role="dialog"
+      aria-label={meta.label}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 1000,
+      }}
+    >
+      <Card accentColor={`${meta.color}55`} style={{ width: 380, maxWidth: "90vw" }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: meta.color, marginBottom: 8 }}>
+          {meta.label}
+        </div>
+
+        {/* 주문 요약 — 결재 전 마지막 확인용 */}
+        <div style={{
+          fontSize: 11, color: "#94a3b8", padding: "8px 10px", marginBottom: 10,
+          background: "#010a14", border: "1px solid #0c2035", borderRadius: 4,
+        }}>
+          <div>
+            <span style={{ color: "#7dd3fc", fontWeight: 700 }}>{approval.symbol}</span>
+            <span style={{
+              color: approval.side === "BUY" ? "#22c55e" : "#ef4444",
+              fontSize: 10, marginLeft: 8, fontWeight: 700,
+            }}>
+              {approval.side}
+            </span>
+            <span style={{ marginLeft: 8 }}>
+              {approval.quantity}주 · {approval.order_type}
+              {approval.limit_price ? ` · ${fmtKRW(approval.limit_price)}원` : ""}
+            </span>
+          </div>
+          <div style={{ fontSize: 9, color: "#475569", marginTop: 2 }}>
+            #{approval.id} · {approval.mode}
+          </div>
+        </div>
+
+        <div style={{ fontSize: 10, color: "#475569", marginBottom: 10, lineHeight: 1.5 }}>
+          감사 추적을 위해 운영자명과 사유를 남겨주세요. 둘 다 선택 사항이지만,
+          기록된 값은 영구 저장되어 사고 분석 시 사용됩니다.
+        </div>
+
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>운영자명 (decided_by)</div>
+          <Inp value={decidedBy} onChange={setDecidedBy} placeholder="예: ops1" />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>사유 (note)</div>
+          <Inp value={note} onChange={setNote} placeholder="예: 신호 노후, 잔고 부족" />
+        </div>
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <Btn color="#1a3a5c" onClick={onCancel} disabled={busy} small>닫기</Btn>
+          <Btn
+            color={meta.color}
+            onClick={() => onConfirm({ decided_by: decidedBy.trim(), note: note.trim() })}
+            disabled={busy}
+            small
+          >
+            {busy ? "처리 중…" : meta.confirmLabel}
+          </Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+
+export function Approvals({ operatorName = "" }) {
   const { pending, history, loading, error, busy,
           approve, reject, cancel } = useApprovals();
+  // 결재 모달 대상: { action, approval } | null. 같은 모달 컴포넌트를 세 액션에서
+  // 공유하고, 액션은 ACTION_META에서 분기한다.
+  const [decisionTarget, setDecisionTarget] = useState(null);
+
+  const dispatchByAction = { approve, reject, cancel };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -99,13 +191,13 @@ export function Approvals() {
             </div>
 
             <div style={{ display: "flex", gap: 6 }}>
-              <Btn color="#22c55e" onClick={() => approve(a.id)} disabled={busy} small>
+              <Btn color="#22c55e" onClick={() => setDecisionTarget({ action: "approve", approval: a })} disabled={busy} small>
                 ✓ 승인
               </Btn>
-              <Btn color="#ef4444" onClick={() => reject(a.id)} disabled={busy} small>
+              <Btn color="#ef4444" onClick={() => setDecisionTarget({ action: "reject",  approval: a })} disabled={busy} small>
                 ✗ 거부
               </Btn>
-              <Btn color="#94a3b8" onClick={() => cancel(a.id)} disabled={busy} small>
+              <Btn color="#94a3b8" onClick={() => setDecisionTarget({ action: "cancel",  approval: a })} disabled={busy} small>
                 ⊘ 취소
               </Btn>
             </div>
@@ -129,6 +221,20 @@ export function Approvals() {
         거부(REJECTED)는 "이 주문은 안 된다"는 능동적 판단, 취소(CANCELLED)는 "신호가
         오래됐거나 더 이상 의미 없다"는 중립적 폐기입니다 — 처리 내역에서 구분됩니다.
       </div>
+
+      {decisionTarget && (
+        <ApprovalDecisionModal
+          action={decisionTarget.action}
+          approval={decisionTarget.approval}
+          busy={busy}
+          defaultDecidedBy={operatorName}
+          onCancel={() => setDecisionTarget(null)}
+          onConfirm={async (decision) => {
+            await dispatchByAction[decisionTarget.action](decisionTarget.approval.id, decision);
+            setDecisionTarget(null);
+          }}
+        />
+      )}
     </div>
   );
 }

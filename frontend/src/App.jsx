@@ -33,7 +33,7 @@ export default function App() {
       case "dash":   return <Dashboard portfolio={portfolio} bot={bot} botControls={{ start: bot.start, stop: bot.stop }} />;
       case "strat":  return <StrategyRisk strategyOn={strategy.strategyOn} toggle={strategy.toggle} strategyParams={strategy.strategyParams} updateParam={strategy.updateParam} risk={risk} updateRisk={updateRisk} riskPolicy={riskPolicy} operatorName={settings.operatorName} />;
       case "bot":      return <BotControl bot={bot} />;
-      case "approve":  return <Approvals />;
+      case "approve":  return <Approvals operatorName={settings.operatorName} />;
       case "chart":    return <MarketChart />;
       case "backtest": return <Backtest />;
       case "audit":    return <AuditLog />;

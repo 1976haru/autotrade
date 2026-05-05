@@ -50,10 +50,20 @@ export function useApprovals() {
     return () => clearInterval(t);
   }, [refresh, refreshHistory]);
 
-  const approve = useCallback(async (id, note) => {
+  // 결재 모달이 보내는 { decided_by?, note? } 중 빈 값은 제거해 백엔드 audit
+  // 행에 ""가 아니라 null이 저장되도록 한다 — useRiskPolicy.toggleEmergency와
+  // 동일한 정규화 규칙.
+  const _normalize = (decision) => {
+    const payload = {};
+    if (decision?.decided_by) payload.decided_by = decision.decided_by;
+    if (decision?.note)       payload.note       = decision.note;
+    return Object.keys(payload).length ? payload : null;
+  };
+
+  const approve = useCallback(async (id, decision) => {
     setBusy(true);
     try {
-      await backendApi.approveApproval(id, note ? { note } : null);
+      await backendApi.approveApproval(id, _normalize(decision));
       await refresh();
       await refreshHistory();
     } catch (e) {
@@ -63,10 +73,10 @@ export function useApprovals() {
     }
   }, [refresh, refreshHistory]);
 
-  const reject = useCallback(async (id, note) => {
+  const reject = useCallback(async (id, decision) => {
     setBusy(true);
     try {
-      await backendApi.rejectApproval(id, note ? { note } : null);
+      await backendApi.rejectApproval(id, _normalize(decision));
       await refresh();
       await refreshHistory();
     } catch (e) {
@@ -76,10 +86,10 @@ export function useApprovals() {
     }
   }, [refresh, refreshHistory]);
 
-  const cancel = useCallback(async (id, note) => {
+  const cancel = useCallback(async (id, decision) => {
     setBusy(true);
     try {
-      await backendApi.cancelApproval(id, note ? { note } : null);
+      await backendApi.cancelApproval(id, _normalize(decision));
       await refresh();
       await refreshHistory();
     } catch (e) {
