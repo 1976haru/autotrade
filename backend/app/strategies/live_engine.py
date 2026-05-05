@@ -2,7 +2,7 @@ from dataclasses import dataclass, replace
 
 from sqlalchemy.orm import Session
 
-from app.backtest.strategy import Strategy
+from app.strategies.base import Strategy
 from app.backtest.types import Bar, Signal
 from app.brokers.base import BrokerAdapter, OrderRequest, OrderSide, OrderType
 from app.core.modes import OperationMode

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_market_data
 from app.backtest.engine import BacktestEngine
-from app.backtest.strategies import build_strategy
+from app.strategies.concrete import build_strategy
 from app.backtest.types import Bar
 from app.db.models import BacktestRun
 from app.db.session import get_db

@@ -1,5 +1,5 @@
-from app.backtest.strategy import Strategy
 from app.backtest.types import Bar, Signal
+from app.strategies.base import Strategy
 
 
 class SmaCrossoverStrategy(Strategy):

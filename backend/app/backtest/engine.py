@@ -1,4 +1,4 @@
-from app.backtest.strategy import Strategy
+from app.strategies.base import Strategy
 from app.backtest.types import Bar, BacktestResult, Signal, Trade
 
 

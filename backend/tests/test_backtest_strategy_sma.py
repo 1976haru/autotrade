@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.backtest.strategies.sma_crossover import SmaCrossoverStrategy
+from app.strategies.concrete.sma_crossover import SmaCrossoverStrategy
 from app.backtest.types import Bar, Signal
 
 

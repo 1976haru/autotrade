@@ -1,5 +1,5 @@
-from app.backtest.strategies.sma_crossover import SmaCrossoverStrategy
-from app.backtest.strategy import Strategy
+from app.strategies.base import Strategy
+from app.strategies.concrete.sma_crossover import SmaCrossoverStrategy
 
 
 STRATEGY_REGISTRY: dict[str, type[Strategy]] = {

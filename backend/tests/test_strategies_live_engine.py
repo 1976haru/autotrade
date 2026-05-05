@@ -6,8 +6,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.backtest.strategy import Strategy
-from app.backtest.strategies.sma_crossover import SmaCrossoverStrategy
+from app.strategies.base import Strategy
+from app.strategies.concrete.sma_crossover import SmaCrossoverStrategy
 from app.backtest.types import Bar, Signal
 from app.brokers.base import OrderSide, OrderType
 from app.brokers.mock_broker import MockBrokerAdapter
