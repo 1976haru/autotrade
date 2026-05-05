@@ -3,6 +3,7 @@ const TABS = [
   { id: "strat",    icon: "🎯", label: "전략·리스크" },
   { id: "bot",      icon: "🤖", label: "자동봇" },
   { id: "approve",  icon: "🔐", label: "승인" },
+  { id: "chart",    icon: "📈", label: "차트" },
   { id: "backtest", icon: "🧪", label: "백테스트" },
   { id: "signal",   icon: "🧠", label: "AI시그널" },
   { id: "config",   icon: "⚙",  label: "설정" },

@@ -5,6 +5,7 @@ import { Dashboard }    from "./components/tabs/Dashboard";
 import { StrategyRisk } from "./components/tabs/StrategyRisk";
 import { BotControl }   from "./components/tabs/BotControl";
 import { Approvals }    from "./components/tabs/Approvals";
+import { MarketChart }  from "./components/tabs/MarketChart";
 import { Backtest }     from "./components/tabs/Backtest";
 import { AISignal }     from "./components/tabs/AISignal";
 import { Settings }     from "./components/tabs/Settings";
@@ -28,6 +29,7 @@ export default function App() {
       case "strat":  return <StrategyRisk strategyOn={strategy.strategyOn} toggle={strategy.toggle} strategyParams={strategy.strategyParams} updateParam={strategy.updateParam} risk={risk} updateRisk={updateRisk} />;
       case "bot":      return <BotControl bot={bot} />;
       case "approve":  return <Approvals />;
+      case "chart":    return <MarketChart />;
       case "backtest": return <Backtest />;
       case "signal":   return <AISignal activeStratIds={strategy.activeIds} />;
       case "config":   return <Settings settings={settings} />;

@@ -41,4 +41,8 @@ export const backendApi = {
     body: JSON.stringify(req),
   }),
   getBacktestRun: (id) => backendFetch(`/api/backtest/runs/${id}`),
+  marketBars: (params) => {
+    const qs = new URLSearchParams(params).toString();
+    return backendFetch(`/api/market/bars?${qs}`);
+  },
 };
