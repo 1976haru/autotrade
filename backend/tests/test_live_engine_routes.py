@@ -169,6 +169,8 @@ def test_tick_with_submit_true_in_manual_mode_enqueues(client, monkeypatch):
     from app.core.config import get_settings
     from app.core.modes import OperationMode
     monkeypatch.setattr(get_settings(), "default_mode", OperationMode.LIVE_MANUAL_APPROVAL)
+    # 061: queue gate requires the global flag explicitly on
+    client.test_risk_manager.policy.enable_live_trading = True
 
     client.post("/api/strategies/configure", json={
         "strategy": "sma_crossover",

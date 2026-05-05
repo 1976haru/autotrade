@@ -71,10 +71,14 @@ def test_oversized_order_is_rejected_with_audit_only():
 def test_manual_approval_mode_enqueues_without_executing():
     Session = _session_factory()
     with Session() as db:
+        # 061 queue gate: needs enable_live_trading=True for the order to
+        # actually queue rather than getting REJECTED at the flag.
         result = run(route_order(
             order=_order(1), requested_by_ai=False,
             mode=OperationMode.LIVE_MANUAL_APPROVAL,
-            broker=MockBrokerAdapter(), risk=RiskManager(RiskPolicy()), db=db,
+            broker=MockBrokerAdapter(),
+            risk=RiskManager(RiskPolicy(enable_live_trading=True)),
+            db=db,
         ))
         assert result.decision == RiskDecision.NEEDS_APPROVAL
         assert result.approval is not None
@@ -128,7 +132,9 @@ def test_ai_assist_mode_enqueues_without_executing():
         result = run(route_order(
             order=_order(1), requested_by_ai=False,
             mode=OperationMode.LIVE_AI_ASSIST,
-            broker=MockBrokerAdapter(), risk=RiskManager(RiskPolicy()), db=db,
+            broker=MockBrokerAdapter(),
+            risk=RiskManager(RiskPolicy(enable_live_trading=True)),
+            db=db,
         ))
         assert result.decision == RiskDecision.NEEDS_APPROVAL
         assert result.approval is not None

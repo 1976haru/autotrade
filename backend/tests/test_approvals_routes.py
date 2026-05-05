@@ -5,8 +5,14 @@ from app.core.modes import OperationMode
 from app.db.models import OrderAuditLog, PendingApproval
 
 
-def _enable_manual_approval(monkeypatch):
+def _enable_manual_approval(monkeypatch, client=None):
+    """Sets DEFAULT_MODE=LIVE_MANUAL_APPROVAL and (since 061) flips
+    enable_live_trading on the risk manager — the queue gate added by 061
+    rejects submissions when the global flag is off, so any test that
+    expects a PENDING row needs the operator to have opted in."""
     monkeypatch.setattr(get_settings(), "default_mode", OperationMode.LIVE_MANUAL_APPROVAL)
+    if client is not None:
+        client.test_risk_manager.policy.enable_live_trading = True
 
 
 def _submit_buy(client, symbol="005930", qty=1):
@@ -17,7 +23,7 @@ def _submit_buy(client, symbol="005930", qty=1):
 
 
 def test_order_in_manual_mode_returns_202_with_pending(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     res = _submit_buy(client)
     assert res.status_code == 202
     body = res.json()
@@ -27,7 +33,7 @@ def test_order_in_manual_mode_returns_202_with_pending(client, monkeypatch):
 
 
 def test_list_pending_returns_submitted_approvals(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     res = client.get("/api/approvals")
     assert res.status_code == 200
     assert res.json() == []
@@ -45,7 +51,7 @@ def test_get_unknown_approval_returns_404(client):
 
 
 def test_approve_executes_order_and_marks_approved(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     submit = _submit_buy(client, qty=1).json()
     approval_id = submit["approval_id"]
 
@@ -69,7 +75,7 @@ def test_approve_executes_order_and_marks_approved(client, monkeypatch):
 
 
 def test_reject_does_not_execute(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     submit = _submit_buy(client).json()
     approval_id = submit["approval_id"]
 
@@ -87,7 +93,7 @@ def test_reject_does_not_execute(client, monkeypatch):
 
 
 def test_double_approve_returns_409(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     submit = _submit_buy(client).json()
     approval_id = submit["approval_id"]
     client.post(f"/api/approvals/{approval_id}/approve")
@@ -96,7 +102,7 @@ def test_double_approve_returns_409(client, monkeypatch):
 
 
 def test_reject_after_approve_returns_409(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     submit = _submit_buy(client).json()
     approval_id = submit["approval_id"]
     client.post(f"/api/approvals/{approval_id}/approve")
@@ -105,7 +111,7 @@ def test_reject_after_approve_returns_409(client, monkeypatch):
 
 
 def test_approve_without_body_uses_defaults(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     submit = _submit_buy(client).json()
     res = client.post(f"/api/approvals/{submit['approval_id']}/approve")
     assert res.status_code == 200
@@ -126,7 +132,7 @@ def test_simulation_mode_does_not_create_pending(client):
 # ---------- cancel ----------
 
 def test_cancel_marks_approval_cancelled_and_keeps_audit_unexecuted(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     submit = _submit_buy(client).json()
     approval_id = submit["approval_id"]
 
@@ -146,7 +152,7 @@ def test_cancel_marks_approval_cancelled_and_keeps_audit_unexecuted(client, monk
 
 
 def test_cancelled_approval_disappears_from_pending_list(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     submit = _submit_buy(client).json()
     client.post(f"/api/approvals/{submit['approval_id']}/cancel")
     assert client.get("/api/approvals").json() == []
@@ -158,7 +164,7 @@ def test_cancel_unknown_id_returns_404(client):
 
 
 def test_cancel_after_approve_returns_409(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     submit = _submit_buy(client).json()
     approval_id = submit["approval_id"]
     client.post(f"/api/approvals/{approval_id}/approve")
@@ -168,7 +174,7 @@ def test_cancel_after_approve_returns_409(client, monkeypatch):
 
 def test_approve_after_cancel_returns_409(client, monkeypatch):
     """Cancelled approvals are settled — cannot be reopened by approve."""
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     submit = _submit_buy(client).json()
     approval_id = submit["approval_id"]
     client.post(f"/api/approvals/{approval_id}/cancel")
@@ -177,7 +183,7 @@ def test_approve_after_cancel_returns_409(client, monkeypatch):
 
 
 def test_cancel_without_body_uses_defaults(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     submit = _submit_buy(client).json()
     res = client.post(f"/api/approvals/{submit['approval_id']}/cancel")
     assert res.status_code == 200
@@ -190,7 +196,7 @@ def test_cancel_without_body_uses_defaults(client, monkeypatch):
 # ---------- history ----------
 
 def test_history_excludes_pending_and_returns_only_decided(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     a1 = _submit_buy(client, "005930").json()
     a2 = _submit_buy(client, "000660").json()
     _submit_buy(client, "035720")  # third stays PENDING — must not appear
@@ -205,7 +211,7 @@ def test_history_excludes_pending_and_returns_only_decided(client, monkeypatch):
 
 
 def test_history_orders_most_recent_first(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     a1 = _submit_buy(client, "005930").json()
     a2 = _submit_buy(client, "000660").json()
 
@@ -219,7 +225,7 @@ def test_history_orders_most_recent_first(client, monkeypatch):
 
 
 def test_history_status_filter_narrows_results(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     a1 = _submit_buy(client).json()
     a2 = _submit_buy(client).json()
     a3 = _submit_buy(client).json()
@@ -237,7 +243,7 @@ def test_history_status_filter_narrows_results(client, monkeypatch):
 
 
 def test_history_empty_when_nothing_decided(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     _submit_buy(client)  # PENDING but never decided
     assert client.get("/api/approvals/history").json() == []
 
@@ -248,7 +254,7 @@ def test_history_rejects_invalid_status_filter(client):
 
 
 def test_history_limit_caps_results(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     ids = []
     for _ in range(5):
         ids.append(_submit_buy(client).json()["approval_id"])
@@ -264,7 +270,7 @@ def test_history_limit_caps_results(client, monkeypatch):
 def test_pending_list_includes_reasons_from_audit_join(client, monkeypatch):
     """결재 행에 RiskManager가 NEEDS_APPROVAL로 분류한 사유가 함께 노출돼야
     운영자가 모달을 열기 전부터 컨텍스트를 본다."""
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     _submit_buy(client)
     pending = client.get("/api/approvals").json()
     assert len(pending) == 1
@@ -273,7 +279,7 @@ def test_pending_list_includes_reasons_from_audit_join(client, monkeypatch):
 
 
 def test_get_single_approval_includes_reasons(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     submit = _submit_buy(client).json()
     res = client.get(f"/api/approvals/{submit['approval_id']}").json()
     assert isinstance(res["reasons"], list)
@@ -281,7 +287,7 @@ def test_get_single_approval_includes_reasons(client, monkeypatch):
 
 
 def test_history_includes_reasons(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     submit = _submit_buy(client).json()
     client.post(f"/api/approvals/{submit['approval_id']}/cancel")
     history = client.get("/api/approvals/history").json()
@@ -290,7 +296,7 @@ def test_history_includes_reasons(client, monkeypatch):
 
 
 def test_approve_response_includes_reasons(client, monkeypatch):
-    _enable_manual_approval(monkeypatch)
+    _enable_manual_approval(monkeypatch, client)
     submit = _submit_buy(client).json()
     res = client.post(f"/api/approvals/{submit['approval_id']}/approve").json()
     assert isinstance(res["approval"]["reasons"], list)

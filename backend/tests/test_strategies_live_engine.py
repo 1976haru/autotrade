@@ -197,9 +197,10 @@ def test_submit_tick_shadow_mode_rejection_rolls_back_position_state():
 def test_submit_tick_manual_approval_mode_enqueues():
     Session = _make_session()
     with Session() as db:
+        # 061: queue gate requires enable_live_trading=True
         eng = LiveStrategyEngine(
             _FixedSignals([Signal.BUY]),
-            broker=MockBrokerAdapter(), risk=RiskManager(RiskPolicy()),
+            broker=MockBrokerAdapter(), risk=RiskManager(RiskPolicy(enable_live_trading=True)),
             db=db, mode=OperationMode.LIVE_MANUAL_APPROVAL,
         )
         result = run(eng.submit_tick(_bar(0, 75_000)))

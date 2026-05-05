@@ -200,10 +200,13 @@ def test_live_ai_execution_approved_when_both_flags_on():
 # decide whether enable_live_trading should additionally short-circuit the
 # queue.
 
-def test_manual_approval_queues_even_when_live_trading_disabled():
-    """LIVE_MANUAL_APPROVAL with the global ENABLE_LIVE_TRADING off still
-    enqueues — the early-return fires before the flag check. Real-money risk
-    is bounded today by get_broker → MockBroker for this mode."""
+def test_manual_approval_rejects_when_live_trading_disabled():
+    """061 hardening: the global ENABLE_LIVE_TRADING flag now blocks the
+    NEEDS_APPROVAL queue itself, not just downstream execution. The queue
+    no longer fills with orders the operator hasn't authorized at the
+    global flag level. Reasons list contains only the flag string —
+    incidental approval-mode wording is dropped because it no longer
+    applies."""
     risk = RiskManager(RiskPolicy(enable_live_trading=False))
     result = risk.evaluate_order(
         order=_buy(1),
@@ -212,12 +215,12 @@ def test_manual_approval_queues_even_when_live_trading_disabled():
         positions=[],
         latest_price=75_000,
     )
-    assert result.decision == RiskDecision.NEEDS_APPROVAL
-    assert any("manual approval" in r for r in result.reasons)
+    assert result.decision == RiskDecision.REJECTED
+    assert result.reasons == ["live trading is disabled by global safety flag"]
 
 
-def test_ai_assist_queues_even_when_live_trading_disabled():
-    """Same as the LIVE_MANUAL_APPROVAL invariant but for LIVE_AI_ASSIST.
+def test_ai_assist_rejects_when_live_trading_disabled():
+    """Mirror of the LIVE_MANUAL_APPROVAL invariant but for LIVE_AI_ASSIST.
     The two share the early-return path; both must remain symmetric so any
     LIVE-routing change applies to both at once."""
     risk = RiskManager(RiskPolicy(enable_live_trading=False))
@@ -228,7 +231,8 @@ def test_ai_assist_queues_even_when_live_trading_disabled():
         positions=[],
         latest_price=75_000,
     )
-    assert result.decision == RiskDecision.NEEDS_APPROVAL
+    assert result.decision == RiskDecision.REJECTED
+    assert result.reasons == ["live trading is disabled by global safety flag"]
 
 
 def test_emergency_stop_short_circuits_to_rejected_in_manual_approval_mode():
@@ -305,11 +309,15 @@ def test_emergency_stop_short_circuits_in_live_shadow_mode():
 
 def test_manual_approval_surfaces_oversized_reason_to_operator():
     """A notional violation in SIMULATION mode produces REJECTED. The same
-    violation in LIVE_MANUAL_APPROVAL produces NEEDS_APPROVAL with the
-    notional reason attached — the operator gets the violation reason in
-    the modal and decides whether to override. This is the operator-override
-    design; the test locks it in."""
-    risk = RiskManager(RiskPolicy(max_order_notional=100_000))
+    violation in LIVE_MANUAL_APPROVAL — with live trading globally enabled
+    — produces NEEDS_APPROVAL with the notional reason attached. The
+    operator gets the violation reason in the modal and decides whether to
+    override. This is the operator-override design; the test locks it in.
+
+    (When enable_live_trading is off, the 061 queue gate REJECTs before
+    this scenario can run — see test_manual_approval_rejects_when_live_trading_disabled.)
+    """
+    risk = RiskManager(RiskPolicy(max_order_notional=100_000, enable_live_trading=True))
     result = risk.evaluate_order(
         order=_buy(10),  # 10 * 75_000 = 750_000 > 100_000 cap
         mode=OperationMode.LIVE_MANUAL_APPROVAL,

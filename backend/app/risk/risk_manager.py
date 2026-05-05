@@ -116,6 +116,17 @@ class RiskManager:
             result.reasons.append("LIVE_SHADOW records signals only; live orders disabled")
 
         if mode in {OperationMode.LIVE_MANUAL_APPROVAL, OperationMode.LIVE_AI_ASSIST}:
+            # 061 hardening: the global ENABLE_LIVE_TRADING flag must gate the
+            # queue itself, not just downstream execution. Otherwise the queue
+            # would fill even with live trading disabled, leaving only the
+            # broker-layer guard between operator approval and a real order
+            # once LIVE routing wires KIS in. Clean-slate REJECTED keeps the
+            # reason list focused on the missing flag.
+            if not can_place_live_order(mode, enable_live_trading=self.policy.enable_live_trading):
+                return RiskCheckResult(
+                    decision=RiskDecision.REJECTED,
+                    reasons=["live trading is disabled by global safety flag"],
+                )
             result.decision = RiskDecision.NEEDS_APPROVAL
             result.reasons.append("manual approval required by operation mode")
             return result
