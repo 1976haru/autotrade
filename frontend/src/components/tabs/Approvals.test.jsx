@@ -1,7 +1,15 @@
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApprovalDecisionModal, Approvals, HistoryRow, ReasonsLine } from "./Approvals";
+import {
+  ApprovalDecisionModal,
+  Approvals,
+  HistoryRow,
+  PendingAgeBadge,
+  ReasonsLine,
+  formatPendingAge,
+  isPendingStale,
+} from "./Approvals";
 
 
 // useApprovals는 App에서 lift돼 prop으로 들어오므로 모듈 모킹 없이 prop으로
@@ -131,6 +139,93 @@ describe("<ReasonsLine>", () => {
     );
     expect(container.textContent).toContain("사유:");
     expect(container.textContent).toContain("a / b / c");
+  });
+});
+
+
+describe("formatPendingAge", () => {
+  const NOW = new Date("2026-05-06T12:00:00Z").getTime();
+  const ago = (ms) => new Date(NOW - ms).toISOString();
+
+  it("returns '방금' for ages under 30 seconds", () => {
+    expect(formatPendingAge(ago(0), NOW)).toBe("방금");
+    expect(formatPendingAge(ago(15_000), NOW)).toBe("방금");
+  });
+
+  it("returns minutes when between 30s and 1h", () => {
+    expect(formatPendingAge(ago(60_000), NOW)).toBe("1분 전");
+    expect(formatPendingAge(ago(5 * 60_000), NOW)).toBe("5분 전");
+    expect(formatPendingAge(ago(59 * 60_000), NOW)).toBe("59분 전");
+  });
+
+  it("returns hours when between 1h and 24h", () => {
+    expect(formatPendingAge(ago(60 * 60_000), NOW)).toBe("1시간 전");
+    expect(formatPendingAge(ago(5 * 60 * 60_000), NOW)).toBe("5시간 전");
+  });
+
+  it("returns days when 24h or more", () => {
+    expect(formatPendingAge(ago(24 * 60 * 60_000), NOW)).toBe("1일 전");
+    expect(formatPendingAge(ago(3 * 24 * 60 * 60_000), NOW)).toBe("3일 전");
+  });
+
+  it("clamps negative deltas (clock skew) to '방금' rather than producing negative ages", () => {
+    const future = new Date(NOW + 60_000).toISOString();
+    expect(formatPendingAge(future, NOW)).toBe("방금");
+  });
+});
+
+
+describe("isPendingStale", () => {
+  const NOW = new Date("2026-05-06T12:00:00Z").getTime();
+  const ago = (ms) => new Date(NOW - ms).toISOString();
+
+  it("returns false under 10 minutes", () => {
+    expect(isPendingStale(ago(0), NOW)).toBe(false);
+    expect(isPendingStale(ago(9 * 60_000), NOW)).toBe(false);
+  });
+
+  it("returns true at or over 10 minutes", () => {
+    expect(isPendingStale(ago(10 * 60_000), NOW)).toBe(true);
+    expect(isPendingStale(ago(60 * 60_000), NOW)).toBe(true);
+  });
+});
+
+
+describe("<PendingAgeBadge>", () => {
+  afterEach(cleanup);
+  const NOW = new Date("2026-05-06T12:00:00Z").getTime();
+  const ago = (ms) => new Date(NOW - ms).toISOString();
+
+  it("renders fresh badge in neutral color when age < 10min", () => {
+    const { getByTestId } = render(
+      <PendingAgeBadge createdAt={ago(2 * 60_000)} now={NOW} />,
+    );
+    const badge = getByTestId("pending-age-badge");
+    expect(badge.getAttribute("data-stale")).toBe("false");
+    expect(badge.textContent).toBe("2분 전");
+    expect(badge.style.color).toBe("rgb(100, 116, 139)"); // #64748b
+  });
+
+  it("renders stale badge in amber with warning icon when age >= 10min", () => {
+    const { getByTestId } = render(
+      <PendingAgeBadge createdAt={ago(15 * 60_000)} now={NOW} />,
+    );
+    const badge = getByTestId("pending-age-badge");
+    expect(badge.getAttribute("data-stale")).toBe("true");
+    expect(badge.textContent).toContain("⚠");
+    expect(badge.textContent).toContain("15분 전");
+    expect(badge.style.color).toBe("rgb(245, 158, 11)"); // #f59e0b
+  });
+});
+
+
+describe("<Approvals> PENDING age badge", () => {
+  afterEach(cleanup);
+
+  it("shows the PendingAgeBadge alongside #ID on each PENDING row", () => {
+    const approvals = _makeApprovals({ pending: [_PENDING] });
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(getByTestId("pending-age-badge")).toBeTruthy();
   });
 });
 
