@@ -41,6 +41,7 @@
 | `/api/ai/analyze` | Anthropic 호출 비용이 있으므로 운영자만 사용 (인증 게이트는 별도 PR) |
 | `/api/strategies/replay` | 서버측 메모리 + market 호출 발생 — DoS 방지 위해 인증 필요 |
 | `/api/backtest/run` | 클라이언트 제공 bars 모드는 큰 페이로드 가능 — body 크기 제한은 nginx 단 |
+| `/api/backtest/compare` | param_sets는 최대 50개로 코드에서 cap (`MAX_COMPARE_PARAM_SETS`). 50초과 시 422. bars는 1회 fetch + 재사용 |
 
 ## 백그라운드 폴러
 

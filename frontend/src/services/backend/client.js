@@ -51,6 +51,10 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify(req),
   }),
+  compareBacktests: (req) => backendFetch("/api/backtest/compare", {
+    method: "POST",
+    body: JSON.stringify(req),
+  }),
   getBacktestRun: (id) => backendFetch(`/api/backtest/runs/${id}`),
   marketBars: (params) => {
     const qs = new URLSearchParams(params).toString();

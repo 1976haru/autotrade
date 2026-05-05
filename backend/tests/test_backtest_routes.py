@@ -331,3 +331,113 @@ def test_get_run_returns_market_metadata(client):
     assert fetched["data_symbol"] == "005930"
     assert fetched["data_interval"] == "1d"
     assert fetched["data_start"].startswith("2026-01-01")
+
+
+# ---------- compare (parameter sweep) ----------
+
+def _compare_body(param_sets, **overrides):
+    closes = [100, 99, 98, 97, 100, 105, 110, 108, 112, 115, 113, 118, 120]
+    body = {
+        "strategy":     "sma_crossover",
+        "param_sets":   param_sets,
+        "initial_cash": 1_000_000,
+        "quantity":     10,
+        "bars":         [_bar_payload(i, c) for i, c in enumerate(closes)],
+    }
+    body.update(overrides)
+    return body
+
+
+def test_compare_returns_one_run_per_param_set_persisted_to_audit(client):
+    res = client.post("/api/backtest/compare", json=_compare_body([
+        {"short": 2, "long": 4},
+        {"short": 3, "long": 5},
+        {"short": 2, "long": 6},
+    ]))
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["sort_by"] == "total_pnl"
+    assert len(data["runs"]) == 3
+    # Each run got a real run_id and is persisted; audit shows all three.
+    audits = client.get("/api/audit/backtests?limit=10").json()
+    assert len(audits) == 3
+
+
+def test_compare_sorts_descending_by_total_pnl_by_default(client):
+    res = client.post("/api/backtest/compare", json=_compare_body([
+        {"short": 2, "long": 4},
+        {"short": 3, "long": 5},
+        {"short": 2, "long": 6},
+    ]))
+    runs = res.json()["runs"]
+    pnls = [r["total_pnl"] for r in runs]
+    assert pnls == sorted(pnls, reverse=True)
+
+
+def test_compare_supports_sort_by_sharpe_ratio_with_none_last(client):
+    res = client.post("/api/backtest/compare", json=_compare_body(
+        [{"short": 2, "long": 4}, {"short": 3, "long": 5}, {"short": 2, "long": 6}],
+        sort_by="sharpe_ratio",
+    ))
+    assert res.status_code == 200
+    runs = res.json()["runs"]
+    # None values should be at the end of the list.
+    sharpes = [r["sharpe_ratio"] for r in runs]
+    valued = [s for s in sharpes if s is not None]
+    nones  = [s for s in sharpes if s is None]
+    assert sharpes == valued + nones
+    assert valued == sorted(valued, reverse=True)
+
+
+def test_compare_invalid_param_set_returns_400_with_index(client):
+    """A bad param set surfaces with its index so callers can fix the cell."""
+    res = client.post("/api/backtest/compare", json=_compare_body([
+        {"short": 2, "long": 4},
+        {"short": 10, "long": 5},   # short > long — invalid
+        {"short": 3, "long": 6},
+    ]))
+    assert res.status_code == 400
+    assert "param_sets[1]" in res.json()["detail"]
+
+
+def test_compare_empty_param_sets_returns_422(client):
+    """min_length=1 → pydantic validation error."""
+    res = client.post("/api/backtest/compare", json=_compare_body([]))
+    assert res.status_code == 422
+
+
+def test_compare_too_many_param_sets_returns_422(client):
+    res = client.post("/api/backtest/compare", json=_compare_body(
+        [{"short": 2, "long": 4}] * 51,
+    ))
+    assert res.status_code == 422
+
+
+def test_compare_unsupported_sort_by_returns_422(client):
+    """max_drawdown is intentionally not in the whitelist — Literal rejects it."""
+    res = client.post("/api/backtest/compare", json=_compare_body(
+        [{"short": 2, "long": 4}], sort_by="max_drawdown",
+    ))
+    assert res.status_code == 422
+
+
+def test_compare_market_range_fetches_bars_once(client):
+    """Sweep over a market range should not re-fetch / re-cache the same bars
+    for each param set. We assert the cache holds exactly one symbol's worth."""
+    from app.db.models import MarketBar
+    from sqlalchemy import select
+    body = {
+        "strategy":   "sma_crossover",
+        "param_sets": [{"short": 2, "long": 4}, {"short": 2, "long": 6}],
+        "symbol":     "005930",
+        "start":      "2026-01-01T00:00:00+00:00",
+        "end":        "2026-01-15T00:00:00+00:00",
+    }
+    res = client.post("/api/backtest/compare", json=body)
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["bars_processed"] == 15
+
+    with client.test_db_factory() as db:
+        cached = db.execute(select(MarketBar)).scalars().all()
+        assert len(cached) == 15  # not 30 — single resolution shared across runs
