@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -280,3 +281,133 @@ def get_run(run_id: int, db: Session = Depends(get_db)) -> BacktestResponse:
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     return _build_response(run, _result_from_run(run))
+
+
+# ---------- compare (parameter sweep) ----------
+
+# Hyperparameter sweeps are O(N) over the param sets but each run is bounded
+# by bars_processed. Cap N so a careless caller can't pin the worker.
+MAX_COMPARE_PARAM_SETS = 50
+
+
+# Whitelisted sort metrics — all "higher is better", sorted descending.
+# max_drawdown is intentionally omitted because the convention there is
+# "lower is better"; clients that want to rank by drawdown can sort the
+# response client-side without ambiguity.
+CompareSortBy = Literal["total_pnl", "sharpe_ratio", "profit_factor", "win_rate"]
+
+
+class BacktestCompareRequest(BaseModel):
+    """Run the same data through multiple parameter sets and rank the results.
+
+    Bars are resolved once and reused across every param set, so a 50-set
+    sweep over a market range only fetches the range once. Each run is
+    persisted as a normal BacktestRun so the sweep entries show up in
+    /api/audit/backtests like any other run.
+    """
+    strategy:     str
+    param_sets:   list[dict] = Field(min_length=1, max_length=MAX_COMPARE_PARAM_SETS)
+    sort_by:      CompareSortBy = "total_pnl"
+    initial_cash: int = 10_000_000
+    quantity:     int = 1
+    bars:         list[BarPayload] | None = None
+    symbol:       str | None = None
+    start:        datetime | None = None
+    end:          datetime | None = None
+    interval:     Interval = Interval.DAY_1
+
+
+class BacktestCompareResponse(BaseModel):
+    sort_by:    str
+    bars_processed: int
+    runs:       list[BacktestResponse]
+
+
+def _metric_value(resp: BacktestResponse, metric: str) -> float | None:
+    return getattr(resp, metric)
+
+
+def _sort_key(resp: BacktestResponse, metric: str) -> tuple[int, float]:
+    """Sort key that places None values last regardless of direction.
+
+    Returns (none_first, neg_value): tuples sort lexicographically, so any
+    response with metric=None gets none_first=1 and ends up after the
+    valued rows; among valued rows, larger metric values come first because
+    we negate before sorting ascending.
+    """
+    v = _metric_value(resp, metric)
+    if v is None:
+        return (1, 0.0)
+    return (0, -float(v))
+
+
+@router.post("/compare", response_model=BacktestCompareResponse)
+async def compare_backtests(
+    req: BacktestCompareRequest,
+    db: Session = Depends(get_db),
+    upstream: MarketDataAdapter = Depends(get_market_data),
+) -> BacktestCompareResponse:
+    if req.initial_cash <= 0 or req.quantity <= 0:
+        raise HTTPException(status_code=400, detail="initial_cash and quantity must be positive")
+
+    # Validate every strategy + params combination up front so a bad row
+    # doesn't appear several runs into a sweep with persisted partial state.
+    strategies = []
+    for i, params in enumerate(req.param_sets):
+        try:
+            strategies.append(build_strategy(req.strategy, params))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"param_sets[{i}]: {e}")
+
+    # Bars resolved once and reused. Reuse the existing single-run resolver
+    # by adapting the request shape — keeps the data-source enforcement and
+    # error mapping in one place.
+    proxy = BacktestRequest(
+        strategy=req.strategy,
+        params={},
+        initial_cash=req.initial_cash,
+        quantity=req.quantity,
+        bars=req.bars,
+        symbol=req.symbol,
+        start=req.start,
+        end=req.end,
+        interval=req.interval,
+    )
+    bars, data_source, data_symbol, data_start, data_end, data_interval = await _resolve_bars(
+        proxy, db, upstream,
+    )
+
+    runs: list[BacktestResponse] = []
+    for params, strategy in zip(req.param_sets, strategies):
+        engine = BacktestEngine(initial_cash=req.initial_cash, quantity=req.quantity)
+        result = engine.run(bars, strategy)
+
+        run = BacktestRun(
+            strategy=req.strategy,
+            params=dict(params),
+            initial_cash=result.initial_cash,
+            quantity=req.quantity,
+            bars_processed=result.bars_processed,
+            final_cash=result.final_cash,
+            total_pnl=result.total_pnl,
+            win_count=result.win_count,
+            loss_count=result.loss_count,
+            max_drawdown=result.max_drawdown,
+            trades_json=[_trade_to_dict(t) for t in result.trades],
+            data_source=data_source,
+            data_symbol=data_symbol,
+            data_start=data_start,
+            data_end=data_end,
+            data_interval=data_interval,
+        )
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+        runs.append(_build_response(run, result))
+
+    runs.sort(key=lambda r: _sort_key(r, req.sort_by))
+    return BacktestCompareResponse(
+        sort_by=req.sort_by,
+        bars_processed=len(bars),
+        runs=runs,
+    )

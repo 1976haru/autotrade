@@ -23,7 +23,7 @@
 │  routes ─┬─ /api/status, /api/risk/*                         │
 │          ├─ /api/broker/* (price/balance/positions/orders)   │
 │          ├─ /api/approvals/*  (PermissionGate queue)         │
-│          ├─ /api/backtest/run, /runs/{id}                    │
+│          ├─ /api/backtest/{run, compare, runs/{id}}          │
 │          ├─ /api/market/bars   (cache → adapter)             │
 │          ├─ /api/strategies/*  (LiveStrategyEngine)          │
 │          ├─ /api/ai/analyze   (Anthropic, audit only)        │
