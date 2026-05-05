@@ -1,13 +1,96 @@
 import { Card, SectionLabel, StatBox } from "../common";
 import { fmtKRW, fmtPct, pnlColor } from "../../utils/format";
 
-export function Dashboard({ portfolio, bot, botControls }) {
+
+// 운영자가 대시보드 진입 즉시 봐야 하는 3가지 위험/상태 신호.
+// alarm=true면 강조 색상으로 시선을 잡고, 핀의 클릭은 해당 탭으로 점프.
+export function StatusPin({ icon, label, value, alarm, accent, onClick, testId }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={testId}
+      style={{
+        flex: 1,
+        padding: "8px 10px", borderRadius: 6,
+        cursor: onClick ? "pointer" : "default",
+        background:  alarm ? `${accent}15` : "#020e1c",
+        border:      `1px solid ${alarm ? `${accent}99` : "#0c2035"}`,
+        color:       alarm ? accent : "#94a3b8",
+        fontFamily:  "inherit",
+        textAlign:   "left",
+        display:     "flex",
+        alignItems:  "center",
+        gap:         8,
+      }}
+    >
+      <span style={{ fontSize: 16 }}>{icon}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 9, color: alarm ? accent : "#475569", marginBottom: 1 }}>
+          {label}
+        </div>
+        <div style={{ fontSize: 11, fontWeight: 700,
+                       color: alarm ? accent : "#64748b",
+                       overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {value}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+
+export function StatusSummaryCard({ emergencyStop, pendingCount, running, onJumpTab }) {
+  const _jump = onJumpTab || (() => {});
+  return (
+    <div style={{ display: "flex", gap: 8 }}>
+      <StatusPin
+        icon="🛑"
+        label="긴급 정지"
+        value={emergencyStop ? "ACTIVE" : "OFF"}
+        alarm={!!emergencyStop}
+        accent="#ef4444"
+        onClick={() => _jump("strat")}
+        testId="status-pin-emergency-stop"
+      />
+      <StatusPin
+        icon="🔐"
+        label="승인 대기"
+        value={pendingCount > 0 ? `${pendingCount}건` : "없음"}
+        alarm={pendingCount > 0}
+        accent="#f59e0b"
+        onClick={() => _jump("approve")}
+        testId="status-pin-pending-approvals"
+      />
+      <StatusPin
+        icon="🤖"
+        label="봇"
+        value={running ? "RUNNING" : "STOPPED"}
+        alarm={running}
+        accent="#22c55e"
+        onClick={() => _jump("bot")}
+        testId="status-pin-bot"
+      />
+    </div>
+  );
+}
+
+
+export function Dashboard({ portfolio, bot, botControls, emergencyStop, pendingCount = 0, onJumpTab }) {
   const { totalAsset, totalPnL, totalPnLPct, cash, positions } = portfolio;
   const { stats, winRate, trades, running } = bot;
   const { start, stop } = botControls;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+
+      {/* 위험/상태 요약 */}
+      <StatusSummaryCard
+        emergencyStop={emergencyStop}
+        pendingCount={pendingCount}
+        running={running}
+        onJumpTab={onJumpTab}
+      />
 
       {/* KPI */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>

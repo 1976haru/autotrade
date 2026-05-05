@@ -34,7 +34,7 @@ export default function App() {
 
   const renderTab = () => {
     switch (tab) {
-      case "dash":   return <Dashboard portfolio={portfolio} bot={bot} botControls={{ start: bot.start, stop: bot.stop }} />;
+      case "dash":   return <Dashboard portfolio={portfolio} bot={bot} botControls={{ start: bot.start, stop: bot.stop }} emergencyStop={riskPolicy.emergencyStop} pendingCount={approvals.pending.length} onJumpTab={setTab} />;
       case "strat":  return <StrategyRisk strategyOn={strategy.strategyOn} toggle={strategy.toggle} strategyParams={strategy.strategyParams} updateParam={strategy.updateParam} risk={risk} updateRisk={updateRisk} riskPolicy={riskPolicy} operatorName={settings.operatorName} />;
       case "bot":      return <BotControl bot={bot} />;
       case "approve":  return <Approvals approvals={approvals} operatorName={settings.operatorName} />;
