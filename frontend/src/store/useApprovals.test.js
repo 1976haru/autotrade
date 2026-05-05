@@ -200,6 +200,50 @@ describe("useApprovals", () => {
     expect(backendApi.cancelApproval).not.toHaveBeenCalled();
   });
 
+  it("records a per-row entry in lastFailures when approve fails", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    backendApi.approveApproval.mockRejectedValue(new Error("재평가 거부됨"));
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => { await result.current.approve(42); });
+
+    expect(result.current.lastFailures[42]).toMatchObject({
+      message: "재평가 거부됨",
+    });
+    expect(result.current.lastFailures[42].at).toBeTypeOf("number");
+  });
+
+  it("clears the lastFailures entry when a subsequent approve succeeds", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    backendApi.approveApproval
+      .mockRejectedValueOnce(new Error("transient"))
+      .mockResolvedValueOnce({});
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => { await result.current.approve(7); });
+    expect(result.current.lastFailures[7]).toBeDefined();
+
+    await act(async () => { await result.current.approve(7); });
+    expect(result.current.lastFailures[7]).toBeUndefined();
+  });
+
+  it("tracks failures independently per approval id", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    backendApi.approveApproval
+      .mockRejectedValueOnce(new Error("a fail"))
+      .mockRejectedValueOnce(new Error("b fail"));
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => { await result.current.approve(1); });
+    await act(async () => { await result.current.approve(2); });
+
+    expect(result.current.lastFailures[1].message).toBe("a fail");
+    expect(result.current.lastFailures[2].message).toBe("b fail");
+  });
+
   it("approve returns {ok:true} on success and {ok:false, message} on failure", async () => {
     backendApi.listApprovals.mockResolvedValue([]);
     backendApi.approveApproval

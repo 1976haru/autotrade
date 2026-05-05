@@ -226,10 +226,39 @@ export function BulkCancelStaleModal({
 }
 
 
+// 075: per-row failure hint. Renders a small red strip when this row has had
+// a failed approve attempt in the current session. formatPendingAge does the
+// relative time math; the message comes from the hook (typically 070's
+// "승인 시점 재평가에서 거부됨: <reasons>").
+export function ApproveAttemptFailureBadge({ failure, now }) {
+  if (!failure) return null;
+  return (
+    <div
+      data-testid="approve-attempt-failure-badge"
+      style={{
+        marginTop: 6,
+        padding: "4px 8px",
+        background: "#7f1d1d22",
+        border: "1px solid #ef444466",
+        borderRadius: 4,
+        fontSize: 9,
+        color: "#fca5a5",
+        lineHeight: 1.4,
+      }}
+    >
+      <span style={{ fontWeight: 700, marginRight: 4 }}>
+        ⚠ {formatPendingAge(new Date(failure.at).toISOString(), now)} 거부:
+      </span>
+      {failure.message}
+    </div>
+  );
+}
+
+
 export function Approvals({ approvals, operatorName = "" }) {
   // useApprovals는 App에서 lift되어 prop으로 전달된다 — BottomNav 배지가 같은
   // 폴링 결과를 공유하기 위해서. 테스트는 모킹 없이 prop만 직접 주입.
-  const { pending, history, loading, error, busy,
+  const { pending, history, loading, error, busy, lastFailures = {},
           approve, reject, cancel, cancelMany } = approvals;
   // 결재 모달 대상: { action, approval } | null. 같은 모달 컴포넌트를 세 액션에서
   // 공유하고, 액션은 ACTION_META에서 분기한다.
@@ -307,6 +336,7 @@ export function Approvals({ approvals, operatorName = "" }) {
             </div>
 
             <ReasonsLine reasons={a.reasons} />
+            <ApproveAttemptFailureBadge failure={lastFailures[a.id]} />
 
             <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
               <Btn color="#22c55e" onClick={() => setDecisionTarget({ action: "approve", approval: a })} disabled={busy} small>
