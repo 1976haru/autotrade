@@ -9,6 +9,7 @@ import { MarketChart }  from "./components/tabs/MarketChart";
 import { Backtest }     from "./components/tabs/Backtest";
 import { AuditLog }     from "./components/tabs/AuditLog";
 import { AISignal }     from "./components/tabs/AISignal";
+import { Futures }      from "./components/tabs/Futures";
 import { Settings }     from "./components/tabs/Settings";
 import { usePortfolio }  from "./store/usePortfolio";
 import { useBot }        from "./store/useBot";
@@ -36,6 +37,7 @@ export default function App() {
       case "backtest": return <Backtest />;
       case "audit":    return <AuditLog />;
       case "signal":   return <AISignal activeStratIds={strategy.activeIds} />;
+      case "futures":  return <Futures />;
       case "config":   return <Settings settings={settings} />;
       default:       return null;
     }
