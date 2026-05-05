@@ -6,6 +6,7 @@ import {
   EventTimelineView,
   KindFilterBar,
   OrderAuditRow,
+  TimeBucketBar,
   mergeEvents,
   setEventKindFilter,
 } from "./AuditLog";
@@ -468,6 +469,131 @@ describe("<EventTimelineView> kind filter persistence", () => {
     localStorage.setItem(STORAGE_KEY, "garbage-from-future-build");
     const { getByRole } = render(<EventTimelineView />);
     expect(getByRole("radio", { name: "전체" }).getAttribute("aria-checked")).toBe("true");
+  });
+});
+
+
+describe("<TimeBucketBar>", () => {
+  afterEach(cleanup);
+
+  it("renders four chips and highlights the active one", () => {
+    const { getByRole } = render(<TimeBucketBar active="all" onChange={() => {}} />);
+    expect(getByRole("radiogroup", { name: "시간 범위 필터" })).toBeTruthy();
+    expect(getByRole("radio", { name: "전 기간" }).getAttribute("aria-checked")).toBe("true");
+    expect(getByRole("radio", { name: "1시간" }).getAttribute("aria-checked")).toBe("false");
+    expect(getByRole("radio", { name: "24시간" }).getAttribute("aria-checked")).toBe("false");
+    expect(getByRole("radio", { name: "7일" }).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("calls onChange with the chip id", () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(<TimeBucketBar active="all" onChange={onChange} />);
+    fireEvent.click(getByRole("radio", { name: "1시간" }));
+    expect(onChange).toHaveBeenCalledWith("1h");
+    fireEvent.click(getByRole("radio", { name: "24시간" }));
+    expect(onChange).toHaveBeenLastCalledWith("24h");
+    fireEvent.click(getByRole("radio", { name: "7일" }));
+    expect(onChange).toHaveBeenLastCalledWith("7d");
+  });
+});
+
+
+describe("<EventTimelineView> time-bucket filter", () => {
+  const STORAGE_KEY = "autotrade.eventTimeBucket";
+  const NOW = new Date("2026-05-06T12:00:00Z").getTime();
+  const minutesAgo = (m) => new Date(NOW - m * 60_000).toISOString();
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+    _resetHooks(
+      { items: [
+          _ORDER({ id: 10, created_at: minutesAgo(30) }),       // 30 min ago
+          _ORDER({ id: 11, created_at: minutesAgo(120) }),      // 2 h ago
+          _ORDER({ id: 12, created_at: minutesAgo(60 * 26) }),  // 26 h ago
+          _ORDER({ id: 13, created_at: minutesAgo(60 * 24 * 8) }), // 8 d ago
+      ]},
+      { items: [] },
+    );
+  });
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+    vi.useRealTimers();
+  });
+
+  it("default is 전 기간 — every row visible", () => {
+    const { container, getByRole } = render(<EventTimelineView />);
+    expect(getByRole("radio", { name: "전 기간" }).getAttribute("aria-checked")).toBe("true");
+    expect(container.textContent).toContain("(4)");
+  });
+
+  it("1시간 chip narrows to events from the last hour", () => {
+    const { container, getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "1시간" }));
+    // Only the 30-min-ago row falls inside
+    expect(container.textContent).toContain("(1)");
+  });
+
+  it("24시간 chip includes intra-day rows but excludes older", () => {
+    const { container, getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "24시간" }));
+    // 30 min, 2 h fit; 26 h and 8 d do not
+    expect(container.textContent).toContain("(2)");
+  });
+
+  it("7일 chip includes 26h ago but excludes 8d ago", () => {
+    const { container, getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "7일" }));
+    expect(container.textContent).toContain("(3)");
+  });
+
+  it("persists selection to localStorage and hydrates on remount", () => {
+    const { getByRole, unmount } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "1시간" }));
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("1h");
+    unmount();
+    const { getByRole: g2 } = render(<EventTimelineView />);
+    expect(g2("radio", { name: "1시간" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("falls back to 전 기간 when stored value is unknown", () => {
+    localStorage.setItem(STORAGE_KEY, "garbage");
+    const { getByRole } = render(<EventTimelineView />);
+    expect(getByRole("radio", { name: "전 기간" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("bucket filter applies to stops too (universal time scope)", () => {
+    _resetHooks(
+      { items: [_ORDER({ id: 10, created_at: minutesAgo(30) })] },
+      { items: [
+          _STOP({ id: 1, created_at: minutesAgo(30) }),       // recent
+          _STOP({ id: 2, created_at: minutesAgo(60 * 48) }),  // 2 d ago
+      ]},
+    );
+    const { container, getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "1시간" }));
+    // 1 order + 1 stop in window
+    expect(container.textContent).toContain("(2)");
+    fireEvent.click(getByRole("radio", { name: "24시간" }));
+    // 24h includes the 2-day-old stop? No: 48h > 24h cutoff.
+    expect(container.textContent).toContain("(2)");
+    fireEvent.click(getByRole("radio", { name: "7일" }));
+    // 7d covers 2-day stop
+    expect(container.textContent).toContain("(3)");
+  });
+
+  it("composes with kind filter (1h × 주문)", () => {
+    _resetHooks(
+      { items: [_ORDER({ id: 10, created_at: minutesAgo(30) })] },
+      { items: [_STOP({ id: 1, created_at: minutesAgo(30) })] },
+    );
+    const { container, getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "1시간" }));
+    expect(container.textContent).toContain("(2)");
+    fireEvent.click(getByRole("radio", { name: "주문" }));
+    expect(container.textContent).toContain("(1)");
   });
 });
 
