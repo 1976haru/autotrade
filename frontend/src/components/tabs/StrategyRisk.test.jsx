@@ -2,7 +2,11 @@ import { cleanup, render, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { RISK_POLICY_FIELDS } from "../../config/riskPolicy";
-import { BackendPolicyCard } from "./StrategyRisk";
+import {
+  BackendPolicyCard,
+  EmergencyStopHistoryCard,
+  EmergencyStopHistoryRow,
+} from "./StrategyRisk";
 
 
 // Defaults from backend/app/risk/risk_manager.py::RiskPolicy() — kept in
@@ -103,5 +107,71 @@ describe("<BackendPolicyCard>", () => {
     // The text content in the emergency-stop banner contains "ACTIVE" when on
     const banner = getByText(/긴급 정지/);
     expect(within(banner.parentElement).getByText(/ACTIVE/)).toBeTruthy();
+  });
+});
+
+
+describe("<EmergencyStopHistoryRow>", () => {
+  afterEach(cleanup);
+
+  it("renders ON badge in red when enabled", () => {
+    const { getByText } = render(
+      <EmergencyStopHistoryRow event={{
+        id: 1, created_at: "2026-05-05T12:00:00+00:00",
+        enabled: true, decided_by: "ops", note: "vol spike",
+      }} />,
+    );
+    const badge = getByText("ON");
+    expect(badge.style.color).toBe("rgb(239, 68, 68)"); // #ef4444
+  });
+
+  it("renders OFF badge in green when disabled", () => {
+    const { getByText } = render(
+      <EmergencyStopHistoryRow event={{
+        id: 2, created_at: "2026-05-05T12:05:00+00:00",
+        enabled: false, decided_by: null, note: null,
+      }} />,
+    );
+    expect(getByText("OFF").style.color).toBe("rgb(34, 197, 94)"); // #22c55e
+  });
+
+  it("renders decided_by + note metadata when present", () => {
+    const { container } = render(
+      <EmergencyStopHistoryRow event={{
+        id: 3, created_at: "2026-05-05T12:00:00+00:00",
+        enabled: true, decided_by: "trader1", note: "circuit breaker",
+      }} />,
+    );
+    expect(container.textContent).toContain("by trader1");
+    expect(container.textContent).toContain("circuit breaker");
+  });
+});
+
+
+describe("<EmergencyStopHistoryCard>", () => {
+  afterEach(cleanup);
+
+  it("renders an empty state when there are no events", () => {
+    const { getByText } = render(<EmergencyStopHistoryCard history={[]} />);
+    expect(getByText(/기록된 토글 없음/)).toBeTruthy();
+  });
+
+  it("renders one row per event", () => {
+    const { container } = render(
+      <EmergencyStopHistoryCard history={[
+        { id: 1, created_at: "2026-05-05T12:00:00+00:00", enabled: true,  note: "first" },
+        { id: 2, created_at: "2026-05-05T12:05:00+00:00", enabled: false, note: "second" },
+        { id: 3, created_at: "2026-05-05T12:10:00+00:00", enabled: true,  note: "third" },
+      ]} />,
+    );
+    const onCount  = (container.textContent.match(/ON/g)  || []).length;
+    const offCount = (container.textContent.match(/OFF/g) || []).length;
+    expect(onCount).toBeGreaterThanOrEqual(2);
+    expect(offCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("includes the explanatory note about the runtime flag resetting on restart", () => {
+    const { container } = render(<EmergencyStopHistoryCard history={[]} />);
+    expect(container.textContent).toContain("재시작");
   });
 });

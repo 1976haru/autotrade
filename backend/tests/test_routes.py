@@ -1,6 +1,6 @@
 from sqlalchemy import select
 
-from app.db.models import OrderAuditLog
+from app.db.models import EmergencyStopEvent, OrderAuditLog
 
 
 def test_root_returns_app_metadata(client):
@@ -36,6 +36,69 @@ def test_emergency_stop_toggles_flag(client):
     assert res.json() == {"emergency_stop": True}
     res = client.post("/api/risk/emergency-stop", json={"enabled": False})
     assert res.json() == {"emergency_stop": False}
+
+
+# ---------- emergency-stop audit trail ----------
+
+def test_emergency_stop_logs_event_with_metadata(client):
+    res = client.post("/api/risk/emergency-stop", json={
+        "enabled": True, "decided_by": "ops1", "note": "vol spike",
+    })
+    assert res.status_code == 200
+    with client.test_db_factory() as db:
+        ev = db.execute(select(EmergencyStopEvent)).scalar_one()
+        assert ev.enabled    is True
+        assert ev.decided_by == "ops1"
+        assert ev.note       == "vol spike"
+
+
+def test_emergency_stop_skips_log_on_no_op_toggle(client):
+    """Re-asserting current state (e.g. enabled=False when already off)
+    should not pollute the audit trail with duplicates."""
+    # Default state is OFF — this re-asserts OFF and should be a no-op.
+    client.post("/api/risk/emergency-stop", json={"enabled": False})
+    with client.test_db_factory() as db:
+        rows = db.execute(select(EmergencyStopEvent)).scalars().all()
+        assert rows == []
+
+
+def test_emergency_stop_logs_only_state_changes(client):
+    client.post("/api/risk/emergency-stop", json={"enabled": True})   # change
+    client.post("/api/risk/emergency-stop", json={"enabled": True})   # no-op
+    client.post("/api/risk/emergency-stop", json={"enabled": False})  # change
+    client.post("/api/risk/emergency-stop", json={"enabled": False})  # no-op
+    with client.test_db_factory() as db:
+        rows = db.execute(select(EmergencyStopEvent).order_by(EmergencyStopEvent.id)).scalars().all()
+        assert [r.enabled for r in rows] == [True, False]
+
+
+def test_emergency_stop_history_returns_most_recent_first(client):
+    client.post("/api/risk/emergency-stop", json={"enabled": True,  "note": "first"})
+    client.post("/api/risk/emergency-stop", json={"enabled": False, "note": "second"})
+    res = client.get("/api/risk/emergency-stop/history")
+    assert res.status_code == 200
+    body = res.json()
+    assert len(body) == 2
+    # Most recent first by id desc
+    assert body[0]["note"]    == "second"
+    assert body[0]["enabled"] is False
+    assert body[1]["note"]    == "first"
+    assert body[1]["enabled"] is True
+
+
+def test_emergency_stop_history_empty_initially(client):
+    res = client.get("/api/risk/emergency-stop/history")
+    assert res.status_code == 200
+    assert res.json() == []
+
+
+def test_emergency_stop_history_limit_caps_results(client):
+    for i in range(5):
+        # Force a state change every call to write a row
+        client.post("/api/risk/emergency-stop", json={"enabled": i % 2 == 0})
+    res = client.get("/api/risk/emergency-stop/history?limit=3")
+    assert res.status_code == 200
+    assert len(res.json()) == 3
 
 
 def test_mock_broker_price_and_balance(client):

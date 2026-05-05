@@ -39,6 +39,51 @@ export function PolicyRow({ label, value, envVar, isOverridden }) {
 }
 
 
+export function EmergencyStopHistoryRow({ event }) {
+  const color = event.enabled ? "#ef4444" : "#22c55e";
+  const label = event.enabled ? "ON"      : "OFF";
+  return (
+    <div style={{ padding: "5px 0", borderBottom: "1px solid #05121f",
+                   display: "flex", justifyContent: "space-between", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <span style={{
+          fontSize: 9, fontWeight: 700, letterSpacing: "0.04em", color,
+          padding: "1px 5px", borderRadius: 3,
+          border: `1px solid ${color}55`, background: `${color}15`,
+        }}>
+          {label}
+        </span>
+        <span style={{ fontSize: 10, color: "#94a3b8" }}>
+          {new Date(event.created_at).toLocaleString("ko-KR")}
+        </span>
+      </div>
+      <div style={{ fontSize: 9, color: "#64748b", textAlign: "right" }}>
+        {event.decided_by ? `by ${event.decided_by}` : ""}
+        {event.note ? ` · ${event.note}` : ""}
+      </div>
+    </div>
+  );
+}
+
+
+export function EmergencyStopHistoryCard({ history }) {
+  return (
+    <Card>
+      <SectionLabel>긴급 정지 이력 (최근 50건)</SectionLabel>
+      <div style={{ fontSize: 9, color: "#334155", marginBottom: 6, lineHeight: 1.5 }}>
+        런타임 플래그는 백엔드 재시작 시 OFF로 리셋되지만, 이력은 영구 저장되어
+        "누가 언제 어떤 사유로 토글했는지"가 재시작 후에도 유지됩니다.
+      </div>
+      {history.length === 0 ? (
+        <div style={{ color: "#1e3a5c", fontSize: 11, textAlign: "center", padding: 12 }}>
+          기록된 토글 없음
+        </div>
+      ) : history.map((e) => <EmergencyStopHistoryRow key={e.id} event={e} />)}
+    </Card>
+  );
+}
+
+
 export function BackendPolicyCard({ riskPolicy }) {
   const { policy, loading, error, emergencyStop, busy, toggleEmergency } = riskPolicy;
 
@@ -111,6 +156,7 @@ export function StrategyRisk({ strategyOn, toggle, strategyParams, updateParam, 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <BackendPolicyCard riskPolicy={riskPolicy} />
+      <EmergencyStopHistoryCard history={riskPolicy.history || []} />
 
       <div style={{ fontSize: 11, color: "#475569", marginBottom: 2, marginTop: 8 }}>
         복수 전략 동시 활성화 → 신호 합류(Confluence) 시 진입

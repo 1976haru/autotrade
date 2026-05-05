@@ -16,10 +16,14 @@ export async function backendFetch(path, options = {}) {
 export const backendApi = {
   getStatus: () => backendFetch("/api/status"),
   getRiskPolicy: () => backendFetch("/api/risk/policy"),
-  setEmergencyStop: (enabled) => backendFetch("/api/risk/emergency-stop", {
+  setEmergencyStop: (enabled, decision) => backendFetch("/api/risk/emergency-stop", {
     method: "POST",
-    body: JSON.stringify({ enabled }),
+    body: JSON.stringify({ enabled, ...(decision || {}) }),
   }),
+  emergencyStopHistory: ({ limit = 50, offset = 0 } = {}) => {
+    const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    return backendFetch(`/api/risk/emergency-stop/history?${qs.toString()}`);
+  },
   brokerPrice:     (symbol) => backendFetch(`/api/broker/price/${symbol}`),
   brokerBalance:   () => backendFetch("/api/broker/balance"),
   brokerPositions: () => backendFetch("/api/broker/positions"),
