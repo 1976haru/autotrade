@@ -121,3 +121,67 @@ def test_simulation_mode_does_not_create_pending(client):
     with client.test_db_factory() as db:
         approvals = db.execute(select(PendingApproval)).scalars().all()
         assert approvals == []
+
+
+# ---------- cancel ----------
+
+def test_cancel_marks_approval_cancelled_and_keeps_audit_unexecuted(client, monkeypatch):
+    _enable_manual_approval(monkeypatch)
+    submit = _submit_buy(client).json()
+    approval_id = submit["approval_id"]
+
+    res = client.post(f"/api/approvals/{approval_id}/cancel",
+                      json={"decided_by": "user", "note": "stale signal"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"]     == "CANCELLED"
+    assert body["decided_by"] == "user"
+    assert body["note"]       == "stale signal"
+
+    with client.test_db_factory() as db:
+        audit = db.execute(select(OrderAuditLog)).scalar_one()
+        assert audit.executed is False
+        approval = db.execute(select(PendingApproval)).scalar_one()
+        assert approval.status == "CANCELLED"
+
+
+def test_cancelled_approval_disappears_from_pending_list(client, monkeypatch):
+    _enable_manual_approval(monkeypatch)
+    submit = _submit_buy(client).json()
+    client.post(f"/api/approvals/{submit['approval_id']}/cancel")
+    assert client.get("/api/approvals").json() == []
+
+
+def test_cancel_unknown_id_returns_404(client):
+    res = client.post("/api/approvals/9999/cancel")
+    assert res.status_code == 404
+
+
+def test_cancel_after_approve_returns_409(client, monkeypatch):
+    _enable_manual_approval(monkeypatch)
+    submit = _submit_buy(client).json()
+    approval_id = submit["approval_id"]
+    client.post(f"/api/approvals/{approval_id}/approve")
+    res = client.post(f"/api/approvals/{approval_id}/cancel")
+    assert res.status_code == 409
+
+
+def test_approve_after_cancel_returns_409(client, monkeypatch):
+    """Cancelled approvals are settled — cannot be reopened by approve."""
+    _enable_manual_approval(monkeypatch)
+    submit = _submit_buy(client).json()
+    approval_id = submit["approval_id"]
+    client.post(f"/api/approvals/{approval_id}/cancel")
+    res = client.post(f"/api/approvals/{approval_id}/approve")
+    assert res.status_code == 409
+
+
+def test_cancel_without_body_uses_defaults(client, monkeypatch):
+    _enable_manual_approval(monkeypatch)
+    submit = _submit_buy(client).json()
+    res = client.post(f"/api/approvals/{submit['approval_id']}/cancel")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "CANCELLED"
+    assert body["decided_by"] is None
+    assert body["note"] is None

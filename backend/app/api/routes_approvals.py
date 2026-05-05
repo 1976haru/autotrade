@@ -110,3 +110,28 @@ def reject_route(
     except ApprovalAlreadyDecidedError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return _to_out(approval)
+
+
+@router.post("/{approval_id}/cancel", response_model=ApprovalOut)
+def cancel_route(
+    approval_id: int,
+    payload: ApprovalDecision | None = None,
+    db:      Session = Depends(get_db),
+) -> ApprovalOut:
+    """Dismiss a pending approval without approving or rejecting.
+
+    Distinct from reject: CANCELLED is a neutral disposition — used when the
+    signal is stale or the order is no longer relevant, not when the operator
+    actively refuses it. Same 404/409 contract as reject.
+    """
+    decision = payload or ApprovalDecision()
+    try:
+        approval = PermissionGate(db).cancel(
+            approval_id,
+            decided_by=decision.decided_by, note=decision.note,
+        )
+    except ApprovalNotFoundError:
+        raise HTTPException(status_code=404, detail="approval not found")
+    except ApprovalAlreadyDecidedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return _to_out(approval)

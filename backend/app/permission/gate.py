@@ -17,9 +17,10 @@ class ApprovalAlreadyDecidedError(RuntimeError):
     pass
 
 
-STATUS_PENDING  = "PENDING"
-STATUS_APPROVED = "APPROVED"
-STATUS_REJECTED = "REJECTED"
+STATUS_PENDING   = "PENDING"
+STATUS_APPROVED  = "APPROVED"
+STATUS_REJECTED  = "REJECTED"
+STATUS_CANCELLED = "CANCELLED"
 
 
 class PermissionGate:
@@ -121,6 +122,34 @@ class PermissionGate:
                 f"approval {approval_id} is already {approval.status}"
             )
         approval.status = STATUS_REJECTED
+        approval.decided_at = datetime.now(timezone.utc)
+        approval.decided_by = decided_by
+        approval.note = note
+        self.db.commit()
+        self.db.refresh(approval)
+        return approval
+
+    def cancel(
+        self,
+        approval_id: int,
+        *,
+        decided_by:  str | None = None,
+        note:        str | None = None,
+    ) -> PendingApproval:
+        """Operator dismissal — neutral disposition distinct from reject.
+
+        Use when the order is no longer relevant (signal stale, made by
+        mistake, will re-evaluate later) rather than actively refused.
+        Preserves audit clarity: REJECTED == "operator said no", CANCELLED ==
+        "operator dismissed without judgement". Same already-decided guard as
+        approve/reject so a settled item cannot be reopened.
+        """
+        approval = self.get(approval_id)
+        if approval.status != STATUS_PENDING:
+            raise ApprovalAlreadyDecidedError(
+                f"approval {approval_id} is already {approval.status}"
+            )
+        approval.status = STATUS_CANCELLED
         approval.decided_at = datetime.now(timezone.utc)
         approval.decided_by = decided_by
         approval.note = note

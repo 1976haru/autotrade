@@ -156,3 +156,78 @@ def test_submit_persists_via_session():
             select(PendingApproval).where(PendingApproval.id == approval_id)
         ).scalar_one()
         assert loaded.status == "PENDING"
+
+
+# ---------- cancel ----------
+
+def test_cancel_marks_approval_cancelled_with_metadata():
+    Session = _session()
+    with Session() as db:
+        audit = _audit(db)
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+
+        cancelled = gate.cancel(approval.id, decided_by="user", note="signal stale")
+        assert cancelled.status == "CANCELLED"
+        assert cancelled.decided_by == "user"
+        assert cancelled.note == "signal stale"
+        assert cancelled.decided_at is not None
+
+
+def test_cancel_does_not_execute_or_touch_audit_executed_flag():
+    """Cancel must not run the order or mutate audit beyond what reject does."""
+    Session = _session()
+    with Session() as db:
+        audit = _audit(db)
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+
+        gate.cancel(approval.id)
+
+        refreshed_audit = db.get(OrderAuditLog, audit.id)
+        assert refreshed_audit.executed is False
+        assert refreshed_audit.broker_order_id is None
+
+
+def test_cancelled_approval_excluded_from_list_pending():
+    Session = _session()
+    with Session() as db:
+        audit = _audit(db)
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+        gate.cancel(approval.id)
+        assert gate.list_pending() == []
+
+
+def test_cannot_cancel_already_decided():
+    Session = _session()
+    with Session() as db:
+        audit = _audit(db)
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+        gate.reject(approval.id)
+        with pytest.raises(ApprovalAlreadyDecidedError):
+            gate.cancel(approval.id)
+
+
+def test_cannot_approve_after_cancel():
+    Session = _session()
+    with Session() as db:
+        audit = _audit(db)
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+        gate.cancel(approval.id)
+        with pytest.raises(ApprovalAlreadyDecidedError):
+            asyncio.run(gate.approve(approval.id, MockBrokerAdapter()))
+
+
+def test_cancel_unknown_id_raises_not_found():
+    Session = _session()
+    with Session() as db:
+        with pytest.raises(ApprovalNotFoundError):
+            PermissionGate(db).cancel(99999)
