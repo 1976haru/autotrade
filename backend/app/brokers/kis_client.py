@@ -2,6 +2,8 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
+from app.core.rate_limiter import SlidingWindowRateLimiter
+
 
 PAPER_HOST = "https://openapivts.koreainvestment.com:29443"
 LIVE_HOST  = "https://openapi.koreainvestment.com:9443"
@@ -34,6 +36,7 @@ class KisClient:
         is_paper:   bool = True,
         transport:  httpx.AsyncBaseTransport | None = None,
         timeout:    float = 10.0,
+        rate_limiter: SlidingWindowRateLimiter | None = None,
     ):
         if not app_key or not app_secret:
             raise KisAuthError("KIS app_key and app_secret are required")
@@ -45,6 +48,11 @@ class KisClient:
         self._timeout   = timeout
         self._token: str | None = None
         self._token_expires_at: datetime | None = None
+        self._rate_limiter = rate_limiter
+
+    async def _throttle(self) -> None:
+        if self._rate_limiter is not None:
+            await self._rate_limiter.acquire()
 
     def _client(self) -> httpx.AsyncClient:
         kwargs = {"base_url": self.base_url, "timeout": self._timeout}
@@ -57,6 +65,7 @@ class KisClient:
         if self._token and self._token_expires_at and now < self._token_expires_at:
             return self._token
 
+        await self._throttle()
         async with self._client() as client:
             r = await client.post(
                 "/oauth2/tokenP",
@@ -80,6 +89,7 @@ class KisClient:
     async def get_price(self, symbol: str) -> dict:
         """Returns raw JSON from KIS quote endpoint. Caller extracts fields."""
         token = await self._ensure_token()
+        await self._throttle()
         async with self._client() as client:
             r = await client.get(
                 "/uapi/domestic-stock/v1/quotations/inquire-price",
@@ -117,6 +127,7 @@ class KisClient:
         cano/prdt_cd are the 8-digit / 2-digit halves of the KIS account number.
         """
         token = await self._ensure_token()
+        await self._throttle()
         async with self._client() as client:
             r = await client.get(
                 "/uapi/domestic-stock/v1/trading/inquire-balance",
@@ -160,6 +171,7 @@ class KisClient:
         """
         today = datetime.now(timezone.utc).strftime("%Y%m%d")
         token = await self._ensure_token()
+        await self._throttle()
         async with self._client() as client:
             r = await client.get(
                 "/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
@@ -213,6 +225,7 @@ class KisClient:
         ord_unpr = "0" if order_type == "market" else str(limit_price)
 
         token = await self._ensure_token()
+        await self._throttle()
         async with self._client() as client:
             r = await client.post(
                 "/uapi/domestic-stock/v1/trading/order-cash",

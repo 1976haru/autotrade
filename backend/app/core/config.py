@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     kis_app_secret: str = ""
     kis_account_no: str = ""
     kis_is_paper: bool = True
+    kis_rate_limit_calls:          int   = 5
+    kis_rate_limit_window_seconds: float = 1.0
 
     openai_api_key: str = ""
     anthropic_api_key: str = ""

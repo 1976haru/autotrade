@@ -3,9 +3,11 @@ from functools import lru_cache
 from app.ai.client import AiClient
 from app.brokers.base import BrokerAdapter
 from app.brokers.kis import KisBrokerAdapter
+from app.brokers.kis_client import KisClient
 from app.brokers.mock_broker import MockBrokerAdapter
 from app.core.config import get_settings
 from app.core.modes import OperationMode
+from app.core.rate_limiter import SlidingWindowRateLimiter
 from app.market.base import MarketDataAdapter
 from app.market.mock import MockMarketData
 from app.risk.risk_manager import RiskManager, RiskPolicy
@@ -18,7 +20,22 @@ def get_mock_broker() -> MockBrokerAdapter:
 
 @lru_cache
 def _get_kis_broker() -> KisBrokerAdapter:
-    return KisBrokerAdapter()
+    settings = get_settings()
+    if not settings.kis_app_key or not settings.kis_app_secret:
+        # No credentials yet — return a bare adapter; the first real call
+        # raises a clear error. Operator must set KIS_APP_KEY / KIS_APP_SECRET.
+        return KisBrokerAdapter()
+    limiter = SlidingWindowRateLimiter(
+        max_calls=settings.kis_rate_limit_calls,
+        window_seconds=settings.kis_rate_limit_window_seconds,
+    )
+    client = KisClient(
+        settings.kis_app_key,
+        settings.kis_app_secret,
+        is_paper=settings.kis_is_paper,
+        rate_limiter=limiter,
+    )
+    return KisBrokerAdapter(client=client)
 
 
 def get_broker() -> BrokerAdapter:
