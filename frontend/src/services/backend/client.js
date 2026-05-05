@@ -1,14 +1,39 @@
 const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
 
+// Format the FastAPI HTTPException detail into something an operator can read
+// without having to mentally parse JSON. Structured server errors get
+// dedicated wording; everything else falls back to JSON stringify so we don't
+// accidentally swallow useful diagnostic data.
+export function formatBackendErrorDetail(detail) {
+  if (detail == null) return null;
+  if (typeof detail === "string") return detail;
+  if (detail.error === "risk_check_failed_at_approve" && Array.isArray(detail.reasons)) {
+    // 070: re-eval at approve time blocked execution. Keep the operator-facing
+    // wording focused on the cause, not the internal error code.
+    return `승인 시점 재평가에서 거부됨: ${detail.reasons.join(" / ")}`;
+  }
+  if (Array.isArray(detail.reasons)) {
+    return detail.reasons.join(" / ");
+  }
+  return JSON.stringify(detail);
+}
+
 export async function backendFetch(path, options = {}) {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
   });
   if (!res.ok) {
-    let detail = null;
-    try { detail = await res.json(); } catch { /* ignore */ }
-    throw new Error(detail ? JSON.stringify(detail) : `Backend API error: ${res.status}`);
+    let body = null;
+    try { body = await res.json(); } catch { /* non-JSON error body */ }
+    // FastAPI wraps errors in {detail: ...}. Fall back to the body itself if
+    // a different layer (proxy, middleware) returned a flat object.
+    const detail = body?.detail ?? body;
+    const message = formatBackendErrorDetail(detail) || `Backend API error: ${res.status}`;
+    const err = new Error(message);
+    err.status = res.status;
+    err.detail = detail;
+    throw err;
   }
   return res.json();
 }
