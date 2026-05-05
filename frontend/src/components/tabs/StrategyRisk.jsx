@@ -1,6 +1,8 @@
+import { useState } from "react";
+
 import { STRATEGIES } from "../../config/strategies";
 import { RISK_POLICY_FIELDS } from "../../config/riskPolicy";
-import { Btn, Card, SectionLabel, Toggle, Slider } from "../common";
+import { Btn, Card, Inp, SectionLabel, Toggle, Slider } from "../common";
 import { fmtKRW } from "../../utils/format";
 
 
@@ -84,8 +86,61 @@ export function EmergencyStopHistoryCard({ history }) {
 }
 
 
+export function EmergencyStopConfirmModal({ targetEnabled, busy, onConfirm, onCancel }) {
+  const [decidedBy, setDecidedBy] = useState("");
+  const [note,      setNote]      = useState("");
+
+  const action = targetEnabled ? "긴급 정지 활성화" : "긴급 정지 해제";
+  const accent = targetEnabled ? "#ef4444"          : "#22c55e";
+
+  return (
+    <div
+      role="dialog"
+      aria-label={action}
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 1000,
+      }}
+    >
+      <Card accentColor={`${accent}55`} style={{ width: 360, maxWidth: "90vw" }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: accent, marginBottom: 4 }}>
+          {action}
+        </div>
+        <div style={{ fontSize: 10, color: "#475569", marginBottom: 12, lineHeight: 1.5 }}>
+          감사 추적을 위해 운영자명과 사유를 남겨주세요. 둘 다 선택 사항이지만,
+          기록된 값은 영구 저장되어 사고 분석 시 사용됩니다.
+        </div>
+
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>운영자명 (decided_by)</div>
+          <Inp value={decidedBy} onChange={setDecidedBy} placeholder="예: ops1" />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>사유 (note)</div>
+          <Inp value={note} onChange={setNote} placeholder="예: vol spike, circuit-breaker" />
+        </div>
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <Btn color="#1a3a5c" onClick={onCancel} disabled={busy} small>취소</Btn>
+          <Btn
+            color={accent}
+            onClick={() => onConfirm({ decided_by: decidedBy.trim(), note: note.trim() })}
+            disabled={busy}
+            small
+          >
+            {busy ? "처리 중…" : "확인"}
+          </Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+
 export function BackendPolicyCard({ riskPolicy }) {
   const { policy, loading, error, emergencyStop, busy, toggleEmergency } = riskPolicy;
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   return (
     <Card accentColor={emergencyStop ? "#ef444455" : "#7dd3fc22"}>
@@ -140,13 +195,25 @@ export function BackendPolicyCard({ riskPolicy }) {
         </div>
         <Btn
           color={emergencyStop ? "#22c55e" : "#ef4444"}
-          onClick={toggleEmergency}
+          onClick={() => setConfirmOpen(true)}
           disabled={busy}
           small
         >
           {emergencyStop ? "해제" : "긴급 정지"}
         </Btn>
       </div>
+
+      {confirmOpen && (
+        <EmergencyStopConfirmModal
+          targetEnabled={!emergencyStop}
+          busy={busy}
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={async (decision) => {
+            await toggleEmergency(decision);
+            setConfirmOpen(false);
+          }}
+        />
+      )}
     </Card>
   );
 }

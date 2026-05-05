@@ -1,9 +1,10 @@
-import { cleanup, render, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { act, cleanup, fireEvent, render, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { RISK_POLICY_FIELDS } from "../../config/riskPolicy";
 import {
   BackendPolicyCard,
+  EmergencyStopConfirmModal,
   EmergencyStopHistoryCard,
   EmergencyStopHistoryRow,
 } from "./StrategyRisk";
@@ -107,6 +108,91 @@ describe("<BackendPolicyCard>", () => {
     // The text content in the emergency-stop banner contains "ACTIVE" when on
     const banner = getByText(/긴급 정지/);
     expect(within(banner.parentElement).getByText(/ACTIVE/)).toBeTruthy();
+  });
+
+  it("opens the confirm modal on toggle-button click without firing toggleEmergency yet", () => {
+    const toggleEmergency = vi.fn();
+    const { getByText, queryByRole } = render(
+      <BackendPolicyCard riskPolicy={{ ..._wrap(_DEFAULT_POLICY), toggleEmergency }} />,
+    );
+    expect(queryByRole("dialog")).toBeNull();
+    fireEvent.click(getByText("긴급 정지"));
+    expect(queryByRole("dialog")).not.toBeNull();
+    expect(toggleEmergency).not.toHaveBeenCalled();
+  });
+
+  it("modal confirm forwards decided_by + note to toggleEmergency and closes", async () => {
+    const toggleEmergency = vi.fn().mockResolvedValue();
+    const { getByText, getByPlaceholderText, queryByRole } = render(
+      <BackendPolicyCard riskPolicy={{ ..._wrap(_DEFAULT_POLICY), toggleEmergency }} />,
+    );
+    fireEvent.click(getByText("긴급 정지"));
+    fireEvent.change(getByPlaceholderText(/ops1/), { target: { value: "ops1" } });
+    fireEvent.change(getByPlaceholderText(/vol spike/), { target: { value: "circuit-breaker" } });
+    await act(async () => {
+      fireEvent.click(getByText("확인"));
+    });
+    expect(toggleEmergency).toHaveBeenCalledWith({
+      decided_by: "ops1", note: "circuit-breaker",
+    });
+    expect(queryByRole("dialog")).toBeNull();
+  });
+
+  it("modal cancel closes without calling toggleEmergency", () => {
+    const toggleEmergency = vi.fn();
+    const { getByText, queryByRole } = render(
+      <BackendPolicyCard riskPolicy={{ ..._wrap(_DEFAULT_POLICY), toggleEmergency }} />,
+    );
+    fireEvent.click(getByText("긴급 정지"));
+    fireEvent.click(getByText("취소"));
+    expect(queryByRole("dialog")).toBeNull();
+    expect(toggleEmergency).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("<EmergencyStopConfirmModal>", () => {
+  afterEach(cleanup);
+
+  it("titles the dialog as activation when targetEnabled=true", () => {
+    const { getByRole } = render(
+      <EmergencyStopConfirmModal
+        targetEnabled={true} busy={false}
+        onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    expect(getByRole("dialog").getAttribute("aria-label")).toBe("긴급 정지 활성화");
+  });
+
+  it("titles the dialog as release when targetEnabled=false", () => {
+    const { getByRole } = render(
+      <EmergencyStopConfirmModal
+        targetEnabled={false} busy={false}
+        onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    expect(getByRole("dialog").getAttribute("aria-label")).toBe("긴급 정지 해제");
+  });
+
+  it("trims surrounding whitespace before forwarding values", () => {
+    const onConfirm = vi.fn();
+    const { getByText, getByPlaceholderText } = render(
+      <EmergencyStopConfirmModal
+        targetEnabled={true} busy={false}
+        onConfirm={onConfirm} onCancel={() => {}} />,
+    );
+    fireEvent.change(getByPlaceholderText(/ops1/), { target: { value: "  ops1 " } });
+    fireEvent.change(getByPlaceholderText(/vol spike/), { target: { value: " note " } });
+    fireEvent.click(getByText("확인"));
+    expect(onConfirm).toHaveBeenCalledWith({ decided_by: "ops1", note: "note" });
+  });
+
+  it("disables both buttons while busy", () => {
+    const { getByText } = render(
+      <EmergencyStopConfirmModal
+        targetEnabled={true} busy={true}
+        onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    expect(getByText("취소").disabled).toBe(true);
+    expect(getByText(/처리 중/).disabled).toBe(true);
   });
 });
 
