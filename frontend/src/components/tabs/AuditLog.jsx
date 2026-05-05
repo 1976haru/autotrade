@@ -133,11 +133,54 @@ export function mergeEvents(orders, stops, limit = 50) {
 }
 
 
+const KIND_FILTERS = [
+  { id: "all",   label: "전체",     color: "#7dd3fc" },
+  { id: "order", label: "주문",     color: "#7dd3fc" },
+  { id: "stop",  label: "긴급정지", color: "#fbbf24" },
+];
+
+
+export function KindFilterBar({ active, onChange }) {
+  return (
+    <div role="radiogroup" aria-label="이벤트 종류 필터"
+         style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+      {KIND_FILTERS.map((f) => {
+        const isActive = active === f.id;
+        return (
+          <button
+            key={f.id}
+            role="radio"
+            aria-checked={isActive}
+            onClick={() => onChange(f.id)}
+            style={{
+              padding: "5px 10px", borderRadius: 12, cursor: "pointer",
+              fontFamily: "inherit", fontSize: 10, fontWeight: 700,
+              background: isActive ? `${f.color}22` : "transparent",
+              border:     `1px solid ${isActive ? f.color : "#1a3a5c"}`,
+              color:      isActive ? f.color : "#475569",
+            }}
+          >
+            {f.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+
 export function EventTimelineView() {
   const orders = useOrderAudits();
   const stops  = useEmergencyStopAudits();
+  const [kind, setKind] = useState("all");
 
-  const events = mergeEvents(orders.items, stops.items);
+  // 필터를 mergeEvents *전에* 적용 — top-50 cap 안에서 한쪽 종류가 밀려나
+  // 사라지는 일을 방지한다 ("긴급정지만" 선택 시 가장 최근 50건의 stop이
+  // 보장되어야지, 시간상 우연히 50개 주문 사이에 끼어든 stop만 보여서는 안 됨).
+  const filteredOrders = kind === "stop"  ? [] : orders.items;
+  const filteredStops  = kind === "order" ? [] : stops.items;
+  const events = mergeEvents(filteredOrders, filteredStops);
+
   const loading = orders.loading || stops.loading;
   // 두 소스 중 하나라도 실패하면 그 메시지를 보여줌. 둘 다 실패하면 주문 쪽
   // 메시지가 우선 — 운영자 입장에선 어느 하나가 깨졌다는 사실이 중요하지
@@ -157,14 +200,18 @@ export function EventTimelineView() {
         "어떤 주문이 있었고 그 사이 긴급정지가 어떻게 움직였는지"를 함께 본다.
       </div>
 
+      <KindFilterBar active={kind} onChange={setKind} />
+
       {error && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>}
 
       {loading ? (
         <div style={{ color: "#475569", fontSize: 11, padding: 12, textAlign: "center" }}>로딩 중…</div>
       ) : events.length === 0 ? (
-        <div style={{ color: "#1e3a5c", fontSize: 12, padding: 16, textAlign: "center" }}>이벤트 없음</div>
-      ) : events.map(({ kind, row }) => (
-        kind === "order"
+        <div style={{ color: "#1e3a5c", fontSize: 12, padding: 16, textAlign: "center" }}>
+          {kind === "all" ? "이벤트 없음" : "해당 종류의 이벤트 없음"}
+        </div>
+      ) : events.map(({ kind: rowKind, row }) => (
+        rowKind === "order"
           ? <OrderAuditRow         key={`order-${row.id}`} r={row} />
           : <EmergencyStopAuditRow key={`stop-${row.id}`}  r={row} />
       ))}
