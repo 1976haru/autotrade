@@ -36,4 +36,9 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify(decision || {}),
   }),
+  runBacktest: (req) => backendFetch("/api/backtest/run", {
+    method: "POST",
+    body: JSON.stringify(req),
+  }),
+  getBacktestRun: (id) => backendFetch(`/api/backtest/runs/${id}`),
 };
