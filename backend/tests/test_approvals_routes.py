@@ -301,3 +301,38 @@ def test_approve_response_includes_reasons(client, monkeypatch):
     res = client.post(f"/api/approvals/{submit['approval_id']}/approve").json()
     assert isinstance(res["approval"]["reasons"], list)
     assert any("manual approval" in r for r in res["approval"]["reasons"])
+
+
+# ---------- 070: re-eval at approve time (route layer) ----------
+
+def test_approve_returns_409_when_emergency_stop_toggled_after_submit(client, monkeypatch):
+    """Operator pulls emergency_stop after queueing; the route must surface
+    409 with reasons rather than executing."""
+    _enable_manual_approval(monkeypatch, client)
+    submit = _submit_buy(client).json()
+
+    client.test_risk_manager.set_emergency_stop(True)
+
+    res = client.post(f"/api/approvals/{submit['approval_id']}/approve")
+    assert res.status_code == 409
+    detail = res.json()["detail"]
+    assert detail["error"] == "risk_check_failed_at_approve"
+    assert any("emergency stop" in r for r in detail["reasons"])
+
+    # Approval still PENDING for retry
+    pending = client.get("/api/approvals").json()
+    assert any(p["id"] == submit["approval_id"] for p in pending)
+
+
+def test_approve_returns_409_when_live_trading_flag_toggled_off(client, monkeypatch):
+    """ENABLE_LIVE_TRADING was on at submit (queue gate let it through);
+    flip off before approve and re-eval blocks at the same gate."""
+    _enable_manual_approval(monkeypatch, client)
+    submit = _submit_buy(client).json()
+
+    client.test_risk_manager.policy.enable_live_trading = False
+
+    res = client.post(f"/api/approvals/{submit['approval_id']}/approve")
+    assert res.status_code == 409
+    detail = res.json()["detail"]
+    assert any("live trading" in r for r in detail["reasons"])

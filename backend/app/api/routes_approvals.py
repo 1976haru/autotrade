@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_broker
+from app.api.deps import get_broker, get_risk_manager
 from app.brokers.base import BrokerAdapter, OrderResult
 from app.db.models import OrderAuditLog
 from app.db.session import get_db
@@ -16,8 +16,10 @@ from app.permission.gate import (
     STATUS_REJECTED,
     ApprovalAlreadyDecidedError,
     ApprovalNotFoundError,
+    ApprovalRiskCheckFailedError,
     PermissionGate,
 )
+from app.risk.risk_manager import RiskManager
 
 router = APIRouter(prefix="/approvals", tags=["approvals"])
 
@@ -130,18 +132,27 @@ async def approve_route(
     approval_id: int,
     payload: ApprovalDecision | None = None,
     broker:  BrokerAdapter = Depends(get_broker),
+    risk:    RiskManager   = Depends(get_risk_manager),
     db:      Session = Depends(get_db),
 ) -> ApproveResponse:
     decision = payload or ApprovalDecision()
     try:
         approval, result = await PermissionGate(db).approve(
-            approval_id, broker,
+            approval_id, broker, risk,
             decided_by=decision.decided_by, note=decision.note,
         )
     except ApprovalNotFoundError:
         raise HTTPException(status_code=404, detail="approval not found")
     except ApprovalAlreadyDecidedError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except ApprovalRiskCheckFailedError as e:
+        # 070: re-eval surfaced violations that didn't exist at submit. The
+        # approval row is intentionally left PENDING so the operator can
+        # retry once the broker state recovers.
+        raise HTTPException(status_code=409, detail={
+            "error": "risk_check_failed_at_approve",
+            "reasons": e.reasons,
+        })
     reasons = _load_reasons(db, [approval]).get(approval.audit_id)
     return ApproveResponse(approval=_to_out(approval, reasons), result=result)
 
