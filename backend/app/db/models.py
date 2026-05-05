@@ -113,6 +113,24 @@ class AiAnalysisLog(Base):
     error:         Mapped[str | None]     = mapped_column(String(500), nullable=True)
 
 
+class EmergencyStopEvent(Base):
+    """긴급 정지 토글 이력.
+
+    `RiskManager.emergency_stop` 자체는 in-memory 토글이라 재시작 시 초기화되지만,
+    누가 언제 어떤 사유로 켜고 껐는지를 추적할 수 있어야 사고 분석이 가능하다.
+    이 테이블은 토글이 발생할 때마다 한 행씩 추가된다 — 같은 상태로 다시 토글한
+    경우(no-op)는 라우트 레이어에서 걸러서 노이즈를 줄인다.
+    """
+
+    __tablename__ = "emergency_stop_event"
+
+    id:         Mapped[int]            = mapped_column(primary_key=True)
+    created_at: Mapped[datetime]       = mapped_column(DateTime, default=_utcnow, index=True)
+    enabled:    Mapped[bool]           = mapped_column(Boolean)
+    decided_by: Mapped[str | None]     = mapped_column(String(64), nullable=True)
+    note:       Mapped[str | None]     = mapped_column(String(500), nullable=True)
+
+
 class MarketBar(Base):
     """업스트림에서 가져온 OHLCV 봉의 캐시. (symbol, interval, timestamp)가 유일."""
 
