@@ -13,8 +13,17 @@ from app.db.models import OrderAuditLog, PendingApproval
 from app.permission.gate import (
     ApprovalAlreadyDecidedError,
     ApprovalNotFoundError,
+    ApprovalRiskCheckFailedError,
     PermissionGate,
 )
+from app.risk.risk_manager import RiskManager, RiskPolicy
+
+
+def _risk_for_live_manual():
+    """070: PermissionGate.approve re-evaluates risk against current broker
+    state, so the LIVE_MANUAL_APPROVAL queue tests need the global flag on
+    (otherwise re-eval would block at the queue gate added in 061)."""
+    return RiskManager(RiskPolicy(enable_live_trading=True))
 
 
 def _session():
@@ -87,7 +96,8 @@ def test_approve_executes_order_and_updates_audit():
 
         broker = MockBrokerAdapter()
         approved, result = asyncio.run(gate.approve(
-            approval.id, broker, decided_by="user", note="ok",
+            approval.id, broker, _risk_for_live_manual(),
+            decided_by="user", note="ok",
         ))
         assert approved.status == "APPROVED"
         assert approved.decided_by == "user"
@@ -128,7 +138,7 @@ def test_cannot_approve_already_decided():
                                mode=OperationMode.LIVE_MANUAL_APPROVAL)
         gate.reject(approval.id)
         with pytest.raises(ApprovalAlreadyDecidedError):
-            asyncio.run(gate.approve(approval.id, MockBrokerAdapter()))
+            asyncio.run(gate.approve(approval.id, MockBrokerAdapter(), _risk_for_live_manual()))
 
 
 def test_cannot_reject_already_decided():
@@ -138,7 +148,7 @@ def test_cannot_reject_already_decided():
         gate = PermissionGate(db)
         approval = gate.submit(audit=audit, order=_order(),
                                mode=OperationMode.LIVE_MANUAL_APPROVAL)
-        asyncio.run(gate.approve(approval.id, MockBrokerAdapter()))
+        asyncio.run(gate.approve(approval.id, MockBrokerAdapter(), _risk_for_live_manual()))
         with pytest.raises(ApprovalAlreadyDecidedError):
             gate.reject(approval.id)
 
@@ -223,7 +233,7 @@ def test_cannot_approve_after_cancel():
                                mode=OperationMode.LIVE_MANUAL_APPROVAL)
         gate.cancel(approval.id)
         with pytest.raises(ApprovalAlreadyDecidedError):
-            asyncio.run(gate.approve(approval.id, MockBrokerAdapter()))
+            asyncio.run(gate.approve(approval.id, MockBrokerAdapter(), _risk_for_live_manual()))
 
 
 def test_cancel_unknown_id_raises_not_found():
@@ -306,3 +316,90 @@ def test_list_decided_limit_offset():
         assert len(next_two) == 2
         # No overlap between pages
         assert {r.id for r in first_two}.isdisjoint({r.id for r in next_two})
+
+
+# ---------- 070: re-evaluation at approve time ----------
+
+def test_approve_rejects_when_emergency_stop_toggled_after_submit():
+    """Operator pulls emergency_stop between submit and approve. Re-eval must
+    block execution and leave the approval as PENDING for retry."""
+    Session = _session()
+    with Session() as db:
+        audit = _audit(db)
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+
+        risk = _risk_for_live_manual()
+        risk.set_emergency_stop(True)
+
+        with pytest.raises(ApprovalRiskCheckFailedError) as excinfo:
+            asyncio.run(gate.approve(approval.id, MockBrokerAdapter(), risk))
+        assert any("emergency stop" in r for r in excinfo.value.reasons)
+
+        # Approval still PENDING — operator can retry once the stop clears
+        refreshed = db.get(PendingApproval, approval.id)
+        assert refreshed.status == "PENDING"
+        # And the audit row was untouched: no execution attempted
+        refreshed_audit = db.get(OrderAuditLog, audit.id)
+        assert refreshed_audit.executed is False
+
+
+def test_approve_rejects_when_notional_now_exceeds_limit():
+    """Price moved enough between submit and approve to violate the notional
+    cap. Re-eval surfaces the violation and blocks execution."""
+    Session = _session()
+    with Session() as db:
+        audit = _audit(db)
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(qty=2),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+
+        # MockBroker default price=75_000 → 2 qty * 75_000 = 150_000 < 1M cap
+        # Tighten the policy so re-eval finds the violation.
+        risk = RiskManager(RiskPolicy(enable_live_trading=True, max_order_notional=100_000))
+
+        with pytest.raises(ApprovalRiskCheckFailedError) as excinfo:
+            asyncio.run(gate.approve(approval.id, MockBrokerAdapter(), risk))
+        assert any("max_order_notional" in r for r in excinfo.value.reasons)
+
+        refreshed = db.get(PendingApproval, approval.id)
+        assert refreshed.status == "PENDING"
+
+
+def test_approve_rejects_when_live_trading_flag_toggled_off():
+    """The global ENABLE_LIVE_TRADING flag was on at submit (enabling the
+    queue) but flipped off before approve. 061's queue gate fires at re-eval."""
+    Session = _session()
+    with Session() as db:
+        audit = _audit(db)
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+
+        # Submit happened with flag on (semantically). Now re-eval with flag off.
+        risk = RiskManager(RiskPolicy(enable_live_trading=False))
+
+        with pytest.raises(ApprovalRiskCheckFailedError) as excinfo:
+            asyncio.run(gate.approve(approval.id, MockBrokerAdapter(), risk))
+        assert any("live trading" in r for r in excinfo.value.reasons)
+
+        refreshed = db.get(PendingApproval, approval.id)
+        assert refreshed.status == "PENDING"
+
+
+def test_approve_proceeds_when_re_eval_only_returns_mode_marker():
+    """Steady state: no violations, mode-required-approval marker is the only
+    reason in the re-eval result. The gate must let execution through."""
+    Session = _session()
+    with Session() as db:
+        audit = _audit(db)
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(qty=1),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+
+        approved, result = asyncio.run(gate.approve(
+            approval.id, MockBrokerAdapter(), _risk_for_live_manual(),
+        ))
+        assert approved.status == "APPROVED"
+        assert result.status.value == "FILLED"

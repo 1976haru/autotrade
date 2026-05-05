@@ -7,6 +7,7 @@ from app.brokers.base import BrokerAdapter, OrderRequest, OrderResult, OrderSide
 from app.core.modes import OperationMode
 from app.db.models import OrderAuditLog, PendingApproval
 from app.execution.executor import OrderExecutor
+from app.risk.risk_manager import RiskDecision, RiskManager
 
 
 class ApprovalNotFoundError(LookupError):
@@ -17,10 +18,37 @@ class ApprovalAlreadyDecidedError(RuntimeError):
     pass
 
 
+class ApprovalRiskCheckFailedError(RuntimeError):
+    """Re-evaluation at approve time surfaced violations that didn't exist at
+    submit. Approval stays PENDING so the operator can retry once conditions
+    improve (price reverts, cash arrives, emergency stop clears, etc.)."""
+
+    def __init__(self, reasons: list[str]) -> None:
+        super().__init__(f"approve-time risk check failed: {reasons}")
+        self.reasons = reasons
+
+
 STATUS_PENDING   = "PENDING"
 STATUS_APPROVED  = "APPROVED"
 STATUS_REJECTED  = "REJECTED"
 STATUS_CANCELLED = "CANCELLED"
+
+# evaluate_order returns NEEDS_APPROVAL with this reason for the queueing modes
+# (LIVE_MANUAL_APPROVAL / LIVE_AI_ASSIST). At approve time it's the *expected*
+# reason — we strip it before deciding whether re-eval found real violations.
+_MODE_REQUIRES_APPROVAL_REASON = "manual approval required by operation mode"
+
+
+def _approve_re_eval_blocks_execution(result) -> bool:
+    """True iff the re-evaluation reasons indicate a real violation, not just
+    the mode-driven NEEDS_APPROVAL marker that would always show up for
+    LIVE_MANUAL_APPROVAL / LIVE_AI_ASSIST."""
+    if result.decision == RiskDecision.REJECTED:
+        return True
+    # APPROVED at SIM-like re-eval → proceed.
+    # NEEDS_APPROVAL → only proceed if every reason is the mode marker;
+    # accumulated limit/state reasons mean conditions changed since submit.
+    return any(r != _MODE_REQUIRES_APPROVAL_REASON for r in result.reasons)
 
 
 class PermissionGate:
@@ -98,6 +126,7 @@ class PermissionGate:
         self,
         approval_id: int,
         broker:      BrokerAdapter,
+        risk:        RiskManager,
         *,
         decided_by:  str | None = None,
         note:        str | None = None,
@@ -121,6 +150,26 @@ class PermissionGate:
             order_type=OrderType(approval.order_type),
             limit_price=approval.limit_price,
         )
+
+        # 070 hardening: between submit and approve the broker state can drift
+        # (price moves, cash spent on another order, emergency_stop toggled,
+        # ENABLE_LIVE_TRADING flag flipped off). Re-evaluate against the
+        # current state before executing — if conditions broke, raise so the
+        # caller can hold the approval as PENDING for retry.
+        quote     = await broker.get_price(order.symbol)
+        balance   = await broker.get_balance()
+        positions = await broker.get_positions()
+        re_eval   = risk.evaluate_order(
+            order=order,
+            mode=OperationMode(approval.mode),
+            balance=balance,
+            positions=positions,
+            latest_price=quote.price,
+        )
+        if _approve_re_eval_blocks_execution(re_eval):
+            # Approval stays PENDING — operator retries when conditions improve.
+            raise ApprovalRiskCheckFailedError(list(re_eval.reasons))
+
         result = await OrderExecutor(broker, self.db).execute(order, audit)
 
         approval.status = STATUS_APPROVED
