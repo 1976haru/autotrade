@@ -1,8 +1,14 @@
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.api.deps import get_mock_broker, get_risk_manager
 from app.brokers.mock_broker import MockBrokerAdapter
+from app.db.base import Base
+from app.db.models import OrderAuditLog
+from app.db.session import get_db
 from app.main import app
 from app.risk.risk_manager import RiskManager, RiskPolicy
 
@@ -11,9 +17,29 @@ from app.risk.risk_manager import RiskManager, RiskPolicy
 def client():
     broker = MockBrokerAdapter()
     risk = RiskManager(RiskPolicy())
+
+    test_engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(bind=test_engine)
+    TestSession = sessionmaker(
+        bind=test_engine, autoflush=False, autocommit=False, expire_on_commit=False
+    )
+
+    def override_get_db():
+        db = TestSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
     app.dependency_overrides[get_mock_broker] = lambda: broker
     app.dependency_overrides[get_risk_manager] = lambda: risk
+    app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as c:
+        c.test_db_factory = TestSession
         yield c
     app.dependency_overrides.clear()
 
@@ -72,6 +98,16 @@ def test_mock_broker_order_happy_path(client):
     assert len(positions) == 1
     assert positions[0]["symbol"] == "005930"
 
+    with client.test_db_factory() as db:
+        rows = db.execute(select(OrderAuditLog)).scalars().all()
+        assert len(rows) == 1
+        audit = rows[0]
+        assert audit.decision == "APPROVED"
+        assert audit.executed is True
+        assert audit.broker_status == "FILLED"
+        assert audit.filled_quantity == 1
+        assert audit.avg_fill_price == 75_000
+
 
 def test_mock_broker_order_rejected_by_risk(client):
     order = {"symbol": "005930", "side": "BUY", "quantity": 50}
@@ -80,6 +116,13 @@ def test_mock_broker_order_rejected_by_risk(client):
     detail = res.json()["detail"]
     assert detail["decision"] == "REJECTED"
     assert any("max_order_notional" in r for r in detail["reasons"])
+
+    with client.test_db_factory() as db:
+        audit = db.execute(select(OrderAuditLog)).scalar_one()
+        assert audit.decision == "REJECTED"
+        assert audit.executed is False
+        assert audit.broker_order_id is None
+        assert any("max_order_notional" in r for r in audit.reasons)
 
 
 def test_ai_analyze_is_placeholder_without_execute_permission(client):
