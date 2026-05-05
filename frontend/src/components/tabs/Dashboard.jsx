@@ -65,8 +65,20 @@ export function StatusPin({ icon, label, value, alarm, accent, onClick, testId }
 }
 
 
-export function StatusSummaryCard({ emergencyStop, pendingCount, running, onJumpTab }) {
+export function StatusSummaryCard({
+  emergencyStop, pendingCount, stalePendingCount = 0, running, onJumpTab,
+}) {
   const _jump = onJumpTab || (() => {});
+
+  // 결재 핀은 두 단계로 색을 escalate: 평상 amber, stale(10분+)이 하나라도
+  // 끼면 빨강. "3건 적체" vs "3건 + 1건 방치"를 첫 화면에서 구분하기 위해
+  // 핀 라벨에도 "(N stale)"을 부가한다.
+  const hasPending = pendingCount > 0;
+  const hasStale   = stalePendingCount > 0;
+  const pendingValue = hasPending
+    ? (hasStale ? `${pendingCount}건 (${stalePendingCount} stale)` : `${pendingCount}건`)
+    : "없음";
+
   return (
     <div style={{ display: "flex", gap: 8 }}>
       <StatusPin
@@ -81,9 +93,9 @@ export function StatusSummaryCard({ emergencyStop, pendingCount, running, onJump
       <StatusPin
         icon="🔐"
         label="승인 대기"
-        value={pendingCount > 0 ? `${pendingCount}건` : "없음"}
-        alarm={pendingCount > 0}
-        accent="#f59e0b"
+        value={pendingValue}
+        alarm={hasPending}
+        accent={hasStale ? "#ef4444" : "#f59e0b"}
         onClick={() => _jump("approve")}
         testId="status-pin-pending-approvals"
       />
@@ -189,7 +201,10 @@ export function Activity24hCard({ onJumpTab }) {
 }
 
 
-export function Dashboard({ portfolio, bot, botControls, emergencyStop, pendingCount = 0, onJumpTab }) {
+export function Dashboard({
+  portfolio, bot, botControls, emergencyStop,
+  pendingCount = 0, stalePendingCount = 0, onJumpTab,
+}) {
   const { totalAsset, totalPnL, totalPnLPct, cash, positions } = portfolio;
   const { stats, winRate, trades, running } = bot;
   const { start, stop } = botControls;
@@ -201,6 +216,7 @@ export function Dashboard({ portfolio, bot, botControls, emergencyStop, pendingC
       <StatusSummaryCard
         emergencyStop={emergencyStop}
         pendingCount={pendingCount}
+        stalePendingCount={stalePendingCount}
         running={running}
         onJumpTab={onJumpTab}
       />
