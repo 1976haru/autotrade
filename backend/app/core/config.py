@@ -1,0 +1,32 @@
+from functools import lru_cache
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.core.modes import OperationMode
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    app_env: str = "local"
+    app_name: str = "auto-trader-backend"
+    default_mode: OperationMode = OperationMode.SIMULATION
+    enable_live_trading: bool = False
+    enable_ai_execution: bool = False
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
+    kis_app_key: str = ""
+    kis_app_secret: str = ""
+    kis_account_no: str = ""
+    kis_is_paper: bool = True
+
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
