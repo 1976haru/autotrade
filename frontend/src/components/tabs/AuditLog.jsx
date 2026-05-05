@@ -162,6 +162,16 @@ function _writeKindFilter(value) {
   }
 }
 
+// 다른 탭(Dashboard 24h drill-down 등)에서 AuditLog로 점프하기 직전에
+// 미리 필터를 세팅할 때 사용. EventTimelineView가 마운트 시 localStorage에서
+// 초기값을 읽으므로, 여기서 쓴 뒤 onJumpTab("audit")을 호출하면 도착 시
+// 자동으로 그 필터로 렌더된다. 잘못된 kind는 무시 — 호출자 실수로 인해
+// 사용자 환경설정이 망가지지 않도록 방어.
+export function setEventKindFilter(kind) {
+  if (!_VALID_KINDS.has(kind)) return;
+  _writeKindFilter(kind);
+}
+
 
 export function KindFilterBar({ active, onChange }) {
   return (

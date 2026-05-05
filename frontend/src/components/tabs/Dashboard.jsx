@@ -1,6 +1,7 @@
 import { Card, SectionLabel, StatBox } from "../common";
 import { fmtKRW, fmtPct, pnlColor } from "../../utils/format";
 import { useEmergencyStopAudits, useOrderAudits } from "../../store/useAuditLogs";
+import { setEventKindFilter } from "./AuditLog";
 
 
 const _DAY_MS = 24 * 60 * 60 * 1000;
@@ -100,12 +101,33 @@ export function StatusSummaryCard({ emergencyStop, pendingCount, running, onJump
 }
 
 
-export function Activity24hCard() {
+// Activity24hCard 내부 행을 버튼으로 만들기 위한 공용 스타일.
+// AuditLog 탭으로 점프 + kind filter를 미리 세팅해 도착 시 자동 적용되도록 한다.
+const _DRILLDOWN_BUTTON_STYLE = {
+  background:   "transparent",
+  border:       "none",
+  padding:      "4px 0",
+  display:      "flex",
+  alignItems:   "baseline",
+  gap:          8,
+  width:        "100%",
+  textAlign:    "left",
+  fontFamily:   "inherit",
+  color:        "inherit",
+};
+
+export function Activity24hCard({ onJumpTab }) {
   const orders = useOrderAudits();
   const stops  = useEmergencyStopAudits();
   const a = computeActivity24h(orders.items, stops.items);
   const loading = orders.loading || stops.loading;
   const error   = orders.error || stops.error;
+
+  const _drillDown = (kind) => {
+    if (!onJumpTab) return;
+    setEventKindFilter(kind);
+    onJumpTab("audit");
+  };
 
   return (
     <Card>
@@ -121,7 +143,13 @@ export function Activity24hCard() {
         </div>
       ) : (
         <>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
+          <button
+            type="button"
+            onClick={() => _drillDown("order")}
+            data-testid="activity-orders-row"
+            style={{ ..._DRILLDOWN_BUTTON_STYLE, marginBottom: 4,
+                      cursor: onJumpTab ? "pointer" : "default" }}
+          >
             <span style={{ fontSize: 11, color: "#94a3b8" }}>주문</span>
             <span style={{ fontSize: 14, fontWeight: 700, color: "#7dd3fc" }}>{a.orders}건</span>
             <span style={{ fontSize: 10, color: "#475569" }}>
@@ -132,8 +160,14 @@ export function Activity24hCard() {
               {" · "}
               <span style={{ color: "#f59e0b", fontWeight: 700 }}>대기 {a.pending}</span>
             </span>
-          </div>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          </button>
+          <button
+            type="button"
+            onClick={() => _drillDown("stop")}
+            data-testid="activity-stops-row"
+            style={{ ..._DRILLDOWN_BUTTON_STYLE,
+                      cursor: onJumpTab ? "pointer" : "default" }}
+          >
             <span style={{ fontSize: 11, color: "#94a3b8" }}>긴급정지 토글</span>
             <span style={{
               fontSize: 14, fontWeight: 700,
@@ -147,7 +181,7 @@ export function Activity24hCard() {
                 <span style={{ color: "#22c55e", fontWeight: 700 }}>OFF {a.stopsOff}</span>
               </span>
             )}
-          </div>
+          </button>
         </>
       )}
     </Card>
@@ -197,7 +231,7 @@ export function Dashboard({ portfolio, bot, botControls, emergencyStop, pendingC
       </div>
 
       {/* 24시간 활동 요약 */}
-      <Activity24hCard />
+      <Activity24hCard onJumpTab={onJumpTab} />
 
       {/* 봇 컨트롤 */}
       <Card accentColor={running ? "#22c55e33" : undefined}>

@@ -287,3 +287,40 @@ describe("<Activity24hCard>", () => {
     vi.useRealTimers();
   });
 });
+
+
+describe("<Activity24hCard> drilldown to AuditLog", () => {
+  const STORAGE_KEY = "autotrade.eventKindFilter";
+
+  beforeEach(() => { _resetAuditHooks(); localStorage.clear(); });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  it("clicking 주문 row sets order filter and jumps to audit tab", () => {
+    const onJumpTab = vi.fn();
+    const { getByTestId } = render(<Activity24hCard onJumpTab={onJumpTab} />);
+    fireEvent.click(getByTestId("activity-orders-row"));
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("order");
+    expect(onJumpTab).toHaveBeenCalledWith("audit");
+  });
+
+  it("clicking 긴급정지 row sets stop filter and jumps to audit tab", () => {
+    const onJumpTab = vi.fn();
+    const { getByTestId } = render(<Activity24hCard onJumpTab={onJumpTab} />);
+    fireEvent.click(getByTestId("activity-stops-row"));
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("stop");
+    expect(onJumpTab).toHaveBeenCalledWith("audit");
+  });
+
+  it("clicks are no-ops when onJumpTab is missing (no localStorage write)", () => {
+    const { getByTestId } = render(<Activity24hCard />);
+    fireEvent.click(getByTestId("activity-orders-row"));
+    fireEvent.click(getByTestId("activity-stops-row"));
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it("renders rows as buttons (clickable) when onJumpTab is provided", () => {
+    const { getByTestId } = render(<Activity24hCard onJumpTab={() => {}} />);
+    expect(getByTestId("activity-orders-row").tagName).toBe("BUTTON");
+    expect(getByTestId("activity-orders-row").style.cursor).toBe("pointer");
+  });
+});

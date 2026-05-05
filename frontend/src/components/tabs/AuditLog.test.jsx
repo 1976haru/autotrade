@@ -7,6 +7,7 @@ import {
   KindFilterBar,
   OrderAuditRow,
   mergeEvents,
+  setEventKindFilter,
 } from "./AuditLog";
 
 
@@ -311,5 +312,28 @@ describe("<EventTimelineView> kind filter persistence", () => {
     localStorage.setItem(STORAGE_KEY, "garbage-from-future-build");
     const { getByRole } = render(<EventTimelineView />);
     expect(getByRole("radio", { name: "전체" }).getAttribute("aria-checked")).toBe("true");
+  });
+});
+
+
+describe("setEventKindFilter helper (cross-tab navigation entry point)", () => {
+  const STORAGE_KEY = "autotrade.eventKindFilter";
+
+  beforeEach(() => { localStorage.clear(); });
+  afterEach(() => { localStorage.clear(); });
+
+  it("writes a valid kind to localStorage", () => {
+    setEventKindFilter("order");
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("order");
+    setEventKindFilter("stop");
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("stop");
+    setEventKindFilter("all");
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("all");
+  });
+
+  it("ignores invalid kinds (caller bug should not corrupt user setting)", () => {
+    setEventKindFilter("order");
+    setEventKindFilter("garbage");
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("order");
   });
 });
