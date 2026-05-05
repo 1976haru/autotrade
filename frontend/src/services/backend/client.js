@@ -64,7 +64,10 @@ export const backendApi = {
     const qs = new URLSearchParams(params).toString();
     return backendFetch(`/api/market/bars?${qs}`);
   },
-  listOrderAudits: (limit = 50) => backendFetch(`/api/audit/orders?limit=${limit}`),
+  listOrderAudits: ({ limit = 50, offset = 0 } = {}) => {
+    const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    return backendFetch(`/api/audit/orders?${qs.toString()}`);
+  },
   listAiAudits:    (limit = 50) => backendFetch(`/api/audit/ai?limit=${limit}`),
   listBacktestRuns:(limit = 50) => backendFetch(`/api/audit/backtests?limit=${limit}`),
   engineRegistry:  () => backendFetch("/api/strategies/registry"),

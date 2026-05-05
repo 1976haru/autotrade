@@ -122,14 +122,16 @@ export function EmergencyStopAuditRow({ r }) {
 
 
 // id 충돌(주문 id와 긴급정지 id는 별도 시퀀스)을 피하려면 React key로 종류를
-// 함께 묶어야 한다. created_at 역순 병합 후 상위 50건만 렌더해 무한 길이를 막음.
-export function mergeEvents(orders, stops, limit = 50) {
+// 함께 묶어야 한다. created_at 역순으로 병합. limit이 명시되면 그만큼 자르지만,
+// 064 이후 EventTimelineView는 페이징 누적 결과를 통째로 넘기므로 기본은 한도 없음
+// (Infinity). 호출자가 cap을 두고 싶을 때만 명시.
+export function mergeEvents(orders, stops, limit = Infinity) {
   const tagged = [
     ...orders.map((r) => ({ kind: "order", row: r, ts: new Date(r.created_at).getTime() })),
     ...stops.map((r)  => ({ kind: "stop",  row: r, ts: new Date(r.created_at).getTime() })),
   ];
   tagged.sort((a, b) => b.ts - a.ts);
-  return tagged.slice(0, limit);
+  return Number.isFinite(limit) ? tagged.slice(0, limit) : tagged;
 }
 
 
@@ -213,6 +215,7 @@ export function EventTimelineView() {
   // 보장되어야지, 시간상 우연히 50개 주문 사이에 끼어든 stop만 보여서는 안 됨).
   const filteredOrders = kind === "stop"  ? [] : orders.items;
   const filteredStops  = kind === "order" ? [] : stops.items;
+  // 064: 페이징 누적 결과 전부 보여줌 (기본 Infinity).
   const events = mergeEvents(filteredOrders, filteredStops);
 
   const loading = orders.loading || stops.loading;
@@ -221,6 +224,19 @@ export function EventTimelineView() {
   // 정확히 어느 쪽인지는 부차적.
   const error = orders.error || stops.error;
   const refresh = () => { orders.refresh(); stops.refresh(); };
+
+  // "더 보기"는 현재 필터 종류에 해당하는 소스만 추가 페이지를 가져온다.
+  // 전체 모드면 양쪽 모두 — 한쪽이 끝나도 다른 쪽이 더 있으면 버튼 유지.
+  const sourceHasMore = (() => {
+    if (kind === "order") return orders.hasMore;
+    if (kind === "stop")  return stops.hasMore;
+    return orders.hasMore || stops.hasMore;
+  })();
+  const sourceLoadingMore = orders.loadingMore || stops.loadingMore;
+  const loadMore = () => {
+    if (kind !== "stop"  && orders.hasMore) orders.loadMore();
+    if (kind !== "order" && stops.hasMore)  stops.loadMore();
+  };
 
   return (
     <Card>
@@ -244,11 +260,29 @@ export function EventTimelineView() {
         <div style={{ color: "#1e3a5c", fontSize: 12, padding: 16, textAlign: "center" }}>
           {kind === "all" ? "이벤트 없음" : "해당 종류의 이벤트 없음"}
         </div>
-      ) : events.map(({ kind: rowKind, row }) => (
-        rowKind === "order"
-          ? <OrderAuditRow         key={`order-${row.id}`} r={row} />
-          : <EmergencyStopAuditRow key={`stop-${row.id}`}  r={row} />
-      ))}
+      ) : (
+        <>
+          {events.map(({ kind: rowKind, row }) => (
+            rowKind === "order"
+              ? <OrderAuditRow         key={`order-${row.id}`} r={row} />
+              : <EmergencyStopAuditRow key={`stop-${row.id}`}  r={row} />
+          ))}
+          <div style={{ marginTop: 10, textAlign: "center" }}>
+            {sourceHasMore ? (
+              <Btn
+                color="#334155"
+                onClick={loadMore}
+                disabled={sourceLoadingMore}
+                small
+              >
+                {sourceLoadingMore ? "불러오는 중…" : "더 보기"}
+              </Btn>
+            ) : (
+              <span style={{ fontSize: 9, color: "#1e3a5c" }}>모든 이벤트를 불러왔습니다</span>
+            )}
+          </div>
+        </>
+      )}
     </Card>
   );
 }
