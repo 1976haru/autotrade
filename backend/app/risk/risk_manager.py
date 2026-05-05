@@ -69,10 +69,19 @@ class RiskManager:
         latest_price: int,
         requested_by_ai: bool = False,
     ) -> RiskCheckResult:
-        result = RiskCheckResult(decision=RiskDecision.APPROVED)
-
+        # Hard short-circuit: emergency_stop is the operator's "stop everything"
+        # signal. It must REJECT across every mode — including LIVE_MANUAL_APPROVAL
+        # and LIVE_AI_ASSIST whose NEEDS_APPROVAL early-return below would
+        # otherwise queue the order behind the alarm. Returning here also keeps
+        # the audit row's reason list focused on the actual cause rather than
+        # piling on incidental violations.
         if self.emergency_stop:
-            result.reasons.append("emergency stop is enabled")
+            return RiskCheckResult(
+                decision=RiskDecision.REJECTED,
+                reasons=["emergency stop is enabled"],
+            )
+
+        result = RiskCheckResult(decision=RiskDecision.APPROVED)
 
         order_notional = latest_price * order.quantity
         if order_notional > self.policy.max_order_notional:

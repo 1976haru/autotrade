@@ -231,17 +231,14 @@ def test_ai_assist_queues_even_when_live_trading_disabled():
     assert result.decision == RiskDecision.NEEDS_APPROVAL
 
 
-def test_emergency_stop_does_not_short_circuit_manual_approval_queue():
-    """Today emergency_stop only appends a reason — it does not flip the
-    decision. In SIMULATION mode reasons get rolled up into REJECTED at the
-    end, but in LIVE_MANUAL_APPROVAL the early-return forces NEEDS_APPROVAL
-    and the operator sees emergency_stop as a flag in the modal.
-
-    LIVE-readiness note: this means emergency_stop alone is not a hard
-    short-circuit for the queue — defense relies on operator vigilance plus
-    the multi-layer guards. If hardening is desired (e.g., a flipped
-    emergency stop forces REJECTED across all modes), it should be a
-    deliberate change with this test updated."""
+def test_emergency_stop_short_circuits_to_rejected_in_manual_approval_mode():
+    """060 hardening: emergency_stop now forces REJECTED before the
+    NEEDS_APPROVAL early-return fires. Previously the order queued with
+    "emergency stop" alongside "manual approval required" and relied on
+    the operator to spot the alarm in the modal — now the queue itself is
+    closed while the alarm is on. Reasons list is focused on the alarm
+    only, not the incidental "manual approval required" string that no
+    longer applies."""
     risk = RiskManager(RiskPolicy())
     risk.set_emergency_stop(True)
     result = risk.evaluate_order(
@@ -251,9 +248,59 @@ def test_emergency_stop_does_not_short_circuit_manual_approval_queue():
         positions=[],
         latest_price=75_000,
     )
-    assert result.decision == RiskDecision.NEEDS_APPROVAL
-    assert any("emergency stop" in r for r in result.reasons)
-    assert any("manual approval" in r for r in result.reasons)
+    assert result.decision == RiskDecision.REJECTED
+    assert result.reasons == ["emergency stop is enabled"]
+
+
+def test_emergency_stop_short_circuits_to_rejected_in_ai_assist_mode():
+    """Mirror of the LIVE_MANUAL_APPROVAL invariant. The two modes share the
+    early-return path; both must remain symmetrically blocked when emergency
+    stop is engaged."""
+    risk = RiskManager(RiskPolicy())
+    risk.set_emergency_stop(True)
+    result = risk.evaluate_order(
+        order=_buy(1),
+        mode=OperationMode.LIVE_AI_ASSIST,
+        balance=_balance(),
+        positions=[],
+        latest_price=75_000,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert result.reasons == ["emergency stop is enabled"]
+
+
+def test_emergency_stop_short_circuits_in_live_ai_execution_with_flags_on():
+    """Even with both global flags enabled, emergency_stop wins — operator's
+    explicit stop signal beats configured trading permissions."""
+    risk = RiskManager(RiskPolicy(enable_live_trading=True, enable_ai_execution=True))
+    risk.set_emergency_stop(True)
+    result = risk.evaluate_order(
+        order=_buy(1),
+        mode=OperationMode.LIVE_AI_EXECUTION,
+        balance=_balance(),
+        positions=[],
+        latest_price=75_000,
+        requested_by_ai=True,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert result.reasons == ["emergency stop is enabled"]
+
+
+def test_emergency_stop_short_circuits_in_live_shadow_mode():
+    """LIVE_SHADOW already rejects every order; with emergency_stop the
+    rejection reason is the alarm rather than the shadow-mode notice. This
+    keeps the audit row pointed at the operator action, not the mode."""
+    risk = RiskManager(RiskPolicy())
+    risk.set_emergency_stop(True)
+    result = risk.evaluate_order(
+        order=_buy(1),
+        mode=OperationMode.LIVE_SHADOW,
+        balance=_balance(),
+        positions=[],
+        latest_price=75_000,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert result.reasons == ["emergency stop is enabled"]
 
 
 def test_manual_approval_surfaces_oversized_reason_to_operator():
