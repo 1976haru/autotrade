@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ApprovalDecisionModal, Approvals, HistoryRow } from "./Approvals";
+import { ApprovalDecisionModal, Approvals, HistoryRow, ReasonsLine } from "./Approvals";
 
 
 // useApprovals는 App에서 lift돼 prop으로 들어오므로 모듈 모킹 없이 prop으로
@@ -93,6 +93,66 @@ describe("<HistoryRow>", () => {
     );
     expect(container.textContent).toContain("LIMIT");
     expect(container.textContent).toContain("75,000원");
+  });
+
+  it("renders reasons line when row has reasons", () => {
+    const { container } = render(
+      <HistoryRow a={_row({ reasons: ["max_order_notional 초과", "manual approval required"] })} />,
+    );
+    expect(container.textContent).toContain("사유:");
+    expect(container.textContent).toContain("max_order_notional 초과");
+    expect(container.textContent).toContain("manual approval required");
+  });
+
+  it("omits reasons line when reasons is empty or missing", () => {
+    const { container: c1 } = render(<HistoryRow a={_row({ reasons: [] })} />);
+    expect(c1.textContent).not.toContain("사유:");
+    cleanup();
+    const { container: c2 } = render(<HistoryRow a={_row()} />);
+    expect(c2.textContent).not.toContain("사유:");
+  });
+});
+
+
+describe("<ReasonsLine>", () => {
+  afterEach(cleanup);
+
+  it("renders nothing when reasons is undefined or empty", () => {
+    const { container: c1 } = render(<ReasonsLine />);
+    expect(c1.textContent).toBe("");
+    cleanup();
+    const { container: c2 } = render(<ReasonsLine reasons={[]} />);
+    expect(c2.textContent).toBe("");
+  });
+
+  it("joins multiple reasons with ' / ' for compact display", () => {
+    const { container } = render(
+      <ReasonsLine reasons={["a", "b", "c"]} />,
+    );
+    expect(container.textContent).toContain("사유:");
+    expect(container.textContent).toContain("a / b / c");
+  });
+});
+
+
+describe("<Approvals> reasons on PENDING rows", () => {
+  afterEach(cleanup);
+
+  it("renders the reasons line on a PENDING row when present", () => {
+    const approvals = _makeApprovals({
+      pending: [{ ..._PENDING, reasons: ["manual approval required"] }],
+    });
+    const { container } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(container.textContent).toContain("사유:");
+    expect(container.textContent).toContain("manual approval required");
+  });
+
+  it("omits the reasons line on a PENDING row with no reasons", () => {
+    const approvals = _makeApprovals({
+      pending: [{ ..._PENDING, reasons: [] }],
+    });
+    const { container } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(container.textContent).not.toContain("사유:");
   });
 });
 
