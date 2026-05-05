@@ -73,7 +73,7 @@ def get_broker() -> BrokerAdapter:
 
 @lru_cache
 def get_risk_manager() -> RiskManager:
-    return RiskManager(RiskPolicy())
+    return RiskManager(RiskPolicy.from_settings(get_settings()))
 
 
 @lru_cache

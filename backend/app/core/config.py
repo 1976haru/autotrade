@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     enable_fill_polling:           bool = False
     fill_polling_interval_seconds: int  = 5
 
+    # RiskPolicy thresholds — operator-tunable without code changes.
+    # Defaults match RiskPolicy() defaults, so unset env vars preserve behavior.
+    risk_max_order_notional:   int = 1_000_000
+    risk_max_daily_loss:       int = 200_000
+    risk_max_positions:        int = 5
+    risk_max_symbol_exposure:  int = 1_500_000
+
     kis_app_key: str = ""
     kis_app_secret: str = ""
     kis_account_no: str = ""
