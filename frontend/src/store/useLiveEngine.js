@@ -4,12 +4,15 @@ import { backendApi } from "../services/backend/client";
 
 /**
  * LiveStrategyEngine HTTP 엔드포인트(/api/strategies/*) 래퍼.
- * - 초기 로드 시 status fetch
+ * - 초기 로드 시 status + registry fetch
  * - configure / tick / reset 후 status 자동 갱신
  * - lastResult: 최근 tick 응답 (signal + intended_order + routing)
+ * - registry: 서버가 알려주는 전략 목록 + 각 전략의 파라미터 스키마
+ *   (configure 폼을 하드코딩 없이 렌더링하기 위함)
  */
 export function useLiveEngine() {
   const [status,       setStatus]       = useState(null);
+  const [registry,     setRegistry]     = useState(null);
   const [lastResult,   setLastResult]   = useState(null);
   const [replaySummary,setReplaySummary]= useState(null);
   const [busy,         setBusy]         = useState(false);
@@ -25,11 +28,23 @@ export function useLiveEngine() {
     }
   }, []);
 
+  const refreshRegistry = useCallback(async () => {
+    try {
+      const r = await backendApi.engineRegistry();
+      setRegistry(r);
+    } catch (e) {
+      // Registry fetch 실패는 치명적이지 않다 — 폼이 비어 보일 뿐이므로
+      // status error 와는 분리해서 동일한 error 슬롯에만 노출한다.
+      setError(e.message);
+    }
+  }, []);
+
   useEffect(() => {
-    // refresh is async; setState happens after the awaited fetch.
+    // refresh + refreshRegistry는 async — setState는 await 이후에만 발생.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     refresh();
-  }, [refresh]);
+    refreshRegistry();
+  }, [refresh, refreshRegistry]);
 
   const configure = useCallback(async (req) => {
     setBusy(true);
@@ -96,6 +111,6 @@ export function useLiveEngine() {
     }
   }, []);
 
-  return { status, lastResult, replaySummary, busy, error,
-           refresh, configure, tick, reset, replay };
+  return { status, registry, lastResult, replaySummary, busy, error,
+           refresh, refreshRegistry, configure, tick, reset, replay };
 }

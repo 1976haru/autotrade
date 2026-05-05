@@ -1,7 +1,32 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Btn, Card, Inp, SectionLabel } from "../common";
 import { fmtKRW, pnlColor } from "../../utils/format";
 import { useLiveEngine } from "../../store/useLiveEngine";
+
+
+// String form value -> typed value matching the registry schema.
+// Returns undefined when the cast would lose meaning so the caller can omit
+// the field and let the backend fall back to the default.
+function castParamValue(rawValue, type) {
+  if (rawValue === "" || rawValue == null) return undefined;
+  if (type === "int") {
+    const n = parseInt(rawValue, 10);
+    return Number.isNaN(n) ? undefined : n;
+  }
+  if (type === "float") {
+    const n = parseFloat(rawValue);
+    return Number.isNaN(n) ? undefined : n;
+  }
+  if (type === "bool") {
+    return rawValue === true || rawValue === "true";
+  }
+  return rawValue;
+}
+
+
+function inputTypeFor(type) {
+  return (type === "int" || type === "float") ? "number" : "text";
+}
 
 
 function StatusCard({ status, busy, onReset }) {
@@ -35,48 +60,127 @@ function Field({ label, value }) {
 }
 
 
-function ConfigureCard({ busy, onConfigure }) {
-  const [form, setForm] = useState({
-    strategy: "sma_crossover",
-    short:    "5",
-    long:     "20",
-    quantity: "1",
-  });
-  const update = (key) => (v) => setForm((prev) => ({ ...prev, [key]: v }));
+function _initialParamValues(strategy) {
+  if (!strategy) return {};
+  const initial = {};
+  for (const p of strategy.params) {
+    initial[p.name] = p.default == null ? "" : String(p.default);
+  }
+  return initial;
+}
+
+
+export function ConfigureCard({ busy, registry, onConfigure }) {
+  // userSelectedName falls through to the first registry entry until the user
+  // explicitly picks one. This avoids the "setState in useEffect" anti-pattern
+  // that React 19 lints against.
+  const [userSelectedName, setUserSelectedName] = useState("");
+  const strategyName =
+    userSelectedName || registry?.[0]?.name || "";
+
+  const selected = useMemo(
+    () => registry?.find((s) => s.name === strategyName) ?? null,
+    [registry, strategyName],
+  );
+
+  // Reset param values during render whenever the schema (selected.name)
+  // changes — the React 19 "Adjusting state on prop change" pattern.
+  const [paramValues, setParamValues] = useState(() => _initialParamValues(selected));
+  const [lastSchemaName, setLastSchemaName] = useState(selected?.name ?? "");
+  if ((selected?.name ?? "") !== lastSchemaName) {
+    setParamValues(_initialParamValues(selected));
+    setLastSchemaName(selected?.name ?? "");
+  }
+
+  const [quantity, setQuantity] = useState("1");
+
+  const updateParam = (name) => (raw) =>
+    setParamValues((prev) => ({ ...prev, [name]: raw }));
 
   const onSubmit = () => {
+    if (!selected) return;
+    const params = {};
+    for (const p of selected.params) {
+      const cast = castParamValue(paramValues[p.name], p.type);
+      if (cast !== undefined) params[p.name] = cast;
+    }
     onConfigure({
-      strategy: form.strategy,
-      params:   {
-        short: parseInt(form.short, 10),
-        long:  parseInt(form.long, 10),
-      },
-      quantity: parseInt(form.quantity, 10),
+      strategy: selected.name,
+      params,
+      quantity: parseInt(quantity, 10),
     });
   };
+
+  if (!registry) {
+    return (
+      <Card>
+        <SectionLabel>구성</SectionLabel>
+        <div style={{ fontSize: 11, color: "#64748b" }}>전략 목록 로딩 중…</div>
+      </Card>
+    );
+  }
+
+  if (registry.length === 0) {
+    return (
+      <Card accentColor="#ef444433">
+        <SectionLabel>구성</SectionLabel>
+        <div style={{ fontSize: 11, color: "#f87171" }}>
+          서버에 등록된 전략이 없습니다.
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card>
       <SectionLabel>구성</SectionLabel>
       <div style={{ marginBottom: 8 }}>
         <div style={{ fontSize: 10, color: "#475569", marginBottom: 4 }}>전략</div>
-        <Inp value={form.strategy} onChange={update("strategy")} />
+        <select
+          value={strategyName}
+          onChange={(e) => setUserSelectedName(e.target.value)}
+          style={{
+            width: "100%", background: "#010a14", border: "1px solid #1a3a5c",
+            borderRadius: 4, padding: "8px 10px", color: "#c9d6e3",
+            fontSize: 12, fontFamily: "inherit", outline: "none", boxSizing: "border-box",
+          }}
+        >
+          {registry.map((s) => (
+            <option key={s.name} value={s.name}>{s.name}</option>
+          ))}
+        </select>
+        {selected?.description && (
+          <div style={{ fontSize: 10, color: "#64748b", marginTop: 4, lineHeight: 1.5 }}>
+            {selected.description}
+          </div>
+        )}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-        <div>
-          <div style={{ fontSize: 10, color: "#475569", marginBottom: 4 }}>단기 SMA</div>
-          <Inp value={form.short} onChange={update("short")} type="number" />
+
+      {selected && selected.params.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+          {selected.params.map((p) => (
+            <div key={p.name}>
+              <div style={{ fontSize: 10, color: "#475569", marginBottom: 4 }}>
+                {p.name}
+                <span style={{ color: "#334155", marginLeft: 4 }}>
+                  ({p.type}{p.required ? " · required" : ""})
+                </span>
+              </div>
+              <Inp
+                value={paramValues[p.name] ?? ""}
+                onChange={updateParam(p.name)}
+                type={inputTypeFor(p.type)}
+              />
+            </div>
+          ))}
         </div>
-        <div>
-          <div style={{ fontSize: 10, color: "#475569", marginBottom: 4 }}>장기 SMA</div>
-          <Inp value={form.long} onChange={update("long")} type="number" />
-        </div>
-      </div>
+      )}
+
       <div style={{ marginBottom: 8 }}>
         <div style={{ fontSize: 10, color: "#475569", marginBottom: 4 }}>회당 수량</div>
-        <Inp value={form.quantity} onChange={update("quantity")} type="number" />
+        <Inp value={quantity} onChange={setQuantity} type="number" />
       </div>
-      <Btn onClick={onSubmit} disabled={busy} color="#7dd3fc" full>구성/재구성</Btn>
+      <Btn onClick={onSubmit} disabled={busy || !selected} color="#7dd3fc" full>구성/재구성</Btn>
     </Card>
   );
 }
@@ -251,7 +355,7 @@ function ReplayCard({ status, busy, onReplay, summary }) {
 
 
 export function LiveEngine() {
-  const { status, lastResult, replaySummary, busy, error,
+  const { status, registry, lastResult, replaySummary, busy, error,
           configure, tick, reset, replay } = useLiveEngine();
 
   return (
@@ -264,7 +368,7 @@ export function LiveEngine() {
         </Card>
       )}
 
-      <ConfigureCard busy={busy} onConfigure={configure} />
+      <ConfigureCard busy={busy} registry={registry} onConfigure={configure} />
       <ReplayCard    status={status} busy={busy} onReplay={replay} summary={replaySummary} />
       <TickCard      status={status} busy={busy} onTick={tick} />
       <ResultCard    result={lastResult} />
