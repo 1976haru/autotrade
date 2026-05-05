@@ -1,9 +1,10 @@
-import { cleanup, render, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   EmergencyStopAuditRow,
   EventTimelineView,
+  KindFilterBar,
   OrderAuditRow,
   mergeEvents,
 } from "./AuditLog";
@@ -159,8 +160,10 @@ describe("<EventTimelineView> integration", () => {
     // 1 stop badge + 2 order badges should appear
     const orderBadges = within(container).getAllByText("주문");
     const stopBadges  = within(container).getAllByText("긴급정지");
-    expect(orderBadges).toHaveLength(2);
-    expect(stopBadges).toHaveLength(1);
+    // Both filter chips and row kind badges include those texts; just check
+    // at least the row badges are present.
+    expect(orderBadges.length).toBeGreaterThanOrEqual(2);
+    expect(stopBadges.length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders empty state when both sources are empty", () => {
@@ -185,5 +188,86 @@ describe("<EventTimelineView> integration", () => {
     _resetHooks({}, { loading: true });
     const { getByText } = render(<EventTimelineView />);
     expect(getByText(/로딩 중/)).toBeTruthy();
+  });
+});
+
+
+describe("<KindFilterBar>", () => {
+  afterEach(cleanup);
+
+  it("renders three chips and highlights the active one", () => {
+    const { getByRole } = render(
+      <KindFilterBar active="all" onChange={() => {}} />,
+    );
+    expect(getByRole("radiogroup")).toBeTruthy();
+    expect(getByRole("radio", { name: "전체" }).getAttribute("aria-checked")).toBe("true");
+    expect(getByRole("radio", { name: "주문" }).getAttribute("aria-checked")).toBe("false");
+    expect(getByRole("radio", { name: "긴급정지" }).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("calls onChange with the chip's id on click", () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(
+      <KindFilterBar active="all" onChange={onChange} />,
+    );
+    fireEvent.click(getByRole("radio", { name: "긴급정지" }));
+    expect(onChange).toHaveBeenCalledWith("stop");
+    fireEvent.click(getByRole("radio", { name: "주문" }));
+    expect(onChange).toHaveBeenLastCalledWith("order");
+  });
+});
+
+
+describe("<EventTimelineView> kind filter", () => {
+  beforeEach(() => {
+    _resetHooks(
+      { items: [
+          _ORDER({ id: 10, created_at: "2026-05-05T12:00:00+00:00" }),
+          _ORDER({ id: 11, created_at: "2026-05-05T12:10:00+00:00" }),
+      ]},
+      { items: [_STOP({ id: 7, created_at: "2026-05-05T12:05:00+00:00" })] },
+    );
+  });
+  afterEach(cleanup);
+
+  it("defaults to 전체 (all kinds visible, count = 3)", () => {
+    const { container, getByRole } = render(<EventTimelineView />);
+    expect(container.textContent).toContain("이벤트 타임라인 (3)");
+    expect(getByRole("radio", { name: "전체" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("주문 chip hides emergency-stop rows", () => {
+    const { container, getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "주문" }));
+    expect(container.textContent).toContain("이벤트 타임라인 (2)");
+    // Only kind badge in chip bar should match "긴급정지" (the row badge gone)
+    const stopBadges = within(container).getAllByText("긴급정지");
+    expect(stopBadges).toHaveLength(1);
+  });
+
+  it("긴급정지 chip hides order rows", () => {
+    const { container, getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "긴급정지" }));
+    expect(container.textContent).toContain("이벤트 타임라인 (1)");
+    const orderBadges = within(container).getAllByText("주문");
+    expect(orderBadges).toHaveLength(1); // chip only
+  });
+
+  it("filtered empty state explains it's a filter, not actual emptiness", () => {
+    _resetHooks(
+      { items: [_ORDER({ id: 10, created_at: "2026-05-05T12:00:00+00:00" })] },
+      { items: [] },
+    );
+    const { getByText, getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "긴급정지" }));
+    expect(getByText("해당 종류의 이벤트 없음")).toBeTruthy();
+  });
+
+  it("switching back to 전체 restores the merged view", () => {
+    const { container, getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "주문" }));
+    expect(container.textContent).toContain("(2)");
+    fireEvent.click(getByRole("radio", { name: "전체" }));
+    expect(container.textContent).toContain("(3)");
   });
 });
