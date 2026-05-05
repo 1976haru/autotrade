@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     default_mode: OperationMode = OperationMode.SIMULATION
     enable_live_trading: bool = False
     enable_ai_execution: bool = False
+    enable_futures_live_trading: bool = False
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     database_url: str = "sqlite:///./data/auto_trader.db"
     market_data_provider: Literal["mock", "yfinance"] = "mock"
