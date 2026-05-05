@@ -106,7 +106,12 @@ export function HistoryRow({ a }) {
       </div>
       <div style={{ fontSize: 9, color: "#475569" }}>
         #{a.id} · {a.mode} ·{" "}
-        {a.decided_at ? new Date(a.decided_at).toLocaleString("ko-KR") : "—"}
+        {a.decided_at ? (
+          <>
+            {new Date(a.decided_at).toLocaleString("ko-KR")}{" "}
+            <span style={{ color: "#64748b" }}>({formatPendingAge(a.decided_at)})</span>
+          </>
+        ) : "—"}
         {a.decided_by ? ` · by ${a.decided_by}` : ""}
         {a.note ? ` · ${a.note}` : ""}
       </div>

@@ -105,6 +105,26 @@ describe("<HistoryRow>", () => {
     expect(container.textContent).toContain("75,000원");
   });
 
+  it("appends a relative-time hint next to decided_at", () => {
+    // Pin Date.now so the offset (created relative to current real time) is
+    // predictable inside the component's formatPendingAge call.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-06T12:05:00Z"));
+    const { container } = render(
+      <HistoryRow a={_row({ decided_at: "2026-05-06T12:00:00+00:00" })} />,
+    );
+    expect(container.textContent).toContain("(5분 전)");
+    vi.useRealTimers();
+  });
+
+  it("does not crash and shows '—' when decided_at is null (no relative hint)", () => {
+    const { container } = render(
+      <HistoryRow a={_row({ decided_at: null, decided_by: null, note: null })} />,
+    );
+    expect(container.textContent).toContain("—");
+    expect(container.textContent).not.toContain("분 전");
+  });
+
   it("renders reasons line when row has reasons", () => {
     const { container } = render(
       <HistoryRow a={_row({ reasons: ["max_order_notional 초과", "manual approval required"] })} />,
