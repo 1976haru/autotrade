@@ -1,15 +1,18 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_market_data
 from app.backtest.engine import BacktestEngine
 from app.backtest.strategies import build_strategy
 from app.backtest.types import Bar
 from app.db.models import BacktestRun
 from app.db.session import get_db
+from app.market.base import Interval, MarketDataAdapter
+from app.market.cache import BarCache
 
 router = APIRouter(prefix="/backtest", tags=["backtest"])
 
@@ -39,7 +42,12 @@ class BacktestRequest(BaseModel):
     params:       dict = Field(default_factory=dict)
     initial_cash: int = 10_000_000
     quantity:     int = 1
-    bars:         list[BarPayload]
+    # 둘 중 정확히 하나만 제공: 사전 준비된 bars 또는 시장 데이터 범위
+    bars:         list[BarPayload] | None = None
+    symbol:       str | None = None
+    start:        datetime | None = None
+    end:          datetime | None = None
+    interval:     Interval = Interval.DAY_1
 
 
 class BacktestResponse(BaseModel):
@@ -54,6 +62,11 @@ class BacktestResponse(BaseModel):
     loss_count:     int
     win_rate:       float
     max_drawdown:   int
+    data_source:    str
+    data_symbol:    str | None = None
+    data_start:     datetime | None = None
+    data_end:       datetime | None = None
+    data_interval:  str | None = None
     trades:         list[TradePayload]
 
 
@@ -69,6 +82,14 @@ def _trade_to_dict(t) -> dict:
     }
 
 
+def _ensure_utc(ts: datetime | None) -> datetime | None:
+    if ts is None:
+        return None
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=timezone.utc)
+    return ts
+
+
 def _build_response(run: BacktestRun, win_rate: float) -> BacktestResponse:
     return BacktestResponse(
         run_id=run.id,
@@ -82,14 +103,59 @@ def _build_response(run: BacktestRun, win_rate: float) -> BacktestResponse:
         loss_count=run.loss_count,
         win_rate=win_rate,
         max_drawdown=run.max_drawdown,
+        data_source=run.data_source,
+        data_symbol=run.data_symbol,
+        data_start=_ensure_utc(run.data_start),
+        data_end=_ensure_utc(run.data_end),
+        data_interval=run.data_interval,
         trades=[TradePayload(**t) for t in run.trades_json],
     )
 
 
+async def _resolve_bars(
+    req: BacktestRequest,
+    db: Session,
+    upstream: MarketDataAdapter,
+) -> tuple[list[Bar], str, str | None, datetime | None, datetime | None, str | None]:
+    has_bars = req.bars is not None
+    has_market = req.symbol is not None and req.start is not None and req.end is not None
+
+    if has_bars and has_market:
+        raise HTTPException(status_code=400, detail="provide either `bars` or `(symbol, start, end)`, not both")
+    if not has_bars and not has_market:
+        raise HTTPException(status_code=400, detail="must provide either `bars` or `(symbol, start, end)`")
+
+    if has_bars:
+        if not req.bars:
+            raise HTTPException(status_code=400, detail="bars must not be empty")
+        bars = [Bar(**b.model_dump()) for b in req.bars]
+        return bars, "bars", None, None, None, None
+
+    if req.start > req.end:
+        raise HTTPException(status_code=400, detail="start must be <= end")
+
+    cache = BarCache(db)
+    cached = cache.get(req.symbol, req.interval.value, req.start, req.end)
+    if cached:
+        bars = cached
+    else:
+        try:
+            bars = await upstream.get_bars(req.symbol, req.start, req.end, req.interval)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        cache.save(bars, req.interval.value)
+
+    if not bars:
+        raise HTTPException(status_code=400, detail="market range yielded no bars")
+    return bars, "market", req.symbol, req.start, req.end, req.interval.value
+
+
 @router.post("/run", response_model=BacktestResponse)
-def run_backtest(req: BacktestRequest, db: Session = Depends(get_db)) -> BacktestResponse:
-    if not req.bars:
-        raise HTTPException(status_code=400, detail="bars must not be empty")
+async def run_backtest(
+    req: BacktestRequest,
+    db: Session = Depends(get_db),
+    upstream: MarketDataAdapter = Depends(get_market_data),
+) -> BacktestResponse:
     if req.initial_cash <= 0 or req.quantity <= 0:
         raise HTTPException(status_code=400, detail="initial_cash and quantity must be positive")
     try:
@@ -97,7 +163,10 @@ def run_backtest(req: BacktestRequest, db: Session = Depends(get_db)) -> Backtes
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    bars = [Bar(**b.model_dump()) for b in req.bars]
+    bars, data_source, data_symbol, data_start, data_end, data_interval = await _resolve_bars(
+        req, db, upstream,
+    )
+
     engine = BacktestEngine(initial_cash=req.initial_cash, quantity=req.quantity)
     result = engine.run(bars, strategy)
 
@@ -113,6 +182,11 @@ def run_backtest(req: BacktestRequest, db: Session = Depends(get_db)) -> Backtes
         loss_count=result.loss_count,
         max_drawdown=result.max_drawdown,
         trades_json=[_trade_to_dict(t) for t in result.trades],
+        data_source=data_source,
+        data_symbol=data_symbol,
+        data_start=data_start,
+        data_end=data_end,
+        data_interval=data_interval,
     )
     db.add(run)
     db.commit()

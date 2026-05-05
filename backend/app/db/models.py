@@ -58,6 +58,12 @@ class BacktestRun(Base):
     loss_count:     Mapped[int]      = mapped_column(Integer, default=0)
     max_drawdown:   Mapped[int]      = mapped_column(Integer, default=0)
 
+    data_source:    Mapped[str]              = mapped_column(String(16), default="bars")
+    data_symbol:    Mapped[str | None]       = mapped_column(String(16), nullable=True)
+    data_start:     Mapped[datetime | None]  = mapped_column(DateTime, nullable=True)
+    data_end:       Mapped[datetime | None]  = mapped_column(DateTime, nullable=True)
+    data_interval:  Mapped[str | None]       = mapped_column(String(8), nullable=True)
+
     trades_json:    Mapped[list]     = mapped_column(JSON, default=list)
 
 

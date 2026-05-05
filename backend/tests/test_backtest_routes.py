@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from app.db.models import BacktestRun
+from app.db.models import BacktestRun, MarketBar
 
 
 _BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -100,3 +100,117 @@ def test_empty_bars_returns_400(client):
     # FastAPI/pydantic accept empty list; route handler enforces non-empty
     res = client.post("/api/backtest/run", json=body)
     assert res.status_code == 400
+
+
+def test_run_with_bars_records_data_source_bars(client):
+    body = {
+        "strategy": "sma_crossover",
+        "params":   {"short": 2, "long": 4},
+        "bars": [_bar_payload(i, c) for i, c in enumerate([100, 99, 98, 97, 100, 105, 110])],
+    }
+    data = client.post("/api/backtest/run", json=body).json()
+    assert data["data_source"] == "bars"
+    assert data["data_symbol"] is None
+    assert data["data_start"] is None
+    assert data["data_end"] is None
+    assert data["data_interval"] is None
+
+
+def test_run_with_market_range_fetches_and_persists_metadata(client):
+    body = {
+        "strategy": "sma_crossover",
+        "params":   {"short": 2, "long": 4},
+        "symbol":   "005930",
+        "start":    "2026-01-01T00:00:00+00:00",
+        "end":      "2026-01-15T00:00:00+00:00",
+        "interval": "1d",
+    }
+    res = client.post("/api/backtest/run", json=body)
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["data_source"] == "market"
+    assert data["data_symbol"] == "005930"
+    assert data["data_interval"] == "1d"
+    assert data["bars_processed"] == 15
+
+    with client.test_db_factory() as db:
+        bars_in_cache = db.execute(select(MarketBar)).scalars().all()
+        assert len(bars_in_cache) == 15
+        assert all(b.symbol == "005930" for b in bars_in_cache)
+
+
+def test_run_with_market_range_uses_cache_on_repeat(client):
+    body = {
+        "strategy": "sma_crossover",
+        "params":   {"short": 2, "long": 4},
+        "symbol":   "005930",
+        "start":    "2026-01-01T00:00:00+00:00",
+        "end":      "2026-01-10T00:00:00+00:00",
+    }
+    first  = client.post("/api/backtest/run", json=body).json()
+    second = client.post("/api/backtest/run", json=body).json()
+    assert first["trades"] == second["trades"]
+
+    with client.test_db_factory() as db:
+        cached = db.execute(select(MarketBar)).scalars().all()
+        assert len(cached) == 10  # not 20 — second call hit cache, no duplicates
+
+
+def test_run_must_provide_bars_or_market_range(client):
+    res = client.post("/api/backtest/run", json={"strategy": "sma_crossover"})
+    assert res.status_code == 400
+    assert "must provide" in res.json()["detail"]
+
+
+def test_run_cannot_provide_both_bars_and_market_range(client):
+    body = {
+        "strategy": "sma_crossover",
+        "bars":     [_bar_payload(0, 100)],
+        "symbol":   "005930",
+        "start":    "2026-01-01T00:00:00+00:00",
+        "end":      "2026-01-05T00:00:00+00:00",
+    }
+    res = client.post("/api/backtest/run", json=body)
+    assert res.status_code == 400
+    assert "not both" in res.json()["detail"]
+
+
+def test_run_with_market_unsupported_interval_returns_400(client):
+    body = {
+        "strategy": "sma_crossover",
+        "params":   {"short": 2, "long": 4},
+        "symbol":   "005930",
+        "start":    "2026-01-01T00:00:00+00:00",
+        "end":      "2026-01-05T00:00:00+00:00",
+        "interval": "1h",
+    }
+    res = client.post("/api/backtest/run", json=body)
+    assert res.status_code == 400
+    assert "daily" in res.json()["detail"].lower()
+
+
+def test_run_with_market_start_after_end_returns_400(client):
+    body = {
+        "strategy": "sma_crossover",
+        "symbol":   "005930",
+        "start":    "2026-02-01T00:00:00+00:00",
+        "end":      "2026-01-01T00:00:00+00:00",
+    }
+    res = client.post("/api/backtest/run", json=body)
+    assert res.status_code == 400
+
+
+def test_get_run_returns_market_metadata(client):
+    body = {
+        "strategy": "sma_crossover",
+        "params":   {"short": 2, "long": 4},
+        "symbol":   "005930",
+        "start":    "2026-01-01T00:00:00+00:00",
+        "end":      "2026-01-10T00:00:00+00:00",
+    }
+    posted = client.post("/api/backtest/run", json=body).json()
+    fetched = client.get(f"/api/backtest/runs/{posted['run_id']}").json()
+    assert fetched["data_source"] == "market"
+    assert fetched["data_symbol"] == "005930"
+    assert fetched["data_interval"] == "1d"
+    assert fetched["data_start"].startswith("2026-01-01")
