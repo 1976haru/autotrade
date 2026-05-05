@@ -24,8 +24,8 @@ export function usePortfolio() {
     (async () => {
       try {
         const [balance, raw] = await Promise.all([
-          backendApi.mockBalance(),
-          backendApi.mockPositions(),
+          backendApi.brokerBalance(),
+          backendApi.brokerPositions(),
         ]);
         if (cancelled) return;
         setCash(balance.cash);
@@ -46,7 +46,7 @@ export function usePortfolio() {
     const codes = codesKey.split(",");
     const t = setInterval(async () => {
       try {
-        const quotes = await Promise.all(codes.map((c) => backendApi.mockPrice(c)));
+        const quotes = await Promise.all(codes.map((c) => backendApi.brokerPrice(c)));
         setPositions((prev) =>
           prev.map((p) => {
             const q = quotes.find((x) => x.symbol === p.code);

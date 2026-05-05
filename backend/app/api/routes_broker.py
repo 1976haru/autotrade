@@ -9,7 +9,7 @@ from app.db.session import get_db
 from app.execution.order_router import route_order
 from app.risk.risk_manager import RiskDecision, RiskManager
 
-router = APIRouter(prefix="/broker/mock", tags=["mock-broker"])
+router = APIRouter(prefix="/broker", tags=["broker"])
 
 
 @router.get("/price/{symbol}")

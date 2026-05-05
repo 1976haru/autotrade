@@ -20,10 +20,10 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify({ enabled }),
   }),
-  mockPrice: (symbol) => backendFetch(`/api/broker/mock/price/${symbol}`),
-  mockBalance: () => backendFetch("/api/broker/mock/balance"),
-  mockPositions: () => backendFetch("/api/broker/mock/positions"),
-  mockOrder: (order) => backendFetch("/api/broker/mock/orders", {
+  brokerPrice:     (symbol) => backendFetch(`/api/broker/price/${symbol}`),
+  brokerBalance:   () => backendFetch("/api/broker/balance"),
+  brokerPositions: () => backendFetch("/api/broker/positions"),
+  brokerOrder:     (order) => backendFetch("/api/broker/orders", {
     method: "POST",
     body: JSON.stringify(order),
   }),

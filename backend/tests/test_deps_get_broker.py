@@ -81,7 +81,7 @@ def test_route_uses_kis_in_shadow_mode(client, monkeypatch):
     from app.main import app
     app.dependency_overrides[get_broker] = lambda: _make_kis_with_stub(price="76500")
 
-    res = client.get("/api/broker/mock/price/005930")
+    res = client.get("/api/broker/price/005930")
     assert res.status_code == 200
     body = res.json()
     assert body["price"] == 76500
@@ -99,7 +99,7 @@ def test_shadow_mode_order_is_rejected_before_reaching_broker(client, monkeypatc
     app.dependency_overrides[get_broker] = lambda: _make_kis_with_stub()
 
     res = client.post(
-        "/api/broker/mock/orders",
+        "/api/broker/orders",
         json={"symbol": "005930", "side": "BUY", "quantity": 1},
     )
     assert res.status_code == 400

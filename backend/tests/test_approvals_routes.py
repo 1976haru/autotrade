@@ -11,7 +11,7 @@ def _enable_manual_approval(monkeypatch):
 
 def _submit_buy(client, symbol="005930", qty=1):
     return client.post(
-        "/api/broker/mock/orders",
+        "/api/broker/orders",
         json={"symbol": symbol, "side": "BUY", "quantity": qty},
     )
 

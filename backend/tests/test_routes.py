@@ -39,21 +39,21 @@ def test_emergency_stop_toggles_flag(client):
 
 
 def test_mock_broker_price_and_balance(client):
-    price = client.get("/api/broker/mock/price/005930").json()
+    price = client.get("/api/broker/price/005930").json()
     assert price["symbol"] == "005930"
     assert price["price"] == 75_000
-    balance = client.get("/api/broker/mock/balance").json()
+    balance = client.get("/api/broker/balance").json()
     assert balance["cash"] == 10_000_000
-    positions = client.get("/api/broker/mock/positions").json()
+    positions = client.get("/api/broker/positions").json()
     assert positions == []
 
 
 def test_mock_broker_order_happy_path(client):
     order = {"symbol": "005930", "side": "BUY", "quantity": 1}
-    res = client.post("/api/broker/mock/orders", json=order)
+    res = client.post("/api/broker/orders", json=order)
     assert res.status_code == 200
     assert res.json()["status"] == "FILLED"
-    positions = client.get("/api/broker/mock/positions").json()
+    positions = client.get("/api/broker/positions").json()
     assert len(positions) == 1
     assert positions[0]["symbol"] == "005930"
 
@@ -70,7 +70,7 @@ def test_mock_broker_order_happy_path(client):
 
 def test_mock_broker_order_rejected_by_risk(client):
     order = {"symbol": "005930", "side": "BUY", "quantity": 50}
-    res = client.post("/api/broker/mock/orders", json=order)
+    res = client.post("/api/broker/orders", json=order)
     assert res.status_code == 400
     detail = res.json()["detail"]
     assert detail["decision"] == "REJECTED"
