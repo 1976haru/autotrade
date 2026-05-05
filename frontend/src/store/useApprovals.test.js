@@ -163,6 +163,67 @@ describe("useApprovals", () => {
     expect(backendApi.cancelApproval).toHaveBeenCalledWith(7, null);
   });
 
+  it("cancelMany sequences each id with the same decision and refreshes once", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    backendApi.cancelApproval.mockResolvedValue({});
+    backendApi.listApprovalHistory.mockResolvedValue([]);
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    backendApi.listApprovals.mockClear();
+    backendApi.listApprovalHistory.mockClear();
+    backendApi.cancelApproval.mockClear();
+
+    await act(async () => {
+      await result.current.cancelMany([10, 11, 12], { decided_by: "ops1", note: "stale" });
+    });
+
+    expect(backendApi.cancelApproval).toHaveBeenCalledTimes(3);
+    expect(backendApi.cancelApproval).toHaveBeenNthCalledWith(1, 10, { decided_by: "ops1", note: "stale" });
+    expect(backendApi.cancelApproval).toHaveBeenNthCalledWith(2, 11, { decided_by: "ops1", note: "stale" });
+    expect(backendApi.cancelApproval).toHaveBeenNthCalledWith(3, 12, { decided_by: "ops1", note: "stale" });
+    // Single refresh + history fetch at the end (not 3 of each)
+    expect(backendApi.listApprovals).toHaveBeenCalledTimes(1);
+    expect(backendApi.listApprovalHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancelMany with empty list is a no-op", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    backendApi.cancelApproval.mockClear();
+
+    await act(async () => {
+      await result.current.cancelMany([], { decided_by: "ops" });
+    });
+
+    expect(backendApi.cancelApproval).not.toHaveBeenCalled();
+  });
+
+  it("cancelMany surfaces error and still refreshes so partial state shows up", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    backendApi.listApprovalHistory.mockResolvedValue([]);
+    backendApi.cancelApproval
+      .mockResolvedValueOnce({})           // id 10 ok
+      .mockRejectedValueOnce(new Error("boom"));  // id 11 fails
+
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    backendApi.listApprovals.mockClear();
+    backendApi.listApprovalHistory.mockClear();
+
+    await act(async () => {
+      await result.current.cancelMany([10, 11, 12], { note: "stale" });
+    });
+
+    expect(backendApi.cancelApproval).toHaveBeenCalledTimes(2);
+    expect(result.current.error).toBe("boom");
+    // Refresh still fires after the failure so the UI reflects what got through
+    expect(backendApi.listApprovals).toHaveBeenCalledTimes(1);
+    expect(backendApi.listApprovalHistory).toHaveBeenCalledTimes(1);
+  });
+
   it("fetches history on mount", async () => {
     backendApi.listApprovals.mockResolvedValue([]);
     backendApi.listApprovalHistory.mockResolvedValue([

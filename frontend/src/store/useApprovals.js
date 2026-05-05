@@ -99,6 +99,33 @@ export function useApprovals() {
     }
   }, [refresh, refreshHistory]);
 
+  // 같은 사유로 여러 건을 한 번에 취소할 때 (065: stale 일괄 청소). 백엔드는
+  // 단건 라우트만 있어 순차 호출이지만 refresh/refreshHistory는 끝에 한 번만
+  // 돌려 단순 N회 cancel() 루프 대비 N+1배 트래픽을 줄인다. 중간에 한 건이
+  // 실패하면 거기서 멈추고 error만 surface — 운영자가 다시 실행하면 PENDING으로
+  // 남아있는 항목만 자동으로 추려진다.
+  const cancelMany = useCallback(async (ids, decision) => {
+    if (!ids || ids.length === 0) return;
+    setBusy(true);
+    try {
+      const payload = _normalize(decision);
+      for (const id of ids) {
+        await backendApi.cancelApproval(id, payload);
+      }
+      await refresh();
+      await refreshHistory();
+    } catch (e) {
+      // refresh() clears `error` on its success path, so to keep the cancel
+      // failure visible we have to refresh first and then re-set the error.
+      const msg = e.message;
+      await refresh();
+      await refreshHistory();
+      setError(msg);
+    } finally {
+      setBusy(false);
+    }
+  }, [refresh, refreshHistory]);
+
   return { pending, history, loading, error, busy,
-           refresh, refreshHistory, approve, reject, cancel };
+           refresh, refreshHistory, approve, reject, cancel, cancelMany };
 }

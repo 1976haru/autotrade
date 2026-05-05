@@ -213,21 +213,143 @@ export function ApprovalDecisionModal({
 }
 
 
+export function BulkCancelStaleModal({
+  approvals: stale, busy, defaultDecidedBy = "", onConfirm, onCancel,
+}) {
+  const [decidedBy, setDecidedBy] = useState(defaultDecidedBy);
+  const [note,      setNote]      = useState("");
+  const decidedByRef = useRef(null);
+  const noteRef      = useRef(null);
+
+  // Reuse the 063 a11y pattern: focus first empty field on mount; Esc/Enter
+  // shortcuts; suppress while busy. This is the operator's "쌓인 stale 한
+  // 번에 정리" path, so speed matters.
+  useEffect(() => {
+    (defaultDecidedBy ? noteRef : decidedByRef).current?.focus();
+  }, [defaultDecidedBy]);
+
+  useEffect(() => {
+    if (busy) return undefined;
+    const handler = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+      else if (e.key === "Enter") {
+        e.preventDefault();
+        onConfirm({ decided_by: decidedBy.trim(), note: note.trim() });
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [busy, onCancel, onConfirm, decidedBy, note]);
+
+  // Operator should be able to verify what they're about to dispose. Show up
+  // to 5 rows; collapse the rest into "외 N건" so the modal stays bounded.
+  const visible = stale.slice(0, 5);
+  const overflow = stale.length - visible.length;
+
+  return (
+    <div
+      role="dialog"
+      aria-label="stale 일괄 취소"
+      style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        zIndex: 1000,
+      }}
+    >
+      <Card accentColor="#94a3b855" style={{ width: 380, maxWidth: "90vw" }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", marginBottom: 8 }}>
+          stale 일괄 취소 ({stale.length}건)
+        </div>
+
+        <div style={{
+          fontSize: 11, color: "#94a3b8", padding: "8px 10px", marginBottom: 10,
+          background: "#010a14", border: "1px solid #0c2035", borderRadius: 4,
+          maxHeight: 140, overflowY: "auto",
+        }}>
+          {visible.map((a) => (
+            <div key={a.id} style={{ display: "flex", justifyContent: "space-between",
+                                       fontSize: 10, padding: "2px 0" }}>
+              <span>
+                <span style={{ color: "#7dd3fc", fontWeight: 700 }}>{a.symbol}</span>
+                <span style={{ marginLeft: 6, color: a.side === "BUY" ? "#22c55e" : "#ef4444" }}>
+                  {a.side}
+                </span>
+                <span style={{ marginLeft: 6 }}>{a.quantity}주</span>
+              </span>
+              <span style={{ color: "#f59e0b" }}>{formatPendingAge(a.created_at)}</span>
+            </div>
+          ))}
+          {overflow > 0 && (
+            <div style={{ fontSize: 9, color: "#475569", marginTop: 4, textAlign: "center" }}>
+              외 {overflow}건
+            </div>
+          )}
+        </div>
+
+        <div style={{ fontSize: 10, color: "#475569", marginBottom: 10, lineHeight: 1.5 }}>
+          모든 행이 같은 운영자명/사유로 CANCELLED 처리됩니다. 거부(REJECTED)와 달리
+          취소는 "신호 노후" 같은 중립적 폐기를 의미합니다.
+        </div>
+
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>운영자명 (decided_by)</div>
+          <Inp value={decidedBy} onChange={setDecidedBy} placeholder="예: ops1" inputRef={decidedByRef} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>사유 (note)</div>
+          <Inp value={note} onChange={setNote} placeholder="예: stale 신호 일괄 정리" inputRef={noteRef} />
+        </div>
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <Btn color="#1a3a5c" onClick={onCancel} disabled={busy} small>닫기</Btn>
+          <Btn
+            color="#94a3b8"
+            onClick={() => onConfirm({ decided_by: decidedBy.trim(), note: note.trim() })}
+            disabled={busy}
+            small
+          >
+            {busy ? "처리 중…" : `⊘ ${stale.length}건 취소`}
+          </Btn>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+
 export function Approvals({ approvals, operatorName = "" }) {
   // useApprovals는 App에서 lift되어 prop으로 전달된다 — BottomNav 배지가 같은
   // 폴링 결과를 공유하기 위해서. 테스트는 모킹 없이 prop만 직접 주입.
   const { pending, history, loading, error, busy,
-          approve, reject, cancel } = approvals;
+          approve, reject, cancel, cancelMany } = approvals;
   // 결재 모달 대상: { action, approval } | null. 같은 모달 컴포넌트를 세 액션에서
   // 공유하고, 액션은 ACTION_META에서 분기한다.
   const [decisionTarget, setDecisionTarget] = useState(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const dispatchByAction = { approve, reject, cancel };
+
+  // 058 isPendingStale 기준(10분+) — 062 status pin escalation과 같은 임계값.
+  // 일괄 취소 버튼은 여기 매칭되는 항목이 있을 때만 노출.
+  const staleApprovals = pending.filter((a) => isPendingStale(a.created_at));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <Card>
-        <SectionLabel>승인 대기 큐</SectionLabel>
+        <div style={{ display: "flex", justifyContent: "space-between",
+                       alignItems: "center", marginBottom: 8 }}>
+          <SectionLabel>승인 대기 큐</SectionLabel>
+          {staleApprovals.length > 0 && (
+            <Btn
+              color="#f59e0b"
+              onClick={() => setBulkOpen(true)}
+              disabled={busy}
+              small
+            >
+              📦 stale 일괄 취소 ({staleApprovals.length})
+            </Btn>
+          )}
+        </div>
 
         {error && (
           <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>
@@ -319,6 +441,19 @@ export function Approvals({ approvals, operatorName = "" }) {
           onConfirm={async (decision) => {
             await dispatchByAction[decisionTarget.action](decisionTarget.approval.id, decision);
             setDecisionTarget(null);
+          }}
+        />
+      )}
+
+      {bulkOpen && (
+        <BulkCancelStaleModal
+          approvals={staleApprovals}
+          busy={busy}
+          defaultDecidedBy={operatorName}
+          onCancel={() => setBulkOpen(false)}
+          onConfirm={async (decision) => {
+            await cancelMany(staleApprovals.map((a) => a.id), decision);
+            setBulkOpen(false);
           }}
         />
       )}
