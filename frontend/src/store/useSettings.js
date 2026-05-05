@@ -1,6 +1,17 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { DEFAULT_BROKER, BROKERS } from "../config/brokers";
 import { backendApi } from "../services/backend/client";
+
+const OPERATOR_NAME_KEY = "autotrade.operatorName";
+
+function _readOperatorName() {
+  try {
+    return localStorage.getItem(OPERATOR_NAME_KEY) || "";
+  } catch {
+    // localStorage may be blocked in some embeds — fall back to "".
+    return "";
+  }
+}
 
 /**
  * API 설정 / 증권사 연결 훅
@@ -13,6 +24,18 @@ export function useSettings() {
   const [connecting,setConnecting]= useState(false);
   const [connMsg,   setConnMsg]   = useState("");
   const [token,     setToken]     = useState(null);
+  // 운영자명: 감사 로그용 decided_by에 미리 채워질 값. 로컬 환경설정이라
+  // localStorage에 영속화 — 백엔드는 토글마다 받은 값을 그대로 기록한다.
+  const [operatorName, _setOperatorName] = useState(_readOperatorName);
+
+  const setOperatorName = useCallback((value) => {
+    _setOperatorName(value);
+    try {
+      localStorage.setItem(OPERATOR_NAME_KEY, value);
+    } catch {
+      // 영속화 실패는 사용자 경험에 직접 영향 없음 — 이 세션에서만 유효.
+    }
+  }, []);
 
   const broker = BROKERS[brokerId];
 
@@ -60,5 +83,6 @@ export function useSettings() {
   return {
     brokerId, broker, tradeMode, apiKeys, connected, connecting, connMsg, token,
     switchBroker, switchMode, updateKey, connect,
+    operatorName, setOperatorName,
   };
 }

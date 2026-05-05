@@ -86,8 +86,10 @@ export function EmergencyStopHistoryCard({ history }) {
 }
 
 
-export function EmergencyStopConfirmModal({ targetEnabled, busy, onConfirm, onCancel }) {
-  const [decidedBy, setDecidedBy] = useState("");
+export function EmergencyStopConfirmModal({
+  targetEnabled, busy, onConfirm, onCancel, defaultDecidedBy = "",
+}) {
+  const [decidedBy, setDecidedBy] = useState(defaultDecidedBy);
   const [note,      setNote]      = useState("");
 
   const action = targetEnabled ? "긴급 정지 활성화" : "긴급 정지 해제";
@@ -138,7 +140,7 @@ export function EmergencyStopConfirmModal({ targetEnabled, busy, onConfirm, onCa
 }
 
 
-export function BackendPolicyCard({ riskPolicy }) {
+export function BackendPolicyCard({ riskPolicy, operatorName = "" }) {
   const { policy, loading, error, emergencyStop, busy, toggleEmergency } = riskPolicy;
   const [confirmOpen, setConfirmOpen] = useState(false);
 
@@ -207,6 +209,7 @@ export function BackendPolicyCard({ riskPolicy }) {
         <EmergencyStopConfirmModal
           targetEnabled={!emergencyStop}
           busy={busy}
+          defaultDecidedBy={operatorName}
           onCancel={() => setConfirmOpen(false)}
           onConfirm={async (decision) => {
             await toggleEmergency(decision);
@@ -219,10 +222,10 @@ export function BackendPolicyCard({ riskPolicy }) {
 }
 
 
-export function StrategyRisk({ strategyOn, toggle, strategyParams, updateParam, risk, updateRisk, riskPolicy }) {
+export function StrategyRisk({ strategyOn, toggle, strategyParams, updateParam, risk, updateRisk, riskPolicy, operatorName }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <BackendPolicyCard riskPolicy={riskPolicy} />
+      <BackendPolicyCard riskPolicy={riskPolicy} operatorName={operatorName} />
       <EmergencyStopHistoryCard history={riskPolicy.history || []} />
 
       <div style={{ fontSize: 11, color: "#475569", marginBottom: 2, marginTop: 8 }}>

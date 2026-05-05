@@ -148,6 +148,17 @@ describe("<BackendPolicyCard>", () => {
     expect(queryByRole("dialog")).toBeNull();
     expect(toggleEmergency).not.toHaveBeenCalled();
   });
+
+  it("forwards operatorName as the modal's prefilled decided_by", () => {
+    const { getByText, getByPlaceholderText } = render(
+      <BackendPolicyCard
+        riskPolicy={_wrap(_DEFAULT_POLICY)}
+        operatorName="ops-prefill"
+      />,
+    );
+    fireEvent.click(getByText("긴급 정지"));
+    expect(getByPlaceholderText(/ops1/).value).toBe("ops-prefill");
+  });
 });
 
 
@@ -183,6 +194,33 @@ describe("<EmergencyStopConfirmModal>", () => {
     fireEvent.change(getByPlaceholderText(/vol spike/), { target: { value: " note " } });
     fireEvent.click(getByText("확인"));
     expect(onConfirm).toHaveBeenCalledWith({ decided_by: "ops1", note: "note" });
+  });
+
+  it("pre-fills decided_by from defaultDecidedBy when provided", () => {
+    const onConfirm = vi.fn();
+    const { getByText, getByPlaceholderText } = render(
+      <EmergencyStopConfirmModal
+        targetEnabled={true} busy={false}
+        defaultDecidedBy="ops-default"
+        onConfirm={onConfirm} onCancel={() => {}} />,
+    );
+    expect(getByPlaceholderText(/ops1/).value).toBe("ops-default");
+    // Confirming without editing should forward the prefilled value.
+    fireEvent.click(getByText("확인"));
+    expect(onConfirm).toHaveBeenCalledWith({ decided_by: "ops-default", note: "" });
+  });
+
+  it("operator can override the prefilled decided_by before confirming", () => {
+    const onConfirm = vi.fn();
+    const { getByText, getByPlaceholderText } = render(
+      <EmergencyStopConfirmModal
+        targetEnabled={true} busy={false}
+        defaultDecidedBy="ops-default"
+        onConfirm={onConfirm} onCancel={() => {}} />,
+    );
+    fireEvent.change(getByPlaceholderText(/ops1/), { target: { value: "ops-other" } });
+    fireEvent.click(getByText("확인"));
+    expect(onConfirm).toHaveBeenCalledWith({ decided_by: "ops-other", note: "" });
   });
 
   it("disables both buttons while busy", () => {
