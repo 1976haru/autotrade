@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -8,6 +9,9 @@ from app.api.deps import get_broker
 from app.brokers.base import BrokerAdapter, OrderResult
 from app.db.session import get_db
 from app.permission.gate import (
+    STATUS_APPROVED,
+    STATUS_CANCELLED,
+    STATUS_REJECTED,
     ApprovalAlreadyDecidedError,
     ApprovalNotFoundError,
     PermissionGate,
@@ -63,6 +67,28 @@ def _to_out(approval) -> ApprovalOut:
 @router.get("", response_model=list[ApprovalOut])
 def list_pending(db: Session = Depends(get_db)) -> list[ApprovalOut]:
     return [_to_out(a) for a in PermissionGate(db).list_pending()]
+
+
+_DECIDED_STATUSES = {STATUS_APPROVED, STATUS_REJECTED, STATUS_CANCELLED}
+
+
+@router.get("/history", response_model=list[ApprovalOut])
+def list_history(
+    limit:  int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    status: Literal["APPROVED", "REJECTED", "CANCELLED"] | None = Query(None),
+    db:     Session = Depends(get_db),
+) -> list[ApprovalOut]:
+    """Decided approvals (APPROVED / REJECTED / CANCELLED), most recent first.
+
+    Complements `GET /api/approvals` which returns PENDING only. The status
+    filter is whitelisted to the three terminal states so callers cannot
+    accidentally retrieve PENDING rows through this route.
+    """
+    if status is not None and status not in _DECIDED_STATUSES:
+        raise HTTPException(status_code=400, detail=f"unsupported status: {status}")
+    rows = PermissionGate(db).list_decided(limit=limit, offset=offset, status=status)
+    return [_to_out(a) for a in rows]
 
 
 @router.get("/{approval_id}", response_model=ApprovalOut)

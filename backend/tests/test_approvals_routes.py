@@ -185,3 +185,75 @@ def test_cancel_without_body_uses_defaults(client, monkeypatch):
     assert body["status"] == "CANCELLED"
     assert body["decided_by"] is None
     assert body["note"] is None
+
+
+# ---------- history ----------
+
+def test_history_excludes_pending_and_returns_only_decided(client, monkeypatch):
+    _enable_manual_approval(monkeypatch)
+    a1 = _submit_buy(client, "005930").json()
+    a2 = _submit_buy(client, "000660").json()
+    _submit_buy(client, "035720")  # third stays PENDING — must not appear
+
+    client.post(f"/api/approvals/{a1['approval_id']}/approve")
+    client.post(f"/api/approvals/{a2['approval_id']}/reject")
+
+    history = client.get("/api/approvals/history").json()
+    assert len(history) == 2
+    statuses = {h["status"] for h in history}
+    assert statuses == {"APPROVED", "REJECTED"}
+
+
+def test_history_orders_most_recent_first(client, monkeypatch):
+    _enable_manual_approval(monkeypatch)
+    a1 = _submit_buy(client, "005930").json()
+    a2 = _submit_buy(client, "000660").json()
+
+    client.post(f"/api/approvals/{a1['approval_id']}/reject")
+    client.post(f"/api/approvals/{a2['approval_id']}/cancel")
+
+    history = client.get("/api/approvals/history").json()
+    # decided_at desc → a2 (cancelled last) comes first
+    assert history[0]["status"] == "CANCELLED"
+    assert history[1]["status"] == "REJECTED"
+
+
+def test_history_status_filter_narrows_results(client, monkeypatch):
+    _enable_manual_approval(monkeypatch)
+    a1 = _submit_buy(client).json()
+    a2 = _submit_buy(client).json()
+    a3 = _submit_buy(client).json()
+    client.post(f"/api/approvals/{a1['approval_id']}/cancel")
+    client.post(f"/api/approvals/{a2['approval_id']}/cancel")
+    client.post(f"/api/approvals/{a3['approval_id']}/reject")
+
+    cancelled = client.get("/api/approvals/history?status=CANCELLED").json()
+    assert len(cancelled) == 2
+    assert all(h["status"] == "CANCELLED" for h in cancelled)
+
+    rejected = client.get("/api/approvals/history?status=REJECTED").json()
+    assert len(rejected) == 1
+    assert rejected[0]["status"] == "REJECTED"
+
+
+def test_history_empty_when_nothing_decided(client, monkeypatch):
+    _enable_manual_approval(monkeypatch)
+    _submit_buy(client)  # PENDING but never decided
+    assert client.get("/api/approvals/history").json() == []
+
+
+def test_history_rejects_invalid_status_filter(client):
+    res = client.get("/api/approvals/history?status=PENDING")
+    assert res.status_code == 422  # FastAPI's Literal validation rejects PENDING
+
+
+def test_history_limit_caps_results(client, monkeypatch):
+    _enable_manual_approval(monkeypatch)
+    ids = []
+    for _ in range(5):
+        ids.append(_submit_buy(client).json()["approval_id"])
+    for i in ids:
+        client.post(f"/api/approvals/{i}/cancel")
+
+    res = client.get("/api/approvals/history?limit=3").json()
+    assert len(res) == 3

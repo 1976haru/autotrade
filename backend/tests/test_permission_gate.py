@@ -231,3 +231,78 @@ def test_cancel_unknown_id_raises_not_found():
     with Session() as db:
         with pytest.raises(ApprovalNotFoundError):
             PermissionGate(db).cancel(99999)
+
+
+# ---------- list_decided ----------
+
+def test_list_decided_excludes_pending():
+    Session = _session()
+    with Session() as db:
+        gate = PermissionGate(db)
+        a1 = gate.submit(audit=_audit(db), order=_order(),
+                         mode=OperationMode.LIVE_MANUAL_APPROVAL)
+        # a2 stays PENDING — only a1 should appear in list_decided
+        gate.submit(audit=_audit(db), order=_order(),
+                    mode=OperationMode.LIVE_MANUAL_APPROVAL)
+        gate.reject(a1.id)
+
+        decided = gate.list_decided()
+        assert len(decided) == 1
+        assert decided[0].id == a1.id
+        assert decided[0].status == "REJECTED"
+
+
+def test_list_decided_status_filter():
+    Session = _session()
+    with Session() as db:
+        gate = PermissionGate(db)
+        a1 = gate.submit(audit=_audit(db), order=_order(),
+                         mode=OperationMode.LIVE_MANUAL_APPROVAL)
+        a2 = gate.submit(audit=_audit(db), order=_order(),
+                         mode=OperationMode.LIVE_MANUAL_APPROVAL)
+        a3 = gate.submit(audit=_audit(db), order=_order(),
+                         mode=OperationMode.LIVE_MANUAL_APPROVAL)
+        gate.reject(a1.id)
+        gate.cancel(a2.id)
+        gate.cancel(a3.id)
+
+        cancelled = gate.list_decided(status="CANCELLED")
+        assert {a.id for a in cancelled} == {a2.id, a3.id}
+        rejected = gate.list_decided(status="REJECTED")
+        assert {a.id for a in rejected} == {a1.id}
+
+
+def test_list_decided_orders_most_recent_first():
+    Session = _session()
+    with Session() as db:
+        gate = PermissionGate(db)
+        a1 = gate.submit(audit=_audit(db), order=_order(),
+                         mode=OperationMode.LIVE_MANUAL_APPROVAL)
+        a2 = gate.submit(audit=_audit(db), order=_order(),
+                         mode=OperationMode.LIVE_MANUAL_APPROVAL)
+        gate.reject(a1.id)
+        gate.cancel(a2.id)  # decided after a1
+
+        decided = gate.list_decided()
+        # Most recent decided_at first
+        assert decided[0].id == a2.id
+        assert decided[1].id == a1.id
+
+
+def test_list_decided_limit_offset():
+    Session = _session()
+    with Session() as db:
+        gate = PermissionGate(db)
+        ids = []
+        for _ in range(5):
+            a = gate.submit(audit=_audit(db), order=_order(),
+                            mode=OperationMode.LIVE_MANUAL_APPROVAL)
+            gate.cancel(a.id)
+            ids.append(a.id)
+
+        first_two  = gate.list_decided(limit=2)
+        assert len(first_two) == 2
+        next_two = gate.list_decided(limit=2, offset=2)
+        assert len(next_two) == 2
+        # No overlap between pages
+        assert {r.id for r in first_two}.isdisjoint({r.id for r in next_two})
