@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -59,3 +59,21 @@ class BacktestRun(Base):
     max_drawdown:   Mapped[int]      = mapped_column(Integer, default=0)
 
     trades_json:    Mapped[list]     = mapped_column(JSON, default=list)
+
+
+class MarketBar(Base):
+    """업스트림에서 가져온 OHLCV 봉의 캐시. (symbol, interval, timestamp)가 유일."""
+
+    __tablename__ = "market_bar"
+    __table_args__ = (UniqueConstraint("symbol", "interval", "timestamp", name="uq_market_bar_key"),)
+
+    id:         Mapped[int]      = mapped_column(primary_key=True)
+    symbol:     Mapped[str]      = mapped_column(String(16), index=True)
+    interval:   Mapped[str]      = mapped_column(String(8), index=True)
+    timestamp:  Mapped[datetime] = mapped_column(DateTime, index=True)
+    open:       Mapped[int]      = mapped_column(Integer)
+    high:       Mapped[int]      = mapped_column(Integer)
+    low:        Mapped[int]      = mapped_column(Integer)
+    close:      Mapped[int]      = mapped_column(Integer)
+    volume:     Mapped[int]      = mapped_column(Integer)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
