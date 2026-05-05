@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.brokers.base import BrokerAdapter, OrderRequest, OrderResult, OrderSide, OrderType
 from app.core.modes import OperationMode
 from app.db.models import OrderAuditLog, PendingApproval
+from app.execution.executor import OrderExecutor
 
 
 class ApprovalNotFoundError(LookupError):
@@ -84,6 +85,12 @@ class PermissionGate:
                 f"approval {approval_id} is already {approval.status}"
             )
 
+        audit = self.db.get(OrderAuditLog, approval.audit_id)
+        if audit is None:
+            raise RuntimeError(
+                f"audit {approval.audit_id} for approval {approval_id} not found"
+            )
+
         order = OrderRequest(
             symbol=approval.symbol,
             side=OrderSide(approval.side),
@@ -91,16 +98,7 @@ class PermissionGate:
             order_type=OrderType(approval.order_type),
             limit_price=approval.limit_price,
         )
-        result = await broker.place_order(order)
-
-        audit = self.db.get(OrderAuditLog, approval.audit_id)
-        if audit is not None:
-            audit.executed = True
-            audit.broker_order_id = result.order_id
-            audit.broker_status = result.status.value
-            audit.filled_quantity = result.filled_quantity
-            audit.avg_fill_price = result.avg_fill_price
-            audit.message = result.message
+        result = await OrderExecutor(broker, self.db).execute(order, audit)
 
         approval.status = STATUS_APPROVED
         approval.decided_at = datetime.now(timezone.utc)

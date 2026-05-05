@@ -8,6 +8,7 @@ from app.brokers.mock_broker import MockBrokerAdapter
 from app.core.config import get_settings
 from app.db.models import OrderAuditLog
 from app.db.session import get_db
+from app.execution.executor import OrderExecutor
 from app.permission.gate import PermissionGate
 from app.risk.risk_manager import RiskDecision, RiskManager
 
@@ -78,12 +79,6 @@ async def place_order(
             },
         )
 
-    result = await broker.place_order(order)
-    audit.executed = True
-    audit.broker_order_id = result.order_id
-    audit.broker_status = result.status.value
-    audit.filled_quantity = result.filled_quantity
-    audit.avg_fill_price = result.avg_fill_price
-    audit.message = result.message
+    result = await OrderExecutor(broker, db).execute(order, audit)
     db.commit()
     return result
