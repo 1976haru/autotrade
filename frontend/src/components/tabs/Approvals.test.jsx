@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApprovalDecisionModal,
   Approvals,
+  BulkCancelStaleModal,
   HistoryRow,
   PendingAgeBadge,
   ReasonsLine,
@@ -24,6 +25,7 @@ function _makeApprovals(overrides = {}) {
     approve: vi.fn(),
     reject:  vi.fn(),
     cancel:  vi.fn(),
+    cancelMany: vi.fn(),
     refresh: vi.fn(),
     refreshHistory: vi.fn(),
     ...overrides,
@@ -226,6 +228,159 @@ describe("<Approvals> PENDING age badge", () => {
     const approvals = _makeApprovals({ pending: [_PENDING] });
     const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
     expect(getByTestId("pending-age-badge")).toBeTruthy();
+  });
+});
+
+
+describe("<BulkCancelStaleModal>", () => {
+  afterEach(cleanup);
+
+  // 11분 전 — 058 stale 임계값(10분) 초과
+  const STALE_NOW = new Date("2026-05-06T12:00:00Z").getTime();
+  const STALE_CREATED = new Date(STALE_NOW - 11 * 60_000).toISOString();
+
+  function _staleApproval(overrides = {}) {
+    return {
+      id: 1, symbol: "005930", side: "BUY", quantity: 5,
+      order_type: "MARKET", limit_price: null,
+      mode: "LIVE_MANUAL_APPROVAL",
+      created_at: STALE_CREATED,
+      ...overrides,
+    };
+  }
+
+  it("titles the dialog with the count of stale approvals", () => {
+    const { getByRole, container } = render(
+      <BulkCancelStaleModal
+        approvals={[_staleApproval(), _staleApproval({ id: 2 }), _staleApproval({ id: 3 })]}
+        busy={false} onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    expect(getByRole("dialog").getAttribute("aria-label")).toBe("stale 일괄 취소");
+    expect(container.textContent).toContain("stale 일괄 취소 (3건)");
+    expect(container.textContent).toContain("3건 취소");
+  });
+
+  it("lists up to 5 rows and collapses the rest into 외 N건", () => {
+    const many = Array.from({ length: 8 }, (_, i) =>
+      _staleApproval({ id: i + 1, symbol: `STK${i}` }),
+    );
+    const { container } = render(
+      <BulkCancelStaleModal approvals={many} busy={false}
+        onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    expect(container.textContent).toContain("STK0");
+    expect(container.textContent).toContain("STK4");
+    expect(container.textContent).not.toContain("STK5");
+    expect(container.textContent).toContain("외 3건");
+  });
+
+  it("pre-fills decided_by from defaultDecidedBy and forwards trimmed values on confirm", () => {
+    const onConfirm = vi.fn();
+    const { getByText, getByPlaceholderText } = render(
+      <BulkCancelStaleModal
+        approvals={[_staleApproval()]} busy={false}
+        defaultDecidedBy="ops-default"
+        onConfirm={onConfirm} onCancel={() => {}} />,
+    );
+    expect(getByPlaceholderText(/ops1/).value).toBe("ops-default");
+    fireEvent.change(getByPlaceholderText(/stale 신호 일괄/), { target: { value: " stale " } });
+    fireEvent.click(getByText(/1건 취소/));
+    expect(onConfirm).toHaveBeenCalledWith({ decided_by: "ops-default", note: "stale" });
+  });
+
+  it("Esc dispatches onCancel; Enter dispatches onConfirm", () => {
+    const onCancel = vi.fn();
+    const onConfirm = vi.fn();
+    render(
+      <BulkCancelStaleModal
+        approvals={[_staleApproval()]} busy={false}
+        onConfirm={onConfirm} onCancel={onCancel} />,
+    );
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(onConfirm).toHaveBeenCalledWith({ decided_by: "", note: "" });
+  });
+
+  it("disables both buttons while busy", () => {
+    const { getByText } = render(
+      <BulkCancelStaleModal
+        approvals={[_staleApproval()]} busy={true}
+        onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    expect(getByText("닫기").disabled).toBe(true);
+    expect(getByText(/처리 중/).disabled).toBe(true);
+  });
+});
+
+
+describe("<Approvals> stale bulk-cancel button", () => {
+  afterEach(cleanup);
+
+  const NOW = Date.now();
+  const FRESH = new Date(NOW - 2 * 60_000).toISOString();   // 2분 전 (fresh)
+  const STALE = new Date(NOW - 11 * 60_000).toISOString();  // 11분 전 (stale)
+
+  function _row(overrides = {}) {
+    return { ..._PENDING, created_at: FRESH, ...overrides };
+  }
+
+  it("hides the bulk-cancel button when there are no stale rows", () => {
+    const approvals = _makeApprovals({
+      pending: [_row({ id: 1, created_at: FRESH }), _row({ id: 2, created_at: FRESH })],
+    });
+    const { queryByText } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(queryByText(/stale 일괄 취소/)).toBeNull();
+  });
+
+  it("shows the bulk-cancel button with stale count when at least one row is stale", () => {
+    const approvals = _makeApprovals({
+      pending: [_row({ id: 1, created_at: STALE }), _row({ id: 2, created_at: FRESH }),
+                _row({ id: 3, created_at: STALE })],
+    });
+    const { getByText } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(getByText(/stale 일괄 취소 \(2\)/)).toBeTruthy();
+  });
+
+  it("clicking the bulk button opens the modal scoped to stale rows only", () => {
+    const approvals = _makeApprovals({
+      pending: [_row({ id: 1, created_at: STALE, symbol: "OLDSTK" }),
+                _row({ id: 2, created_at: FRESH, symbol: "NEWSTK" })],
+    });
+    const { getByText, getByRole } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    fireEvent.click(getByText(/stale 일괄 취소/));
+    const dialog = within(getByRole("dialog"));
+    // Modal scope contains the stale symbol and the "1건 취소" confirm — fresh
+    // symbol is not in the modal list (verified by the count, since the modal
+    // would say 2건 if it included the fresh row).
+    expect(dialog.getByText("OLDSTK")).toBeTruthy();
+    expect(dialog.getByText(/1건 취소/)).toBeTruthy();
+  });
+
+  it("modal confirm dispatches cancelMany with stale ids and decision", async () => {
+    const approvals = _makeApprovals({
+      pending: [_row({ id: 11, created_at: STALE }),
+                _row({ id: 12, created_at: STALE }),
+                _row({ id: 13, created_at: FRESH })],
+    });
+    approvals.cancelMany.mockResolvedValue();
+    const { getByText, getByPlaceholderText, getByRole, queryByRole } = render(
+      <Approvals approvals={approvals} operatorName="ops-prefill" />,
+    );
+    fireEvent.click(getByText(/stale 일괄 취소/));
+    const dialog = within(getByRole("dialog"));
+    fireEvent.change(dialog.getByPlaceholderText(/stale 신호 일괄/), {
+      target: { value: "스테일 정리" },
+    });
+    await act(async () => {
+      fireEvent.click(dialog.getByText(/2건 취소/));
+    });
+    expect(approvals.cancelMany).toHaveBeenCalledWith([11, 12], {
+      decided_by: "ops-prefill", note: "스테일 정리",
+    });
+    await waitFor(() => expect(queryByRole("dialog")).toBeNull());
   });
 });
 
