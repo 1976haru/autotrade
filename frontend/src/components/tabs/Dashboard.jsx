@@ -1,7 +1,59 @@
 import { Card, SectionLabel, StatBox } from "../common";
 import { fmtKRW, fmtPct, pnlColor } from "../../utils/format";
 import { useEmergencyStopAudits, useOrderAudits } from "../../store/useAuditLogs";
+import { formatPendingAge } from "./Approvals";
 import { setEventKindFilter } from "./AuditLog";
+
+
+// 060 hardening made emergency_stop a hard kill-switch. The downside: if an
+// operator forgets it on, the system silently rejects every order. This
+// banner fires when it's been on long enough that "leftover from earlier
+// incident" is more likely than "intentionally still on right now."
+const _STUCK_THRESHOLD_MS = 30 * 60 * 1000;
+
+// 046 history is sorted desc (newest first). When emergency_stop is currently
+// on, history[0] should be the matching ON event — its created_at is when the
+// stop turned on. If history[0] is OFF for some reason (transient state /
+// older ON event off-window), return null rather than guessing.
+export function emergencyStopOnSince(emergencyStop, history) {
+  if (!emergencyStop || !history || history.length === 0) return null;
+  const latest = history[0];
+  return latest.enabled ? latest.created_at : null;
+}
+
+
+export function EmergencyStopStuckBanner({ since, now = Date.now(), onClick }) {
+  if (!since) return null;
+  const elapsed = now - new Date(since).getTime();
+  if (elapsed < _STUCK_THRESHOLD_MS) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid="emergency-stop-stuck-banner"
+      style={{
+        background: "#fbbf2422",
+        border: "1px solid #fbbf2466",
+        borderRadius: 6,
+        padding: "8px 12px",
+        color: "#fbbf24",
+        textAlign: "left",
+        fontFamily: "inherit",
+        fontSize: 11,
+        cursor: onClick ? "pointer" : "default",
+        width: "100%",
+      }}
+    >
+      <div style={{ fontWeight: 700 }}>
+        🛑 긴급 정지 {formatPendingAge(since, now)}째 ON
+      </div>
+      <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
+        모든 신규 주문이 차단됩니다. 의도적이라면 무시하세요.
+      </div>
+    </button>
+  );
+}
 
 
 const _DAY_MS = 24 * 60 * 60 * 1000;
@@ -203,6 +255,7 @@ export function Activity24hCard({ onJumpTab }) {
 
 export function Dashboard({
   portfolio, bot, botControls, emergencyStop,
+  emergencyStopSince,
   pendingCount = 0, stalePendingCount = 0, onJumpTab,
 }) {
   const { totalAsset, totalPnL, totalPnLPct, cash, positions } = portfolio;
@@ -211,6 +264,12 @@ export function Dashboard({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+
+      {/* 긴급 정지가 오래 켜져 있을 때 reminder — 위험/상태 요약보다 먼저 노출 */}
+      <EmergencyStopStuckBanner
+        since={emergencyStopSince}
+        onClick={() => onJumpTab && onJumpTab("strat")}
+      />
 
       {/* 위험/상태 요약 */}
       <StatusSummaryCard

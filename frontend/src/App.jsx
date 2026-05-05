@@ -13,6 +13,7 @@ import { LiveEngine }   from "./components/tabs/LiveEngine";
 import { Futures }      from "./components/tabs/Futures";
 import { Settings }     from "./components/tabs/Settings";
 import { isPendingStale } from "./components/tabs/Approvals";
+import { emergencyStopOnSince } from "./components/tabs/Dashboard";
 import { useApprovals }  from "./store/useApprovals";
 import { usePortfolio }  from "./store/usePortfolio";
 import { useBot }        from "./store/useBot";
@@ -42,7 +43,12 @@ export default function App() {
         const stalePendingCount = approvals.pending.filter(
           (a) => isPendingStale(a.created_at)
         ).length;
-        return <Dashboard portfolio={portfolio} bot={bot} botControls={{ start: bot.start, stop: bot.stop }} emergencyStop={riskPolicy.emergencyStop} pendingCount={approvals.pending.length} stalePendingCount={stalePendingCount} onJumpTab={setTab} />;
+        // 069: when emergency_stop has been on a while, surface a reminder so
+        // the operator doesn't leave the system silently rejecting orders.
+        const emergencyStopSince = emergencyStopOnSince(
+          riskPolicy.emergencyStop, riskPolicy.history,
+        );
+        return <Dashboard portfolio={portfolio} bot={bot} botControls={{ start: bot.start, stop: bot.stop }} emergencyStop={riskPolicy.emergencyStop} emergencyStopSince={emergencyStopSince} pendingCount={approvals.pending.length} stalePendingCount={stalePendingCount} onJumpTab={setTab} />;
       }
       case "strat":  return <StrategyRisk strategyOn={strategy.strategyOn} toggle={strategy.toggle} strategyParams={strategy.strategyParams} updateParam={strategy.updateParam} risk={risk} updateRisk={updateRisk} riskPolicy={riskPolicy} operatorName={settings.operatorName} />;
       case "bot":      return <BotControl bot={bot} />;

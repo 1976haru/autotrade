@@ -3,9 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   Activity24hCard,
+  EmergencyStopStuckBanner,
   StatusPin,
   StatusSummaryCard,
   computeActivity24h,
+  emergencyStopOnSince,
 } from "./Dashboard";
 
 
@@ -299,6 +301,85 @@ describe("<Activity24hCard>", () => {
     expect(container.textContent).toContain("ON 1");
     expect(container.textContent).toContain("OFF 1");
     vi.useRealTimers();
+  });
+});
+
+
+describe("emergencyStopOnSince", () => {
+  it("returns null when emergency_stop is off", () => {
+    const history = [{ id: 1, enabled: true, created_at: "2026-05-06T11:00:00+00:00" }];
+    expect(emergencyStopOnSince(false, history)).toBeNull();
+  });
+
+  it("returns null when history is empty (e.g. backend restart with on flag)", () => {
+    expect(emergencyStopOnSince(true, [])).toBeNull();
+    expect(emergencyStopOnSince(true, undefined)).toBeNull();
+    expect(emergencyStopOnSince(true, null)).toBeNull();
+  });
+
+  it("returns the latest event's created_at when on and history[0] is ON", () => {
+    const history = [
+      { id: 3, enabled: true,  created_at: "2026-05-06T11:00:00+00:00" },
+      { id: 2, enabled: false, created_at: "2026-05-06T10:30:00+00:00" },
+      { id: 1, enabled: true,  created_at: "2026-05-06T10:00:00+00:00" },
+    ];
+    expect(emergencyStopOnSince(true, history)).toBe("2026-05-06T11:00:00+00:00");
+  });
+
+  it("returns null when on flag and latest event is OFF (data inconsistency)", () => {
+    const history = [
+      { id: 2, enabled: false, created_at: "2026-05-06T11:00:00+00:00" },
+      { id: 1, enabled: true,  created_at: "2026-05-06T10:00:00+00:00" },
+    ];
+    expect(emergencyStopOnSince(true, history)).toBeNull();
+  });
+});
+
+
+describe("<EmergencyStopStuckBanner>", () => {
+  afterEach(cleanup);
+
+  const NOW = new Date("2026-05-06T12:00:00Z").getTime();
+  const minutesAgo = (m) => new Date(NOW - m * 60_000).toISOString();
+
+  it("renders nothing when since is null", () => {
+    const { container } = render(
+      <EmergencyStopStuckBanner since={null} now={NOW} />,
+    );
+    expect(container.querySelector('[data-testid="emergency-stop-stuck-banner"]')).toBeNull();
+  });
+
+  it("renders nothing when elapsed is below the 30-minute threshold", () => {
+    const { container } = render(
+      <EmergencyStopStuckBanner since={minutesAgo(15)} now={NOW} />,
+    );
+    expect(container.querySelector('[data-testid="emergency-stop-stuck-banner"]')).toBeNull();
+  });
+
+  it("renders the banner once elapsed reaches 30 minutes", () => {
+    const { getByTestId } = render(
+      <EmergencyStopStuckBanner since={minutesAgo(30)} now={NOW} />,
+    );
+    const banner = getByTestId("emergency-stop-stuck-banner");
+    expect(banner.textContent).toContain("긴급 정지");
+    expect(banner.textContent).toContain("30분 전");
+    expect(banner.textContent).toContain("모든 신규 주문이 차단");
+  });
+
+  it("renders relative time at hour granularity for long stuck states", () => {
+    const { getByTestId } = render(
+      <EmergencyStopStuckBanner since={minutesAgo(180)} now={NOW} />,
+    );
+    expect(getByTestId("emergency-stop-stuck-banner").textContent).toContain("3시간 전");
+  });
+
+  it("clicking the banner fires onClick", () => {
+    const onClick = vi.fn();
+    const { getByTestId } = render(
+      <EmergencyStopStuckBanner since={minutesAgo(45)} now={NOW} onClick={onClick} />,
+    );
+    fireEvent.click(getByTestId("emergency-stop-stuck-banner"));
+    expect(onClick).toHaveBeenCalled();
   });
 });
 
