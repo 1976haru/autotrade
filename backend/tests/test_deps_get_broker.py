@@ -48,6 +48,15 @@ def test_live_ai_execution_returns_mock(monkeypatch):
     assert isinstance(get_broker(), MockBrokerAdapter)
 
 
+def test_live_ai_assist_returns_mock(monkeypatch):
+    """Defense-in-depth: LIVE_AI_ASSIST routes to MockBroker today. The
+    LIVE_MANUAL_APPROVAL routing PR will likely flip this to KIS for both
+    LIVE_MANUAL_APPROVAL and LIVE_AI_ASSIST; until then this test locks in
+    the current safety net."""
+    _set_mode(monkeypatch, OperationMode.LIVE_AI_ASSIST)
+    assert isinstance(get_broker(), MockBrokerAdapter)
+
+
 def test_live_shadow_returns_kis(monkeypatch):
     _set_mode(monkeypatch, OperationMode.LIVE_SHADOW)
     try:

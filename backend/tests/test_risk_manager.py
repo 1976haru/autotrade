@@ -187,6 +187,94 @@ def test_live_ai_execution_approved_when_both_flags_on():
     assert result.allowed is True
 
 
+# ---------- LIVE-readiness invariants (059 audit) ----------
+#
+# evaluate_order has an early-return for LIVE_MANUAL_APPROVAL / LIVE_AI_ASSIST
+# that converts the order to NEEDS_APPROVAL before checking the global
+# enable_live_trading flag and (importantly) before any reason populated
+# earlier could downgrade the decision to REJECTED. The tests below lock
+# that behavior in so a future RiskManager refactor that wants to gate the
+# queue itself becomes a deliberate change. The multi-layer defense today
+# still holds because get_broker returns MockBroker for these modes
+# (test_live_*_returns_mock) — the LIVE PR has to wire the real broker AND
+# decide whether enable_live_trading should additionally short-circuit the
+# queue.
+
+def test_manual_approval_queues_even_when_live_trading_disabled():
+    """LIVE_MANUAL_APPROVAL with the global ENABLE_LIVE_TRADING off still
+    enqueues — the early-return fires before the flag check. Real-money risk
+    is bounded today by get_broker → MockBroker for this mode."""
+    risk = RiskManager(RiskPolicy(enable_live_trading=False))
+    result = risk.evaluate_order(
+        order=_buy(1),
+        mode=OperationMode.LIVE_MANUAL_APPROVAL,
+        balance=_balance(),
+        positions=[],
+        latest_price=75_000,
+    )
+    assert result.decision == RiskDecision.NEEDS_APPROVAL
+    assert any("manual approval" in r for r in result.reasons)
+
+
+def test_ai_assist_queues_even_when_live_trading_disabled():
+    """Same as the LIVE_MANUAL_APPROVAL invariant but for LIVE_AI_ASSIST.
+    The two share the early-return path; both must remain symmetric so any
+    LIVE-routing change applies to both at once."""
+    risk = RiskManager(RiskPolicy(enable_live_trading=False))
+    result = risk.evaluate_order(
+        order=_buy(1),
+        mode=OperationMode.LIVE_AI_ASSIST,
+        balance=_balance(),
+        positions=[],
+        latest_price=75_000,
+    )
+    assert result.decision == RiskDecision.NEEDS_APPROVAL
+
+
+def test_emergency_stop_does_not_short_circuit_manual_approval_queue():
+    """Today emergency_stop only appends a reason — it does not flip the
+    decision. In SIMULATION mode reasons get rolled up into REJECTED at the
+    end, but in LIVE_MANUAL_APPROVAL the early-return forces NEEDS_APPROVAL
+    and the operator sees emergency_stop as a flag in the modal.
+
+    LIVE-readiness note: this means emergency_stop alone is not a hard
+    short-circuit for the queue — defense relies on operator vigilance plus
+    the multi-layer guards. If hardening is desired (e.g., a flipped
+    emergency stop forces REJECTED across all modes), it should be a
+    deliberate change with this test updated."""
+    risk = RiskManager(RiskPolicy())
+    risk.set_emergency_stop(True)
+    result = risk.evaluate_order(
+        order=_buy(1),
+        mode=OperationMode.LIVE_MANUAL_APPROVAL,
+        balance=_balance(),
+        positions=[],
+        latest_price=75_000,
+    )
+    assert result.decision == RiskDecision.NEEDS_APPROVAL
+    assert any("emergency stop" in r for r in result.reasons)
+    assert any("manual approval" in r for r in result.reasons)
+
+
+def test_manual_approval_surfaces_oversized_reason_to_operator():
+    """A notional violation in SIMULATION mode produces REJECTED. The same
+    violation in LIVE_MANUAL_APPROVAL produces NEEDS_APPROVAL with the
+    notional reason attached — the operator gets the violation reason in
+    the modal and decides whether to override. This is the operator-override
+    design; the test locks it in."""
+    risk = RiskManager(RiskPolicy(max_order_notional=100_000))
+    result = risk.evaluate_order(
+        order=_buy(10),  # 10 * 75_000 = 750_000 > 100_000 cap
+        mode=OperationMode.LIVE_MANUAL_APPROVAL,
+        balance=_balance(),
+        positions=[],
+        latest_price=75_000,
+    )
+    assert result.decision == RiskDecision.NEEDS_APPROVAL
+    assert any("max_order_notional" in r for r in result.reasons)
+    assert any("manual approval" in r for r in result.reasons)
+
+
 # ---------- RiskPolicy.from_settings ----------
 
 def _settings(**overrides):
