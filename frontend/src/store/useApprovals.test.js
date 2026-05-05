@@ -55,12 +55,53 @@ describe("useApprovals", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     await act(async () => {
-      await result.current.approve(1, "looks good");
+      await result.current.approve(1, { note: "looks good" });
     });
 
     expect(backendApi.approveApproval).toHaveBeenCalledWith(1, { note: "looks good" });
     expect(backendApi.listApprovals).toHaveBeenCalledTimes(2);
     expect(result.current.pending).toEqual([]);
+  });
+
+  it("approve forwards both decided_by and note when present", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    backendApi.approveApproval.mockResolvedValue({});
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.approve(3, { decided_by: "ops1", note: "looks good" });
+    });
+
+    expect(backendApi.approveApproval).toHaveBeenCalledWith(3, {
+      decided_by: "ops1", note: "looks good",
+    });
+  });
+
+  it("approve drops empty fields so backend records null instead of \"\"", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    backendApi.approveApproval.mockResolvedValue({});
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.approve(4, { decided_by: "", note: "looks good" });
+    });
+
+    expect(backendApi.approveApproval).toHaveBeenCalledWith(4, { note: "looks good" });
+  });
+
+  it("approve passes null when decision is empty object", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    backendApi.approveApproval.mockResolvedValue({});
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => {
+      await result.current.approve(5, { decided_by: "", note: "" });
+    });
+
+    expect(backendApi.approveApproval).toHaveBeenCalledWith(5, null);
   });
 
   it("reject calls the API and refreshes the list", async () => {
@@ -101,7 +142,7 @@ describe("useApprovals", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     await act(async () => {
-      await result.current.cancel(9, "stale signal");
+      await result.current.cancel(9, { note: "stale signal" });
     });
 
     expect(backendApi.cancelApproval).toHaveBeenCalledWith(9, { note: "stale signal" });
