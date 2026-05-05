@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_market_data
 from app.backtest.engine import BacktestEngine
 from app.strategies.concrete import build_strategy
-from app.backtest.types import Bar
+from app.backtest.types import Bar, BacktestResult, Trade
 from app.db.models import BacktestRun
 from app.db.session import get_db
 from app.market.base import Interval, MarketDataAdapter
@@ -62,6 +62,12 @@ class BacktestResponse(BaseModel):
     loss_count:     int
     win_rate:       float
     max_drawdown:   int
+    # Per-trade metrics (no annualization; bar interval is opaque to the engine).
+    # None when not computable (no trades / no losses / single trade / zero stdev).
+    avg_win:        float
+    avg_loss:       float
+    profit_factor:  float | None = None
+    sharpe_ratio:   float | None = None
     data_source:    str
     data_symbol:    str | None = None
     data_start:     datetime | None = None
@@ -131,7 +137,31 @@ def _validate_bars(bars: list[Bar]) -> None:
         prev_ts = bar.timestamp
 
 
-def _build_response(run: BacktestRun, win_rate: float) -> BacktestResponse:
+def _result_from_run(run: BacktestRun) -> BacktestResult:
+    """Reconstruct a BacktestResult from persisted state.
+
+    Lets `GET /runs/{id}` recompute all derived metrics (sharpe, profit factor,
+    win_rate, etc.) the same way the fresh `POST /run` does — single source of
+    truth for the formulas, no metric drift between the two endpoints.
+    """
+    trades = [Trade(
+        symbol      = t["symbol"],
+        entry_ts    = datetime.fromisoformat(t["entry_ts"]),
+        entry_price = t["entry_price"],
+        exit_ts     = datetime.fromisoformat(t["exit_ts"]),
+        exit_price  = t["exit_price"],
+        quantity    = t["quantity"],
+        pnl         = t["pnl"],
+    ) for t in run.trades_json]
+    return BacktestResult(
+        trades         = trades,
+        initial_cash   = run.initial_cash,
+        final_cash     = run.final_cash,
+        bars_processed = run.bars_processed,
+    )
+
+
+def _build_response(run: BacktestRun, result: BacktestResult) -> BacktestResponse:
     return BacktestResponse(
         run_id=run.id,
         strategy=run.strategy,
@@ -139,11 +169,15 @@ def _build_response(run: BacktestRun, win_rate: float) -> BacktestResponse:
         bars_processed=run.bars_processed,
         initial_cash=run.initial_cash,
         final_cash=run.final_cash,
-        total_pnl=run.total_pnl,
-        win_count=run.win_count,
-        loss_count=run.loss_count,
-        win_rate=win_rate,
-        max_drawdown=run.max_drawdown,
+        total_pnl=result.total_pnl,
+        win_count=result.win_count,
+        loss_count=result.loss_count,
+        win_rate=result.win_rate,
+        max_drawdown=result.max_drawdown,
+        avg_win=result.avg_win,
+        avg_loss=result.avg_loss,
+        profit_factor=result.profit_factor,
+        sharpe_ratio=result.sharpe_ratio,
         data_source=run.data_source,
         data_symbol=run.data_symbol,
         data_start=_ensure_utc(run.data_start),
@@ -237,7 +271,7 @@ async def run_backtest(
     db.commit()
     db.refresh(run)
 
-    return _build_response(run, result.win_rate)
+    return _build_response(run, result)
 
 
 @router.get("/runs/{run_id}", response_model=BacktestResponse)
@@ -245,6 +279,4 @@ def get_run(run_id: int, db: Session = Depends(get_db)) -> BacktestResponse:
     run = db.execute(select(BacktestRun).where(BacktestRun.id == run_id)).scalar_one_or_none()
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
-    total = run.win_count + run.loss_count
-    win_rate = run.win_count / total if total else 0.0
-    return _build_response(run, win_rate)
+    return _build_response(run, _result_from_run(run))

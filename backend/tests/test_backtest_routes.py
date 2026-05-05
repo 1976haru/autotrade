@@ -39,6 +39,16 @@ def test_run_persists_and_returns_metrics(client):
     assert isinstance(data["trades"], list)
     assert data["win_count"] + data["loss_count"] == len(data["trades"])
     assert data["total_pnl"] == data["final_cash"] - data["initial_cash"]
+    # Expanded metrics surface in the response. None values are JSON null so
+    # we check the keys exist and have the right type when present.
+    assert "avg_win"        in data
+    assert "avg_loss"       in data
+    assert "profit_factor"  in data
+    assert "sharpe_ratio"   in data
+    assert isinstance(data["avg_win"],  (int, float))
+    assert isinstance(data["avg_loss"], (int, float))
+    assert data["profit_factor"] is None or isinstance(data["profit_factor"], (int, float))
+    assert data["sharpe_ratio"]  is None or isinstance(data["sharpe_ratio"],  (int, float))
 
     with client.test_db_factory() as db:
         runs = db.execute(select(BacktestRun)).scalars().all()
@@ -70,6 +80,12 @@ def test_run_then_get_returns_same_payload(client):
     assert fetched["trades"] == posted["trades"]
     assert fetched["total_pnl"] == posted["total_pnl"]
     assert fetched["win_rate"] == posted["win_rate"]
+    # Recomputed metrics on GET must match the fresh POST — single source of
+    # truth for the formulas (no metric drift between endpoints).
+    assert fetched["avg_win"]       == posted["avg_win"]
+    assert fetched["avg_loss"]      == posted["avg_loss"]
+    assert fetched["profit_factor"] == posted["profit_factor"]
+    assert fetched["sharpe_ratio"]  == posted["sharpe_ratio"]
 
 
 def test_get_unknown_run_returns_404(client):

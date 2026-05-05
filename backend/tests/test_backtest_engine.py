@@ -121,3 +121,91 @@ def test_result_metrics_on_constructed_trades():
 def test_max_drawdown_zero_when_only_winners():
     r = BacktestResult(trades=[_trade(50), _trade(20), _trade(10)])
     assert r.max_drawdown == 0
+
+
+# ---------- avg_win / avg_loss ----------
+
+def test_avg_win_and_loss_split_by_pnl_sign():
+    r = BacktestResult(trades=[_trade(100), _trade(-40), _trade(60), _trade(-20)])
+    assert r.avg_win  == 80.0   # (100 + 60) / 2
+    assert r.avg_loss == -30.0  # (-40 + -20) / 2
+
+
+def test_avg_win_and_loss_zero_when_no_trades():
+    r = BacktestResult(trades=[])
+    assert r.avg_win  == 0.0
+    assert r.avg_loss == 0.0
+
+
+def test_avg_loss_includes_break_even_trades():
+    """pnl == 0 is classified as a loss (matches loss_count / win_rate)."""
+    r = BacktestResult(trades=[_trade(50), _trade(0)])
+    assert r.avg_win  == 50.0
+    assert r.avg_loss == 0.0
+
+
+# ---------- profit_factor ----------
+
+def test_profit_factor_sums_winners_over_absolute_losers():
+    r = BacktestResult(trades=[_trade(100), _trade(-50), _trade(50), _trade(-25)])
+    # gross_win=150, gross_loss=75 → 2.0
+    assert r.profit_factor == 2.0
+
+
+def test_profit_factor_none_when_no_losses():
+    r = BacktestResult(trades=[_trade(100), _trade(50)])
+    assert r.profit_factor is None
+
+
+def test_profit_factor_none_when_no_trades():
+    assert BacktestResult(trades=[]).profit_factor is None
+
+
+def test_profit_factor_excludes_break_even_from_loss_sum():
+    # pnl == 0 contributes neither to gross_win nor gross_loss.
+    r = BacktestResult(trades=[_trade(100), _trade(0), _trade(-50)])
+    assert r.profit_factor == 2.0
+
+
+# ---------- sharpe_ratio ----------
+
+def test_sharpe_none_when_fewer_than_two_trades():
+    assert BacktestResult(trades=[]).sharpe_ratio is None
+    assert BacktestResult(trades=[_trade(100)]).sharpe_ratio is None
+
+
+def test_sharpe_none_when_zero_variance():
+    """Identical returns → stdev=0 → sharpe undefined."""
+    # Both trades have identical returns: pnl=10 / (entry_price=100 * qty=1) = 0.1
+    r = BacktestResult(trades=[_trade(10), _trade(10)])
+    assert r.sharpe_ratio is None
+
+
+def test_sharpe_positive_when_returns_skew_positive():
+    """Two trades, +20% and -10%, mean = +5%. Sharpe should be positive."""
+    r = BacktestResult(trades=[_trade(20), _trade(-10)])
+    sharpe = r.sharpe_ratio
+    assert sharpe is not None
+    assert sharpe > 0
+
+
+def test_sharpe_negative_when_returns_skew_negative():
+    r = BacktestResult(trades=[_trade(-20), _trade(10)])
+    sharpe = r.sharpe_ratio
+    assert sharpe is not None
+    assert sharpe < 0
+
+
+def test_sharpe_uses_per_trade_returns_not_dollar_pnl():
+    """Same dollar pnl with different entry prices yields different returns."""
+    # Trade A: 10 / (100 * 1) = 0.10 return
+    # Trade B: 10 / (200 * 1) = 0.05 return
+    big_entry = Trade(
+        symbol="X", entry_ts=_BASE, entry_price=200,
+        exit_ts=_BASE, exit_price=210, quantity=1, pnl=10,
+    )
+    r = BacktestResult(trades=[_trade(10), big_entry])
+    assert r.sharpe_ratio is not None
+    # Mean = 0.075, stdev (sample) = sqrt(((0.10-0.075)^2 + (0.05-0.075)^2) / 1) = 0.025*sqrt(2)
+    # Sharpe = 0.075 / (0.025*sqrt(2)) = 3 / sqrt(2) ≈ 2.121
+    assert abs(r.sharpe_ratio - (0.075 / (0.025 * (2 ** 0.5)))) < 1e-9

@@ -108,7 +108,7 @@ export function Backtest() {
                 {run.bars_processed}개 봉 · {run.data_source}
               </span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", textAlign: "center" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", textAlign: "center", marginBottom: 10 }}>
               <StatBox
                 label="총 손익"
                 value={`${run.total_pnl >= 0 ? "+" : ""}${fmtKRW(run.total_pnl)}`}
@@ -117,6 +117,21 @@ export function Backtest() {
               <StatBox label="승률" value={`${winRatePct}%`} color={winRatePct >= 50 ? "#22c55e" : "#f59e0b"} />
               <StatBox label="승/패" value={`${run.win_count}/${run.loss_count}`} color="#7dd3fc" />
               <StatBox label="MDD" value={fmtKRW(run.max_drawdown)} color="#ef4444" />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr",
+                           textAlign: "center", paddingTop: 10, borderTop: "1px solid #0c2035" }}>
+              <StatBox label="평균 익절"   value={fmtKRW(Math.round(run.avg_win  ?? 0))} color="#22c55e" />
+              <StatBox label="평균 손절"   value={fmtKRW(Math.round(run.avg_loss ?? 0))} color="#ef4444" />
+              <StatBox
+                label="Profit Factor"
+                value={run.profit_factor == null ? "—" : run.profit_factor.toFixed(2)}
+                color="#7dd3fc"
+              />
+              <StatBox
+                label="Sharpe (per-trade)"
+                value={run.sharpe_ratio == null ? "—" : run.sharpe_ratio.toFixed(2)}
+                color="#a78bfa"
+              />
             </div>
           </Card>
 
