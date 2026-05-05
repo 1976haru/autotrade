@@ -6,6 +6,7 @@ export function Settings({ settings }) {
     brokerId, broker, tradeMode, apiKeys,
     connected, connecting, connMsg,
     switchBroker, switchMode, updateKey, connect,
+    operatorName, setOperatorName,
   } = settings;
 
   return (
@@ -106,6 +107,20 @@ export function Settings({ settings }) {
           </div>
         </Card>
       )}
+
+      {/* 운영자명 (감사 로그용) */}
+      <Card>
+        <SectionLabel>운영자명 (감사 로그용)</SectionLabel>
+        <div style={{ fontSize: 10, color: "#475569", marginBottom: 8, lineHeight: 1.5 }}>
+          긴급 정지 등 결재 모달의 <code>decided_by</code> 필드에 미리 채워집니다.
+          이 기기에만 저장되며 (localStorage), 백엔드로는 토글 시점에만 전송됩니다.
+        </div>
+        <Inp
+          value={operatorName || ""}
+          onChange={setOperatorName}
+          placeholder="예: ops1, trader-hsuhyun"
+        />
+      </Card>
 
       {/* PWA 설치 안내 */}
       <Card accentColor="#a855f733">
