@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
-import { Btn, Card, Inp, SectionLabel } from "../common";
+import { Btn, Card, SectionLabel } from "../common";
+import { DecisionDialog } from "../common/DecisionDialog";
 import { fmtKRW } from "../../utils/format";
 
 
@@ -115,99 +116,84 @@ export function HistoryRow({ a }) {
 }
 
 
+function _OrderSummary({ approval }) {
+  return (
+    <div style={{
+      fontSize: 11, color: "#94a3b8", padding: "8px 10px", marginBottom: 10,
+      background: "#010a14", border: "1px solid #0c2035", borderRadius: 4,
+    }}>
+      <div>
+        <span style={{ color: "#7dd3fc", fontWeight: 700 }}>{approval.symbol}</span>
+        <span style={{
+          color: approval.side === "BUY" ? "#22c55e" : "#ef4444",
+          fontSize: 10, marginLeft: 8, fontWeight: 700,
+        }}>
+          {approval.side}
+        </span>
+        <span style={{ marginLeft: 8 }}>
+          {approval.quantity}주 · {approval.order_type}
+          {approval.limit_price ? ` · ${fmtKRW(approval.limit_price)}원` : ""}
+        </span>
+      </div>
+      <div style={{ fontSize: 9, color: "#475569", marginTop: 2 }}>
+        #{approval.id} · {approval.mode}
+      </div>
+    </div>
+  );
+}
+
+
 export function ApprovalDecisionModal({
   action, approval, busy, defaultDecidedBy = "", onConfirm, onCancel,
 }) {
-  const [decidedBy, setDecidedBy] = useState(defaultDecidedBy);
-  const [note,      setNote]      = useState("");
-  const decidedByRef = useRef(null);
-  const noteRef      = useRef(null);
-
   const meta = ACTION_META[action];
-
-  // 058 stale 알람의 짝꿍: 결재 한 사이클을 키보드만으로 끝내 처리 속도를 높인다.
-  // operatorName(048)이 이미 채워졌으면 운영자가 보통 사유부터 적으므로 노트로 점프.
-  useEffect(() => {
-    (defaultDecidedBy ? noteRef : decidedByRef).current?.focus();
-  }, [defaultDecidedBy]);
-
-  useEffect(() => {
-    if (busy) return undefined;
-    const handler = (e) => {
-      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
-      else if (e.key === "Enter") {
-        e.preventDefault();
-        onConfirm({ decided_by: decidedBy.trim(), note: note.trim() });
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [busy, onCancel, onConfirm, decidedBy, note]);
-
   return (
-    <div
-      role="dialog"
-      aria-label={meta.label}
-      style={{
-        position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        zIndex: 1000,
-      }}
-    >
-      <Card accentColor={`${meta.color}55`} style={{ width: 380, maxWidth: "90vw" }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: meta.color, marginBottom: 8 }}>
-          {meta.label}
-        </div>
+    <DecisionDialog
+      title={meta.label}
+      accent={meta.color}
+      cancelLabel="닫기"
+      confirmLabel={meta.confirmLabel}
+      summary={<_OrderSummary approval={approval} />}
+      description="감사 추적을 위해 운영자명과 사유를 남겨주세요. 둘 다 선택 사항이지만, 기록된 값은 영구 저장되어 사고 분석 시 사용됩니다."
+      notePlaceholder="예: 신호 노후, 잔고 부족"
+      busy={busy}
+      defaultDecidedBy={defaultDecidedBy}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />
+  );
+}
 
-        {/* 주문 요약 — 결재 전 마지막 확인용 */}
-        <div style={{
-          fontSize: 11, color: "#94a3b8", padding: "8px 10px", marginBottom: 10,
-          background: "#010a14", border: "1px solid #0c2035", borderRadius: 4,
-        }}>
-          <div>
-            <span style={{ color: "#7dd3fc", fontWeight: 700 }}>{approval.symbol}</span>
-            <span style={{
-              color: approval.side === "BUY" ? "#22c55e" : "#ef4444",
-              fontSize: 10, marginLeft: 8, fontWeight: 700,
-            }}>
-              {approval.side}
+
+function _StaleApprovalList({ stale }) {
+  // Operator should be able to verify what they're about to dispose. Show up
+  // to 5 rows; collapse the rest into "외 N건" so the modal stays bounded.
+  const visible = stale.slice(0, 5);
+  const overflow = stale.length - visible.length;
+  return (
+    <div style={{
+      fontSize: 11, color: "#94a3b8", padding: "8px 10px", marginBottom: 10,
+      background: "#010a14", border: "1px solid #0c2035", borderRadius: 4,
+      maxHeight: 140, overflowY: "auto",
+    }}>
+      {visible.map((a) => (
+        <div key={a.id} style={{ display: "flex", justifyContent: "space-between",
+                                   fontSize: 10, padding: "2px 0" }}>
+          <span>
+            <span style={{ color: "#7dd3fc", fontWeight: 700 }}>{a.symbol}</span>
+            <span style={{ marginLeft: 6, color: a.side === "BUY" ? "#22c55e" : "#ef4444" }}>
+              {a.side}
             </span>
-            <span style={{ marginLeft: 8 }}>
-              {approval.quantity}주 · {approval.order_type}
-              {approval.limit_price ? ` · ${fmtKRW(approval.limit_price)}원` : ""}
-            </span>
-          </div>
-          <div style={{ fontSize: 9, color: "#475569", marginTop: 2 }}>
-            #{approval.id} · {approval.mode}
-          </div>
+            <span style={{ marginLeft: 6 }}>{a.quantity}주</span>
+          </span>
+          <span style={{ color: "#f59e0b" }}>{formatPendingAge(a.created_at)}</span>
         </div>
-
-        <div style={{ fontSize: 10, color: "#475569", marginBottom: 10, lineHeight: 1.5 }}>
-          감사 추적을 위해 운영자명과 사유를 남겨주세요. 둘 다 선택 사항이지만,
-          기록된 값은 영구 저장되어 사고 분석 시 사용됩니다.
+      ))}
+      {overflow > 0 && (
+        <div style={{ fontSize: 9, color: "#475569", marginTop: 4, textAlign: "center" }}>
+          외 {overflow}건
         </div>
-
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>운영자명 (decided_by)</div>
-          <Inp value={decidedBy} onChange={setDecidedBy} placeholder="예: ops1" inputRef={decidedByRef} />
-        </div>
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>사유 (note)</div>
-          <Inp value={note} onChange={setNote} placeholder="예: 신호 노후, 잔고 부족" inputRef={noteRef} />
-        </div>
-
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <Btn color="#1a3a5c" onClick={onCancel} disabled={busy} small>닫기</Btn>
-          <Btn
-            color={meta.color}
-            onClick={() => onConfirm({ decided_by: decidedBy.trim(), note: note.trim() })}
-            disabled={busy}
-            small
-          >
-            {busy ? "처리 중…" : meta.confirmLabel}
-          </Btn>
-        </div>
-      </Card>
+      )}
     </div>
   );
 }
@@ -216,103 +202,21 @@ export function ApprovalDecisionModal({
 export function BulkCancelStaleModal({
   approvals: stale, busy, defaultDecidedBy = "", onConfirm, onCancel,
 }) {
-  const [decidedBy, setDecidedBy] = useState(defaultDecidedBy);
-  const [note,      setNote]      = useState("");
-  const decidedByRef = useRef(null);
-  const noteRef      = useRef(null);
-
-  // Reuse the 063 a11y pattern: focus first empty field on mount; Esc/Enter
-  // shortcuts; suppress while busy. This is the operator's "쌓인 stale 한
-  // 번에 정리" path, so speed matters.
-  useEffect(() => {
-    (defaultDecidedBy ? noteRef : decidedByRef).current?.focus();
-  }, [defaultDecidedBy]);
-
-  useEffect(() => {
-    if (busy) return undefined;
-    const handler = (e) => {
-      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
-      else if (e.key === "Enter") {
-        e.preventDefault();
-        onConfirm({ decided_by: decidedBy.trim(), note: note.trim() });
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [busy, onCancel, onConfirm, decidedBy, note]);
-
-  // Operator should be able to verify what they're about to dispose. Show up
-  // to 5 rows; collapse the rest into "외 N건" so the modal stays bounded.
-  const visible = stale.slice(0, 5);
-  const overflow = stale.length - visible.length;
-
   return (
-    <div
-      role="dialog"
-      aria-label="stale 일괄 취소"
-      style={{
-        position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        zIndex: 1000,
-      }}
-    >
-      <Card accentColor="#94a3b855" style={{ width: 380, maxWidth: "90vw" }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: "#94a3b8", marginBottom: 8 }}>
-          stale 일괄 취소 ({stale.length}건)
-        </div>
-
-        <div style={{
-          fontSize: 11, color: "#94a3b8", padding: "8px 10px", marginBottom: 10,
-          background: "#010a14", border: "1px solid #0c2035", borderRadius: 4,
-          maxHeight: 140, overflowY: "auto",
-        }}>
-          {visible.map((a) => (
-            <div key={a.id} style={{ display: "flex", justifyContent: "space-between",
-                                       fontSize: 10, padding: "2px 0" }}>
-              <span>
-                <span style={{ color: "#7dd3fc", fontWeight: 700 }}>{a.symbol}</span>
-                <span style={{ marginLeft: 6, color: a.side === "BUY" ? "#22c55e" : "#ef4444" }}>
-                  {a.side}
-                </span>
-                <span style={{ marginLeft: 6 }}>{a.quantity}주</span>
-              </span>
-              <span style={{ color: "#f59e0b" }}>{formatPendingAge(a.created_at)}</span>
-            </div>
-          ))}
-          {overflow > 0 && (
-            <div style={{ fontSize: 9, color: "#475569", marginTop: 4, textAlign: "center" }}>
-              외 {overflow}건
-            </div>
-          )}
-        </div>
-
-        <div style={{ fontSize: 10, color: "#475569", marginBottom: 10, lineHeight: 1.5 }}>
-          모든 행이 같은 운영자명/사유로 CANCELLED 처리됩니다. 거부(REJECTED)와 달리
-          취소는 "신호 노후" 같은 중립적 폐기를 의미합니다.
-        </div>
-
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>운영자명 (decided_by)</div>
-          <Inp value={decidedBy} onChange={setDecidedBy} placeholder="예: ops1" inputRef={decidedByRef} />
-        </div>
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>사유 (note)</div>
-          <Inp value={note} onChange={setNote} placeholder="예: stale 신호 일괄 정리" inputRef={noteRef} />
-        </div>
-
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <Btn color="#1a3a5c" onClick={onCancel} disabled={busy} small>닫기</Btn>
-          <Btn
-            color="#94a3b8"
-            onClick={() => onConfirm({ decided_by: decidedBy.trim(), note: note.trim() })}
-            disabled={busy}
-            small
-          >
-            {busy ? "처리 중…" : `⊘ ${stale.length}건 취소`}
-          </Btn>
-        </div>
-      </Card>
-    </div>
+    <DecisionDialog
+      title={`stale 일괄 취소 (${stale.length}건)`}
+      ariaLabel="stale 일괄 취소"
+      accent="#94a3b8"
+      cancelLabel="닫기"
+      confirmLabel={`⊘ ${stale.length}건 취소`}
+      summary={<_StaleApprovalList stale={stale} />}
+      description={'모든 행이 같은 운영자명/사유로 CANCELLED 처리됩니다. 거부(REJECTED)와 달리 취소는 "신호 노후" 같은 중립적 폐기를 의미합니다.'}
+      notePlaceholder="예: stale 신호 일괄 정리"
+      busy={busy}
+      defaultDecidedBy={defaultDecidedBy}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />
   );
 }
 

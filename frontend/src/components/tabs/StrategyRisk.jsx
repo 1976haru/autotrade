@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 import { STRATEGIES } from "../../config/strategies";
 import { RISK_POLICY_FIELDS } from "../../config/riskPolicy";
-import { Btn, Card, Inp, SectionLabel, Toggle, Slider } from "../common";
+import { Btn, Card, SectionLabel, Toggle, Slider } from "../common";
+import { DecisionDialog } from "../common/DecisionDialog";
 import { fmtKRW } from "../../utils/format";
 
 
@@ -89,75 +90,22 @@ export function EmergencyStopHistoryCard({ history }) {
 export function EmergencyStopConfirmModal({
   targetEnabled, busy, onConfirm, onCancel, defaultDecidedBy = "",
 }) {
-  const [decidedBy, setDecidedBy] = useState(defaultDecidedBy);
-  const [note,      setNote]      = useState("");
-  const decidedByRef = useRef(null);
-  const noteRef      = useRef(null);
-
   const action = targetEnabled ? "긴급 정지 활성화" : "긴급 정지 해제";
   const accent = targetEnabled ? "#ef4444"          : "#22c55e";
 
-  // 결재 속도가 사고 분석/방어에 직접 영향이라(058 stale 알람과 짝꿍), 키보드만으로
-  // 한 사이클 끝나도록 한다: 첫 빈 입력 자동 포커스 + Esc 취소 + Enter 확인.
-  // operatorName(048)이 이미 채워졌으면 운영자가 보통 사유부터 적으므로 노트로 점프.
-  useEffect(() => {
-    (defaultDecidedBy ? noteRef : decidedByRef).current?.focus();
-  }, [defaultDecidedBy]);
-
-  useEffect(() => {
-    if (busy) return undefined;
-    const handler = (e) => {
-      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
-      else if (e.key === "Enter") {
-        e.preventDefault();
-        onConfirm({ decided_by: decidedBy.trim(), note: note.trim() });
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [busy, onCancel, onConfirm, decidedBy, note]);
-
   return (
-    <div
-      role="dialog"
-      aria-label={action}
-      style={{
-        position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        zIndex: 1000,
-      }}
-    >
-      <Card accentColor={`${accent}55`} style={{ width: 360, maxWidth: "90vw" }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: accent, marginBottom: 4 }}>
-          {action}
-        </div>
-        <div style={{ fontSize: 10, color: "#475569", marginBottom: 12, lineHeight: 1.5 }}>
-          감사 추적을 위해 운영자명과 사유를 남겨주세요. 둘 다 선택 사항이지만,
-          기록된 값은 영구 저장되어 사고 분석 시 사용됩니다.
-        </div>
-
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>운영자명 (decided_by)</div>
-          <Inp value={decidedBy} onChange={setDecidedBy} placeholder="예: ops1" inputRef={decidedByRef} />
-        </div>
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>사유 (note)</div>
-          <Inp value={note} onChange={setNote} placeholder="예: vol spike, circuit-breaker" inputRef={noteRef} />
-        </div>
-
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <Btn color="#1a3a5c" onClick={onCancel} disabled={busy} small>취소</Btn>
-          <Btn
-            color={accent}
-            onClick={() => onConfirm({ decided_by: decidedBy.trim(), note: note.trim() })}
-            disabled={busy}
-            small
-          >
-            {busy ? "처리 중…" : "확인"}
-          </Btn>
-        </div>
-      </Card>
-    </div>
+    <DecisionDialog
+      title={action}
+      accent={accent}
+      cancelLabel="취소"
+      confirmLabel="확인"
+      description="감사 추적을 위해 운영자명과 사유를 남겨주세요. 둘 다 선택 사항이지만, 기록된 값은 영구 저장되어 사고 분석 시 사용됩니다."
+      notePlaceholder="예: vol spike, circuit-breaker"
+      busy={busy}
+      defaultDecidedBy={defaultDecidedBy}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />
   );
 }
 
