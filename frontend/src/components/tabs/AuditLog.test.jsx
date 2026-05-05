@@ -299,6 +299,75 @@ describe("<EventTimelineView> kind filter", () => {
 });
 
 
+describe("<EventTimelineView> symbol filter", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    _resetHooks(
+      { items: [
+          _ORDER({ id: 10, symbol: "005930", created_at: "2026-05-05T12:00:00+00:00" }),
+          _ORDER({ id: 11, symbol: "000660", created_at: "2026-05-05T12:05:00+00:00" }),
+          _ORDER({ id: 12, symbol: "005930", created_at: "2026-05-05T12:10:00+00:00" }),
+      ]},
+      { items: [_STOP({ id: 1, created_at: "2026-05-05T12:07:00+00:00" })] },
+    );
+  });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  it("renders the symbol input with placeholder hint", () => {
+    const { getByPlaceholderText } = render(<EventTimelineView />);
+    expect(getByPlaceholderText(/종목/)).toBeTruthy();
+  });
+
+  it("default empty filter shows all rows (3 orders + 1 stop = 4)", () => {
+    const { container } = render(<EventTimelineView />);
+    expect(container.textContent).toContain("(4)");
+  });
+
+  it("typing a matching symbol narrows orders to that ticker (stop preserved)", () => {
+    const { container, getByPlaceholderText } = render(<EventTimelineView />);
+    fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "005930" } });
+    // 2 matching orders + 1 stop (stop is mode-wide, not symbol-bound) = 3
+    expect(container.textContent).toContain("(3)");
+  });
+
+  it("substring match works case-insensitively", () => {
+    const { container, getByPlaceholderText } = render(<EventTimelineView />);
+    // "0066" should match symbol "000660"
+    fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "0066" } });
+    expect(container.textContent).toContain("(2)"); // 1 order + 1 stop
+  });
+
+  it("non-matching symbol leaves only stops visible", () => {
+    const { container, getByPlaceholderText } = render(<EventTimelineView />);
+    fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "999999" } });
+    // 0 orders match + 1 stop preserved
+    expect(container.textContent).toContain("(1)");
+  });
+
+  it("symbol filter combined with kind=주문 hides stops as before", () => {
+    const { container, getByPlaceholderText, getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "주문" }));
+    fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "005930" } });
+    // 2 matching orders, 0 stops
+    expect(container.textContent).toContain("(2)");
+  });
+
+  it("symbol filter is ignored when kind=긴급정지 (no symbol on stops)", () => {
+    const { container, getByPlaceholderText, getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "긴급정지" }));
+    fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "005930" } });
+    // 0 orders, 1 stop (not affected by symbol filter)
+    expect(container.textContent).toContain("(1)");
+  });
+
+  it("trims whitespace before matching (operator paste habits)", () => {
+    const { container, getByPlaceholderText } = render(<EventTimelineView />);
+    fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "  005930  " } });
+    expect(container.textContent).toContain("(3)");
+  });
+});
+
+
 describe("<EventTimelineView> load-more", () => {
   beforeEach(() => {
     // Direct describes write to localStorage; clear so leakage doesn't make
