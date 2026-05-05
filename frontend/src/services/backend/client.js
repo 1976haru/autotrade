@@ -58,4 +58,8 @@ export const backendApi = {
     body:   JSON.stringify(req),
   }),
   engineReset:     () => backendFetch("/api/strategies/reset", { method: "POST" }),
+  engineReplay:    (req) => backendFetch("/api/strategies/replay", {
+    method: "POST",
+    body:   JSON.stringify(req),
+  }),
 };

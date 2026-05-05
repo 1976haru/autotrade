@@ -12,12 +12,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_broker, get_risk_manager
+from app.api.deps import get_broker, get_market_data, get_risk_manager
 from app.backtest.types import Bar
 from app.brokers.base import BrokerAdapter, OrderRequest, OrderResult
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.execution.order_router import OrderRoutingResult, route_order
+from app.market.base import Interval, MarketDataAdapter
+from app.market.cache import BarCache
 from app.risk.risk_manager import RiskDecision, RiskManager
 from app.strategies.concrete import build_strategy
 from app.strategies.live_engine import LiveStrategyEngine
@@ -44,6 +46,22 @@ class ConfigureRequest(BaseModel):
 class TickRequest(BaseModel):
     bar:    BarIn
     submit: bool = False
+
+
+class ReplayRequest(BaseModel):
+    symbol:   str
+    start:    datetime
+    end:      datetime
+    interval: Interval = Interval.DAY_1
+
+
+class ReplayResponse(BaseModel):
+    bars_processed:  int
+    signals_emitted: dict[str, int]
+    last_signal:     str | None  = None
+    last_intended:   OrderRequest | None = None
+    bars_seen:       int
+    holding:         bool
 
 
 class StatusResponse(BaseModel):
@@ -159,4 +177,54 @@ async def tick_route(
         bars_seen=engine.bars_seen,
         holding=engine.holding,
         routing=routing_out,
+    )
+
+
+@router.post("/replay", response_model=ReplayResponse)
+async def replay_route(
+    req:      ReplayRequest,
+    upstream: MarketDataAdapter = Depends(get_market_data),
+    db:       Session           = Depends(get_db),
+) -> ReplayResponse:
+    """Feed a range of bars from the market adapter into the configured engine.
+
+    Useful for warming up the engine state from history before manual ticks
+    take over. submit is intentionally not exposed — replaying with order
+    submission would mass-fire orders and is risky enough to deserve its own
+    PR with explicit safeguards.
+    """
+    engine = _EngineState.engine
+    if engine is None:
+        raise HTTPException(
+            status_code=400,
+            detail="engine not configured; POST /api/strategies/configure first",
+        )
+    if req.start > req.end:
+        raise HTTPException(status_code=400, detail="start must be <= end")
+
+    cache = BarCache(db)
+    bars = cache.get(req.symbol, req.interval.value, req.start, req.end)
+    if not bars:
+        try:
+            bars = await upstream.get_bars(req.symbol, req.start, req.end, req.interval)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        cache.save(bars, req.interval.value)
+
+    if not bars:
+        raise HTTPException(status_code=400, detail="no bars returned for the requested range")
+
+    counts = {"BUY": 0, "SELL": 0, "HOLD": 0}
+    last_result = None
+    for bar in bars:
+        last_result = engine.run_tick(bar)
+        counts[last_result.signal.value] += 1
+
+    return ReplayResponse(
+        bars_processed=len(bars),
+        signals_emitted=counts,
+        last_signal=last_result.signal.value if last_result else None,
+        last_intended=last_result.intended_order if last_result else None,
+        bars_seen=engine.bars_seen,
+        holding=engine.holding,
     )

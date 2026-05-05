@@ -189,8 +189,70 @@ function ResultCard({ result }) {
 }
 
 
+function ReplayCard({ status, busy, onReplay, summary }) {
+  const [form, setForm] = useState({
+    symbol: "005930",
+    start:  "2026-01-01",
+    end:    "2026-01-31",
+  });
+  const update = (key) => (v) => setForm((prev) => ({ ...prev, [key]: v }));
+
+  const onSubmit = () => {
+    onReplay({
+      symbol:   form.symbol,
+      start:    `${form.start}T00:00:00+00:00`,
+      end:      `${form.end}T00:00:00+00:00`,
+      interval: "1d",
+    });
+  };
+
+  const disabled = busy || !status?.configured;
+
+  return (
+    <Card>
+      <SectionLabel>시장 데이터로 봉 일괄 입력 (replay)</SectionLabel>
+      <div style={{ fontSize: 10, color: "#475569", marginBottom: 8, lineHeight: 1.6 }}>
+        주어진 기간의 봉을 시장 어댑터에서 가져와 엔진에 차례로 흘려보냅니다 (BarCache 사용).
+        주문 라우팅은 비활성 — 신호 수집 + 엔진 상태 워밍업만 수행합니다.
+      </div>
+      <div style={{ marginBottom: 8 }}>
+        <div style={{ fontSize: 10, color: "#475569", marginBottom: 4 }}>종목</div>
+        <Inp value={form.symbol} onChange={update("symbol")} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+        <div>
+          <div style={{ fontSize: 10, color: "#475569", marginBottom: 4 }}>시작일</div>
+          <Inp value={form.start} onChange={update("start")} type="date" />
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: "#475569", marginBottom: 4 }}>종료일</div>
+          <Inp value={form.end} onChange={update("end")} type="date" />
+        </div>
+      </div>
+      <Btn onClick={onSubmit} disabled={disabled} color="#a78bfa" full>
+        ⏩ replay
+      </Btn>
+
+      {summary && (
+        <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid #0c2035" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", marginBottom: 6 }}>
+            결과: {summary.bars_processed}개 봉 처리됨
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, fontSize: 11 }}>
+            <Field label="BUY"  value={String(summary.signals_emitted?.BUY  ?? 0)} />
+            <Field label="SELL" value={String(summary.signals_emitted?.SELL ?? 0)} />
+            <Field label="HOLD" value={String(summary.signals_emitted?.HOLD ?? 0)} />
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+
 export function LiveEngine() {
-  const { status, lastResult, busy, error, configure, tick, reset } = useLiveEngine();
+  const { status, lastResult, replaySummary, busy, error,
+          configure, tick, reset, replay } = useLiveEngine();
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -203,12 +265,14 @@ export function LiveEngine() {
       )}
 
       <ConfigureCard busy={busy} onConfigure={configure} />
+      <ReplayCard    status={status} busy={busy} onReplay={replay} summary={replaySummary} />
       <TickCard      status={status} busy={busy} onTick={tick} />
       <ResultCard    result={lastResult} />
 
       <div style={{ fontSize: 10, color: "#1e3a5c", lineHeight: 1.6, padding: "0 4px" }}>
-        ⚠ 엔진은 단일 인스턴스로, 한 번에 한 전략만 실행합니다. 봉은 수동 입력으로
-        들어옵니다 — 실시간 자동 폴링은 별도 PR에서 추가될 예정입니다.
+        ⚠ 엔진은 단일 인스턴스로, 한 번에 한 전략만 실행합니다. replay는 신호 워밍업
+        전용이라 주문이 발생하지 않으며, tick의 submit 토글은 현재 운용모드에 따라
+        라우팅됩니다. 실시간 자동 폴링은 별도 PR.
       </div>
     </div>
   );

@@ -224,3 +224,78 @@ def test_buy_signal_returns_intended_order_with_market_buy(client):
             found_buy = True
             break
     assert found_buy, "expected an SMA-crossover BUY signal in the test bars"
+
+
+# ---------- /api/strategies/replay ----------
+
+def test_replay_before_configure_returns_400(client):
+    res = client.post("/api/strategies/replay", json={
+        "symbol": "005930",
+        "start":  "2026-01-01T00:00:00+00:00",
+        "end":    "2026-01-15T00:00:00+00:00",
+    })
+    assert res.status_code == 400
+    assert "configure" in res.json()["detail"]
+
+
+def test_replay_start_after_end_returns_400(client):
+    client.post("/api/strategies/configure",
+                json={"strategy": "sma_crossover", "params": {"short": 2, "long": 4}})
+    res = client.post("/api/strategies/replay", json={
+        "symbol": "005930",
+        "start":  "2026-02-01T00:00:00+00:00",
+        "end":    "2026-01-01T00:00:00+00:00",
+    })
+    assert res.status_code == 400
+
+
+def test_replay_feeds_market_bars_into_engine(client):
+    client.post("/api/strategies/configure",
+                json={"strategy": "sma_crossover", "params": {"short": 2, "long": 4}})
+
+    res = client.post("/api/strategies/replay", json={
+        "symbol":   "005930",
+        "start":    "2026-01-01T00:00:00+00:00",
+        "end":      "2026-01-15T00:00:00+00:00",
+        "interval": "1d",
+    })
+    assert res.status_code == 200
+    body = res.json()
+
+    # Mock market adapter returns 1 bar/day inclusive — Jan 1 .. Jan 15 = 15.
+    assert body["bars_processed"] == 15
+    assert body["bars_seen"]      == 15
+    counts = body["signals_emitted"]
+    assert counts["BUY"] + counts["SELL"] + counts["HOLD"] == 15
+
+    status = client.get("/api/strategies/status").json()
+    assert status["bars_seen"] == 15
+
+
+def test_replay_unsupported_interval_returns_400(client):
+    client.post("/api/strategies/configure",
+                json={"strategy": "sma_crossover", "params": {"short": 2, "long": 4}})
+    res = client.post("/api/strategies/replay", json={
+        "symbol":   "005930",
+        "start":    "2026-01-01T00:00:00+00:00",
+        "end":      "2026-01-05T00:00:00+00:00",
+        "interval": "1h",
+    })
+    assert res.status_code == 400
+    assert "daily" in res.json()["detail"].lower()
+
+
+def test_replay_appends_to_existing_engine_state(client):
+    client.post("/api/strategies/configure",
+                json={"strategy": "sma_crossover", "params": {"short": 2, "long": 4}})
+    client.post("/api/strategies/tick", json={"bar": _bar_payload(0, 100)})
+    assert client.get("/api/strategies/status").json()["bars_seen"] == 1
+
+    res = client.post("/api/strategies/replay", json={
+        "symbol": "005930",
+        "start":  "2026-01-01T00:00:00+00:00",
+        "end":    "2026-01-05T00:00:00+00:00",
+    })
+    assert res.status_code == 200
+    assert res.json()["bars_processed"] == 5
+    assert res.json()["bars_seen"] == 6  # 1 manual + 5 replay

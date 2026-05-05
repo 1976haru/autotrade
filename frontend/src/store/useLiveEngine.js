@@ -9,10 +9,11 @@ import { backendApi } from "../services/backend/client";
  * - lastResult: 최근 tick 응답 (signal + intended_order + routing)
  */
 export function useLiveEngine() {
-  const [status,     setStatus]     = useState(null);
-  const [lastResult, setLastResult] = useState(null);
-  const [busy,       setBusy]       = useState(false);
-  const [error,      setError]      = useState("");
+  const [status,       setStatus]       = useState(null);
+  const [lastResult,   setLastResult]   = useState(null);
+  const [replaySummary,setReplaySummary]= useState(null);
+  const [busy,         setBusy]         = useState(false);
+  const [error,        setError]        = useState("");
 
   const refresh = useCallback(async () => {
     try {
@@ -68,6 +69,7 @@ export function useLiveEngine() {
       const s = await backendApi.engineReset();
       setStatus(s);
       setLastResult(null);
+      setReplaySummary(null);
       setError("");
     } catch (e) {
       setError(e.message);
@@ -76,5 +78,24 @@ export function useLiveEngine() {
     }
   }, []);
 
-  return { status, lastResult, busy, error, refresh, configure, tick, reset };
+  const replay = useCallback(async (req) => {
+    setBusy(true);
+    try {
+      const summary = await backendApi.engineReplay(req);
+      setReplaySummary(summary);
+      setStatus((prev) => prev ? {
+        ...prev,
+        bars_seen: summary.bars_seen,
+        holding:   summary.holding,
+      } : prev);
+      setError("");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  return { status, lastResult, replaySummary, busy, error,
+           refresh, configure, tick, reset, replay };
 }
