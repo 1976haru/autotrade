@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ConfigureCard } from "./LiveEngine";
+import { ConfigureCard, PositionBlock } from "./LiveEngine";
 
 
 const _REGISTRY = [
@@ -120,5 +120,52 @@ describe("<ConfigureCard>", () => {
       <ConfigureCard busy={true} registry={_REGISTRY} onConfigure={() => {}} />,
     );
     expect(getByRole("button").disabled).toBe(true);
+  });
+});
+
+
+describe("<PositionBlock>", () => {
+  afterEach(cleanup);
+
+  function _status(overrides = {}) {
+    return {
+      entry_price: 75_000, last_price: 76_000,
+      unrealized_pnl: 10_000, unrealized_pnl_pct: 0.0133,
+      ...overrides,
+    };
+  }
+
+  it("renders entry / current / pnl values with green when profitable", () => {
+    const { container, getByText } = render(<PositionBlock status={_status()} />);
+    expect(getByText("75,000원")).toBeTruthy();   // entry
+    expect(getByText("76,000원")).toBeTruthy();   // current
+    const pnlBlock = container.querySelector('[data-testid="position-block"]');
+    expect(pnlBlock.textContent).toContain("+10,000");
+    expect(pnlBlock.textContent).toContain("+1.33%");
+  });
+
+  it("uses red color and minus sign when pnl is negative", () => {
+    const { container } = render(
+      <PositionBlock status={_status({ unrealized_pnl: -5_000, unrealized_pnl_pct: -0.0667 })} />,
+    );
+    const block = container.querySelector('[data-testid="position-block"]');
+    expect(block.textContent).toContain("-5,000");
+    expect(block.textContent).toContain("-6.67%");
+    // At least one descendant carries the red color inline.
+    const reds = Array.from(block.querySelectorAll("*"))
+      .filter((el) => el.style?.color === "rgb(239, 68, 68)"); // #ef4444
+    expect(reds.length).toBeGreaterThan(0);
+  });
+
+  it("falls back to em-dashes when fields are null", () => {
+    const { container } = render(
+      <PositionBlock status={{
+        entry_price: 75_000, last_price: null,
+        unrealized_pnl: null, unrealized_pnl_pct: null,
+      }} />,
+    );
+    const block = container.querySelector('[data-testid="position-block"]');
+    expect(block.textContent).toContain("75,000원");
+    expect(block.textContent).toContain("—"); // last_price + pnl
   });
 });

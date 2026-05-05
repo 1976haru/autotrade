@@ -62,6 +62,10 @@ class ReplayResponse(BaseModel):
     last_intended:   OrderRequest | None = None
     bars_seen:       int
     holding:         bool
+    entry_price:        int | None = None
+    last_price:         int | None = None
+    unrealized_pnl:     int | None = None
+    unrealized_pnl_pct: float | None = None
 
 
 class StatusResponse(BaseModel):
@@ -70,6 +74,11 @@ class StatusResponse(BaseModel):
     quantity:   int | None = None
     bars_seen:  int = 0
     holding:    bool = False
+    # Position tracking — None when flat or no marks yet.
+    entry_price:        int | None = None
+    last_price:         int | None = None
+    unrealized_pnl:     int | None = None
+    unrealized_pnl_pct: float | None = None
 
 
 class StrategyParamSchema(BaseModel):
@@ -98,6 +107,10 @@ class TickResponse(BaseModel):
     intended_order: OrderRequest | None = None
     bars_seen:      int
     holding:        bool
+    entry_price:        int | None = None
+    last_price:         int | None = None
+    unrealized_pnl:     int | None = None
+    unrealized_pnl_pct: float | None = None
     routing:        RoutingOut | None = None
 
 
@@ -141,6 +154,10 @@ def get_status() -> StatusResponse:
         quantity=eng.quantity,
         bars_seen=eng.bars_seen,
         holding=eng.holding,
+        entry_price=eng.entry_price,
+        last_price=eng.last_price,
+        unrealized_pnl=eng.unrealized_pnl,
+        unrealized_pnl_pct=eng.unrealized_pnl_pct,
     )
 
 
@@ -200,6 +217,10 @@ async def tick_route(
         intended_order=result.intended_order,
         bars_seen=engine.bars_seen,
         holding=engine.holding,
+        entry_price=engine.entry_price,
+        last_price=engine.last_price,
+        unrealized_pnl=engine.unrealized_pnl,
+        unrealized_pnl_pct=engine.unrealized_pnl_pct,
         routing=routing_out,
     )
 
@@ -248,6 +269,10 @@ async def replay_route(
         bars_processed=len(bars),
         signals_emitted=counts,
         last_signal=last_result.signal.value if last_result else None,
+        entry_price=engine.entry_price,
+        last_price=engine.last_price,
+        unrealized_pnl=engine.unrealized_pnl,
+        unrealized_pnl_pct=engine.unrealized_pnl_pct,
         last_intended=last_result.intended_order if last_result else None,
         bars_seen=engine.bars_seen,
         holding=engine.holding,

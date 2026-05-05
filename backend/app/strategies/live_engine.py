@@ -71,6 +71,9 @@ class LiveStrategyEngine:
         self.quantity = quantity
         self._bars: list[Bar] = []
         self._holding = False  # logical position state, not broker truth
+        self._entry_price: int | None = None     # set on BUY, cleared on SELL
+        self._last_price:  int | None = None     # last seen bar.close, mark price
+        self._prev_entry_price: int | None = None  # snapshot for SELL rollback
         self._broker = broker
         self._risk   = risk
         self._db     = db
@@ -78,6 +81,7 @@ class LiveStrategyEngine:
 
     def run_tick(self, bar: Bar) -> TickResult:
         self._bars.append(bar)
+        self._last_price = bar.close
         signal = self.strategy.on_bar(self._bars)
         intended: OrderRequest | None = None
 
@@ -88,6 +92,7 @@ class LiveStrategyEngine:
                 quantity=self.quantity,
                 order_type=OrderType.MARKET,
             )
+            self._entry_price = bar.close
             self._holding = True
         elif signal == Signal.SELL and self._holding:
             intended = OrderRequest(
@@ -96,6 +101,10 @@ class LiveStrategyEngine:
                 quantity=self.quantity,
                 order_type=OrderType.MARKET,
             )
+            # Snapshot for rollback — without this a rejected SELL would leave
+            # the engine in "holding but no entry_price" state, breaking PnL.
+            self._prev_entry_price = self._entry_price
+            self._entry_price = None
             self._holding = False
 
         return TickResult(bar=bar, signal=signal, intended_order=intended)
@@ -132,12 +141,15 @@ class LiveStrategyEngine:
         Call this when an intended order was rejected by Risk or otherwise
         not actually placed, so the engine doesn't keep believing it holds
         shares the broker never bought (or that it's flat after a rejected
-        sell).
+        sell). Restores `_entry_price` symmetrically with `_holding`.
         """
         if order.side == OrderSide.BUY:
             self._holding = False
+            self._entry_price = None
         else:
             self._holding = True
+            self._entry_price = self._prev_entry_price
+            self._prev_entry_price = None
 
     @property
     def holding(self) -> bool:
@@ -146,6 +158,31 @@ class LiveStrategyEngine:
     @property
     def bars_seen(self) -> int:
         return len(self._bars)
+
+    @property
+    def entry_price(self) -> int | None:
+        """Price at which the current open position was entered (None when flat)."""
+        return self._entry_price
+
+    @property
+    def last_price(self) -> int | None:
+        """Close of the most recent bar fed to run_tick — the mark price."""
+        return self._last_price
+
+    @property
+    def unrealized_pnl(self) -> int | None:
+        """(last_price - entry_price) * quantity. None when flat or no marks yet."""
+        if not self._holding or self._entry_price is None or self._last_price is None:
+            return None
+        return (self._last_price - self._entry_price) * self.quantity
+
+    @property
+    def unrealized_pnl_pct(self) -> float | None:
+        """Fractional return on the open position, signed. None when flat."""
+        if (not self._holding or self._entry_price is None or self._last_price is None
+                or self._entry_price == 0):
+            return None
+        return (self._last_price - self._entry_price) / self._entry_price
 
     def start(self) -> None:
         raise NotImplementedError(_STUB_MESSAGE)
