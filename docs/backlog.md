@@ -8,10 +8,8 @@
 ### ~~1. Daily PnL의 KST 일자 경계~~ ✅ 166에서 해결
 - 166 진행: `today_kst()` 헬퍼 + `compute_today_realized_pnl(tz=KST)` 기본값. KST 자정(=15:00 UTC, 장 종료 후) 리셋 → 운영자 직관 일치. `tz=timezone.utc` 명시로 backwards-compat. backend +5 테스트 (KST 자정 boundary / KST vs UTC 분기 / backwards-compat).
 
-### 2. Position vs broker reconciliation
-- **현재**: 가상 환경은 단일 진실(`MockBrokerAdapter` 또는 `VirtualOrder`). 실거래 KIS LIVE 활성화 시 broker가 인식한 포지션 vs 백엔드 내부 상태 불일치 가능.
-- **변경 안**: 주기적 `broker.get_positions()` vs `compute_open_positions(db)` 비교 → 불일치 시 경고 로그 + Dashboard 배너.
-- **차단 조건**: KIS LIVE place_order 활성화 직전에 필요 (LIVE 옵트인 PR과 함께).
+### ~~2. Position vs broker reconciliation~~ ✅ 212에서 해결
+- 212 진행: `app/reconciliation/position_checker.py` 신설 — `aggregate_audit_positions(db)`가 `OrderAuditLog.executed=True + filled_quantity > 0` 행을 walk해 symbol별 net BUY-SELL 포지션을 계산하고, `compare_positions(broker, audit)`가 `broker.get_positions()` 결과와 비교해 `quantity_mismatch`/`broker_only`/`audit_only` 분류로 mismatch 산출. `/api/reconciliation/status` (read-only) endpoint + StrategyRisk 탭 `ReconciliationStatusCard` (DRIFT/IN SYNC 배지 + mismatch 행). archived audit row도 포함 — 보유 포지션은 archive 여부와 무관. backend +21 / frontend +13 테스트. 본 기능은 LIVE 활성화 직전에 운영자가 broker 외부 주문 / 체결 누락 / 동기화 문제를 즉시 감지하기 위한 안전 메커니즘.
 
 ### ~~3. Approval queue TTL / expiry~~ ✅ 167에서 해결
 - 167 진행: `RiskPolicy.approval_ttl_seconds` (기본 0=비활성, env `APPROVAL_TTL_SECONDS`). `PermissionGate.list_pending(ttl_seconds=N)` lazy expire + `expire_stale_approvals()` 명시 sweep. `STATUS_EXPIRED` 추가 — terminal 상태로 approve/reject/cancel 차단. backend +8 테스트.

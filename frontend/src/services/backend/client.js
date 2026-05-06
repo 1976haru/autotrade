@@ -150,4 +150,6 @@ export const backendApi = {
     return backendFetch(`/api/futures/orders?${qs.toString()}`);
   },
   futuresOrdersSummary: () => backendFetch("/api/futures/orders/summary"),
+  // 212: Position vs broker reconciliation status.
+  reconciliationStatus: () => backendFetch("/api/reconciliation/status"),
 };

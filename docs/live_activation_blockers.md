@@ -106,6 +106,7 @@ LIVE 활성화 전 운영자가 확인해야 할 것:
 - [ ] RiskPolicy 한도가 운용 자본 대비 합리적.
 - [ ] 운영자명 / decided_by 프로토콜 확정.
 - [ ] emergency_stop 토글 테스트 — KST 시장 시간 외에서 ON / OFF 한 번씩.
+- [ ] `/api/reconciliation/status` (212) IN SYNC 확인 — broker 인식 포지션 vs audit 산출 포지션 drift 0건. SHADOW / PAPER 단계에서 며칠 단위 모니터링.
 - [ ] AI 자동매매 활성화는 LIVE_MANUAL_APPROVAL 단계 1개월 이상 무사고 후만.
 
 ## 9. 본 세션이 "절대 안 한 것" 단정문
