@@ -57,6 +57,15 @@ export function EmergencyStopStuckBanner({ since, now = Date.now(), onClick }) {
 
 const _DAY_MS = 24 * 60 * 60 * 1000;
 
+
+// 097 supporting helper — Dashboard가 봇 idle 경고를 위해 24h 주문 카운트만
+// 쓰는 가벼운 경로. computeActivity24h를 그대로 쓰면 stops/byMode 등을 다 도는
+// 비용이 매 렌더 발생해 분리.
+function _count24h(orders, now = Date.now()) {
+  const since = now - _DAY_MS;
+  return orders.filter((r) => new Date(r.created_at).getTime() >= since).length;
+}
+
 // 시간 필터 + 카운팅을 컴포넌트에서 분리해 vi.setSystemTime 없이도 단위 테스트
 // 가능하도록. NEEDS_APPROVAL은 BottomNav 배지/StatusSummaryCard와 중복되지만,
 // 24h 활동 요약에서는 "어제 N건이 결재 단계로 갔는지" 자체가 의미 있는 신호라
@@ -120,6 +129,25 @@ export function formatModeBreakdown(byMode) {
 }
 
 
+// 097: 봇 RUNNING이지만 최근 24h 주문이 0건이면 신호 stuck/dead 의심.
+// 평상 RUNNING(초록)과 STOPPED(회색) 사이에 노란 idle 단계를 추가해, 봇이
+// 잘 돌고 있는 줄 알았는데 사실은 시그널이 안 뜨는 채로 굴러가는 상황을
+// 첫 화면에서 알아챌 수 있도록.
+export function botIdleSignal(running, ordersIn24h) {
+  if (!running) return "off";
+  if ((ordersIn24h || 0) === 0) return "idle";
+  return "running";
+}
+
+// 봇 핀의 세 시각 상태. 071/058 다른 핀과 같이 alarm/accent 두 prop으로
+// StatusPin에 흘려보낸다.
+export const BOT_SIGNAL_DISPLAY = {
+  off:     { value: "STOPPED",        color: "#94a3b8", alarm: false },
+  running: { value: "RUNNING",        color: "#22c55e", alarm: true  },
+  idle:    { value: "RUNNING (24h 0건)", color: "#fbbf24", alarm: true  },
+};
+
+
 // 운영자가 대시보드 진입 즉시 봐야 하는 3가지 위험/상태 신호.
 // alarm=true면 강조 색상으로 시선을 잡고, 핀의 클릭은 해당 탭으로 점프.
 export function StatusPin({ icon, label, value, alarm, accent, onClick, testId }) {
@@ -160,6 +188,10 @@ export function StatusPin({ icon, label, value, alarm, accent, onClick, testId }
 
 export function StatusSummaryCard({
   emergencyStop, pendingCount, stalePendingCount = 0, running, onJumpTab,
+  // 097: 봇 RUNNING + 24h 주문 0건이면 idle 의심으로 escalate. 기본값은 1로
+  // 둬서 "데이터 모름" 호출자(예: 097 이전 시점에 만들어진 wrapper)가 idle
+  // 경고를 잘못 트리거하지 않도록 — 명시적으로 0을 넘긴 경우만 idle 분기.
+  ordersIn24h = 1,
 }) {
   const _jump = onJumpTab || (() => {});
 
@@ -171,6 +203,11 @@ export function StatusSummaryCard({
   const pendingValue = hasPending
     ? (hasStale ? `${pendingCount}건 (${stalePendingCount} stale)` : `${pendingCount}건`)
     : "없음";
+
+  // 097: 봇 핀의 세 단계 — STOPPED(회색) / RUNNING(초록) / idle(노랑).
+  // 같은 testId(`status-pin-bot`)를 유지해 058~077의 기존 회귀가 깨지지 않도록.
+  const _botSignal = botIdleSignal(running, ordersIn24h);
+  const _botDisplay = BOT_SIGNAL_DISPLAY[_botSignal];
 
   return (
     <div style={{ display: "flex", gap: 8 }}>
@@ -195,9 +232,9 @@ export function StatusSummaryCard({
       <StatusPin
         icon="🤖"
         label="봇"
-        value={running ? "RUNNING" : "STOPPED"}
-        alarm={running}
-        accent="#22c55e"
+        value={_botDisplay.value}
+        alarm={_botDisplay.alarm}
+        accent={_botDisplay.color}
         onClick={() => _jump("bot")}
         testId="status-pin-bot"
       />
@@ -350,6 +387,12 @@ export function Dashboard({
   const { stats, winRate, trades, running } = bot;
   const { start, stop } = botControls;
 
+  // 097: 봇 핀 idle 경고용 24h 주문 수 — useOrderAudits를 한 번 더 호출하는
+  // 비용은 같은 5s 폴링이 두 인스턴스가 되는 정도로 미미. 데이터 일관성을
+  // 위해 Activity24hCard와 hook을 lift up하는 refactor는 별도 PR.
+  const _orderAudits = useOrderAudits();
+  const _ordersIn24h = _count24h(_orderAudits.items);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
 
@@ -365,6 +408,7 @@ export function Dashboard({
         pendingCount={pendingCount}
         stalePendingCount={stalePendingCount}
         running={running}
+        ordersIn24h={_ordersIn24h}
         onJumpTab={onJumpTab}
       />
 
