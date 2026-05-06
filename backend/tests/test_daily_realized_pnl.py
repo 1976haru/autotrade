@@ -318,6 +318,71 @@ def test_pnl_kst_vs_utc_diverge_at_kst_midnight():
     assert pnl_utc_5_5 == 10  # UTC 기준 어제(=KST 5/6) PnL
 
 
+# ---------- 183: count_orders_today_kst ----------
+
+def test_count_orders_today_kst_empty_db_zero():
+    Session = _make_session()
+    with Session() as db:
+        from app.risk.daily_pnl import count_orders_today_kst
+        assert count_orders_today_kst(db) == 0
+
+
+def test_count_orders_today_kst_excludes_yesterday():
+    """KST date 다른 행은 제외 (decision 무관)."""
+    Session = _make_session()
+    today = today_kst()
+    today_dt = datetime.now(timezone.utc)
+    yesterday_dt = today_dt - timedelta(days=1)
+    with Session() as db:
+        # 오늘 2건 + 어제 3건. count = 2.
+        for _ in range(2):
+            db.add(_audit(side="BUY", created_at=today_dt))
+        for _ in range(3):
+            db.add(_audit(side="BUY", created_at=yesterday_dt - timedelta(hours=12)))
+        db.commit()
+        from app.risk.daily_pnl import count_orders_today_kst
+        assert count_orders_today_kst(db, today=today) == 2
+
+
+def test_count_orders_today_includes_all_decisions():
+    """REJECTED / NEEDS_APPROVAL / APPROVED 모두 카운트."""
+    Session = _make_session()
+    today = today_kst()
+    now = datetime.now(timezone.utc)
+    with Session() as db:
+        for decision in ("APPROVED", "REJECTED", "NEEDS_APPROVAL", "REJECTED"):
+            row = OrderAuditLog(
+                mode="SIMULATION", symbol="X", side="BUY", quantity=1,
+                order_type="MARKET", latest_price=100,
+                decision=decision, reasons=[],
+                created_at=now,
+            )
+            db.add(row)
+        db.commit()
+        from app.risk.daily_pnl import count_orders_today_kst
+        assert count_orders_today_kst(db, today=today) == 4
+
+
+def test_route_order_blocks_when_max_orders_per_day_exceeded(client):
+    """183 핵심: max_orders_per_day=N → 그날 N건째 이후 REJECTED."""
+    risk = client.test_risk_manager
+    risk.policy.max_orders_per_day = 3
+
+    # 3건 통과.
+    for i in range(3):
+        side = "BUY" if i % 2 == 0 else "SELL"
+        res = client.post("/api/broker/orders", json={
+            "symbol": "005930", "side": side, "quantity": 1,
+        })
+        assert res.status_code == 200
+
+    # 4번째 거부.
+    res4 = client.post("/api/broker/orders", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1,
+    })
+    assert res4.status_code == 400
+
+
 def test_pnl_explicit_utc_tz_backwards_compat():
     """tz=timezone.utc 명시하면 145 이전 UTC 기반 동작 — 같은 입력에서 동일."""
     Session = _make_session()

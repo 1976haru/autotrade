@@ -360,6 +360,7 @@ def _settings(**overrides):
         max_total_exposure_pct           = 0.0,
         max_symbol_exposure_pct          = 0.0,
         auto_stop_consecutive_rejections = 0,
+        max_orders_per_day               = 0,
     )
     base.update(overrides)
     ns = SimpleNamespace(**base)

@@ -11,7 +11,7 @@ from app.core.modes import OperationMode
 from app.db.models import OrderAuditLog, PendingApproval
 from app.execution.executor import OrderExecutor
 from app.permission.gate import PermissionGate
-from app.risk.daily_pnl import compute_today_realized_pnl
+from app.risk.daily_pnl import compute_today_realized_pnl, count_orders_today_kst
 from app.risk.risk_manager import RiskDecision, RiskManager
 
 
@@ -97,6 +97,13 @@ async def route_order(
         if not within:
             global_rate_violation_count = current_count
 
+    # 183: 일일(KST date) 최대 주문 횟수. decision 무관, 모든 audit row 카운트.
+    daily_order_violation_count: int | None = None
+    if risk.policy.max_orders_per_day > 0:
+        today_count = count_orders_today_kst(db)
+        if today_count >= risk.policy.max_orders_per_day:
+            daily_order_violation_count = today_count
+
     quote     = await broker.get_price(order.symbol)
     balance   = await broker.get_balance()
     positions = await broker.get_positions()
@@ -142,6 +149,14 @@ async def route_order(
             f"global rate limit exceeded: {global_rate_violation_count} orders "
             f"in {risk.policy.global_rate_limit_window_seconds}s window "
             f"(max {risk.policy.global_rate_limit_max_count})"
+        )
+        decision.decision = RiskDecision.REJECTED
+
+    # 183: 일일 주문 횟수 한도 위반.
+    if daily_order_violation_count is not None:
+        decision.reasons.append(
+            f"max_orders_per_day exceeded: {daily_order_violation_count} orders "
+            f"today (max {risk.policy.max_orders_per_day})"
         )
         decision.decision = RiskDecision.REJECTED
 

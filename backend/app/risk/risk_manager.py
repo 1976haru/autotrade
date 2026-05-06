@@ -90,6 +90,9 @@ class RiskPolicy:
     # 시스템 이상 자동 감지 — LLM bug, broker 장애, stale price 연속 발생 등.
     # 0이면 비활성 (기본). 권장 5~10건.
     auto_stop_consecutive_rejections: int = 0
+    # 183: 일일(KST date) 최대 주문 횟수. decision 무관 — 모든 audit row 카운트.
+    # 시스템 폭주 / 비용 제어. 0이면 비활성 (기본).
+    max_orders_per_day: int = 0
 
     @classmethod
     def from_settings(cls, settings) -> "RiskPolicy":
@@ -122,6 +125,7 @@ class RiskPolicy:
             max_total_exposure_pct           = settings.max_total_exposure_pct,
             max_symbol_exposure_pct          = settings.max_symbol_exposure_pct,
             auto_stop_consecutive_rejections = settings.auto_stop_consecutive_rejections,
+            max_orders_per_day               = settings.max_orders_per_day,
         )
 
 
