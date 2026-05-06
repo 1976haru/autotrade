@@ -55,10 +55,10 @@ function StatusCard({ status, busy, onReset }) {
 }
 
 
-// 137: 전략별 누적 성과 — backtest run 기반. /api/strategies/scoreboard 응답을
-// 그대로 표시. live 주문의 strategy 추적은 OrderAuditLog.strategy 컬럼 추가
-// 후 통합 (TODO 137-followup). hook 없이 직접 fetch — Strategies 탭의
-// 다른 hook(useLiveEngine)과 라이프사이클 분리.
+// 137 + 144: 전략별 누적 성과. backtest(BacktestRun) + LIVE 체결(OrderAuditLog
+// FIFO 페어매칭) 두 출처를 한 표에 surface. /api/strategies/scoreboard 응답을
+// 그대로 표시. hook 없이 직접 fetch — Strategies 탭의 다른 hook(useLiveEngine)과
+// 라이프사이클 분리.
 export function ScoreboardCard() {
   const [rows, setRows]       = useState(null);
   const [error, setError]     = useState("");
@@ -86,12 +86,12 @@ export function ScoreboardCard() {
   return (
     <Card>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <SectionLabel>전략 누적 성과 (backtest)</SectionLabel>
+        <SectionLabel>전략 누적 성과 (backtest + live)</SectionLabel>
         <Btn color="#334155" onClick={refresh} disabled={loading} small>새로고침</Btn>
       </div>
       <div style={{ fontSize: 9, color: "#334155", marginBottom: 8, lineHeight: 1.5 }}>
-        모든 backtest run을 strategy별로 누적. LIVE 주문 결과는 향후 OrderAuditLog
-        에 strategy가 추가되면 통합 예정.
+        backtest는 모든 BacktestRun을 strategy별로 누적, live는 OrderAuditLog
+        의 BUY/SELL 체결을 FIFO 페어매칭하여 realized PnL로 산출. 두 합계로 정렬.
       </div>
       {error && (
         <div style={{ fontSize: 11, color: "#f87171", marginBottom: 8 }}>{error}</div>
@@ -109,7 +109,7 @@ export function ScoreboardCard() {
                style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr>
-              {["전략", "runs", "총 PnL", "평균", "최고", "최저", "승률"].map((h, i) => (
+              {["전략", "runs", "BT PnL", "BT 승률", "live trades", "live PnL", "live 승률"].map((h, i) => (
                 <th key={h} style={{
                   fontSize: 10, color: "#475569", fontWeight: 700,
                   borderBottom: "1px solid #1a3a5c",
@@ -129,24 +129,27 @@ export function ScoreboardCard() {
                 <td style={{ padding: "3px 6px", fontSize: 10, textAlign: "right",
                               color: "#94a3b8" }}>{r.runs}</td>
                 <td style={{ padding: "3px 6px", fontSize: 10, textAlign: "right",
-                              color: pnlColor(r.total_pnl), fontWeight: 700 }}>
+                              color: pnlColor(r.total_pnl), fontWeight: 700 }}
+                    data-testid={`scoreboard-bt-pnl-${r.strategy}`}>
                   {r.total_pnl >= 0 ? "+" : ""}{fmtKRW(r.total_pnl)}
-                </td>
-                <td style={{ padding: "3px 6px", fontSize: 10, textAlign: "right",
-                              color: pnlColor(r.avg_pnl) }}>
-                  {r.avg_pnl >= 0 ? "+" : ""}{fmtKRW(r.avg_pnl)}
-                </td>
-                <td style={{ padding: "3px 6px", fontSize: 10, textAlign: "right",
-                              color: pnlColor(r.best_pnl) }}>
-                  {r.best_pnl >= 0 ? "+" : ""}{fmtKRW(r.best_pnl)}
-                </td>
-                <td style={{ padding: "3px 6px", fontSize: 10, textAlign: "right",
-                              color: pnlColor(r.worst_pnl) }}>
-                  {r.worst_pnl >= 0 ? "+" : ""}{fmtKRW(r.worst_pnl)}
                 </td>
                 <td style={{ padding: "3px 6px", fontSize: 10, textAlign: "right",
                               color: "#a78bfa" }}>
                   {Math.round(r.win_rate * 1000) / 10}%
+                </td>
+                <td style={{ padding: "3px 6px", fontSize: 10, textAlign: "right",
+                              color: "#94a3b8" }}
+                    data-testid={`scoreboard-live-trades-${r.strategy}`}>
+                  {r.live_trades ?? 0}
+                </td>
+                <td style={{ padding: "3px 6px", fontSize: 10, textAlign: "right",
+                              color: pnlColor(r.live_pnl ?? 0), fontWeight: 700 }}
+                    data-testid={`scoreboard-live-pnl-${r.strategy}`}>
+                  {(r.live_pnl ?? 0) >= 0 ? "+" : ""}{fmtKRW(r.live_pnl ?? 0)}
+                </td>
+                <td style={{ padding: "3px 6px", fontSize: 10, textAlign: "right",
+                              color: "#a78bfa" }}>
+                  {Math.round((r.live_win_rate ?? 0) * 1000) / 10}%
                 </td>
               </tr>
             ))}
