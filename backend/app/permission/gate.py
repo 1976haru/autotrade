@@ -144,12 +144,18 @@ class PermissionGate:
                 f"audit {approval.audit_id} for approval {approval_id} not found"
             )
 
+        # 160: AI invariants(158/159)도 approve 시점 re-eval에 적용되려면
+        # OrderRequest 재구성 시 audit row에서 AI 메타데이터를 복원해야 한다.
+        # PendingApproval 자체엔 carry되지 않지만 audit row에 영구화되어 있다.
         order = OrderRequest(
             symbol=approval.symbol,
             side=OrderSide(approval.side),
             quantity=approval.quantity,
             order_type=OrderType(approval.order_type),
             limit_price=approval.limit_price,
+            signal_strength=audit.signal_strength,
+            signal_confidence=audit.signal_confidence,
+            ai_decision_meta=audit.ai_decision_meta,
         )
 
         # 070 hardening: between submit and approve the broker state can drift
@@ -182,6 +188,9 @@ class PermissionGate:
             positions=positions,
             latest_price=quote.price,
             latest_price_timestamp=quote_ts,
+            # 160: 원래 주문이 AI 발신이면 그 invariant(158/159)도 approve 시점에
+            # 다시 검사. audit row가 source of truth.
+            requested_by_ai=audit.requested_by_ai,
         )
         if _approve_re_eval_blocks_execution(re_eval):
             # 076: persist the failed attempt on the row before raising.

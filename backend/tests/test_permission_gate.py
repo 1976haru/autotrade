@@ -564,3 +564,105 @@ def test_approve_recomputes_daily_pnl_per_call():
         asyncio.run(gate.approve(approval.id, MockBrokerAdapter(), risk))
         # 재계산되어 0이어야 한다.
         assert risk.daily_realized_pnl == 0
+
+
+# ---------- 160: approve-time AI invariant consistency (158/159) ----------
+
+def _ai_audit(db, *, requested_by_ai=True, signal_confidence=80,
+               ai_decision_meta=None, symbol="005930"):
+    """AI 발신 audit row + 그에 대응하는 PendingApproval. 160 invariant 테스트용."""
+    if ai_decision_meta is None:
+        ai_decision_meta = {"confidence": signal_confidence,
+                            "reasons": ["test_reason"]}
+    a = OrderAuditLog(
+        mode="LIVE_MANUAL_APPROVAL", symbol=symbol, side="BUY", quantity=1,
+        order_type="MARKET", latest_price=75_000,
+        decision="NEEDS_APPROVAL", reasons=["manual approval required"],
+        requested_by_ai=requested_by_ai,
+        signal_strength=signal_confidence,
+        signal_confidence=signal_confidence,
+        ai_decision_meta=ai_decision_meta,
+        strategy="ai_virtual",
+    )
+    db.add(a)
+    db.flush()
+    return a
+
+
+def test_approve_blocks_ai_proposal_below_confidence_threshold():
+    """submit 시 confidence 통과했지만 운영자가 임계를 올린 후 approve 시 거부."""
+    Session = _session()
+    with Session() as db:
+        audit = _ai_audit(db, signal_confidence=50)
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(qty=1),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+
+        # 임계 70으로 상향 — 50은 미달.
+        risk = RiskManager(RiskPolicy(
+            enable_live_trading=True, min_ai_confidence=70,
+        ))
+        with pytest.raises(ApprovalRiskCheckFailedError) as exc:
+            asyncio.run(gate.approve(approval.id, MockBrokerAdapter(), risk))
+        assert any("AI signal confidence" in r for r in exc.value.reasons), \
+            exc.value.reasons
+
+
+def test_approve_blocks_ai_proposal_with_empty_reasoning():
+    """audit row에 빈 reasons 저장된 AI 주문이 approve 시 enforce_ai_reasoning=
+    True 검사로 거부된다 — 159 invariant 일관성."""
+    Session = _session()
+    with Session() as db:
+        audit = _ai_audit(db, ai_decision_meta={"confidence": 80, "reasons": []})
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(qty=1),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+
+        risk = RiskManager(RiskPolicy(
+            enable_live_trading=True, enforce_ai_reasoning=True,
+        ))
+        with pytest.raises(ApprovalRiskCheckFailedError) as exc:
+            asyncio.run(gate.approve(approval.id, MockBrokerAdapter(), risk))
+        assert any("missing reasoning" in r for r in exc.value.reasons)
+
+
+def test_approve_succeeds_for_ai_proposal_with_reasoning_and_high_confidence():
+    """정상 AI 주문 (high confidence + reasons) → approve 통과."""
+    Session = _session()
+    with Session() as db:
+        audit = _ai_audit(db, signal_confidence=80,
+                          ai_decision_meta={"confidence": 80,
+                                            "reasons": ["earnings_beat"]})
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(qty=1),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+
+        risk = RiskManager(RiskPolicy(
+            enable_live_trading=True, min_ai_confidence=70,
+        ))
+        approval, _ = asyncio.run(
+            gate.approve(approval.id, MockBrokerAdapter(), risk)
+        )
+        assert approval.status == "APPROVED"
+
+
+def test_approve_does_not_apply_ai_invariant_to_non_ai_orders():
+    """audit.requested_by_ai=False인 일반 운영자 주문은 AI 가드 무관 — 회귀 가드."""
+    Session = _session()
+    with Session() as db:
+        # 일반 audit (AI 아님).
+        audit = _audit(db)  # requested_by_ai 기본 False
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(qty=1),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+
+        # min_ai_confidence + enforce_ai_reasoning 켜져도 비-AI 주문엔 영향 X.
+        risk = RiskManager(RiskPolicy(
+            enable_live_trading=True,
+            min_ai_confidence=99,
+            enforce_ai_reasoning=True,
+        ))
+        approval, _ = asyncio.run(
+            gate.approve(approval.id, MockBrokerAdapter(), risk)
+        )
+        assert approval.status == "APPROVED"
