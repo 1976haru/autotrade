@@ -9,6 +9,7 @@ from app.core.modes import OperationMode
 from app.db.models import OrderAuditLog, PendingApproval
 from app.execution.executor import OrderExecutor
 from app.permission.gate import PermissionGate
+from app.risk.daily_pnl import compute_today_realized_pnl
 from app.risk.risk_manager import RiskDecision, RiskManager
 
 
@@ -72,6 +73,11 @@ async def route_order(
     quote     = await broker.get_price(order.symbol)
     balance   = await broker.get_balance()
     positions = await broker.get_positions()
+
+    # 145: max_daily_loss 강제력 회복. 매 주문 평가 직전에 audit log 기반으로
+    # 오늘의 realized PnL을 재계산해 RiskManager 카운터를 채운다 — 이 라인이
+    # 없으면 daily_realized_pnl이 0에 머물러 max_daily_loss 검사가 무효.
+    risk.daily_realized_pnl = compute_today_realized_pnl(db)
 
     # 143: Quote.timestamp는 ISO 문자열. RiskManager가 stale 검사를 수행하려면
     # datetime이 필요하므로 여기서 파싱한다. 파싱 실패는 broker 계약 위반이지만
