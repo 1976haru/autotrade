@@ -90,6 +90,38 @@ NULL은 AI 외 경로 주문 (수동 / strategy 신호). 사후 분석:
 - AI 신호 강도 → 실제 PnL 상관관계 추적.
 - 거부된 AI 제안의 reason 분포 (RiskManager가 거부한 사유 + AI가 만든 사유).
 
+## 162: AI agent self-evaluation stats
+
+운영자가 AI 에이전트의 의사결정 품질을 audit log 기반으로 평가할 수 있는 read-only 분석. 결정/체결에 영향 X.
+
+- HTTP: `GET /api/ai/agent-stats?lookback_days=7` — `lookback_days=0`이면 전체 기간.
+- Backend: `app/ai/agent_stats.py::compute_ai_agent_stats(db, lookback_days, now)`.
+
+응답 shape:
+```json
+{
+  "lookback_days": 7,
+  "total_proposals": 100,
+  "approved": 80, "rejected": 15, "needs_approval": 5,
+  "approval_rate": 0.842,        // approved / (approved + rejected)
+  "avg_confidence": 76.3,        // executed=True + confidence!=null만
+  "top_rejection_reasons": {
+    "low_confidence": 8,
+    "emergency_stop": 4,
+    "rate_limit": 3
+  },
+  "per_strategy": [
+    {"strategy": "ai_virtual", "total": 100, "approved": 80, ...,
+     "approval_rate": 0.842, "avg_confidence": 76.3}
+  ]
+}
+```
+
+운영자 활용:
+- approval_rate가 갑자기 떨어졌다 → strategy / market regime 변화 신호.
+- top_rejection_reasons.low_confidence가 dominant → 158 임계 조정 검토.
+- top_rejection_reasons.rate_limit이 dominant → 161 max_count 조정 또는 에이전트 buggy.
+
 ## 161: AI proposal rate limit
 
 LLM bug / 무한 루프 / 동일 신호 spam 등으로 AI 에이전트가 같은 (strategy,
