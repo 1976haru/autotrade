@@ -25,6 +25,7 @@ from app.virtual.order_ledger import (
     STATUS_NEW, STATUS_PARTIALLY_FILLED, STATUS_REJECTED,
     TERMINAL_STATES,
 )
+from app.virtual.position_engine import compute_open_positions
 
 router = APIRouter(prefix="/virtual", tags=["virtual"])
 
@@ -111,6 +112,59 @@ def list_virtual_orders(
     stmt = stmt.offset(offset).limit(limit)
     rows = db.execute(stmt).scalars().all()
     return [_to_out(r) for r in rows]
+
+
+class VirtualPositionOut(BaseModel):
+    symbol:         str
+    strategy:       str | None
+    quantity:       int
+    avg_price:      int
+    last_price:     int
+    unrealized_pnl: int
+    unrealized_pct: float
+    hold_seconds:   float
+    realized_pnl:   int
+
+
+@router.get("/positions", response_model=list[VirtualPositionOut])
+def list_virtual_positions(
+    last_prices: str | None = Query(
+        None,
+        description="콤마 구분 'symbol:price' 목록. 미지정 시 unrealized=0으로 산출.",
+    ),
+    db: Session = Depends(get_db),
+) -> list[VirtualPositionOut]:
+    """가상 포지션 요약 (FIFO 페어매칭, 148-150).
+
+    last_prices 미지정 시 unrealized_pnl=0이 되며 realized + qty + avg는 정확.
+    parser는 관용적 — `005930:75000,000660:200000` 형태. 잘못된 토큰은 skip.
+    """
+    prices: dict[str, int] = {}
+    if last_prices:
+        for tok in last_prices.split(","):
+            tok = tok.strip()
+            if not tok or ":" not in tok:
+                continue
+            sym, raw = tok.split(":", 1)
+            sym = sym.strip()
+            try:
+                prices[sym] = int(raw.strip())
+            except ValueError:
+                continue
+    summaries = compute_open_positions(db, last_prices=prices)
+    return [
+        VirtualPositionOut(
+            symbol=s.symbol,
+            strategy=s.strategy,
+            quantity=s.quantity,
+            avg_price=s.avg_price,
+            last_price=s.last_price,
+            unrealized_pnl=s.unrealized_pnl,
+            unrealized_pct=s.unrealized_pct,
+            hold_seconds=s.hold_seconds,
+            realized_pnl=s.realized_pnl,
+        ) for s in summaries
+    ]
 
 
 @router.get("/orders/summary", response_model=VirtualOrderSummary)

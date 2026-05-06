@@ -126,6 +126,12 @@ export const backendApi = {
     return backendFetch(`/api/virtual/orders?${qs.toString()}`);
   },
   virtualOrdersSummary: () => backendFetch("/api/virtual/orders/summary"),
+  virtualPositions: ({ lastPrices = null } = {}) => {
+    const qs = new URLSearchParams();
+    if (lastPrices) qs.set("last_prices", lastPrices);
+    const tail = qs.toString();
+    return backendFetch(`/api/virtual/positions${tail ? `?${tail}` : ""}`);
+  },
   // 194: Futures order audit surface (read-only).
   futuresOrders: ({ limit = 50, offset = 0, contract = null,
                     decision = null, forced = null } = {}) => {

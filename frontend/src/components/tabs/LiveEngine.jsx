@@ -4,6 +4,7 @@ import { fmtKRW, pnlColor } from "../../utils/format";
 import { backendApi } from "../../services/backend/client";
 import { useLiveEngine } from "../../store/useLiveEngine";
 import { VirtualOrderLedgerCard } from "./VirtualOrderLedgerCard";
+import { VirtualPositionsCard } from "./VirtualPositionsCard";
 
 
 // String form value -> typed value matching the registry schema.
@@ -656,6 +657,7 @@ export function LiveEngine() {
       <TickCard      status={status} busy={busy} onTick={tick} />
       <ResultCard    result={lastResult} />
       <ScoreboardCard />
+      <VirtualPositionsCard />
       <VirtualOrderLedgerCard />
 
       <div style={{ fontSize: 10, color: "#1e3a5c", lineHeight: 1.6, padding: "0 4px" }}>
