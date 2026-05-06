@@ -16,9 +16,8 @@
 ### ~~3. Approval queue TTL / expiry~~ ✅ 167에서 해결
 - 167 진행: `RiskPolicy.approval_ttl_seconds` (기본 0=비활성, env `APPROVAL_TTL_SECONDS`). `PermissionGate.list_pending(ttl_seconds=N)` lazy expire + `expire_stale_approvals()` 명시 sweep. `STATUS_EXPIRED` 추가 — terminal 상태로 approve/reject/cancel 차단. backend +8 테스트.
 
-### 4. OrderAudit 보존 정책
-- **현재**: 무한 누적. 1년 운영 시 수십만 row 가능.
-- **변경 안**: `archive_audit_older_than(days)` cron + 별도 `order_audit_log_archive` 테이블. dashboard는 hot table만 본다.
+### ~~4. OrderAudit 보존 정책~~ ✅ 168에서 해결
+- 168 진행: 별도 테이블 대신 `OrderAuditLog.archived` boolean flag 추가 (alembic 0012). 컬럼 drift 위험 없고 atomic. `app/audit/archive.py::mark_orders_older_than_archived(db, *, days, dry_run=False)` 함수로 N일보다 오래된 row를 archived=True로 마크. `/api/audit/orders` 기본은 archived=False만 반환 (hot), `?include_archived=true`로 cold 포함. 운영자가 cron / 명시 호출 결정. backend +9 테스트.
 
 ### 5. 선물 별도 audit 테이블
 - **현재**: 선물 거래는 `MockFuturesBroker.orders` dict에만 영구화. DB audit row 없음.
