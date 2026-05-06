@@ -40,6 +40,10 @@ class OrderAuditOut(BaseModel):
     filled_quantity: int
     avg_fill_price:  int | None = None
     message:         str
+    # 189: AI 결정 메타 (152의 0010 마이그레이션 컬럼).
+    # 운영자가 거부 사유 / confidence / reasoning을 audit에서 직접 볼 수 있어야 한다.
+    # 0010 이전 row + AI 미경유 주문은 NULL.
+    ai_decision_meta: dict | None = None
 
 
 class AiAuditOut(BaseModel):
@@ -108,6 +112,7 @@ def _to_order_out(row: OrderAuditLog) -> OrderAuditOut:
         filled_quantity=row.filled_quantity,
         avg_fill_price=row.avg_fill_price,
         message=row.message,
+        ai_decision_meta=row.ai_decision_meta,
     )
 
 

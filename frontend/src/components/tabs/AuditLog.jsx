@@ -149,8 +149,28 @@ export function OrderAuditRow({ r }) {
           {r.reasons.join(" / ")}
         </div>
       )}
+      {r.ai_decision_meta && (
+        <div data-testid="ai-decision-meta"
+             style={{ fontSize: 9, color: "#a78bfa", marginTop: 2 }}>
+          AI: {formatAiDecisionMeta(r.ai_decision_meta)}
+        </div>
+      )}
     </div>
   );
+}
+
+
+export function formatAiDecisionMeta(meta) {
+  if (!meta || typeof meta !== "object") return "—";
+  const parts = [];
+  if (meta.confidence != null) parts.push(`conf ${meta.confidence}`);
+  if (Array.isArray(meta.reasons) && meta.reasons.length > 0) {
+    parts.push(meta.reasons.slice(0, 3).join(" · "));
+  } else if (typeof meta.reasoning === "string" && meta.reasoning.trim()) {
+    parts.push(meta.reasoning);
+  }
+  if (meta.rejected_by_guard) parts.push("guard rejected");
+  return parts.length > 0 ? parts.join(" / ") : JSON.stringify(meta);
 }
 
 
