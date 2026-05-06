@@ -3,11 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   Activity24hCard,
+  BOT_SIGNAL_DISPLAY,
   EmergencyStopStuckBanner,
   MODE_DISPLAY,
   ModeBreakdownRow,
   StatusPin,
   StatusSummaryCard,
+  botIdleSignal,
   computeActivity24h,
   emergencyStopOnSince,
   formatModeBreakdown,
@@ -159,6 +161,62 @@ describe("<StatusSummaryCard>", () => {
     const pin = getByTestId("status-pin-bot");
     expect(pin.textContent).toContain("RUNNING");
     expect(pin.style.color).toBe("rgb(34, 197, 94)"); // #22c55e
+    expect(pin.textContent).not.toContain("idle");
+    expect(pin.textContent).not.toContain("24h 0건");
+  });
+
+  // 097: 봇 RUNNING + 24h 주문 0건이면 노란 dot으로 escalate.
+  it("bot pin shows yellow idle warning when running but 24h orders is 0 (097)", () => {
+    const { getByTestId } = render(
+      <StatusSummaryCard
+        emergencyStop={false} pendingCount={0} running={true}
+        ordersIn24h={0}
+        onJumpTab={() => {}}
+      />,
+    );
+    const pin = getByTestId("status-pin-bot");
+    expect(pin.textContent).toContain("RUNNING (24h 0건)");
+    expect(pin.style.color).toBe("rgb(251, 191, 36)"); // #fbbf24
+  });
+
+  it("bot pin stays green when running and at least one order in 24h (097)", () => {
+    const { getByTestId } = render(
+      <StatusSummaryCard
+        emergencyStop={false} pendingCount={0} running={true}
+        ordersIn24h={1}
+        onJumpTab={() => {}}
+      />,
+    );
+    const pin = getByTestId("status-pin-bot");
+    expect(pin.textContent).toContain("RUNNING");
+    expect(pin.textContent).not.toContain("0건");
+    expect(pin.style.color).toBe("rgb(34, 197, 94)"); // #22c55e
+  });
+
+  it("bot pin shows STOPPED when not running, regardless of 24h orders (097)", () => {
+    const { getByTestId } = render(
+      <StatusSummaryCard
+        emergencyStop={false} pendingCount={0} running={false}
+        ordersIn24h={0}
+        onJumpTab={() => {}}
+      />,
+    );
+    const pin = getByTestId("status-pin-bot");
+    expect(pin.textContent).toContain("STOPPED");
+    expect(pin.style.color).toBe("rgb(148, 163, 184)"); // neutral
+  });
+
+  it("ordersIn24h defaults to 1 so existing callers don't trigger idle (097 back-compat)", () => {
+    // No ordersIn24h prop passed — should not show idle even though running.
+    const { getByTestId } = render(
+      <StatusSummaryCard
+        emergencyStop={false} pendingCount={0} running={true}
+        onJumpTab={() => {}}
+      />,
+    );
+    const pin = getByTestId("status-pin-bot");
+    expect(pin.textContent).not.toContain("0건");
+    expect(pin.style.color).toBe("rgb(34, 197, 94)");
   });
 
   it("clicking each pin calls onJumpTab with the correct tab id", () => {
@@ -185,6 +243,50 @@ describe("<StatusSummaryCard>", () => {
     );
     // Should not throw
     fireEvent.click(getByTestId("status-pin-bot"));
+  });
+});
+
+
+describe("botIdleSignal (097)", () => {
+  it("returns 'off' when not running, regardless of order count", () => {
+    expect(botIdleSignal(false, 0)).toBe("off");
+    expect(botIdleSignal(false, 100)).toBe("off");
+  });
+
+  it("returns 'idle' when running but 24h orders is 0", () => {
+    expect(botIdleSignal(true, 0)).toBe("idle");
+  });
+
+  it("returns 'running' when running and at least one order in 24h", () => {
+    expect(botIdleSignal(true, 1)).toBe("running");
+    expect(botIdleSignal(true, 50)).toBe("running");
+  });
+
+  it("treats null/undefined ordersIn24h as 0 (idle)", () => {
+    expect(botIdleSignal(true, null)).toBe("idle");
+    expect(botIdleSignal(true, undefined)).toBe("idle");
+  });
+});
+
+
+describe("BOT_SIGNAL_DISPLAY (097)", () => {
+  it("covers the three signal states", () => {
+    expect(BOT_SIGNAL_DISPLAY.off).toBeDefined();
+    expect(BOT_SIGNAL_DISPLAY.running).toBeDefined();
+    expect(BOT_SIGNAL_DISPLAY.idle).toBeDefined();
+  });
+
+  it("idle uses amber and the explicit 24h count value", () => {
+    expect(BOT_SIGNAL_DISPLAY.idle.color).toBe("#fbbf24");
+    expect(BOT_SIGNAL_DISPLAY.idle.value).toContain("24h 0건");
+    expect(BOT_SIGNAL_DISPLAY.idle.alarm).toBe(true);
+  });
+
+  it("running stays green; off stays neutral non-alarm", () => {
+    expect(BOT_SIGNAL_DISPLAY.running.color).toBe("#22c55e");
+    expect(BOT_SIGNAL_DISPLAY.running.alarm).toBe(true);
+    expect(BOT_SIGNAL_DISPLAY.off.alarm).toBe(false);
+    expect(BOT_SIGNAL_DISPLAY.off.value).toBe("STOPPED");
   });
 });
 
