@@ -205,10 +205,18 @@ describe("computeActivity24h", () => {
     };
   }
 
-  it("returns all-zero counts when both lists are empty", () => {
-    expect(computeActivity24h([], [], NOW)).toEqual({
+  function _att(hoursAgo) {
+    return {
+      approval_id: 1, symbol: "X", side: "BUY", quantity: 1,
+      at: new Date(NOW - hoursAgo * 3600_000).toISOString(),
+    };
+  }
+
+  it("returns all-zero counts when all sources are empty", () => {
+    expect(computeActivity24h([], [], [], NOW)).toEqual({
       orders: 0, approved: 0, rejected: 0, pending: 0,
       stops:  0, stopsOn: 0, stopsOff: 0,
+      attempts: 0,
     });
   });
 
@@ -221,7 +229,7 @@ describe("computeActivity24h", () => {
       _o("APPROVED",        25), // 25h ago — excluded
       _o("REJECTED",        100),
     ];
-    const a = computeActivity24h(orders, [], NOW);
+    const a = computeActivity24h(orders, [], [], NOW);
     expect(a.orders).toBe(4);
     expect(a.approved).toBe(2);
     expect(a.rejected).toBe(1);
@@ -235,18 +243,28 @@ describe("computeActivity24h", () => {
       _s(true,  18), // included
       _s(false, 30), // excluded
     ];
-    const a = computeActivity24h([], stops, NOW);
+    const a = computeActivity24h([], stops, [], NOW);
     expect(a.stops).toBe(3);
     expect(a.stopsOn).toBe(2);
     expect(a.stopsOff).toBe(1);
   });
 
+  it("counts approve attempts within the window using the `at` field", () => {
+    const attempts = [
+      _att(1),   // included
+      _att(12),  // included
+      _att(25),  // excluded
+    ];
+    const a = computeActivity24h([], [], attempts, NOW);
+    expect(a.attempts).toBe(2);
+  });
+
   it("uses Date.now() when now is omitted", () => {
-    // Just verify the call shape — exact value depends on real clock.
-    const a = computeActivity24h([], []);
+    const a = computeActivity24h([], [], []);
     expect(a).toEqual({
       orders: 0, approved: 0, rejected: 0, pending: 0,
       stops:  0, stopsOn: 0, stopsOff: 0,
+      attempts: 0,
     });
   });
 });
@@ -380,6 +398,77 @@ describe("<EmergencyStopStuckBanner>", () => {
     );
     fireEvent.click(getByTestId("emergency-stop-stuck-banner"));
     expect(onClick).toHaveBeenCalled();
+  });
+});
+
+
+describe("<Activity24hCard> attempts row (079 + 080)", () => {
+  beforeEach(() => { _resetAuditHooks(); localStorage.clear(); });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _approvals(pending = [], history = []) {
+    return { pending, history };
+  }
+
+  it("hides the attempts row when there are no recent attempts", () => {
+    const { queryByTestId } = render(
+      <Activity24hCard onJumpTab={() => {}} approvals={_approvals()} />,
+    );
+    expect(queryByTestId("activity-attempts-row")).toBeNull();
+  });
+
+  it("renders the attempts row when approvals contain recent attempts", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-06T12:00:00Z"));
+    const minutesAgo = (m) => new Date(Date.now() - m * 60_000).toISOString();
+    const approvals = _approvals([
+      { id: 1, symbol: "A", side: "BUY", quantity: 1, attempts: [
+        { at: minutesAgo(10), reasons: ["x"] },
+        { at: minutesAgo(60), reasons: ["y"] },
+      ]},
+    ]);
+    const { getByTestId } = render(
+      <Activity24hCard onJumpTab={() => {}} approvals={approvals} />,
+    );
+    expect(getByTestId("activity-attempts-row").textContent).toContain("2건");
+    vi.useRealTimers();
+  });
+
+  it("clicking the attempts row sets kind=attempt and jumps to audit", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-06T12:00:00Z"));
+    const minutesAgo = (m) => new Date(Date.now() - m * 60_000).toISOString();
+    const onJumpTab = vi.fn();
+    const approvals = _approvals([
+      { id: 1, symbol: "A", side: "BUY", quantity: 1, attempts: [
+        { at: minutesAgo(10), reasons: ["x"] },
+      ]},
+    ]);
+    const { getByTestId } = render(
+      <Activity24hCard onJumpTab={onJumpTab} approvals={approvals} />,
+    );
+    fireEvent.click(getByTestId("activity-attempts-row"));
+    expect(localStorage.getItem("autotrade.eventKindFilter")).toBe("attempt");
+    expect(onJumpTab).toHaveBeenCalledWith("audit");
+    vi.useRealTimers();
+  });
+
+  it("excludes attempts older than 24h from the count", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-06T12:00:00Z"));
+    const hoursAgo = (h) => new Date(Date.now() - h * 3600_000).toISOString();
+    const approvals = _approvals([
+      { id: 1, symbol: "A", side: "BUY", quantity: 1, attempts: [
+        { at: hoursAgo(1), reasons: [] },   // included
+        { at: hoursAgo(25), reasons: [] },  // excluded
+      ]},
+    ]);
+    const { getByTestId } = render(
+      <Activity24hCard onJumpTab={() => {}} approvals={approvals} />,
+    );
+    // 2 attempts total, but only 1 within 24h
+    expect(getByTestId("activity-attempts-row").textContent).toContain("1건");
+    vi.useRealTimers();
   });
 });
 

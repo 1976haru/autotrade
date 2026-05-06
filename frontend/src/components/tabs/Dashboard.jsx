@@ -2,7 +2,7 @@ import { Card, SectionLabel, StatBox } from "../common";
 import { fmtKRW, fmtPct, pnlColor } from "../../utils/format";
 import { useEmergencyStopAudits, useOrderAudits } from "../../store/useAuditLogs";
 import { formatPendingAge } from "./Approvals";
-import { setEventKindFilter } from "./AuditLog";
+import { flattenApprovalAttempts, setEventKindFilter } from "./AuditLog";
 
 
 // 060 hardening made emergency_stop a hard kill-switch. The downside: if an
@@ -61,12 +61,14 @@ const _DAY_MS = 24 * 60 * 60 * 1000;
 // 시간 필터 + 카운팅을 컴포넌트에서 분리해 vi.setSystemTime 없이도 단위 테스트
 // 가능하도록. NEEDS_APPROVAL은 BottomNav 배지/StatusSummaryCard와 중복되지만,
 // 24h 활동 요약에서는 "어제 N건이 결재 단계로 갔는지" 자체가 의미 있는 신호라
-// 별도로 카운트한다.
-export function computeActivity24h(orders, stops, now = Date.now()) {
+// 별도로 카운트한다. attempts(079)는 created_at 대신 `at` 필드를 쓴다.
+export function computeActivity24h(orders, stops, attempts = [], now = Date.now()) {
   const since = now - _DAY_MS;
-  const within = (r) => new Date(r.created_at).getTime() >= since;
-  const recentOrders = orders.filter(within);
-  const recentStops  = stops.filter(within);
+  const within         = (r) => new Date(r.created_at).getTime() >= since;
+  const withinAttempt  = (r) => new Date(r.at).getTime() >= since;
+  const recentOrders   = orders.filter(within);
+  const recentStops    = stops.filter(within);
+  const recentAttempts = attempts.filter(withinAttempt);
   return {
     orders:   recentOrders.length,
     approved: recentOrders.filter((r) => r.decision === "APPROVED").length,
@@ -75,6 +77,7 @@ export function computeActivity24h(orders, stops, now = Date.now()) {
     stops:    recentStops.length,
     stopsOn:  recentStops.filter((r) => r.enabled).length,
     stopsOff: recentStops.filter((r) => !r.enabled).length,
+    attempts: recentAttempts.length,
   };
 }
 
@@ -180,10 +183,11 @@ const _DRILLDOWN_BUTTON_STYLE = {
   color:        "inherit",
 };
 
-export function Activity24hCard({ onJumpTab }) {
+export function Activity24hCard({ onJumpTab, approvals = { pending: [], history: [] } }) {
   const orders = useOrderAudits();
   const stops  = useEmergencyStopAudits();
-  const a = computeActivity24h(orders.items, stops.items);
+  const attempts = flattenApprovalAttempts(approvals.pending, approvals.history);
+  const a = computeActivity24h(orders.items, stops.items, attempts);
   const loading = orders.loading || stops.loading;
   const error   = orders.error || stops.error;
 
@@ -246,6 +250,20 @@ export function Activity24hCard({ onJumpTab }) {
               </span>
             )}
           </button>
+          {a.attempts > 0 && (
+            <button
+              type="button"
+              onClick={() => _drillDown("attempt")}
+              data-testid="activity-attempts-row"
+              style={{ ..._DRILLDOWN_BUTTON_STYLE, marginTop: 4,
+                        cursor: onJumpTab ? "pointer" : "default" }}
+            >
+              <span style={{ fontSize: 11, color: "#94a3b8" }}>결재 시도 거부</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "#ef4444" }}>
+                {a.attempts}건
+              </span>
+            </button>
+          )}
         </>
       )}
     </Card>
@@ -256,7 +274,9 @@ export function Activity24hCard({ onJumpTab }) {
 export function Dashboard({
   portfolio, bot, botControls, emergencyStop,
   emergencyStopSince,
-  pendingCount = 0, stalePendingCount = 0, onJumpTab,
+  pendingCount = 0, stalePendingCount = 0,
+  approvals,
+  onJumpTab,
 }) {
   const { totalAsset, totalPnL, totalPnLPct, cash, positions } = portfolio;
   const { stats, winRate, trades, running } = bot;
@@ -306,7 +326,7 @@ export function Dashboard({
       </div>
 
       {/* 24시간 활동 요약 */}
-      <Activity24hCard onJumpTab={onJumpTab} />
+      <Activity24hCard onJumpTab={onJumpTab} approvals={approvals} />
 
       {/* 봇 컨트롤 */}
       <Card accentColor={running ? "#22c55e33" : undefined}>
