@@ -10,6 +10,7 @@ import {
   PendingAgeBadge,
   ReasonsLine,
   formatPendingAge,
+  historyEmptyMessage,
   isPendingStale,
 } from "./Approvals";
 
@@ -491,6 +492,83 @@ describe("<Approvals> approve-attempt failure badge on PENDING row", () => {
     });
     const { queryByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
     expect(queryByTestId("approve-attempt-failure-badge")).toBeNull();
+  });
+});
+
+
+describe("historyEmptyMessage", () => {
+  it("returns plain '결정된 항목이 없습니다' when history is empty", () => {
+    expect(historyEmptyMessage([], "")).toBe("결정된 항목이 없습니다");
+    expect(historyEmptyMessage(undefined, "")).toBe("결정된 항목이 없습니다");
+  });
+
+  it("returns the filtered variant when history exists but symbol filter narrowed it to zero", () => {
+    expect(historyEmptyMessage([{ id: 1 }], "005930"))
+      .toBe("해당 종목의 항목이 없습니다");
+  });
+
+  it("returns plain message when no symbol filter even if logic is reached", () => {
+    // Defensive — caller might call this with empty needle
+    expect(historyEmptyMessage([{ id: 1 }], "")).toBe("결정된 항목이 없습니다");
+  });
+});
+
+
+describe("<Approvals> 처리 내역 symbol filter", () => {
+  afterEach(cleanup);
+
+  function _h(overrides = {}) {
+    return {
+      id: 1, symbol: "005930", side: "BUY", quantity: 1, order_type: "MARKET",
+      limit_price: null, status: "APPROVED", mode: "LIVE_MANUAL_APPROVAL",
+      decided_at: "2026-05-06T12:00:00+00:00", decided_by: "user", note: "",
+      created_at: "2026-05-06T11:55:00+00:00", audit_id: 1,
+      ...overrides,
+    };
+  }
+
+  it("renders all history rows when filter is empty", () => {
+    const approvals = _makeApprovals({
+      history: [_h({ id: 1, symbol: "AAA" }), _h({ id: 2, symbol: "BBB" })],
+    });
+    const { container } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(container.textContent).toContain("AAA");
+    expect(container.textContent).toContain("BBB");
+  });
+
+  it("narrows history rows by case-insensitive substring on symbol", () => {
+    const approvals = _makeApprovals({
+      history: [_h({ id: 1, symbol: "005930" }), _h({ id: 2, symbol: "000660" })],
+    });
+    const { container, getAllByPlaceholderText } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    // There are multiple symbol inputs (modal might render too); pick the one
+    // for the history filter by placeholder text + scope. Placeholder is
+    // unique so getAllByPlaceholderText returns the historical filter input
+    // (modal isn't open).
+    const inputs = getAllByPlaceholderText(/종목/);
+    fireEvent.change(inputs[0], { target: { value: "0066" } });
+    expect(container.textContent).toContain("000660");
+    expect(container.textContent).not.toContain("005930");
+  });
+
+  it("shows the filtered empty message when filter narrows to zero", () => {
+    const approvals = _makeApprovals({
+      history: [_h({ id: 1, symbol: "005930" })],
+    });
+    const { getByText, getAllByPlaceholderText } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    const inputs = getAllByPlaceholderText(/종목/);
+    fireEvent.change(inputs[0], { target: { value: "999999" } });
+    expect(getByText("해당 종목의 항목이 없습니다")).toBeTruthy();
+  });
+
+  it("shows the plain empty message when history is empty (no filter applied)", () => {
+    const approvals = _makeApprovals({ history: [] });
+    const { getByText } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(getByText("결정된 항목이 없습니다")).toBeTruthy();
   });
 });
 
