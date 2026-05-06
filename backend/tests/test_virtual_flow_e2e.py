@@ -16,11 +16,11 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.ai.virtual_agent import VirtualAiAgent
-from app.brokers.base import OrderRequest, OrderSide, OrderType
+from app.brokers.base import OrderRequest, OrderSide
 from app.brokers.mock_broker import MockBrokerAdapter
 from app.core.modes import OperationMode
 from app.db.base import Base
-from app.db.models import OrderAuditLog, PendingApproval, VirtualOrder
+from app.db.models import OrderAuditLog, PendingApproval
 from app.execution.order_router import route_order
 from app.permission.gate import (
     ApprovalRiskCheckFailedError,

@@ -10,7 +10,9 @@
 | 1 | Backtest | 비동기 (`BacktestEngine`) | 불가 | 가상 | ✓ 구현 (`/api/backtest/run`) | — |
 | 2 | Shadow | `LIVE_SHADOW` | 불가 (Risk가 모든 주문 REJECTED) | 없음 | ✓ 구현 (read-only 4종) | [`shadow_mode.md`](shadow_mode.md) |
 | 3 | Paper | `PAPER` | 가능 (KIS 모의투자) | 가상 | ✓ 구현 (다층 is_paper 가드) | [`paper_mode.md`](paper_mode.md) |
-| 4 | Live Manual | `LIVE_MANUAL_APPROVAL` | 사용자 승인시만 | **실 자금** | ⏳ 절반 — 큐 흐름 ✓, KIS 실주문 라우팅 ✗ | TODO |
+| 3v | Virtual AI | `VIRTUAL_AI_EXECUTION` (152) | AI 자동 (가상) | 가상 | ✓ 구현 — 라이브 broker 미사용 | [`ai_virtual_execution_report.md`](ai_virtual_execution_report.md) |
+| 3f | Virtual Futures | (선물 `MockFuturesBroker` 직접) | 가상 (long/short, leverage, 강제청산) | 가상 | ✓ 구현 — 라이브 broker 미사용 (151) | [`futures_simulation_report.md`](futures_simulation_report.md) |
+| 4 | Live Manual | `LIVE_MANUAL_APPROVAL` | 사용자 승인시만 | **실 자금** | ⏳ 절반 — 큐 흐름 ✓, KIS 실주문 라우팅 ✗ | [`live_activation_blockers.md`](live_activation_blockers.md) |
 | 5 | AI Assist | `LIVE_AI_ASSIST` | 사용자 승인시만 (AI 제안) | **실 자금** | ⏳ 라우트 placeholder, 실 호출 미구현 | TODO |
 | 6 | AI Execution | `LIVE_AI_EXECUTION` | AI 자동 (한도 내) | **실 자금** | 🛑 미구현, 기본 비활성화 (CLAUDE.md) | TODO |
 

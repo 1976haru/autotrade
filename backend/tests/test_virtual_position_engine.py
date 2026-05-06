@@ -2,13 +2,11 @@
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
-from app.virtual.fill_engine import FillContext, simulate_fill
 from app.virtual.order_ledger import (
     STATUS_ACCEPTED,
     STATUS_FILLED,

@@ -11,7 +11,6 @@ from app.futures.risk import (
     FuturesRiskPolicy,
 )
 from app.futures.simulation import (
-    FuturesSimulationParams,
     apply_slippage,
     compute_fee,
     compute_initial_margin,

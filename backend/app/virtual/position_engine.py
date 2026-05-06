@@ -134,12 +134,12 @@ def _summarize_lots(
         if not lots:
             continue
         symbol, strategy = key
-        total_qty = sum(l.quantity for l in lots)
+        total_qty = sum(lot.quantity for lot in lots)
         if total_qty <= 0:
             continue
-        weighted_total = sum(l.quantity * l.avg_price for l in lots)
+        weighted_total = sum(lot.quantity * lot.avg_price for lot in lots)
         avg_price = int(round(weighted_total / total_qty))
-        opened_at = min(l.opened_at for l in lots)
+        opened_at = min(lot.opened_at for lot in lots)
         if opened_at.tzinfo is None:
             opened_at = opened_at.replace(tzinfo=timezone.utc)
 
