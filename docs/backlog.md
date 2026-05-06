@@ -5,11 +5,8 @@
 
 ## High — 운영 안전성 직결
 
-### 1. Daily PnL의 KST 일자 경계
-- **현재**: `app/risk/daily_pnl.py::today_utc()` UTC date 기반. 한국 시장과 9시간 차이.
-- **제약**: KOSPI는 09:00–15:30 KST. UTC 기준 00:00–06:30. UTC 자정에 PnL이 reset되면 한국 장중에 카운터가 갑자기 0으로 — 운영 의미 손상.
-- **변경 안**: `today_kst()` 헬퍼 추가, `compute_today_realized_pnl(today=today_kst())` 호출. 호출자(route_order, PermissionGate.approve)에서 인자 변경.
-- **테스트**: 한국 시간 자정 / UTC 자정 / 시장 종료 후 토글 모두 시나리오 추가.
+### ~~1. Daily PnL의 KST 일자 경계~~ ✅ 166에서 해결
+- 166 진행: `today_kst()` 헬퍼 + `compute_today_realized_pnl(tz=KST)` 기본값. KST 자정(=15:00 UTC, 장 종료 후) 리셋 → 운영자 직관 일치. `tz=timezone.utc` 명시로 backwards-compat. backend +5 테스트 (KST 자정 boundary / KST vs UTC 분기 / backwards-compat).
 
 ### 2. Position vs broker reconciliation
 - **현재**: 가상 환경은 단일 진실(`MockBrokerAdapter` 또는 `VirtualOrder`). 실거래 KIS LIVE 활성화 시 broker가 인식한 포지션 vs 백엔드 내부 상태 불일치 가능.
