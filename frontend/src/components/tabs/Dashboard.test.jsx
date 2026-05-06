@@ -18,6 +18,7 @@ import {
   emergencyStopOnSince,
   formatModeBreakdown,
   isValidBotIdleThreshold,
+  summarizeAiActivity24h,
 } from "./Dashboard";
 
 
@@ -25,18 +26,20 @@ import {
 // useAuditLogs.test.js에서 별도로 검증.
 const _orderHook = { items: [], loading: false, error: "", refresh: vi.fn() };
 const _stopHook  = { items: [], loading: false, error: "", refresh: vi.fn() };
+const _aiHook    = { items: [], loading: false, error: "", refresh: vi.fn() };
 
 vi.mock("../../store/useAuditLogs", () => ({
   useOrderAudits:         () => _orderHook,
-  useAiAudits:            () => ({ items: [], loading: false, error: "", refresh: vi.fn() }),
+  useAiAudits:            () => _aiHook,
   useBacktestRuns:        () => ({ items: [], loading: false, error: "", refresh: vi.fn() }),
   useEmergencyStopAudits: () => _stopHook,
 }));
 
 
-function _resetAuditHooks(orderOverrides = {}, stopOverrides = {}) {
+function _resetAuditHooks(orderOverrides = {}, stopOverrides = {}, aiOverrides = {}) {
   Object.assign(_orderHook, { items: [], loading: false, error: "", ...orderOverrides });
   Object.assign(_stopHook,  { items: [], loading: false, error: "", ...stopOverrides });
+  Object.assign(_aiHook,    { items: [], loading: false, error: "", ...aiOverrides });
 }
 
 
@@ -326,6 +329,133 @@ describe("countOrdersWithinWindow (102)", () => {
     expect(countOrdersWithinWindow(orders, 6  * 60 * 60_000, NOW)).toBe(1);
     expect(countOrdersWithinWindow(orders, 12 * 60 * 60_000, NOW)).toBe(2);
     expect(countOrdersWithinWindow(orders, 24 * 60 * 60_000, NOW)).toBe(3);
+  });
+});
+
+
+describe("summarizeAiActivity24h (119)", () => {
+  const NOW = new Date("2026-05-06T12:00:00Z").getTime();
+  const hAgo = (h) => new Date(NOW - h * 3600_000).toISOString();
+
+  it("returns zero shape for empty / nullable input", () => {
+    const empty = { count: 0, totalUsd: 0, knownCount: 0, unknownCount: 0 };
+    expect(summarizeAiActivity24h([], NOW)).toEqual(empty);
+    expect(summarizeAiActivity24h(null, NOW)).toEqual(empty);
+    expect(summarizeAiActivity24h(undefined, NOW)).toEqual(empty);
+  });
+
+  it("counts only items within the last 24h", () => {
+    const items = [
+      { model: "claude-sonnet-4-6", input_tokens: 0, output_tokens: 0, created_at: hAgo(2) },
+      { model: "claude-sonnet-4-6", input_tokens: 0, output_tokens: 0, created_at: hAgo(20) },
+      { model: "claude-sonnet-4-6", input_tokens: 0, output_tokens: 0, created_at: hAgo(48) }, // outside
+    ];
+    const s = summarizeAiActivity24h(items, NOW);
+    expect(s.count).toBe(2);
+  });
+
+  it("sums USD cost across the recent window via 101's estimateAiCost", () => {
+    const items = [
+      // sonnet 1M in / 0 out → $3
+      { model: "claude-sonnet-4-6", input_tokens: 1_000_000, output_tokens: 0, created_at: hAgo(1) },
+      // older — excluded
+      { model: "claude-opus-4-7",   input_tokens: 1_000_000, output_tokens: 0, created_at: hAgo(48) },
+    ];
+    const s = summarizeAiActivity24h(items, NOW);
+    expect(s.count).toBe(1);
+    expect(s.totalUsd).toBeCloseTo(3, 6);
+  });
+
+  it("counts unknown-family rows separately within the window", () => {
+    const items = [
+      { model: "gpt-4",             input_tokens: 100, output_tokens: 0, created_at: hAgo(1) },
+      { model: "claude-haiku-4-5",  input_tokens: 100, output_tokens: 0, created_at: hAgo(2) },
+    ];
+    const s = summarizeAiActivity24h(items, NOW);
+    expect(s.count).toBe(2);
+    expect(s.knownCount).toBe(1);
+    expect(s.unknownCount).toBe(1);
+  });
+});
+
+
+describe("<Activity24hCard> AI row (119)", () => {
+  beforeEach(() => { _resetAuditHooks(); });
+  afterEach(cleanup);
+
+  it("renders the AI row when there are recent AI calls", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-06T12:00:00Z"));
+    const m = (n) => new Date(Date.now() - n * 60_000).toISOString();
+    _resetAuditHooks({}, {}, {
+      items: [
+        { id: 1, model: "claude-sonnet-4-6",
+          input_tokens: 1_000_000, output_tokens: 0, created_at: m(10) },
+        { id: 2, model: "claude-haiku-4-5",
+          input_tokens: 100, output_tokens: 50, created_at: m(20) },
+      ],
+    });
+    const { getByTestId } = render(<Activity24hCard />);
+    const row = getByTestId("activity-ai-row");
+    expect(row.textContent).toContain("AI 호출");
+    expect(row.textContent).toContain("2건");
+    expect(row.textContent).toContain("$3.00");
+    vi.useRealTimers();
+  });
+
+  it("shows '미상' badge when an unknown model is present", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-06T12:00:00Z"));
+    const m = (n) => new Date(Date.now() - n * 60_000).toISOString();
+    _resetAuditHooks({}, {}, {
+      items: [
+        { id: 1, model: "claude-sonnet-4-6",
+          input_tokens: 1_000_000, output_tokens: 0, created_at: m(5) },
+        { id: 2, model: "gpt-4",
+          input_tokens: 1_000_000, output_tokens: 0, created_at: m(10) },
+      ],
+    });
+    const { getByTestId } = render(<Activity24hCard />);
+    expect(getByTestId("activity-ai-row").textContent).toContain("미상 1건");
+    vi.useRealTimers();
+  });
+
+  it("hides the AI row when there are no recent AI calls", () => {
+    _resetAuditHooks({}, {}, { items: [] });
+    const { container } = render(<Activity24hCard />);
+    expect(container.querySelector('[data-testid="activity-ai-row"]')).toBeNull();
+  });
+
+  it("excludes AI calls older than 24h from the row", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-06T12:00:00Z"));
+    const hAgo = (h) => new Date(Date.now() - h * 3600_000).toISOString();
+    _resetAuditHooks({}, {}, {
+      items: [
+        { id: 1, model: "claude-sonnet-4-6",
+          input_tokens: 0, output_tokens: 0, created_at: hAgo(48) }, // outside
+      ],
+    });
+    const { container } = render(<Activity24hCard />);
+    expect(container.querySelector('[data-testid="activity-ai-row"]')).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("clicking the row calls onJumpTab('audit')", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-06T12:00:00Z"));
+    const m = (n) => new Date(Date.now() - n * 60_000).toISOString();
+    _resetAuditHooks({}, {}, {
+      items: [
+        { id: 1, model: "claude-haiku-4-5",
+          input_tokens: 0, output_tokens: 0, created_at: m(5) },
+      ],
+    });
+    const onJumpTab = vi.fn();
+    const { getByTestId } = render(<Activity24hCard onJumpTab={onJumpTab} />);
+    fireEvent.click(getByTestId("activity-ai-row"));
+    expect(onJumpTab).toHaveBeenCalledWith("audit");
+    vi.useRealTimers();
   });
 });
 

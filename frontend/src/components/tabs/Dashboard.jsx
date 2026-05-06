@@ -2,9 +2,18 @@ import { Card, SectionLabel, StatBox } from "../common";
 import { ChipFilterBar } from "../common/ChipFilterBar";
 import { fmtKRW, fmtPct, formatPendingAge, pnlColor } from "../../utils/format";
 import { MODE_DISPLAY } from "../../utils/modes";
-import { useEmergencyStopAudits, useOrderAudits } from "../../store/useAuditLogs";
+import {
+  useAiAudits,
+  useEmergencyStopAudits,
+  useOrderAudits,
+} from "../../store/useAuditLogs";
 import { usePersistedState } from "../../store/usePersistedState";
-import { flattenApprovalAttempts, setEventKindFilter } from "./AuditLog";
+import {
+  estimateAiCost,
+  flattenApprovalAttempts,
+  formatUsdCost,
+  setEventKindFilter,
+} from "./AuditLog";
 import { HistoryStaleBanner } from "./Approvals";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
@@ -74,6 +83,18 @@ const _DAY_MS = 24 * 60 * 60 * 1000;
 export function countOrdersWithinWindow(orders, windowMs, now = Date.now()) {
   const since = now - windowMs;
   return (orders || []).filter((r) => new Date(r.created_at).getTime() >= since).length;
+}
+
+
+// 119: Dashboard 24h 활동 카드에 AI 호출 row 추가용. 101의 estimateAiCost를
+// 24h 안의 row만 추려서 호출. 빈 결과는 {totalUsd:0, knownCount:0,
+// unknownCount:0}으로 102 estimateAiCost와 동일 shape.
+export function summarizeAiActivity24h(items, now = Date.now()) {
+  const since = now - _DAY_MS;
+  const recent = (items || []).filter((r) =>
+    new Date(r.created_at).getTime() >= since,
+  );
+  return { count: recent.length, ...estimateAiCost(recent) };
 }
 
 
@@ -319,8 +340,10 @@ export function ModeBreakdownRow({ byMode }) {
 export function Activity24hCard({ onJumpTab, approvals = { pending: [], history: [] } }) {
   const orders = useOrderAudits();
   const stops  = useEmergencyStopAudits();
+  const ai     = useAiAudits();  // 119: 24h AI 호출 + cost 추정
   const attempts = flattenApprovalAttempts(approvals.pending, approvals.history);
   const a = computeActivity24h(orders.items, stops.items, attempts);
+  const aiActivity = summarizeAiActivity24h(ai.items);
   const loading = orders.loading || stops.loading;
   const error   = orders.error || stops.error;
 
@@ -395,6 +418,33 @@ export function Activity24hCard({ onJumpTab, approvals = { pending: [], history:
               <span style={{ fontSize: 11, color: "#94a3b8" }}>결재 시도 거부</span>
               <span style={{ fontSize: 14, fontWeight: 700, color: "#ef4444" }}>
                 {a.attempts}건
+              </span>
+            </button>
+          )}
+          {aiActivity.count > 0 && (
+            <button
+              type="button"
+              // AI sub-tab은 setEventKindFilter로 점프하지 않음 — audit 탭의
+              // sub-tab navigation은 별도 state라 단순히 audit 탭만 연다.
+              onClick={() => onJumpTab && onJumpTab("audit")}
+              data-testid="activity-ai-row"
+              style={{ ..._DRILLDOWN_BUTTON_STYLE, marginTop: 4,
+                        cursor: onJumpTab ? "pointer" : "default" }}
+            >
+              <span style={{ fontSize: 11, color: "#94a3b8" }}>AI 호출</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "#a78bfa" }}>
+                {aiActivity.count}건
+              </span>
+              <span style={{ fontSize: 10, color: "#475569" }}>
+                {" · "}
+                <span style={{ color: "#fbbf24", fontWeight: 700 }}>
+                  약 {formatUsdCost(aiActivity.totalUsd)}
+                </span>
+                {aiActivity.unknownCount > 0 && (
+                  <span style={{ color: "#64748b" }}>
+                    {" "}(+ 미상 {aiActivity.unknownCount}건)
+                  </span>
+                )}
               </span>
             </button>
           )}
