@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   AI_MODEL_PRICING,
+  AI_SORT_STORAGE_KEY,
   AiAuditView,
   AiModelBadge,
+  AiSortBar,
   AiTokenByModel,
   AiTokenSummary,
   ApprovalAttemptAuditRow,
@@ -28,12 +30,14 @@ import {
   flattenApprovalAttempts,
   formatAiTokenByModel,
   formatUsdCost,
+  isValidAiSort,
   isValidBacktestOutcome,
   isValidBacktestSort,
   mergeEvents,
   modelAccent,
   modelFamily,
   setEventKindFilter,
+  sortAiCalls,
   sortBacktestRuns,
   summarizeAiTokens,
 } from "./AuditLog";
@@ -1446,6 +1450,188 @@ describe("<AiAuditView> per-model token distribution integration (112)", () => {
     fireEvent.change(getByPlaceholderText(/모델/), { target: { value: "sonnet" } });
     expect(container.querySelector('[data-testid="ai-token-by-model-cell-sonnet"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="ai-token-by-model-cell-haiku"]')).toBeNull();
+  });
+});
+
+
+describe("sortAiCalls (115)", () => {
+  function _r(overrides) {
+    return {
+      id: 1, ticker: "X", model: "claude-sonnet-4-6",
+      input_tokens: 0, output_tokens: 0,
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("returns empty array for nullable input", () => {
+    expect(sortAiCalls(null, "tokens")).toEqual([]);
+    expect(sortAiCalls(undefined, "recent")).toEqual([]);
+  });
+
+  it("returns a new array (does not mutate input)", () => {
+    const items = [_r({ id: 1 }), _r({ id: 2 })];
+    const out = sortAiCalls(items, "tokens");
+    expect(out).not.toBe(items);
+  });
+
+  it("'recent' sorts by created_at desc", () => {
+    const items = [
+      _r({ id: 1, created_at: "2026-05-04T00:00:00Z" }),
+      _r({ id: 2, created_at: "2026-05-06T00:00:00Z" }),
+      _r({ id: 3, created_at: "2026-05-05T00:00:00Z" }),
+    ];
+    expect(sortAiCalls(items, "recent").map((r) => r.id)).toEqual([2, 3, 1]);
+  });
+
+  it("'tokens' sorts by total tokens desc", () => {
+    const items = [
+      _r({ id: 1, input_tokens: 100,  output_tokens: 50  }), // 150
+      _r({ id: 2, input_tokens: 5000, output_tokens: 1000 }), // 6000
+      _r({ id: 3, input_tokens: 0,    output_tokens: 0   }), //   0
+      _r({ id: 4, input_tokens: 1000, output_tokens: 500 }), // 1500
+    ];
+    expect(sortAiCalls(items, "tokens").map((r) => r.id)).toEqual([2, 4, 1, 3]);
+  });
+
+  it("'cost' sorts by per-row USD estimate desc", () => {
+    // opus is 5x sonnet's input cost → small opus call beats larger sonnet
+    const items = [
+      _r({ id: 1, model: "claude-sonnet-4-6", input_tokens: 1_000_000 }), // $3
+      _r({ id: 2, model: "claude-opus-4-7",   input_tokens: 1_000_000 }), // $15
+      _r({ id: 3, model: "claude-haiku-4-5",  input_tokens: 1_000_000 }), // $0.80
+    ];
+    expect(sortAiCalls(items, "cost").map((r) => r.id)).toEqual([2, 1, 3]);
+  });
+
+  it("'cost' treats unknown families as 0 (sinks them to the bottom)", () => {
+    const items = [
+      _r({ id: 1, model: "gpt-4",            input_tokens: 1_000_000 }),
+      _r({ id: 2, model: "claude-haiku-4-5", input_tokens: 1_000_000 }),
+    ];
+    expect(sortAiCalls(items, "cost").map((r) => r.id)).toEqual([2, 1]);
+  });
+
+  it("unknown sortKey falls back to 'recent'", () => {
+    const items = [
+      _r({ id: 1, created_at: "2026-05-04T00:00:00Z" }),
+      _r({ id: 2, created_at: "2026-05-06T00:00:00Z" }),
+    ];
+    expect(sortAiCalls(items, "garbage").map((r) => r.id)).toEqual([2, 1]);
+  });
+});
+
+
+describe("isValidAiSort (115)", () => {
+  it("accepts the three canonical ids", () => {
+    expect(isValidAiSort("recent")).toBe(true);
+    expect(isValidAiSort("tokens")).toBe(true);
+    expect(isValidAiSort("cost")).toBe(true);
+  });
+
+  it("rejects unknown values", () => {
+    expect(isValidAiSort("garbage")).toBe(false);
+    expect(isValidAiSort("")).toBe(false);
+    expect(isValidAiSort(null)).toBe(false);
+  });
+});
+
+
+describe("<AiSortBar> (115)", () => {
+  afterEach(cleanup);
+
+  it("renders three chips with the expected labels", () => {
+    const { getByRole } = render(<AiSortBar active="recent" onChange={() => {}} />);
+    expect(getByRole("radiogroup", { name: "AI 호출 정렬" })).toBeTruthy();
+    expect(getByRole("radio", { name: "최근순" })).toBeTruthy();
+    expect(getByRole("radio", { name: "토큰순" })).toBeTruthy();
+    expect(getByRole("radio", { name: "비용순" })).toBeTruthy();
+  });
+
+  it("calls onChange with the chip id", () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(<AiSortBar active="recent" onChange={onChange} />);
+    fireEvent.click(getByRole("radio", { name: "토큰순" }));
+    expect(onChange).toHaveBeenCalledWith("tokens");
+    fireEvent.click(getByRole("radio", { name: "비용순" }));
+    expect(onChange).toHaveBeenLastCalledWith("cost");
+  });
+});
+
+
+describe("<AiAuditView> sort toggle (115)", () => {
+  beforeEach(() => { _resetAiHook(); localStorage.clear(); });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _ai(overrides = {}) {
+    return {
+      id: 1, ticker: "AAA", model: "claude-sonnet-4-6",
+      input_tokens: 0, output_tokens: 0,
+      score: { total: 75 }, error: null,
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("default '최근순' renders newest first", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, ticker: "OLD", created_at: "2026-05-04T00:00:00Z" }),
+        _ai({ id: 2, ticker: "NEW", created_at: "2026-05-06T00:00:00Z" }),
+      ],
+    });
+    const { container } = render(<AiAuditView />);
+    const text = container.textContent;
+    expect(text.indexOf("NEW")).toBeLessThan(text.indexOf("OLD"));
+  });
+
+  it("clicking 토큰순 reorders by total tokens desc", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, ticker: "SMALL", input_tokens: 100,  output_tokens: 50,
+               created_at: "2026-05-06T12:00:00Z" }),
+        _ai({ id: 2, ticker: "LARGE", input_tokens: 5000, output_tokens: 1000,
+               created_at: "2026-05-06T11:00:00Z" }),
+      ],
+    });
+    const { container, getByRole } = render(<AiAuditView />);
+    fireEvent.click(getByRole("radio", { name: "토큰순" }));
+    const text = container.textContent;
+    expect(text.indexOf("LARGE")).toBeLessThan(text.indexOf("SMALL"));
+  });
+
+  it("clicking 비용순 reorders by USD estimate desc", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, ticker: "HAIKU",  model: "claude-haiku-4-5",
+               input_tokens: 1_000_000, output_tokens: 0,
+               created_at: "2026-05-06T12:00:00Z" }),
+        _ai({ id: 2, ticker: "OPUS",   model: "claude-opus-4-7",
+               input_tokens: 1_000_000, output_tokens: 0,
+               created_at: "2026-05-06T11:00:00Z" }),
+      ],
+    });
+    const { container, getByRole } = render(<AiAuditView />);
+    fireEvent.click(getByRole("radio", { name: "비용순" }));
+    const text = container.textContent;
+    expect(text.indexOf("OPUS")).toBeLessThan(text.indexOf("HAIKU"));
+  });
+
+  it("persists selection to localStorage", () => {
+    _resetAiHook({ items: [_ai()] });
+    const { getByRole, unmount } = render(<AiAuditView />);
+    fireEvent.click(getByRole("radio", { name: "비용순" }));
+    expect(localStorage.getItem(AI_SORT_STORAGE_KEY)).toBe("cost");
+    unmount();
+    const { getByRole: g2 } = render(<AiAuditView />);
+    expect(g2("radio", { name: "비용순" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("falls back to 최근순 when stored value is unknown", () => {
+    localStorage.setItem(AI_SORT_STORAGE_KEY, "garbage");
+    _resetAiHook({ items: [_ai()] });
+    const { getByRole } = render(<AiAuditView />);
+    expect(getByRole("radio", { name: "최근순" }).getAttribute("aria-checked")).toBe("true");
   });
 });
 

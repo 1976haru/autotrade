@@ -678,6 +678,56 @@ export function AiTokenSummary({ items }) {
 const AI_TIME_BUCKET_STORAGE_KEY = "autotrade.aiAuditTimeBucket";
 
 
+// 115: AI 호출 정렬 — 기본 created_at desc지만 token 합계 또는 추정 cost 기준으로
+// 보고 싶은 흐름 ("오늘 가장 비싼 호출 한 줄 검사")이 빈번. 104 backtest sort
+// 패턴 재사용. estimateAiCost를 row 단위로 사용해 cost 단가 산정 — 단가 미상
+// (modelFamily=null) row는 0으로 떨어져 정렬 끝쪽으로 자연스럽게 이동.
+function _rowCostUsd(r) {
+  const family = modelFamily(r.model);
+  const price = family && AI_MODEL_PRICING[family];
+  if (!price) return 0;
+  return ((r.input_tokens  || 0) / 1_000_000) * price.input
+       + ((r.output_tokens || 0) / 1_000_000) * price.output;
+}
+
+
+export function sortAiCalls(items, sortKey) {
+  const arr = [...(items || [])];
+  if (sortKey === "tokens") {
+    arr.sort((a, b) =>
+      ((b.input_tokens || 0) + (b.output_tokens || 0))
+      - ((a.input_tokens || 0) + (a.output_tokens || 0)),
+    );
+  } else if (sortKey === "cost") {
+    arr.sort((a, b) => _rowCostUsd(b) - _rowCostUsd(a));
+  } else {
+    // 'recent' (default) — 104처럼 client-side에서 다시 정렬해 mock/비정렬 입력
+    // 대비 일관성 보장.
+    arr.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }
+  return arr;
+}
+
+
+const AI_SORT_OPTIONS = [
+  { id: "recent", label: "최근순",   color: "#7dd3fc" },
+  { id: "tokens", label: "토큰순",   color: "#67e8f9" },
+  { id: "cost",   label: "비용순",   color: "#fbbf24" },
+];
+
+export const AI_SORT_STORAGE_KEY = "autotrade.aiSort";
+const _VALID_AI_SORTS = new Set(AI_SORT_OPTIONS.map((o) => o.id));
+export const isValidAiSort = (v) => _VALID_AI_SORTS.has(v);
+
+
+export function AiSortBar({ active, onChange }) {
+  return (
+    <ChipFilterBar items={AI_SORT_OPTIONS} active={active}
+      onChange={onChange} ariaLabel="AI 호출 정렬" />
+  );
+}
+
+
 export function AiAuditView() {
   const { items, loading, error, refresh } = useAiAudits();
   // 089: transient ticker filter (not persisted) — same reasoning as the
@@ -703,12 +753,19 @@ export function AiAuditView() {
     _bucketWindowMs === undefined
       ? true
       : _now - new Date(r.created_at).getTime() < _bucketWindowMs;
-  const filteredItems = items
-    .filter((r) =>
-      !_tickerNeedle || (r.ticker && r.ticker.toLowerCase().includes(_tickerNeedle)))
-    .filter((r) =>
-      !_modelNeedle || (r.model && r.model.toLowerCase().includes(_modelNeedle)))
-    .filter(_withinBucket);
+  // 115: 정렬 — 최근/토큰/비용. 영구 저장.
+  const [sortKey, setSortKey] = usePersistedState(
+    AI_SORT_STORAGE_KEY, "recent", isValidAiSort,
+  );
+  const filteredItems = sortAiCalls(
+    items
+      .filter((r) =>
+        !_tickerNeedle || (r.ticker && r.ticker.toLowerCase().includes(_tickerNeedle)))
+      .filter((r) =>
+        !_modelNeedle || (r.model && r.model.toLowerCase().includes(_modelNeedle)))
+      .filter(_withinBucket),
+    sortKey,
+  );
 
   return (
     <Card>
@@ -740,6 +797,9 @@ export function AiAuditView() {
           onChange={setTimeBucket}
           ariaLabel="AI 호출 시간 범위 필터"
         />
+      </div>
+      <div style={{ marginBottom: 8 }}>
+        <AiSortBar active={sortKey} onChange={setSortKey} />
       </div>
 
       <AiTokenSummary items={filteredItems} />
