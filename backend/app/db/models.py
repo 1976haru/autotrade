@@ -175,6 +175,38 @@ class EmergencyStopEvent(Base):
     reason_code: Mapped[str | None]    = mapped_column(String(32), nullable=True, index=True)
 
 
+class AgentDecisionLog(Base):
+    """Agent Council 판단 기록 (185, MUST).
+
+    각 Agent가 만든 structured 결정을 한 행에 기록한다. ChiefTradingAgent가
+    종합 결정을 만들 때 다른 Agent들의 출력을 참고하므로, 사후 분석 시 의사
+    결정 사슬을 재구성할 수 있어야 한다.
+
+    실제 LLM 호출 없이 deterministic stub만 동작 — AI Key 없어도 운영 가능.
+    """
+
+    __tablename__ = "agent_decision_log"
+
+    id:          Mapped[int]            = mapped_column(primary_key=True)
+    created_at:  Mapped[datetime]       = mapped_column(DateTime, default=_utcnow, index=True)
+
+    agent_name:  Mapped[str]            = mapped_column(String(64), index=True)
+    symbol:      Mapped[str | None]     = mapped_column(String(16), nullable=True, index=True)
+    mode:        Mapped[str]            = mapped_column(String(32), index=True)
+
+    # 결정 카테고리: BUY / SELL / HOLD / APPROVE / REJECT / WARN / INFO 등.
+    decision:    Mapped[str]            = mapped_column(String(32), index=True)
+    confidence:  Mapped[int | None]     = mapped_column(Integer, nullable=True)
+
+    reasons:     Mapped[list]           = mapped_column(JSON, default=list)
+    # 자유 형식 metadata — agent별로 추가 구조화 (예: regime / score / size_pct).
+    meta:        Mapped[dict | None]    = mapped_column(JSON, nullable=True)
+
+    # 같은 의사결정 사슬을 묶는 키 — ChiefTradingAgent가 발급, 다른 agent들의
+    # 결정에 같은 chain_id 부여해 사후 분석 시 한 번에 조회.
+    chain_id:    Mapped[str | None]     = mapped_column(String(64), nullable=True, index=True)
+
+
 class FuturesOrderAuditLog(Base):
     """선물 주문/청산 감사 로그 (169, MUST).
 
