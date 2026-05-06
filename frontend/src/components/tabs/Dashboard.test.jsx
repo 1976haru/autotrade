@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   Activity24hCard,
+  BOT_IDLE_THRESHOLD_OPTIONS,
+  BOT_IDLE_THRESHOLD_STORAGE_KEY,
   BOT_SIGNAL_DISPLAY,
+  BotIdleThresholdBar,
   EmergencyStopStuckBanner,
   MODE_DISPLAY,
   ModeBreakdownRow,
@@ -11,8 +14,10 @@ import {
   StatusSummaryCard,
   botIdleSignal,
   computeActivity24h,
+  countOrdersWithinWindow,
   emergencyStopOnSince,
   formatModeBreakdown,
+  isValidBotIdleThreshold,
 } from "./Dashboard";
 
 
@@ -170,7 +175,7 @@ describe("<StatusSummaryCard>", () => {
     const { getByTestId } = render(
       <StatusSummaryCard
         emergencyStop={false} pendingCount={0} running={true}
-        ordersIn24h={0}
+        ordersInWindow={0}
         onJumpTab={() => {}}
       />,
     );
@@ -183,7 +188,7 @@ describe("<StatusSummaryCard>", () => {
     const { getByTestId } = render(
       <StatusSummaryCard
         emergencyStop={false} pendingCount={0} running={true}
-        ordersIn24h={1}
+        ordersInWindow={1}
         onJumpTab={() => {}}
       />,
     );
@@ -197,7 +202,7 @@ describe("<StatusSummaryCard>", () => {
     const { getByTestId } = render(
       <StatusSummaryCard
         emergencyStop={false} pendingCount={0} running={false}
-        ordersIn24h={0}
+        ordersInWindow={0}
         onJumpTab={() => {}}
       />,
     );
@@ -206,8 +211,8 @@ describe("<StatusSummaryCard>", () => {
     expect(pin.style.color).toBe("rgb(148, 163, 184)"); // neutral
   });
 
-  it("ordersIn24h defaults to 1 so existing callers don't trigger idle (097 back-compat)", () => {
-    // No ordersIn24h prop passed — should not show idle even though running.
+  it("ordersInWindow defaults to 1 so existing callers don't trigger idle (097 back-compat)", () => {
+    // No ordersInWindow prop passed — should not show idle even though running.
     const { getByTestId } = render(
       <StatusSummaryCard
         emergencyStop={false} pendingCount={0} running={true}
@@ -287,6 +292,137 @@ describe("BOT_SIGNAL_DISPLAY (097)", () => {
     expect(BOT_SIGNAL_DISPLAY.running.alarm).toBe(true);
     expect(BOT_SIGNAL_DISPLAY.off.alarm).toBe(false);
     expect(BOT_SIGNAL_DISPLAY.off.value).toBe("STOPPED");
+  });
+});
+
+
+describe("countOrdersWithinWindow (102)", () => {
+  const NOW = new Date("2026-05-06T12:00:00Z").getTime();
+  const m = (mins) => new Date(NOW - mins * 60_000).toISOString();
+
+  it("returns 0 for empty / nullable input", () => {
+    expect(countOrdersWithinWindow([], 60_000, NOW)).toBe(0);
+    expect(countOrdersWithinWindow(null, 60_000, NOW)).toBe(0);
+    expect(countOrdersWithinWindow(undefined, 60_000, NOW)).toBe(0);
+  });
+
+  it("counts only rows with created_at >= now - windowMs", () => {
+    const orders = [
+      { created_at: m(30) },     // 30 min ago — within 1h
+      { created_at: m(59) },     // 59 min ago — within 1h
+      { created_at: m(61) },     // 61 min ago — outside 1h
+      { created_at: m(60 * 24) },// 24h ago    — outside 1h
+    ];
+    expect(countOrdersWithinWindow(orders, 60 * 60_000, NOW)).toBe(2);
+  });
+
+  it("widens with windowMs — 6h vs 24h capture different subsets", () => {
+    const orders = [
+      { created_at: m(60 * 4) },   // 4h ago
+      { created_at: m(60 * 8) },   // 8h ago
+      { created_at: m(60 * 20) },  // 20h ago
+      { created_at: m(60 * 30) },  // 30h ago
+    ];
+    expect(countOrdersWithinWindow(orders, 6  * 60 * 60_000, NOW)).toBe(1);
+    expect(countOrdersWithinWindow(orders, 12 * 60 * 60_000, NOW)).toBe(2);
+    expect(countOrdersWithinWindow(orders, 24 * 60 * 60_000, NOW)).toBe(3);
+  });
+});
+
+
+describe("BOT_IDLE_THRESHOLD_OPTIONS (102)", () => {
+  it("provides the three 6h/12h/24h options with windowMs", () => {
+    const ids = BOT_IDLE_THRESHOLD_OPTIONS.map((o) => o.id);
+    expect(ids).toEqual(["6h", "12h", "24h"]);
+    BOT_IDLE_THRESHOLD_OPTIONS.forEach((o) => {
+      expect(o.windowMs).toBeGreaterThan(0);
+      expect(o.label).toMatch(/시간/);
+    });
+  });
+
+  it("windowMs is monotonically increasing across options", () => {
+    const ms = BOT_IDLE_THRESHOLD_OPTIONS.map((o) => o.windowMs);
+    expect(ms[0]).toBeLessThan(ms[1]);
+    expect(ms[1]).toBeLessThan(ms[2]);
+  });
+});
+
+
+describe("isValidBotIdleThreshold (102)", () => {
+  it("accepts the three canonical ids", () => {
+    expect(isValidBotIdleThreshold("6h")).toBe(true);
+    expect(isValidBotIdleThreshold("12h")).toBe(true);
+    expect(isValidBotIdleThreshold("24h")).toBe(true);
+  });
+
+  it("rejects unknown values", () => {
+    expect(isValidBotIdleThreshold("48h")).toBe(false);
+    expect(isValidBotIdleThreshold("garbage")).toBe(false);
+    expect(isValidBotIdleThreshold("")).toBe(false);
+    expect(isValidBotIdleThreshold(null)).toBe(false);
+  });
+});
+
+
+describe("<BotIdleThresholdBar> (102)", () => {
+  afterEach(cleanup);
+
+  it("renders three chips with the expected labels", () => {
+    const { getByRole } = render(<BotIdleThresholdBar active="24h" onChange={() => {}} />);
+    expect(getByRole("radiogroup", { name: "봇 idle 임계 윈도우" })).toBeTruthy();
+    expect(getByRole("radio", { name: "6시간" })).toBeTruthy();
+    expect(getByRole("radio", { name: "12시간" })).toBeTruthy();
+    expect(getByRole("radio", { name: "24시간" })).toBeTruthy();
+  });
+
+  it("calls onChange with the chip id", () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(<BotIdleThresholdBar active="24h" onChange={onChange} />);
+    fireEvent.click(getByRole("radio", { name: "6시간" }));
+    expect(onChange).toHaveBeenCalledWith("6h");
+    fireEvent.click(getByRole("radio", { name: "12시간" }));
+    expect(onChange).toHaveBeenLastCalledWith("12h");
+  });
+});
+
+
+describe("<StatusSummaryCard> idle threshold label (102)", () => {
+  afterEach(cleanup);
+
+  it("idle pin label reflects the supplied idleThresholdLabel", () => {
+    const { getByTestId } = render(
+      <StatusSummaryCard
+        emergencyStop={false} pendingCount={0} running={true}
+        ordersInWindow={0}
+        idleThresholdLabel="6h"
+        onJumpTab={() => {}}
+      />,
+    );
+    expect(getByTestId("status-pin-bot").textContent).toContain("RUNNING (6h 0건)");
+  });
+
+  it("falls back to '24h' label when idleThresholdLabel is omitted", () => {
+    const { getByTestId } = render(
+      <StatusSummaryCard
+        emergencyStop={false} pendingCount={0} running={true}
+        ordersInWindow={0}
+        onJumpTab={() => {}}
+      />,
+    );
+    expect(getByTestId("status-pin-bot").textContent).toContain("RUNNING (24h 0건)");
+  });
+
+  it("non-idle states ignore idleThresholdLabel", () => {
+    const { getByTestId } = render(
+      <StatusSummaryCard
+        emergencyStop={false} pendingCount={0} running={true}
+        ordersInWindow={5}
+        idleThresholdLabel="6h"
+        onJumpTab={() => {}}
+      />,
+    );
+    expect(getByTestId("status-pin-bot").textContent).not.toContain("0건");
+    expect(getByTestId("status-pin-bot").textContent).toContain("RUNNING");
   });
 });
 
