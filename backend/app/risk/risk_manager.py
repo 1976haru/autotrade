@@ -41,6 +41,10 @@ class RiskPolicy:
     # max_order_notional이 절대값 한도라면 본 가드는 자본 대비 *상대* 한도 —
     # 운영자 자본이 증감해도 자동 스케일. 권장 5~15% (단타 운영 가정).
     max_position_size_pct: float = 0.0
+    # 175: 거래 허용 symbol whitelist. 빈 set이면 검사 비활성 (기본 = 모든 symbol
+    # 허용). 비어 있지 않으면 미등록 symbol 주문 거부 — 운영자가 검증한 종목만
+    # 자동 흐름에 노출.
+    symbol_whitelist: frozenset[str] = field(default_factory=frozenset)
 
     @classmethod
     def from_settings(cls, settings) -> "RiskPolicy":
@@ -64,6 +68,7 @@ class RiskPolicy:
             ai_rate_limit_window_seconds = settings.ai_rate_limit_window_seconds,
             ai_rate_limit_max_count      = settings.ai_rate_limit_max_count,
             max_position_size_pct        = settings.max_position_size_pct,
+            symbol_whitelist             = frozenset(settings.symbol_whitelist_set()),
         )
 
 
@@ -130,6 +135,14 @@ class RiskManager:
                 )
 
         result = RiskCheckResult(decision=RiskDecision.APPROVED)
+
+        # 175: symbol whitelist. 비어있지 않으면 미등록 symbol 거부.
+        if self.policy.symbol_whitelist and order.symbol not in self.policy.symbol_whitelist:
+            result.reasons.append(
+                f"symbol '{order.symbol}' not in whitelist"
+            )
+        elif self.policy.symbol_whitelist:
+            result.passed.append("symbol in whitelist")
 
         # 158: AI confidence threshold. requested_by_ai=True인 주문에 한해
         # signal_confidence가 임계 미달이면 거부. 임계 ≤ 0이면 검사 비활성.
