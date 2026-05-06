@@ -202,26 +202,37 @@ LIVE 활성화 전 사용자 명시 옵트인이 필요한 영역:
 | 198 | `OrderAuditOut.archived` surface + `ArchivedAuditView` 서브탭 + `listOrderAudits.include_archived` | AuditLog 탭 "아카이브" 서브탭 — 168 cold rows |
 | 199 | `RISK_POLICY_FIELDS` 6 → 22 항목 + `_formatPolicyValue` (pct/seconds/list) + `isPolicyValueOverridden` (배열 비교) | StrategyRisk 탭 BackendPolicyCard — 모든 가드 노출 |
 
-### 검증 (199 머지 직후)
+### 4차 보강 (201-203) — 환경/백테스트/AI 흐름 가시성
 
-- backend pytest **886 passed**, 15 deselected
+| PR | 역할 | 위치 |
+|---|---|---|
+| 201 | `/api/status.safety_flags` 8개 env flag 매트릭스 + `SafetyFlagsCard` 안전·위험 배지 | Settings 탭 상단 — CLAUDE.md "안전 플래그" 표 라이브 스냅샷 |
+| 202 | `BacktestRunsView` row 클릭 expand + `BacktestTradesPanel` (side/qty/entry/exit/pnl) + per-id 캐시 | AuditLog 백테스트 서브탭 — `/api/backtest/runs/{id}` 활용 |
+| 203 | `AI_ONLY_FILTER_STORAGE_KEY` + `audit-ai-only-toggle` (requested_by_ai=true 필터) | AuditLog 이벤트 타임라인 — kind="AI 호출"(분석 로그)과 별개 |
+
+### 검증 (203 머지 직후)
+
+- backend pytest **887 passed**, 15 deselected
 - ruff **All checks passed**
-- frontend npm test **887 passed**, 29 files
+- frontend npm test **903 passed**, 29 files
 - npm run lint **0 errors** / 59 warnings
-- npm run build **369kB → 105kB gzipped**
+- npm run build **376kB → 106kB gzipped**
 
 ### 안전 invariant
 
-187-199는 **모두 read-only 또는 schema-only 보강**이다:
+187-203은 **모두 read-only 또는 schema-only 보강**이다:
 - 새 broker 호출, 새 가드 분기, 새 AI 실행 경로 0건.
 - 새 endpoint는 모두 SELECT만 — DB write 0건.
-- 199는 backend `/api/risk/policy` 응답을 변경하지 않고 frontend 표시만 확장.
+- 199는 `/api/risk/policy` 응답 변경 없이 frontend 표시만 확장.
+- 201은 `/api/status` 응답에 `safety_flags` 블록 추가 (read-only).
+- 202는 기존 `/api/backtest/runs/{id}` 활용 — backend 변경 0.
+- 203은 frontend 필터만 — backend 변경 0.
 - CLAUDE.md 절대 원칙 / RiskManager → PermissionGate → OrderAuditLog
   단일 진입점은 그대로다.
-- 192/197/200은 본 문서 자체 갱신.
+- 192/197/200/204는 본 문서 자체 갱신.
 
 ## 종료 상태
 
 **완료**. 사용자 directive 최종 완성 모드의 모든 항목 이행 + 사후 UI
-surface 보강 (187-199) 완료. 추가 자동 진행 여지는 LIVE 옵트인 또는
+surface 보강 (187-203) 완료. 추가 자동 진행 여지는 LIVE 옵트인 또는
 NICE 영역으로만 남음.
