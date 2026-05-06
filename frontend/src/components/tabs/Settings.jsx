@@ -1,5 +1,47 @@
 import { BROKERS } from "../../config/brokers";
 import { Card, SectionLabel, Btn, Inp } from "../common";
+import { useBackendStatus } from "../../store/useBackendStatus";
+
+
+// 060 (emergency_stop hard-reject) and 061 (LIVE flag gating the queue)
+// made several mode + flag combinations silently reject every order. The
+// operator who sets DEFAULT_MODE=LIVE_MANUAL_APPROVAL but forgets to flip
+// ENABLE_LIVE_TRADING=true sees nothing in the queue and might think the
+// system is broken. This helper detects those combinations so Settings can
+// surface a warning before the operator wonders why nothing is happening.
+const _LIVE_MODES = new Set([
+  "LIVE_MANUAL_APPROVAL", "LIVE_AI_ASSIST", "LIVE_AI_EXECUTION",
+]);
+
+export function computeModeWarning(status) {
+  if (!status) return null;
+  const { default_mode, enable_live_trading } = status;
+  if (_LIVE_MODES.has(default_mode) && !enable_live_trading) {
+    return {
+      title: "현재 모든 주문이 REJECTED됩니다",
+      detail: `DEFAULT_MODE=${default_mode}이지만 ENABLE_LIVE_TRADING=false라서 RiskManager가 큐 자체를 차단합니다. 운영자가 환경변수 ENABLE_LIVE_TRADING=true를 명시적으로 설정해야 합니다.`,
+    };
+  }
+  return null;
+}
+
+
+export function ModeWarningBanner({ warning }) {
+  if (!warning) return null;
+  return (
+    <Card accentColor="#ef444466"
+          style={{ background: "#7f1d1d22" }}>
+      <div data-testid="mode-warning-banner"
+           style={{ fontSize: 12, color: "#fca5a5", fontWeight: 700, marginBottom: 6 }}>
+        ⚠ {warning.title}
+      </div>
+      <div style={{ fontSize: 11, color: "#94a3b8", lineHeight: 1.5 }}>
+        {warning.detail}
+      </div>
+    </Card>
+  );
+}
+
 
 export function Settings({ settings }) {
   const {
@@ -8,9 +50,14 @@ export function Settings({ settings }) {
     switchBroker, switchMode, updateKey, connect,
     operatorName, setOperatorName,
   } = settings;
+  const { status: backendStatus } = useBackendStatus();
+  const modeWarning = computeModeWarning(backendStatus);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+
+      {/* 위험한 mode + flag 조합 경고 — 가장 먼저 노출 */}
+      <ModeWarningBanner warning={modeWarning} />
 
       {/* 거래 모드 */}
       <Card>
