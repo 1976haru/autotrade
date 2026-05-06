@@ -90,6 +90,48 @@ NULL은 AI 외 경로 주문 (수동 / strategy 신호). 사후 분석:
 - AI 신호 강도 → 실제 PnL 상관관계 추적.
 - 거부된 AI 제안의 reason 분포 (RiskManager가 거부한 사유 + AI가 만든 사유).
 
+## 163: AI agent feedback loop
+
+지능형 에이전트의 self-correction. 과거 AI 발신 거래의 PnL을 144 FIFO
+페어매칭으로 산출하고, win_rate에 따라 다음 제안의 confidence를 보정한다.
+
+**산식** (`app/ai/feedback.py::_factor_from_win_rate`):
+
+| win_rate | factor |
+|---|---:|
+| < 0.4 | 0.5 (절반 깎음) |
+| 0.4–0.5 | 0.7 |
+| 0.5–0.6 | 1.0 (변화 없음) |
+| 0.6–0.7 | 1.1 |
+| ≥ 0.7 | 1.2 (boost) |
+
+표본이 `MIN_SAMPLE_TRADES=10` 미만이면 factor=1.0 (보수적 — 적은 표본에 의한 잘못된 보정 방지).
+
+**흐름**:
+```text
+agent.propose_stub(...) → AiProposal {confidence: raw}
+        │
+        ▼ agent.calibrate_with_feedback(proposal, db)
+        │   ├ compute_historical_accuracy(db, strategy)
+        │   │   - requested_by_ai=True + executed=True audit row만
+        │   │   - symbol별 FIFO BUY/SELL 페어매칭 → wins/losses
+        │   │   - lookback_days 기본 30일
+        │   ├ adjust_confidence(raw, factor) → clamped [0, 100]
+        │   └ extra_meta에 raw_confidence/historical_factor/trades/win_rate 보존
+        │
+        ▼ AiProposal {confidence: adjusted, extra_meta: {...}}
+        │
+        ▼ propose_and_route → audit row의 ai_decision_meta에 보정 이력 영구화
+```
+
+**Closed loop**:
+1. 에이전트가 raw confidence 70인 BUY 제안.
+2. 같은 strategy의 historical win_rate가 0.3 → factor 0.5 → adjusted confidence 35.
+3. RiskPolicy.min_ai_confidence=50이면 158 가드가 거부. 운영자에게 audit log surface.
+4. 손실이 누적되면 자동으로 confidence가 낮아져 추가 진입 차단 — 손실 방어 자동화.
+
+**read-only**: `compute_historical_accuracy`는 audit row를 수정 안 함. `adjust_confidence`는 새 proposal 객체 반환 (immutable patten).
+
 ## 162: AI agent self-evaluation stats
 
 운영자가 AI 에이전트의 의사결정 품질을 audit log 기반으로 평가할 수 있는 read-only 분석. 결정/체결에 영향 X.

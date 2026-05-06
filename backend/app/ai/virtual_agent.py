@@ -16,6 +16,10 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.ai.feedback import (
+    adjust_confidence,
+    compute_historical_accuracy,
+)
 from app.brokers.base import BrokerAdapter, OrderRequest, OrderSide, OrderType
 from app.core.modes import OperationMode
 from app.execution.order_router import OrderRoutingResult, route_order
@@ -91,6 +95,43 @@ class VirtualAiAgent:
             quantity=self.default_quantity,
             confidence=confidence,
             reasons=[reason],
+        )
+
+    def calibrate_with_feedback(
+        self,
+        proposal:       AiProposal,
+        db:             Session,
+        *,
+        strategy:       str = "ai_virtual",
+        lookback_days:  int = 30,
+    ) -> AiProposal:
+        """163: historical accuracy로 confidence를 조정한 새 proposal 반환.
+
+        원래 proposal의 confidence는 raw로 메타에 carry, 새 proposal의
+        confidence는 historical factor 적용 후 [0, 100] clamp된 값.
+        호출자가 RiskManager(158 임계 등)에서 새 confidence로 재평가받는다.
+        """
+        accuracy = compute_historical_accuracy(
+            db, strategy=strategy, lookback_days=lookback_days,
+        )
+        adjusted = adjust_confidence(
+            proposal.confidence, accuracy.recommended_confidence_factor,
+        )
+        # raw + factor + accuracy snapshot을 메타에 보존.
+        extra = dict(proposal.extra_meta)
+        extra.update({
+            "raw_confidence":     proposal.confidence,
+            "historical_factor":  accuracy.recommended_confidence_factor,
+            "historical_trades":  accuracy.trades_realized,
+            "historical_win_rate": accuracy.win_rate,
+        })
+        return AiProposal(
+            symbol=proposal.symbol,
+            side=proposal.side,
+            quantity=proposal.quantity,
+            confidence=adjusted,
+            reasons=list(proposal.reasons),
+            extra_meta=extra,
         )
 
     async def propose_and_route(
