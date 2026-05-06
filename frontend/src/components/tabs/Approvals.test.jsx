@@ -6,8 +6,10 @@ import {
   ApproveAttemptFailureBadge,
   Approvals,
   BulkCancelStaleModal,
+  HISTORY_MODE_STORAGE_KEY,
   HISTORY_STATUS_STORAGE_KEY,
   HISTORY_TIME_BUCKET_STORAGE_KEY,
+  HistoryModeFilterBar,
   HistoryRow,
   HistoryStatusFilterBar,
   HistoryTimeBucketBar,
@@ -16,6 +18,7 @@ import {
   formatPendingAge,
   historyEmptyMessage,
   isPendingStale,
+  isValidHistoryMode,
   isValidHistoryStatus,
   isValidHistoryTimeBucket,
 } from "./Approvals";
@@ -541,6 +544,18 @@ describe("historyEmptyMessage", () => {
     expect(historyEmptyMessage([{ id: 1 }], "", "all", undefined))
       .toBe("결정된 항목이 없습니다");
   });
+
+  it("treats mode axis like the others (092)", () => {
+    expect(historyEmptyMessage([{ id: 1 }], "", "all", "all", "LIVE_MANUAL_APPROVAL"))
+      .toBe("해당 조건의 항목이 없습니다");
+    expect(historyEmptyMessage([{ id: 1 }], "", "all", "all", "all"))
+      .toBe("결정된 항목이 없습니다");
+  });
+
+  it("undefined mode arg falls back to 'no mode filter' (back-compat)", () => {
+    expect(historyEmptyMessage([{ id: 1 }], "", "all", "all", undefined))
+      .toBe("결정된 항목이 없습니다");
+  });
 });
 
 
@@ -787,6 +802,142 @@ describe("<Approvals> 처리 내역 time-bucket filter", () => {
     const approvals = _makeApprovals({ history: [_h()] });
     const { getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
     expect(getByRole("radio", { name: "전 기간" }).getAttribute("aria-checked")).toBe("true");
+  });
+});
+
+
+describe("isValidHistoryMode (092)", () => {
+  it("accepts the three canonical ids", () => {
+    expect(isValidHistoryMode("all")).toBe(true);
+    expect(isValidHistoryMode("LIVE_MANUAL_APPROVAL")).toBe(true);
+    expect(isValidHistoryMode("LIVE_AI_ASSIST")).toBe(true);
+  });
+
+  it("rejects modes that don't appear in the queue (forward-compat)", () => {
+    // RiskManager only emits NEEDS_APPROVAL for the two modes above —
+    // SIMULATION/PAPER/LIVE_SHADOW/LIVE_AI_EXECUTION never queue rows.
+    expect(isValidHistoryMode("SIMULATION")).toBe(false);
+    expect(isValidHistoryMode("LIVE_SHADOW")).toBe(false);
+    expect(isValidHistoryMode("LIVE_AI_EXECUTION")).toBe(false);
+    expect(isValidHistoryMode("garbage")).toBe(false);
+    expect(isValidHistoryMode("")).toBe(false);
+  });
+});
+
+
+describe("<HistoryModeFilterBar> (092)", () => {
+  afterEach(cleanup);
+
+  it("renders three chips with the expected labels", () => {
+    const { getByRole } = render(<HistoryModeFilterBar active="all" onChange={() => {}} />);
+    expect(getByRole("radiogroup", { name: "처리 내역 모드 필터" })).toBeTruthy();
+    expect(getByRole("radio", { name: "모든 모드" })).toBeTruthy();
+    expect(getByRole("radio", { name: "수동" })).toBeTruthy();
+    expect(getByRole("radio", { name: "AI 보조" })).toBeTruthy();
+  });
+
+  it("calls onChange with the chip's mode id", () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(<HistoryModeFilterBar active="all" onChange={onChange} />);
+    fireEvent.click(getByRole("radio", { name: "수동" }));
+    expect(onChange).toHaveBeenCalledWith("LIVE_MANUAL_APPROVAL");
+    fireEvent.click(getByRole("radio", { name: "AI 보조" }));
+    expect(onChange).toHaveBeenLastCalledWith("LIVE_AI_ASSIST");
+  });
+});
+
+
+describe("<Approvals> 처리 내역 mode filter (092)", () => {
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _h(overrides = {}) {
+    return {
+      id: 1, symbol: "X", side: "BUY", quantity: 1, order_type: "MARKET",
+      limit_price: null, status: "APPROVED", mode: "LIVE_MANUAL_APPROVAL",
+      decided_at: "2026-05-06T12:00:00+00:00", decided_by: "u", note: "",
+      created_at: "2026-05-06T11:55:00+00:00", audit_id: 1,
+      ...overrides,
+    };
+  }
+
+  it("default '모든 모드' shows manual + AI rows together", () => {
+    const approvals = _makeApprovals({
+      history: [
+        _h({ id: 1, symbol: "AAA", mode: "LIVE_MANUAL_APPROVAL" }),
+        _h({ id: 2, symbol: "BBB", mode: "LIVE_AI_ASSIST" }),
+      ],
+    });
+    const { container } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(container.textContent).toContain("AAA");
+    expect(container.textContent).toContain("BBB");
+  });
+
+  it("clicking 수동 narrows to LIVE_MANUAL_APPROVAL rows only", () => {
+    const approvals = _makeApprovals({
+      history: [
+        _h({ id: 1, symbol: "AAA", mode: "LIVE_MANUAL_APPROVAL" }),
+        _h({ id: 2, symbol: "BBB", mode: "LIVE_AI_ASSIST" }),
+      ],
+    });
+    const { container, getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.click(getByRole("radio", { name: "수동" }));
+    expect(container.textContent).toContain("AAA");
+    expect(container.textContent).not.toContain("BBB");
+  });
+
+  it("clicking AI 보조 narrows to LIVE_AI_ASSIST rows only", () => {
+    const approvals = _makeApprovals({
+      history: [
+        _h({ id: 1, symbol: "AAA", mode: "LIVE_MANUAL_APPROVAL" }),
+        _h({ id: 2, symbol: "BBB", mode: "LIVE_AI_ASSIST" }),
+      ],
+    });
+    const { container, getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.click(getByRole("radio", { name: "AI 보조" }));
+    expect(container.textContent).not.toContain("AAA");
+    expect(container.textContent).toContain("BBB");
+  });
+
+  it("composes with status filter (수동 × 거부)", () => {
+    const approvals = _makeApprovals({
+      history: [
+        _h({ id: 1, symbol: "AAA", mode: "LIVE_MANUAL_APPROVAL", status: "REJECTED" }),
+        _h({ id: 2, symbol: "BBB", mode: "LIVE_AI_ASSIST",       status: "REJECTED" }),
+        _h({ id: 3, symbol: "CCC", mode: "LIVE_MANUAL_APPROVAL", status: "APPROVED" }),
+      ],
+    });
+    const { container, getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.click(getByRole("radio", { name: "수동" }));
+    fireEvent.click(getByRole("radio", { name: "거부" }));
+    expect(container.textContent).toContain("AAA");        // 수동 + 거부
+    expect(container.textContent).not.toContain("BBB");    // AI 보조 + 거부
+    expect(container.textContent).not.toContain("CCC");    // 수동 + 승인
+  });
+
+  it("shows the filter-narrowed empty message when mode eliminates everything", () => {
+    const approvals = _makeApprovals({
+      history: [_h({ id: 1, symbol: "AAA", mode: "LIVE_MANUAL_APPROVAL" })],
+    });
+    const { getByText, getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.click(getByRole("radio", { name: "AI 보조" }));
+    expect(getByText("해당 조건의 항목이 없습니다")).toBeTruthy();
+  });
+
+  it("persists selection to localStorage", () => {
+    const approvals = _makeApprovals({ history: [_h()] });
+    const { getByRole, unmount } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.click(getByRole("radio", { name: "AI 보조" }));
+    expect(localStorage.getItem(HISTORY_MODE_STORAGE_KEY)).toBe("LIVE_AI_ASSIST");
+    unmount();
+    const { getByRole: g2 } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(g2("radio", { name: "AI 보조" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("falls back to 모든 모드 when stored value is unknown", () => {
+    localStorage.setItem(HISTORY_MODE_STORAGE_KEY, "SIMULATION");
+    const approvals = _makeApprovals({ history: [_h()] });
+    const { getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(getByRole("radio", { name: "모든 모드" }).getAttribute("aria-checked")).toBe("true");
   });
 });
 

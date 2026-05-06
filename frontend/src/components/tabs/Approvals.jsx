@@ -277,16 +277,44 @@ export function HistoryTimeBucketBar({ active, onChange }) {
 }
 
 
-// 082+083+086: 처리 내역에서 세 축(종목/상태/시간) 필터를 조합. 081 audit
-// empty-state 패턴과 같은 구조 — 칩/입력이 활성 필터의 진실 소스이고 메시지는
-// 단순히 "필터 때문임"만 신호한다. timeBucket이 undefined면 정적 default ("all")로
-// 취급해 기존 호출자가 4번째 인자 없이 작동.
-export function historyEmptyMessage(history, symbolNeedle, statusFilter, timeBucket) {
+// 092: mode filter on the 처리 내역 list. RiskManager only emits NEEDS_APPROVAL
+// for LIVE_MANUAL_APPROVAL + LIVE_AI_ASSIST (risk_manager.py:118), so those
+// are the two real-world modes that produce queue rows. The 3rd chip lets
+// operators compare manual-vs-AI approval volumes — the original motivation
+// for 092. Persisted alongside 083 status / 086 time since investigation
+// sessions tend to lock onto one stream ("이번 주 AI 흐름만").
+// "전체"는 083 status 칩이 이미 쓰는 라벨이라 같은 카드 안에서 getByRole
+// 충돌이 생긴다 — "모든 모드"로 구분.
+const HISTORY_MODE_FILTERS = [
+  { id: "all",                   label: "모든 모드", color: "#7dd3fc" },
+  { id: "LIVE_MANUAL_APPROVAL",  label: "수동",      color: "#22c55e" },
+  { id: "LIVE_AI_ASSIST",        label: "AI 보조",   color: "#a78bfa" },
+];
+
+export const HISTORY_MODE_STORAGE_KEY = "autotrade.approvalsHistoryModeFilter";
+const _VALID_HISTORY_MODES = new Set(HISTORY_MODE_FILTERS.map((f) => f.id));
+export const isValidHistoryMode = (v) => _VALID_HISTORY_MODES.has(v);
+
+
+export function HistoryModeFilterBar({ active, onChange }) {
+  return (
+    <ChipFilterBar items={HISTORY_MODE_FILTERS} active={active}
+      onChange={onChange} ariaLabel="처리 내역 모드 필터" />
+  );
+}
+
+
+// 082+083+086+092: 처리 내역에서 네 축(종목/상태/시간/모드) 필터를 조합.
+// 081 audit empty-state 패턴과 같은 구조 — 칩/입력이 활성 필터의 진실 소스이고
+// 메시지는 단순히 "필터 때문임"만 신호한다. timeBucket/modeFilter가 undefined면
+// 정적 default ("all")로 취급해 기존 호출자가 추가 인자 없이 작동.
+export function historyEmptyMessage(history, symbolNeedle, statusFilter, timeBucket, modeFilter) {
   if (!history || history.length === 0) return "결정된 항목이 없습니다";
   const hasFilter =
     (symbolNeedle && symbolNeedle.length > 0)
     || (statusFilter && statusFilter !== "all")
-    || (timeBucket && timeBucket !== "all");
+    || (timeBucket && timeBucket !== "all")
+    || (modeFilter && modeFilter !== "all");
   return hasFilter ? "해당 조건의 항목이 없습니다" : "결정된 항목이 없습니다";
 }
 
@@ -356,11 +384,16 @@ export function Approvals({ approvals, operatorName = "" }) {
     if (!a.decided_at) return false;  // defensive — decided rows always have it
     return _now - new Date(a.decided_at).getTime() < _historyBucketWindowMs;
   };
+  // 092: persisted mode filter — separates manual vs AI approval streams.
+  const [historyModeFilter, setHistoryModeFilter] = usePersistedState(
+    HISTORY_MODE_STORAGE_KEY, "all", isValidHistoryMode,
+  );
 
   const filteredHistory = history
     .filter((a) => historyStatusFilter === "all" || a.status === historyStatusFilter)
     .filter((a) => !_historyNeedle || a.symbol.toLowerCase().includes(_historyNeedle))
-    .filter(_withinHistoryBucket);
+    .filter(_withinHistoryBucket)
+    .filter((a) => historyModeFilter === "all" || a.mode === historyModeFilter);
 
   const dispatchByAction = { approve, reject, cancel };
 
@@ -471,9 +504,16 @@ export function Approvals({ approvals, operatorName = "" }) {
             onChange={setHistoryTimeBucket}
           />
         </div>
+        <div style={{ marginBottom: 8 }}>
+          <HistoryModeFilterBar
+            active={historyModeFilter}
+            onChange={setHistoryModeFilter}
+          />
+        </div>
         {filteredHistory.length === 0 ? (
           <div style={{ color: "#1e3a5c", fontSize: 12, textAlign: "center", padding: 16 }}>
-            {historyEmptyMessage(history, _historyNeedle, historyStatusFilter, historyTimeBucket)}
+            {historyEmptyMessage(history, _historyNeedle, historyStatusFilter,
+              historyTimeBucket, historyModeFilter)}
           </div>
         ) : filteredHistory.map((a) => <HistoryRow key={a.id} a={a} />)}
         <div style={{ marginTop: 8, textAlign: "center" }}>
