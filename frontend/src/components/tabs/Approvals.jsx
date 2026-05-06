@@ -81,10 +81,19 @@ export function ReasonsLine({ reasons }) {
 }
 
 
-export function HistoryRow({ a }) {
+export function HistoryRow({ a, focused = false, onClick }) {
   const color = STATUS_COLOR[a.status] || "#475569";
   return (
-    <div style={{ padding: "8px 0", borderBottom: "1px solid #05121f" }}>
+    <div
+      data-testid={`approval-history-row-${a.id}`}
+      data-focused={focused ? "true" : "false"}
+      onClick={onClick}
+      style={{
+        padding: "8px 0 8px 8px", borderBottom: "1px solid #05121f",
+        borderLeft: focused ? "3px solid #7dd3fc" : "3px solid transparent",
+        background: focused ? "#7dd3fc0a" : "transparent",
+        cursor: onClick ? "pointer" : "default",
+      }}>
       <div style={{ display: "flex", justifyContent: "space-between",
                      alignItems: "baseline", marginBottom: 4 }}>
         <div>
@@ -473,6 +482,11 @@ export function Approvals({ approvals, operatorName = "" }) {
   // 줄이는 게 목표. -1은 "선택 없음" — 페이지 마운트 직후나 모든 PENDING이
   // 해소된 직후의 자연스러운 상태.
   const [focusedIndex, setFocusedIndex] = useState(-1);
+  // 107: 처리 내역에도 별도 focus index. j/k vi-style — ↑↓는 PENDING 큐 nav를
+  // 위해 예약돼 있고, history는 read-only 검토 흐름이라 같은 hotkey가 아니어도
+  // 충분. j/k는 한국어 자판에선 ㅓ/ㅏ에 매핑되지만 shouldHandleApprovalsHotkey가
+  // input/IME에서 skip하니 안전.
+  const [historyFocusedIndex, setHistoryFocusedIndex] = useState(-1);
 
   // pending 폴링이 행을 추가/제거하면 인덱스가 invalid 될 수 있다 — clamp.
   useEffect(() => {
@@ -485,6 +499,17 @@ export function Approvals({ approvals, operatorName = "" }) {
     }
   }, [pending.length, focusedIndex]);
 
+  // 107: filteredHistory가 줄어들면 historyFocusedIndex clamp.
+  useEffect(() => {
+    if (filteredHistory.length === 0) {
+      if (historyFocusedIndex !== -1) setHistoryFocusedIndex(-1);
+      return;
+    }
+    if (historyFocusedIndex >= filteredHistory.length) {
+      setHistoryFocusedIndex(filteredHistory.length - 1);
+    }
+  }, [filteredHistory.length, historyFocusedIndex]);
+
   useEffect(() => {
     const handler = (event) => {
       // 텍스트 입력 또는 IME 조합 중이면 모든 hotkey 무시.
@@ -495,29 +520,46 @@ export function Approvals({ approvals, operatorName = "" }) {
       // 결재 액션 진행 중에는 hotkey도 disabled — DecisionDialog의 busy
       // 가드와 같은 규칙.
       if (busy) return;
-      if (pending.length === 0) return;
 
       const key = event.key.toLowerCase();
+      // PENDING 큐 nav (103) — ↑↓ + a/r/c.
       if (event.key === "ArrowDown") {
+        if (pending.length === 0) return;
         event.preventDefault();
         setFocusedIndex((i) => {
           if (i < 0) return 0;
           return Math.min(pending.length - 1, i + 1);
         });
       } else if (event.key === "ArrowUp") {
+        if (pending.length === 0) return;
         event.preventDefault();
         setFocusedIndex((i) => Math.max(0, i - 1));
       } else if (key === "a" || key === "r" || key === "c") {
+        if (pending.length === 0) return;
         // focus가 없으면 무시 — 잘못된 행에 액션 fire되는 사고를 막는다.
         if (focusedIndex < 0 || focusedIndex >= pending.length) return;
         event.preventDefault();
         const action = key === "a" ? "approve" : key === "r" ? "reject" : "cancel";
         setDecisionTarget({ action, approval: pending[focusedIndex] });
+      } else if (key === "j") {
+        // 107: 처리 내역 다음 행. PENDING과 별도 focus.
+        if (filteredHistory.length === 0) return;
+        event.preventDefault();
+        setHistoryFocusedIndex((i) => {
+          if (i < 0) return 0;
+          return Math.min(filteredHistory.length - 1, i + 1);
+        });
+      } else if (key === "k") {
+        // 107: 처리 내역 이전 행.
+        if (filteredHistory.length === 0) return;
+        event.preventDefault();
+        setHistoryFocusedIndex((i) => Math.max(0, i - 1));
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [pending, focusedIndex, decisionTarget, bulkOpen, busy]);
+  }, [pending, focusedIndex, filteredHistory, historyFocusedIndex,
+       decisionTarget, bulkOpen, busy]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -648,12 +690,26 @@ export function Approvals({ approvals, operatorName = "" }) {
           />
         </div>
         <HistoryDecisionTimeSummary items={filteredHistory} />
+        {filteredHistory.length > 0 && (
+          <div data-testid="approvals-history-keyboard-hint"
+               style={{ fontSize: 9, color: "#475569", marginBottom: 6, padding: "0 2px" }}>
+            <span style={{ color: "#a78bfa" }}>j</span>/
+            <span style={{ color: "#a78bfa" }}>k</span> 처리 내역 행 이동
+          </div>
+        )}
         {filteredHistory.length === 0 ? (
           <div style={{ color: "#1e3a5c", fontSize: 12, textAlign: "center", padding: 16 }}>
             {historyEmptyMessage(history, _historyNeedle, historyStatusFilter,
               historyTimeBucket, historyModeFilter)}
           </div>
-        ) : filteredHistory.map((a) => <HistoryRow key={a.id} a={a} />)}
+        ) : filteredHistory.map((a, idx) => (
+          <HistoryRow
+            key={a.id}
+            a={a}
+            focused={idx === historyFocusedIndex}
+            onClick={() => setHistoryFocusedIndex(idx)}
+          />
+        ))}
         <div style={{ marginTop: 8, textAlign: "center" }}>
           {historyHasMore ? (
             <Btn
