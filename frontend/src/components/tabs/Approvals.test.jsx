@@ -367,6 +367,33 @@ describe("<BulkCancelStaleModal>", () => {
     expect(getByText("닫기").disabled).toBe(true);
     expect(getByText(/처리 중/).disabled).toBe(true);
   });
+
+  // 096: 095에서 DecisionDialog primitive에 추가한 IME 가드는 BulkCancelStaleModal
+  // 같은 thin wrapper를 통해서도 작동해야 한다. wrapper가 미래에 자체 keydown
+  // handler를 덮어쓰는 방식으로 바뀌면 한국어 운영자가 일괄 취소 사유 입력 중
+  // 한글 자모 확정 Enter로 N건이 일괄 취소되는 사고가 다시 가능해진다 — 이 회귀
+  // 테스트가 catch.
+  it("ignores Enter while IME is composing (095 guard reaches the wrapper)", () => {
+    const onConfirm = vi.fn();
+    render(
+      <BulkCancelStaleModal
+        approvals={[_staleApproval()]} busy={false}
+        onConfirm={onConfirm} onCancel={() => {}} />,
+    );
+    fireEvent.keyDown(window, { key: "Enter", isComposing: true });
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("ignores Enter when keyCode 229 (legacy IME signal)", () => {
+    const onConfirm = vi.fn();
+    render(
+      <BulkCancelStaleModal
+        approvals={[_staleApproval()]} busy={false}
+        onConfirm={onConfirm} onCancel={() => {}} />,
+    );
+    fireEvent.keyDown(window, { key: "Enter", keyCode: 229 });
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
 });
 
 
@@ -1203,6 +1230,30 @@ describe("<ApprovalDecisionModal>", () => {
     expect(onCancel).not.toHaveBeenCalled();
     expect(onConfirm).not.toHaveBeenCalled();
   });
+
+  // 096: per-row 결재 모달도 같은 IME 가드를 보존해야 한다. 한국어 운영자가
+  // 사유 입력 중 한글 자모 확정 Enter로 잘못 승인/거부/취소되는 사고를 막는다.
+  it("ignores Enter while IME is composing (095 guard reaches the wrapper)", () => {
+    const onConfirm = vi.fn();
+    render(
+      <ApprovalDecisionModal
+        action="approve" approval={_PENDING} busy={false}
+        onConfirm={onConfirm} onCancel={() => {}} />,
+    );
+    fireEvent.keyDown(window, { key: "Enter", isComposing: true });
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("ignores Enter when keyCode 229 (legacy IME signal)", () => {
+    const onConfirm = vi.fn();
+    render(
+      <ApprovalDecisionModal
+        action="reject" approval={_PENDING} busy={false}
+        onConfirm={onConfirm} onCancel={() => {}} />,
+    );
+    fireEvent.keyDown(window, { key: "Enter", keyCode: 229 });
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
 });
 
 
@@ -1296,5 +1347,20 @@ describe("<Approvals> button → modal flow", () => {
     fireEvent.click(dialog.getByText("닫기"));
     expect(queryByRole("dialog")).toBeNull();
     expect(approvals.approve).not.toHaveBeenCalled();
+  });
+
+  // 096: 095 IME 가드가 button → dialog → keyDown 전체 흐름에서 살아 있는지
+  // end-to-end 검증. Korean 운영자가 사유 typing 중 한글 자모 확정 Enter로
+  // approve()가 우연히 발사되는 회귀를 catch.
+  it("dialog Enter is ignored while IME is composing (full button → modal flow)", () => {
+    const { getByText, getByRole, queryByRole } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    fireEvent.click(getByText(/✓ 승인/));
+    expect(queryByRole("dialog")).not.toBeNull();
+    fireEvent.keyDown(window, { key: "Enter", isComposing: true });
+    expect(approvals.approve).not.toHaveBeenCalled();
+    // Dialog should still be open (Enter was a no-op)
+    expect(queryByRole("dialog")).not.toBeNull();
   });
 });
