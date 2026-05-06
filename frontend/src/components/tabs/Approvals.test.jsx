@@ -100,11 +100,15 @@ describe("<HistoryRow>", () => {
     expect(getByText("CANCELLED").style.color).toBe("rgb(148, 163, 184)"); // #94a3b8
   });
 
-  it("includes decided_by, mode, and note in the secondary line", () => {
-    const { container } = render(
+  it("includes decided_by, mode badge, and note in the secondary line", () => {
+    const { container, getByTestId } = render(
       <HistoryRow a={_row({ note: "stale signal", decided_by: "trader1" })} />,
     );
-    expect(container.textContent).toContain("LIVE_MANUAL_APPROVAL");
+    // 113: mode is now rendered through ModeBadge with the short label "MANUAL"
+    // — the raw enum string is no longer in the DOM.
+    const badge = getByTestId("mode-badge");
+    expect(badge.textContent).toBe("MANUAL");
+    expect(badge.dataset.mode).toBe("LIVE_MANUAL_APPROVAL");
     expect(container.textContent).toContain("by trader1");
     expect(container.textContent).toContain("stale signal");
   });
@@ -1917,6 +1921,75 @@ describe("<Approvals> history keyboard navigation (107)", () => {
     rerender(<Approvals approvals={shrunk} operatorName="" />);
     expect(queryByTestId("approval-history-row-3")).toBeNull();
     expect(getByTestId("approval-history-row-1").dataset.focused).toBe("true");
+  });
+});
+
+
+describe("<Approvals> mode badge integration (113)", () => {
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _h(overrides = {}) {
+    return {
+      id: 1, symbol: "005930", side: "BUY", quantity: 1, order_type: "MARKET",
+      limit_price: null, status: "APPROVED", mode: "LIVE_MANUAL_APPROVAL",
+      created_at: "2026-05-06T11:55:00+00:00",
+      decided_at: "2026-05-06T12:00:00+00:00",
+      decided_by: "u", note: "", audit_id: 1,
+      ...overrides,
+    };
+  }
+
+  function _p(overrides = {}) {
+    return {
+      id: 99, symbol: "005930", side: "BUY", quantity: 1,
+      order_type: "MARKET", limit_price: null,
+      mode: "LIVE_AI_ASSIST",
+      created_at: "2026-05-06T11:55:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("PENDING row renders ModeBadge with the short label", () => {
+    const approvals = _makeApprovals({
+      pending: [_p({ id: 1, mode: "LIVE_AI_ASSIST" })],
+    });
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    const badges = document.querySelectorAll('[data-testid="mode-badge"]');
+    // 1 badge from PENDING row (history is empty)
+    expect(badges).toHaveLength(1);
+    expect(badges[0].textContent).toBe("AI 보조");
+  });
+
+  it("HistoryRow renders ModeBadge with the short label", () => {
+    const approvals = _makeApprovals({
+      history: [_h({ id: 1, mode: "PAPER" })],
+    });
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    const badges = document.querySelectorAll('[data-testid="mode-badge"]');
+    expect(badges).toHaveLength(1);
+    expect(badges[0].textContent).toBe("PAPER");
+  });
+
+  it("the raw enum text is no longer in the DOM (replaced by badge label)", () => {
+    const approvals = _makeApprovals({
+      pending: [_p({ id: 1, mode: "LIVE_MANUAL_APPROVAL" })],
+      history: [_h({ id: 2, mode: "LIVE_AI_ASSIST" })],
+    });
+    const { container } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(container.textContent).not.toContain("LIVE_MANUAL_APPROVAL");
+    expect(container.textContent).not.toContain("LIVE_AI_ASSIST");
+    expect(container.textContent).toContain("MANUAL");
+    expect(container.textContent).toContain("AI 보조");
+  });
+
+  it("falls back to raw id for unknown modes (forward-compat)", () => {
+    const approvals = _makeApprovals({
+      pending: [_p({ id: 1, mode: "FUTURES_SIMULATION" })],
+    });
+    const { container } = render(<Approvals approvals={approvals} operatorName="" />);
+    const badge = container.querySelector('[data-testid="mode-badge"]');
+    expect(badge.textContent).toBe("FUTURES_SIMULATION");
+    expect(badge.dataset.mode).toBe("FUTURES_SIMULATION");
   });
 });
 
