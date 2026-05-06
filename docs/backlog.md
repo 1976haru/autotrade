@@ -36,8 +36,8 @@
 ### ~~9. 봉 데이터 stale detection~~ ✅ 171에서 해결
 - 171 진행: `app/market/staleness.py` 신설. `latest_bar_fetched_at(db, symbol, interval)` / `is_bar_cache_stale(db, *, symbol, interval, max_age_seconds, now)` / `stale_symbols(db, interval, max_age_seconds)` 3개 헬퍼. 운영자 / route_order가 호출 결정. SQLite naive datetime은 UTC 가정. backend +11 테스트.
 
-### 10. Position close → SELL order auto-route
-- `compute_open_positions` + `evaluate_close`가 `should_close=True`를 반환했을 때 자동으로 SELL 주문을 만드는 흐름. 현재는 read-only 분석만.
+### ~~10. Position close → SELL order auto-route~~ ✅ 172에서 해결
+- 172 진행: `app/virtual/auto_close.py::auto_close_position(pos, evaluation, *, mode, broker, risk, db, client_order_id)` — should_close=True PositionSummary를 SELL OrderRequest로 변환 후 `route_order(requested_by_ai=False)`. CloseEvaluation.reason → trade_reason carry (stop_loss/take_profit/time_exit/auto_close). 가드 우회 0 — emergency_stop / LIVE_MANUAL 큐 / RiskManager 모두 적용. backend +10 테스트.
 
 ## Low — UI / 분석
 
