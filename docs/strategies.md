@@ -32,35 +32,44 @@
 | 권장 리스크 | 자본 5% 노출 / 진입가 -2% 손절 / 동시 1종목 |
 | 파라미터 | `short=5`, `long=20` |
 
-### 2. `orb_vwap` — Opening Range Breakout + VWAP
+### 2. `orb_vwap` — Opening Range Breakout + 세션 VWAP
 
 | 필드 | 값 |
 |---|---|
 | 클래스 | `OrbVwapStrategy` |
-| 상태 | 🔧 stub (on_bar = HOLD, TODO 표시) |
-| 진입 | 오프닝 ORB 윈도우(기본 30분) 형성 후, 마감이 ORB 상단 돌파 + VWAP 위 |
-| 청산 | 익일 종가 / ORB 중간선 회귀 / VWAP 하향 이탈 중 가장 빠른 시점 |
-| 무효화 | VWAP 하향 이탈 후 5분 내 회복 실패, ORB 하단 재진입 |
+| 상태 | ✅ 구현 완료 (142) |
+| 진입 | 당일 첫 N봉으로 형성된 ORB 상단을 돌파 + 동시에 세션 VWAP 위에서 마감하는 첫 봉 |
+| 청산 | VWAP 하향 이탈 또는 ORB 하단 재진입에서 SELL (세션 종료 시 운영자 청산 권장) |
+| 무효화 | VWAP 하향 이탈이 5봉 이상 회복 실패하거나 ORB 하단 재진입 후 추세 무효화 |
 | 시장 체제 | `trending_up` |
 | 권장 리스크 | 자본 5% / -1.5% 손절 / 동시 2종목 |
-| 파라미터 | `orb_minutes=30`, `vwap_window=60` |
+| 파라미터 | `orb_bars=6` (기본 — 5분봉 6개 ≈ 30분 ORB) |
 
-> ⚠️ 현재 stub. 실제 ORB/VWAP 계산 + 돌파 판정은 미구현 — `on_bar`는 항상 HOLD를 반환하여 자동매매 안전성에 영향 없음. 별도 PR에서 구현 예정 (`TODO(131-followup)` 주석 참조).
+**구현 노트:**
+- ORB는 *bar count* 단위로 받는다 — `Strategy.on_bar(bars)` 인터페이스가 봉 단위라 분 단위는 봉 간격을 가정해야 한다. 운영자가 데이터 봉 간격을 알고 직접 환산해서 넘긴다.
+- VWAP은 *세션 누적* (typical price = (h+l+c)/3, 거래량 가중) — 거래일이 바뀌면 reset.
+- 거래일은 `bar.timestamp.date()`로 구분 (timezone-aware/naive 모두 동작).
+- 일중 진입 신호는 한 번만 — 같은 날 두 번째 cross-up은 발화하지 않는다.
+- 거래량 0 세션은 VWAP 정의 불가 → 안전 측 HOLD.
 
 ### 3. `rsi_reversion` — RSI 평균회귀
 
 | 필드 | 값 |
 |---|---|
 | 클래스 | `RsiReversionStrategy` |
-| 상태 | 🔧 stub (on_bar = HOLD, TODO 표시) |
-| 진입 | RSI(14)가 oversold(≤30) → 임계 위로 회복하는 첫 봉에서 BUY |
-| 청산 | RSI 50 회복 또는 overbought(≥70)에서 임계 아래로 하락 |
+| 상태 | ✅ 구현 완료 (142) |
+| 진입 | RSI(14)가 oversold(≤30) 영역에서 임계 위로 회복되는 첫 봉에서 BUY |
+| 청산 | RSI가 overbought(≥70)에서 임계 아래로 하락하는 첫 봉에서 SELL |
 | 무효화 | 강한 추세 형성으로 RSI가 임계 영역을 5봉 이상 유지 (mean-reversion 가설 깨짐) |
 | 시장 체제 | `ranging` |
 | 권장 리스크 | 자본 3% / -2% 손절 / 동시 2종목 (추세장 휘말림 보수적) |
 | 파라미터 | `period=14`, `oversold=30`, `overbought=70` |
 
-> ⚠️ 현재 stub. 실제 RSI 계산은 미구현 — `on_bar`는 항상 HOLD. 별도 PR에서 구현 예정.
+**구현 노트:**
+- RSI는 표준 정의 — 직전 `period`개 봉의 평균 상승폭 / 평균 하락폭. Wilder의 지수 평활화 대신 단순 평균을 사용 (결정적이고 테스트 가능).
+- avg_loss = 0이면 RSI = 100 (overbought 진입). 그 상태에서 하락이 시작돼야 SELL이 나온다.
+- 첫 RSI 산출에 `period + 1`개의 봉이 필요 — 그 전까지는 HOLD.
+- cross-back 감지 (직전 RSI ≤ oversold AND 현재 RSI > oversold → BUY) — `_prev_rsi`로 상태 추적.
 
 ---
 
