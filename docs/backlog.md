@@ -33,8 +33,8 @@
 ### ~~8. Strategy contract validation~~ ✅ 170에서 해결
 - 170 진행: `build_strategy()` 기본 enforce_contract=True. base.py default(빈 entry/exit/invalidation, "any" regime, 빈 risk_profile)면 `StrategyContractError`. 백테스트 / 검증 흐름은 `enforce_contract=False` 명시로 우회. `validate_strategy_contract(cls)` 헬퍼 별도 호출 가능. backend +8 테스트.
 
-### 9. 봉 데이터 stale detection (broker가 아닌 데이터 피드)
-- 143은 broker quote timestamp 기반. yfinance / KIS bar cache의 `MarketBar.fetched_at`이 오래됐을 때도 별도 가드.
+### ~~9. 봉 데이터 stale detection~~ ✅ 171에서 해결
+- 171 진행: `app/market/staleness.py` 신설. `latest_bar_fetched_at(db, symbol, interval)` / `is_bar_cache_stale(db, *, symbol, interval, max_age_seconds, now)` / `stale_symbols(db, interval, max_age_seconds)` 3개 헬퍼. 운영자 / route_order가 호출 결정. SQLite naive datetime은 UTC 가정. backend +11 테스트.
 
 ### 10. Position close → SELL order auto-route
 - `compute_open_positions` + `evaluate_close`가 `should_close=True`를 반환했을 때 자동으로 SELL 주문을 만드는 흐름. 현재는 read-only 분석만.
