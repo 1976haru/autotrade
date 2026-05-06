@@ -173,6 +173,16 @@ class ScoreboardEntry(BaseModel):
     live_wins:     int
     live_losses:   int
     live_win_rate: float
+    # 147: extended metrics — backtest trades_json + audit decision 분포 기반.
+    expectancy:            float
+    profit_factor:         float | None  # gross_loss=0이면 None (∞ 회피)
+    avg_hold_time_seconds: float
+    max_consecutive_loss:  int
+    approved_orders:       int
+    rejected_orders:       int
+    pending_orders:        int
+    approval_rate:         float
+    rejection_rate:        float
 
 
 @router.get("/scoreboard", response_model=list[ScoreboardEntry])

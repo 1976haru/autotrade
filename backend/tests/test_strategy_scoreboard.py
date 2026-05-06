@@ -1,6 +1,6 @@
 """Strategy scoreboard tests (137, 144, MUST)."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine
@@ -389,3 +389,206 @@ def test_scoreboard_endpoint_surface_live_fields(client):
     assert row["live_trades"] == 1
     assert row["live_pnl"]    == 25
     assert row["live_wins"]   == 1
+
+
+# ---------- 147: extended metrics (expectancy / PF / hold time / consec loss / approval rate) ----------
+
+def _trade(entry_ts: datetime, hold_minutes: int, pnl: int) -> dict:
+    """trades_json 형식 한 거래. backtest API의 _trade_to_dict와 동일한 shape."""
+    exit_ts = entry_ts + timedelta(minutes=hold_minutes)
+    return {
+        "symbol":      "005930",
+        "entry_ts":    entry_ts.isoformat(),
+        "entry_price": 100,
+        "exit_ts":     exit_ts.isoformat(),
+        "exit_price":  100 + pnl,
+        "quantity":    1,
+        "pnl":         pnl,
+    }
+
+
+def _run_with_trades(strategy: str, trades: list[dict]) -> BacktestRun:
+    """trades_json을 가진 BacktestRun. wins/losses/total_pnl이 trades와 일치하도록."""
+    total = sum(t["pnl"] for t in trades)
+    wins  = sum(1 for t in trades if t["pnl"] > 0)
+    losses = len(trades) - wins
+    return BacktestRun(
+        created_at=datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc),
+        strategy=strategy,
+        params={}, initial_cash=10_000_000, quantity=1, bars_processed=100,
+        final_cash=10_000_000 + total, total_pnl=total,
+        win_count=wins, loss_count=losses, max_drawdown=0,
+        data_source="bars", data_symbol="005930",
+        trades_json=trades,
+    )
+
+
+def test_scoreboard_profit_factor_computed_from_gross_win_over_gross_loss():
+    Session = _make_session()
+    with Session() as db:
+        db.add(_run_with_trades("a", [
+            _trade(datetime(2026, 5, 1, 9, 0, tzinfo=timezone.utc), 10, +200),
+            _trade(datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc), 10, -100),
+        ]))
+        db.commit()
+        sb = compute_strategy_scoreboard(db)
+    assert sb[0]["profit_factor"] == 2.0
+
+
+def test_scoreboard_profit_factor_none_when_no_losses():
+    Session = _make_session()
+    with Session() as db:
+        db.add(_run_with_trades("a", [
+            _trade(datetime(2026, 5, 1, 9, 0, tzinfo=timezone.utc), 10, +200),
+        ]))
+        db.commit()
+        sb = compute_strategy_scoreboard(db)
+    # gross_loss=0 → +inf 회피 위해 None.
+    assert sb[0]["profit_factor"] is None
+
+
+def test_scoreboard_expectancy_per_trade():
+    """expectancy = (gross_win - gross_loss) / num_trades."""
+    Session = _make_session()
+    with Session() as db:
+        db.add(_run_with_trades("a", [
+            _trade(datetime(2026, 5, 1, 9, 0, tzinfo=timezone.utc), 10, +300),
+            _trade(datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc), 10, -100),
+            _trade(datetime(2026, 5, 1, 11, 0, tzinfo=timezone.utc), 10, +200),
+        ]))
+        db.commit()
+        sb = compute_strategy_scoreboard(db)
+    # gross_win=500, gross_loss=100, n=3 → (500-100)/3 = 133.33
+    assert abs(sb[0]["expectancy"] - 400/3) < 0.01
+
+
+def test_scoreboard_avg_hold_time_seconds():
+    Session = _make_session()
+    base = datetime(2026, 5, 1, 9, 0, tzinfo=timezone.utc)
+    with Session() as db:
+        db.add(_run_with_trades("a", [
+            _trade(base, 10, +100),    # 10분 = 600s
+            _trade(base, 20, -50),     # 20분 = 1200s
+        ]))
+        db.commit()
+        sb = compute_strategy_scoreboard(db)
+    # avg = (600 + 1200) / 2 = 900
+    assert sb[0]["avg_hold_time_seconds"] == 900.0
+
+
+def test_scoreboard_max_consecutive_loss():
+    Session = _make_session()
+    base = datetime(2026, 5, 1, 9, 0, tzinfo=timezone.utc)
+    with Session() as db:
+        # win, loss, loss, loss, win, loss, loss — max consecutive = 3
+        db.add(_run_with_trades("a", [
+            _trade(base, 5, +100),
+            _trade(base, 5, -50),
+            _trade(base, 5, -50),
+            _trade(base, 5, -50),
+            _trade(base, 5, +100),
+            _trade(base, 5, -50),
+            _trade(base, 5, -50),
+        ]))
+        db.commit()
+        sb = compute_strategy_scoreboard(db)
+    assert sb[0]["max_consecutive_loss"] == 3
+
+
+def test_scoreboard_breakeven_counts_as_loss_in_consecutive():
+    """본전(0)도 patch 측이라 wins/losses 분류와 일치 — 연속 손실 streak에 포함."""
+    Session = _make_session()
+    base = datetime(2026, 5, 1, 9, 0, tzinfo=timezone.utc)
+    with Session() as db:
+        db.add(_run_with_trades("a", [
+            _trade(base, 5, -50),
+            _trade(base, 5, 0),
+            _trade(base, 5, -50),
+        ]))
+        db.commit()
+        sb = compute_strategy_scoreboard(db)
+    assert sb[0]["max_consecutive_loss"] == 3
+
+
+def test_scoreboard_approval_rejection_rate_from_audit():
+    Session = _make_session()
+    with Session() as db:
+        # strategy 'a': 3 approved, 1 rejected, 1 needs_approval
+        for _ in range(3):
+            db.add(OrderAuditLog(
+                mode="SIMULATION", symbol="005930", side="BUY", quantity=1,
+                order_type="MARKET", latest_price=100,
+                decision="APPROVED", reasons=[], strategy="a",
+            ))
+        db.add(OrderAuditLog(
+            mode="SIMULATION", symbol="005930", side="BUY", quantity=1,
+            order_type="MARKET", latest_price=100,
+            decision="REJECTED", reasons=["reason"], strategy="a",
+        ))
+        db.add(OrderAuditLog(
+            mode="LIVE_MANUAL_APPROVAL", symbol="005930", side="BUY", quantity=1,
+            order_type="MARKET", latest_price=100,
+            decision="NEEDS_APPROVAL", reasons=["pending"], strategy="a",
+        ))
+        db.commit()
+        sb = compute_strategy_scoreboard(db)
+    row = sb[0]
+    assert row["approved_orders"] == 3
+    assert row["rejected_orders"] == 1
+    assert row["pending_orders"]  == 1
+    # denominator = approved + rejected = 4
+    assert row["approval_rate"]  == 0.75
+    assert row["rejection_rate"] == 0.25
+
+
+def test_scoreboard_approval_rate_zero_when_no_decisions():
+    """audit이 NEEDS_APPROVAL만 있으면 분모=0 → rate들 0.0."""
+    Session = _make_session()
+    with Session() as db:
+        db.add(OrderAuditLog(
+            mode="LIVE_MANUAL_APPROVAL", symbol="005930", side="BUY", quantity=1,
+            order_type="MARKET", latest_price=100,
+            decision="NEEDS_APPROVAL", reasons=[], strategy="a",
+        ))
+        db.commit()
+        sb = compute_strategy_scoreboard(db)
+    assert sb[0]["approval_rate"]  == 0.0
+    assert sb[0]["rejection_rate"] == 0.0
+    assert sb[0]["pending_orders"] == 1
+
+
+def test_scoreboard_audit_with_no_strategy_does_not_appear():
+    """strategy=NULL audit row는 어디 귀속도 못 시키므로 응답에 안 나타남."""
+    Session = _make_session()
+    with Session() as db:
+        db.add(OrderAuditLog(
+            mode="SIMULATION", symbol="005930", side="BUY", quantity=1,
+            order_type="MARKET", latest_price=100,
+            decision="APPROVED", reasons=[], strategy=None,
+        ))
+        db.commit()
+        sb = compute_strategy_scoreboard(db)
+    # backtest도 없고 strategy도 없으면 row 자체가 없다.
+    assert sb == []
+
+
+def test_scoreboard_endpoint_surface_extended_metrics(client):
+    base = datetime(2026, 5, 1, 9, 0, tzinfo=timezone.utc)
+    with client.test_db_factory() as db:
+        db.add(_run_with_trades("ext", [
+            _trade(base, 10, +200),
+            _trade(base, 20, -100),
+        ]))
+        db.add(OrderAuditLog(
+            mode="SIMULATION", symbol="005930", side="BUY", quantity=1,
+            order_type="MARKET", latest_price=100,
+            decision="APPROVED", reasons=[], strategy="ext",
+        ))
+        db.commit()
+    row = client.get("/api/strategies/scoreboard").json()[0]
+    assert row["profit_factor"]         == 2.0
+    assert row["expectancy"]            == 50.0
+    assert row["avg_hold_time_seconds"] == 900.0  # (600+1200)/2
+    assert row["max_consecutive_loss"]  == 1
+    assert row["approved_orders"]       == 1
+    assert row["approval_rate"]         == 1.0
