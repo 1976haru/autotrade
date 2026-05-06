@@ -353,6 +353,8 @@ def _settings(**overrides):
         max_position_size_pct     = 0.0,
         symbol_whitelist          = "",
         enforce_market_hours      = False,
+        global_rate_limit_window_seconds = 60,
+        global_rate_limit_max_count      = 0,
     )
     base.update(overrides)
     ns = SimpleNamespace(**base)

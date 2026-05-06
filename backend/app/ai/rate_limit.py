@@ -80,3 +80,42 @@ def check_rate_limit(
         window_seconds=window_seconds, now=now,
     )
     return count < max_count, count
+
+
+# ---------- 177: global rate limit (all orders) ----------
+
+def count_recent_orders(
+    db:              Session,
+    *,
+    window_seconds:  int,
+    now:             datetime | None = None,
+) -> int:
+    """지난 `window_seconds` 동안의 모든 OrderAuditLog 행 카운트 (requested_by_ai
+    무관). 161의 AI-specific 카운트와 분리 — 시스템 전체 주문 빈도 가드용."""
+    if window_seconds <= 0:
+        return 0
+    if now is None:
+        now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(seconds=window_seconds)
+    from sqlalchemy import func as _func
+    return int(
+        db.execute(
+            select(_func.count(OrderAuditLog.id))
+            .where(OrderAuditLog.created_at > cutoff)
+        ).scalar() or 0
+    )
+
+
+def check_global_rate_limit(
+    db:              Session,
+    *,
+    window_seconds:  int,
+    max_count:       int,
+    now:             datetime | None = None,
+) -> tuple[bool, int]:
+    """177: 모든 주문 종류(strategy / AI / manual) 통합 rate limit. AI 전용
+    161과 별개로 시스템 전체 주문 빈도 한도. caller가 차단."""
+    if max_count <= 0 or window_seconds <= 0:
+        return True, 0
+    count = count_recent_orders(db, window_seconds=window_seconds, now=now)
+    return count < max_count, count
