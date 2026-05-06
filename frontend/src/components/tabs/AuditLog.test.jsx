@@ -75,8 +75,12 @@ vi.mock("../../store/useAuditLogs", () => ({
 }));
 
 // 198: ArchivedAuditView calls backendApi directly. Mock that import path.
+// 202: getBacktestRun is now used by BacktestRunsView's expand drill-in.
 vi.mock("../../services/backend/client", () => ({
-  backendApi: { listOrderAudits: vi.fn() },
+  backendApi: {
+    listOrderAudits: vi.fn(),
+    getBacktestRun:  vi.fn(),
+  },
 }));
 import { backendApi } from "../../services/backend/client";
 
@@ -3699,5 +3703,95 @@ describe("<ArchivedAuditView>", () => {
     fireEvent.click(await findByText(/새로고침/));
     // 1 from mount, 1 from click — should be ≥ 2.
     expect(backendApi.listOrderAudits.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+
+describe("<BacktestRunsView> drill-in (202)", () => {
+  beforeEach(() => {
+    _resetBacktestHook();
+    localStorage.clear();
+    vi.clearAllMocks();
+  });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _bt(overrides = {}) {
+    return {
+      id: 1, strategy: "sma_crossover",
+      params: {}, initial_cash: 10_000_000, quantity: 10, bars_processed: 100,
+      final_cash: 10_500_000, total_pnl: 500_000,
+      win_count: 5, loss_count: 3, max_drawdown: 100_000,
+      data_source: "bars", data_symbol: "005930",
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  const _DETAIL = (overrides = {}) => ({
+    summary:  { total_pnl: 500_000, win_count: 5, loss_count: 3 },
+    trades: [
+      { side: "BUY",  quantity: 10, entry_price: 70_000, exit_price: 71_000, pnl: 10_000 },
+      { side: "SELL", quantity: 10, entry_price: 71_500, exit_price: 70_500, pnl: -10_000 },
+    ],
+    ...overrides,
+  });
+
+  it("rows start collapsed", () => {
+    _resetBacktestHook({ items: [_bt({ id: 7 })] });
+    const { getByTestId } = render(<BacktestRunsView />);
+    expect(getByTestId("backtest-row-7").dataset.expanded).toBe("false");
+  });
+
+  it("clicking the row triggers getBacktestRun and expands", async () => {
+    _resetBacktestHook({ items: [_bt({ id: 7 })] });
+    backendApi.getBacktestRun.mockResolvedValueOnce(_DETAIL());
+    const { getByTestId, findByTestId } = render(<BacktestRunsView />);
+    fireEvent.click(getByTestId("backtest-row-toggle-7"));
+    expect(backendApi.getBacktestRun).toHaveBeenCalledWith(7);
+    await findByTestId("backtest-trades-panel");
+    expect(getByTestId("backtest-row-7").dataset.expanded).toBe("true");
+  });
+
+  it("renders trade rows with side / entry / exit / pnl", async () => {
+    _resetBacktestHook({ items: [_bt({ id: 7 })] });
+    backendApi.getBacktestRun.mockResolvedValueOnce(_DETAIL());
+    const { getByTestId, findByTestId } = render(<BacktestRunsView />);
+    fireEvent.click(getByTestId("backtest-row-toggle-7"));
+    const panel = await findByTestId("backtest-trades-panel");
+    expect(panel.textContent).toContain("BUY");
+    expect(panel.textContent).toContain("SELL");
+    expect(panel.textContent).toContain("70,000");
+    expect(panel.textContent).toContain("+10,000");
+    expect(panel.textContent).toContain("-10,000");
+  });
+
+  it("clicking again collapses without re-querying", async () => {
+    _resetBacktestHook({ items: [_bt({ id: 7 })] });
+    backendApi.getBacktestRun.mockResolvedValueOnce(_DETAIL());
+    const { getByTestId, findByTestId } = render(<BacktestRunsView />);
+    fireEvent.click(getByTestId("backtest-row-toggle-7"));
+    await findByTestId("backtest-trades-panel");
+    fireEvent.click(getByTestId("backtest-row-toggle-7"));
+    expect(getByTestId("backtest-row-7").dataset.expanded).toBe("false");
+    // re-expand should hit cache, not re-fetch.
+    fireEvent.click(getByTestId("backtest-row-toggle-7"));
+    await findByTestId("backtest-trades-panel");
+    expect(backendApi.getBacktestRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders empty-trades fallback when run has no trades", async () => {
+    _resetBacktestHook({ items: [_bt({ id: 7 })] });
+    backendApi.getBacktestRun.mockResolvedValueOnce(_DETAIL({ trades: [] }));
+    const { getByTestId, findByTestId } = render(<BacktestRunsView />);
+    fireEvent.click(getByTestId("backtest-row-toggle-7"));
+    await findByTestId("backtest-trades-empty");
+  });
+
+  it("renders error message when detail fetch fails", async () => {
+    _resetBacktestHook({ items: [_bt({ id: 7 })] });
+    backendApi.getBacktestRun.mockRejectedValueOnce(new Error("offline"));
+    const { getByTestId, findByText } = render(<BacktestRunsView />);
+    fireEvent.click(getByTestId("backtest-row-toggle-7"));
+    await findByText(/상세 조회 실패: offline/);
   });
 });
