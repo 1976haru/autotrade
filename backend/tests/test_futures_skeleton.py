@@ -60,41 +60,28 @@ def test_position_side_distinct_from_order_side():
     assert pos.side == FuturesPositionSide.LONG
 
 
-# ---------- mock broker — all stubbed ----------
+# ---------- mock broker — virtual implementation (151) ----------
+# 151 이전 stub 단계: 모든 메서드가 NotImplementedError. 151에서 가상 환경
+# 구현으로 변경 — 실거래 broker endpoint는 여전히 호출하지 않는다.
 
 def test_mock_broker_implements_protocol():
     assert issubclass(MockFuturesBroker, FuturesBrokerAdapter)
 
 
-def test_get_quote_raises_stub():
-    with pytest.raises(NotImplementedError, match="stub"):
-        run(MockFuturesBroker().get_quote("101W3000"))
+def test_get_quote_returns_virtual_quote():
+    q = run(MockFuturesBroker().get_quote("KOSPI200_2503"))
+    assert q.contract == "KOSPI200_2503"
+    assert q.source   == "mock"
+    assert q.price    > 0
 
 
-def test_get_balance_raises_stub():
-    with pytest.raises(NotImplementedError, match="stub"):
-        run(MockFuturesBroker().get_balance())
+def test_get_balance_returns_initial_cash():
+    bal = run(MockFuturesBroker(initial_cash=20_000_000).get_balance())
+    assert bal.cash == 20_000_000
 
 
-def test_get_positions_raises_stub():
-    with pytest.raises(NotImplementedError, match="stub"):
-        run(MockFuturesBroker().get_positions())
-
-
-def test_place_order_raises_with_explicit_safety_message():
-    order = FuturesOrderRequest(contract="101W3000", side=FuturesSide.BUY, quantity=1)
-    with pytest.raises(NotImplementedError, match="intentionally not implemented"):
-        run(MockFuturesBroker().place_order(order))
-
-
-def test_cancel_order_raises_stub():
-    with pytest.raises(NotImplementedError, match="stub"):
-        run(MockFuturesBroker().cancel_order("any-id"))
-
-
-def test_get_order_status_raises_stub():
-    with pytest.raises(NotImplementedError, match="stub"):
-        run(MockFuturesBroker().get_order_status("any-id"))
+def test_get_positions_empty_initially():
+    assert run(MockFuturesBroker().get_positions()) == []
 
 
 # ---------- futures risk manager ----------
@@ -120,12 +107,14 @@ def test_risk_explicit_policy_with_flag_off_rejects():
     assert result.decision == FuturesRiskDecision.REJECTED
 
 
-def test_risk_with_flag_on_raises_until_full_evaluation_lands():
+def test_risk_with_flag_on_still_rejects_in_pr_151():
+    """151은 live 평가 로직을 활성화하지 않는다 — flag만 켜도 REJECTED.
+    실거래 broker 연결은 별도 PR (CLAUDE.md 절대 원칙 6)."""
     risk = FuturesRiskManager(FuturesRiskPolicy(enable_futures_live_trading=True))
-    with pytest.raises(NotImplementedError, match="follow-up"):
-        risk.evaluate_order(
-            order=_order(), positions=[], margin_used=0, margin_available=10_000_000,
-        )
+    result = risk.evaluate_order(
+        order=_order(), positions=[], margin_used=0, margin_available=10_000_000,
+    )
+    assert result.decision == FuturesRiskDecision.REJECTED
 
 
 def test_default_policy_values_are_conservative():

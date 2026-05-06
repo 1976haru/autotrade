@@ -49,6 +49,8 @@ class FuturesPosition(BaseModel):
     entry_price:  int
     market_price: int
     margin_used:  int
+    # 151: 강제청산 가격. None이면 simulation engine 미주입 (예: 라이브 stub).
+    liquidation_price: int | None = None
 
 
 class FuturesBalance(BaseModel):
