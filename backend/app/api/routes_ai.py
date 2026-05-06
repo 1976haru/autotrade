@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.ai.agent_stats import compute_ai_agent_stats
 from app.ai.client import AiClient, AiNotConfiguredError
 from app.ai.service import analyze as run_analysis
 from app.api.deps import get_ai_client
@@ -105,3 +106,13 @@ async def analyze_route(
         model=result.model,
         score=result.score,
     )
+
+
+@router.get("/agent-stats")
+def agent_stats(
+    lookback_days: int = Query(7, ge=0, le=365),
+    db:            Session = Depends(get_db),
+) -> dict:
+    """162: AI 에이전트의 의사결정 품질 통계. read-only — 어떤 가드 / 결정에도
+    영향 X. lookback_days=0이면 전체 기간."""
+    return compute_ai_agent_stats(db, lookback_days=lookback_days)
