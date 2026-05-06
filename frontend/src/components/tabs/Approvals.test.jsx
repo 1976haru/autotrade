@@ -1571,9 +1571,10 @@ describe("summarizeHistoryDecisionTime (106)", () => {
   }
 
   it("returns zero shape for empty / nullable input", () => {
-    expect(summarizeHistoryDecisionTime([])).toEqual({ count: 0, avgMs: 0 });
-    expect(summarizeHistoryDecisionTime(null)).toEqual({ count: 0, avgMs: 0 });
-    expect(summarizeHistoryDecisionTime(undefined)).toEqual({ count: 0, avgMs: 0 });
+    const empty = { count: 0, avgMs: 0, maxMs: 0, minMs: 0 };
+    expect(summarizeHistoryDecisionTime([])).toEqual(empty);
+    expect(summarizeHistoryDecisionTime(null)).toEqual(empty);
+    expect(summarizeHistoryDecisionTime(undefined)).toEqual(empty);
   });
 
   it("averages decided_at - created_at across rows", () => {
@@ -1582,6 +1583,24 @@ describe("summarizeHistoryDecisionTime (106)", () => {
     const s = summarizeHistoryDecisionTime(items);
     expect(s.count).toBe(3);
     expect(s.avgMs).toBe(4 * 60_000);
+  });
+
+  it("returns max + min duration alongside avg (110)", () => {
+    // 2 min, 4 min, 30 min → avg 12, max 30, min 2
+    const items = [_row(2), _row(4), _row(30)];
+    const s = summarizeHistoryDecisionTime(items);
+    expect(s.count).toBe(3);
+    expect(s.avgMs).toBe(12 * 60_000);
+    expect(s.maxMs).toBe(30 * 60_000);
+    expect(s.minMs).toBe(2 * 60_000);
+  });
+
+  it("for a single row, max == min == avg (110)", () => {
+    const s = summarizeHistoryDecisionTime([_row(7)]);
+    expect(s.count).toBe(1);
+    expect(s.avgMs).toBe(7 * 60_000);
+    expect(s.maxMs).toBe(7 * 60_000);
+    expect(s.minMs).toBe(7 * 60_000);
   });
 
   it("skips rows missing created_at or decided_at", () => {
@@ -1595,6 +1614,8 @@ describe("summarizeHistoryDecisionTime (106)", () => {
     const s = summarizeHistoryDecisionTime(items);
     expect(s.count).toBe(1);
     expect(s.avgMs).toBe(5 * 60_000);
+    expect(s.maxMs).toBe(5 * 60_000);
+    expect(s.minMs).toBe(5 * 60_000);
   });
 
   it("excludes negative durations (clock skew or bad data)", () => {
@@ -1607,6 +1628,8 @@ describe("summarizeHistoryDecisionTime (106)", () => {
     const s = summarizeHistoryDecisionTime(items);
     expect(s.count).toBe(1);
     expect(s.avgMs).toBe(5 * 60_000);
+    expect(s.maxMs).toBe(5 * 60_000);
+    expect(s.minMs).toBe(5 * 60_000);
   });
 });
 
@@ -1665,6 +1688,31 @@ describe("<HistoryDecisionTimeSummary> (106)", () => {
     expect(footer.textContent).toContain("처리 2건");
     expect(footer.textContent).toContain("평균 결정");
     expect(footer.textContent).toContain("4분 0초"); // (5+3)/2 = 4 min
+  });
+
+  it("renders 최대/최소 spread when count >= 2 (110)", () => {
+    const items = [
+      { id: 1, created_at: "2026-05-06T11:55:00+00:00",
+              decided_at: "2026-05-06T11:58:00+00:00" }, //  3 min  — min
+      { id: 2, created_at: "2026-05-06T11:30:00+00:00",
+              decided_at: "2026-05-06T12:00:00+00:00" }, // 30 min  — max
+      { id: 3, created_at: "2026-05-06T11:50:00+00:00",
+              decided_at: "2026-05-06T12:00:00+00:00" }, // 10 min
+    ];
+    const { getByTestId } = render(<HistoryDecisionTimeSummary items={items} />);
+    expect(getByTestId("history-decision-time-max").textContent).toContain("30분 0초");
+    expect(getByTestId("history-decision-time-min").textContent).toContain("3분 0초");
+  });
+
+  it("hides 최대/최소 when only one row (count === 1, 110)", () => {
+    const items = [{
+      id: 1, created_at: "2026-05-06T11:55:00+00:00",
+              decided_at: "2026-05-06T12:00:00+00:00",
+    }];
+    const { container, getByTestId } = render(<HistoryDecisionTimeSummary items={items} />);
+    expect(getByTestId("history-decision-time-summary")).toBeTruthy();
+    expect(container.querySelector('[data-testid="history-decision-time-max"]')).toBeNull();
+    expect(container.querySelector('[data-testid="history-decision-time-min"]')).toBeNull();
   });
 });
 

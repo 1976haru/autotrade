@@ -300,22 +300,30 @@ export function HistoryTimeBucketBar({ active, onChange }) {
 }
 
 
-// 106: 처리 내역 footer — 098/101 패턴 재사용. created_at에서 decided_at까지의
-// 평균 결정 시간을 한 줄에 표시. 운영자가 "이번 주 평균 결정 12분"같은 흐름
-// 신호를 한눈에 — 평균이 길어지면 결재 적체 의심. 필터(symbol/status/time/mode)
-// 적용된 visible items 기준으로 재계산.
+// 106/110: 처리 내역 footer — 098/101 패턴 재사용. 평균만으로는 stale 한 건이
+// 흐름을 가려 — 110이 max/min을 추가해 outlier(예: stale 채로 cancel된 1일짜리)
+// 가 한눈에. 평균이 짧아도 max가 크면 적체 의심을 명시적으로 surface.
 export function summarizeHistoryDecisionTime(items) {
   let count = 0;
   let sumMs = 0;
+  let maxMs = 0;
+  let minMs = Number.POSITIVE_INFINITY;
   for (const a of items || []) {
     if (!a || !a.created_at || !a.decided_at) continue;
     const ms = new Date(a.decided_at).getTime() - new Date(a.created_at).getTime();
     // 음수는 시계 어긋남이나 fixture 오류 — defensive하게 제외해 평균 왜곡 방지.
     if (!Number.isFinite(ms) || ms < 0) continue;
     sumMs += ms;
+    if (ms > maxMs) maxMs = ms;
+    if (ms < minMs) minMs = ms;
     count += 1;
   }
-  return { count, avgMs: count > 0 ? Math.round(sumMs / count) : 0 };
+  return {
+    count,
+    avgMs: count > 0 ? Math.round(sumMs / count) : 0,
+    maxMs: count > 0 ? maxMs : 0,
+    minMs: count > 0 ? minMs : 0,
+  };
 }
 
 
@@ -338,6 +346,9 @@ export function formatDecisionDuration(ms) {
 export function HistoryDecisionTimeSummary({ items }) {
   const s = summarizeHistoryDecisionTime(items);
   if (s.count === 0) return null;
+  // 110: 평균은 강조, max/min은 보조. count=1이면 max=avg=min이라 한 값만
+  // 보여 노이즈 줄임. count>=2일 때만 max/min 추가.
+  const showSpread = s.count >= 2;
   return (
     <div data-testid="history-decision-time-summary"
          style={{ fontSize: 10, color: "#64748b", marginBottom: 8,
@@ -348,6 +359,20 @@ export function HistoryDecisionTimeSummary({ items }) {
       <span style={{ color: "#a78bfa", fontWeight: 700 }}>
         평균 결정 {formatDecisionDuration(s.avgMs)}
       </span>
+      {showSpread && (
+        <>
+          <span>·</span>
+          <span data-testid="history-decision-time-max"
+                style={{ color: "#fbbf24" }}>
+            최대 {formatDecisionDuration(s.maxMs)}
+          </span>
+          <span>·</span>
+          <span data-testid="history-decision-time-min"
+                style={{ color: "#475569" }}>
+            최소 {formatDecisionDuration(s.minMs)}
+          </span>
+        </>
+      )}
     </div>
   );
 }
