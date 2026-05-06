@@ -332,6 +332,88 @@ describe("useApprovals", () => {
       await result.current.refreshHistory("CANCELLED");
     });
 
-    expect(backendApi.listApprovalHistory).toHaveBeenLastCalledWith({ status: "CANCELLED" });
+    expect(backendApi.listApprovalHistory).toHaveBeenLastCalledWith({
+      status: "CANCELLED", limit: 50, offset: 0,
+    });
+  });
+
+  // ---------- 085: history pagination ----------
+
+  it("history fetches first page on mount with offset=0 and limit=50", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    backendApi.listApprovalHistory.mockResolvedValue([
+      { id: 1, status: "APPROVED" },
+    ]);
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(backendApi.listApprovalHistory).toHaveBeenLastCalledWith({
+      status: undefined, limit: 50, offset: 0,
+    });
+    // 1 row < 50 → no more available
+    expect(result.current.historyHasMore).toBe(false);
+  });
+
+  it("historyHasMore stays true when first page returns exactly the page size", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    const fullPage = Array.from({ length: 50 }, (_, i) => ({ id: i, status: "APPROVED" }));
+    backendApi.listApprovalHistory.mockResolvedValue(fullPage);
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.historyHasMore).toBe(true);
+  });
+
+  it("loadMoreHistory appends the next page with the running offset", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    const page1 = Array.from({ length: 50 }, (_, i) => ({ id: 100 - i, status: "APPROVED" }));
+    const page2 = Array.from({ length: 25 }, (_, i) => ({ id: 50 - i, status: "REJECTED" }));
+    backendApi.listApprovalHistory
+      .mockResolvedValueOnce(page1)
+      .mockResolvedValueOnce(page2);
+
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.history).toHaveLength(50);
+    expect(result.current.historyHasMore).toBe(true);
+
+    await act(async () => { await result.current.loadMoreHistory(); });
+    expect(backendApi.listApprovalHistory).toHaveBeenLastCalledWith({
+      limit: 50, offset: 50,
+    });
+    expect(result.current.history).toHaveLength(75);
+    // Second page returned less than full → no more
+    expect(result.current.historyHasMore).toBe(false);
+  });
+
+  it("loadMoreHistory is a no-op once historyHasMore is false", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    backendApi.listApprovalHistory.mockResolvedValue([{ id: 1, status: "APPROVED" }]);
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    backendApi.listApprovalHistory.mockClear();
+    await act(async () => { await result.current.loadMoreHistory(); });
+    expect(backendApi.listApprovalHistory).not.toHaveBeenCalled();
+  });
+
+  it("post-action refresh resets history to first page (loses pagination)", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    const page1 = Array.from({ length: 50 }, (_, i) => ({ id: 100 - i, status: "APPROVED" }));
+    const page2 = Array.from({ length: 50 }, (_, i) => ({ id: 50 - i, status: "REJECTED" }));
+    backendApi.listApprovalHistory
+      .mockResolvedValueOnce(page1)
+      .mockResolvedValueOnce(page2);
+
+    const { result } = renderHook(() => useApprovals());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    await act(async () => { await result.current.loadMoreHistory(); });
+    expect(result.current.history).toHaveLength(100);
+
+    // Simulate a post-action refresh — should reset
+    backendApi.listApprovalHistory.mockResolvedValueOnce([{ id: 1, status: "APPROVED" }]);
+    await act(async () => { await result.current.refreshHistory(); });
+    expect(result.current.history).toHaveLength(1);
+    expect(result.current.historyHasMore).toBe(false);
   });
 });

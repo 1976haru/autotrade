@@ -27,12 +27,15 @@ function _makeApprovals(overrides = {}) {
     loading: false,
     error: "",
     busy: false,
+    historyHasMore: false,
+    historyLoadingMore: false,
     approve: vi.fn(),
     reject:  vi.fn(),
     cancel:  vi.fn(),
     cancelMany: vi.fn(),
     refresh: vi.fn(),
     refreshHistory: vi.fn(),
+    loadMoreHistory: vi.fn(),
     ...overrides,
   };
 }
@@ -644,6 +647,62 @@ describe("<Approvals> 처리 내역 status filter", () => {
     const approvals = _makeApprovals({ history: [_h()] });
     const { getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
     expect(getByRole("radio", { name: "전체" }).getAttribute("aria-checked")).toBe("true");
+  });
+});
+
+
+describe("<Approvals> 처리 내역 pagination", () => {
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _h(overrides = {}) {
+    return {
+      id: 1, symbol: "X", side: "BUY", quantity: 1, order_type: "MARKET",
+      limit_price: null, status: "APPROVED", mode: "LIVE_MANUAL_APPROVAL",
+      decided_at: "2026-05-06T12:00:00+00:00", decided_by: "u", note: "",
+      created_at: "2026-05-06T11:55:00+00:00", audit_id: 1,
+      ...overrides,
+    };
+  }
+
+  it("renders 더 보기 button when historyHasMore is true", () => {
+    const approvals = _makeApprovals({
+      history: [_h()], historyHasMore: true,
+    });
+    const { getByText } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(getByText(/더 보기/)).toBeTruthy();
+  });
+
+  it("hides the button and shows end marker when no more pages", () => {
+    const approvals = _makeApprovals({
+      history: [_h()], historyHasMore: false,
+    });
+    const { getByText, queryByText } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(queryByText(/더 보기/)).toBeNull();
+    expect(getByText(/모든 내역을 불러왔습니다/)).toBeTruthy();
+  });
+
+  it("clicking 더 보기 calls loadMoreHistory", () => {
+    const approvals = _makeApprovals({
+      history: [_h()], historyHasMore: true,
+    });
+    const { getByText } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.click(getByText(/더 보기/));
+    expect(approvals.loadMoreHistory).toHaveBeenCalled();
+  });
+
+  it("button shows '불러오는 중…' while loading", () => {
+    const approvals = _makeApprovals({
+      history: [_h()], historyHasMore: true, historyLoadingMore: true,
+    });
+    const { getByText } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(getByText(/불러오는 중/)).toBeTruthy();
+  });
+
+  it("hides both button and end marker when history is empty (default state)", () => {
+    const approvals = _makeApprovals({ history: [], historyHasMore: false });
+    const { queryByText } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(queryByText(/더 보기/)).toBeNull();
+    expect(queryByText(/모든 내역을 불러왔습니다/)).toBeNull();
   });
 });
 

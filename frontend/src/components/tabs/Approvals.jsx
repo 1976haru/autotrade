@@ -307,6 +307,7 @@ export function Approvals({ approvals, operatorName = "" }) {
   // useApprovals는 App에서 lift되어 prop으로 전달된다 — BottomNav 배지가 같은
   // 폴링 결과를 공유하기 위해서. 테스트는 모킹 없이 prop만 직접 주입.
   const { pending, history, loading, error, busy,
+          historyHasMore, historyLoadingMore, loadMoreHistory,
           approve, reject, cancel, cancelMany } = approvals;
   // 결재 모달 대상: { action, approval } | null. 같은 모달 컴포넌트를 세 액션에서
   // 공유하고, 액션은 ACTION_META에서 분기한다.
@@ -435,6 +436,20 @@ export function Approvals({ approvals, operatorName = "" }) {
             {historyEmptyMessage(history, _historyNeedle, historyStatusFilter)}
           </div>
         ) : filteredHistory.map((a) => <HistoryRow key={a.id} a={a} />)}
+        <div style={{ marginTop: 8, textAlign: "center" }}>
+          {historyHasMore ? (
+            <Btn
+              color="#334155"
+              onClick={loadMoreHistory}
+              disabled={historyLoadingMore}
+              small
+            >
+              {historyLoadingMore ? "불러오는 중…" : "더 보기"}
+            </Btn>
+          ) : history.length > 0 ? (
+            <span style={{ fontSize: 9, color: "#1e3a5c" }}>모든 내역을 불러왔습니다</span>
+          ) : null}
+        </div>
       </Card>
 
       <div style={{ fontSize: 10, color: "#1e3a5c", lineHeight: 1.6, padding: "0 4px" }}>

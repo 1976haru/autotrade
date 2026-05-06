@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { backendApi } from "../services/backend/client";
 
 const REFRESH_MS = 5000;
+// 085: backend caps each fetch at 50 by default; matches the page size used
+// by 064's audit pagination so the UX is consistent across tabs.
+const HISTORY_PAGE_SIZE = 50;
 
 /**
  * 승인 큐 훅 — backend `/api/approvals` (PENDING)와 `/api/approvals/history`
@@ -18,6 +21,11 @@ export function useApprovals() {
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState("");
   const [busy,    setBusy]    = useState(false);
+  // 085: pagination state for the history list. hasMore tracks whether the
+  // last page came back exactly full (more likely available); loadingMore
+  // guards against double-clicks. Mirror of 064's audit pattern.
+  const [historyHasMore,     setHistoryHasMore]     = useState(true);
+  const [historyLoadingMore, setHistoryLoadingMore] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -31,15 +39,42 @@ export function useApprovals() {
     }
   }, []);
 
+  // refreshHistory always resets to page 1. Post-action callers (after
+  // approve/reject/cancel) want a fresh top page anyway because the row that
+  // just transitioned should appear at the top. Operators who had paged
+  // deeper lose that scroll position — acceptable trade for consistency.
   const refreshHistory = useCallback(async (status) => {
     try {
-      const list = await backendApi.listApprovalHistory({ status });
+      const list = await backendApi.listApprovalHistory({
+        status, limit: HISTORY_PAGE_SIZE, offset: 0,
+      });
       setHistory(list);
+      setHistoryHasMore(list.length === HISTORY_PAGE_SIZE);
     } catch (e) {
       // history 실패는 PENDING 큐 사용에 영향 없음 — 같은 error 슬롯에만 노출.
       setError(e.message);
     }
   }, []);
+
+  // 085: append the next page. setHistory uses a functional update to avoid
+  // capturing a stale list reference; the loadingMore guard prevents
+  // double-clicks while the fetch is in flight.
+  const loadMoreHistory = useCallback(async () => {
+    if (historyLoadingMore || !historyHasMore) return;
+    setHistoryLoadingMore(true);
+    try {
+      const offset = history.length;
+      const list = await backendApi.listApprovalHistory({
+        limit: HISTORY_PAGE_SIZE, offset,
+      });
+      setHistory((prev) => [...prev, ...list]);
+      setHistoryHasMore(list.length === HISTORY_PAGE_SIZE);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setHistoryLoadingMore(false);
+    }
+  }, [history.length, historyHasMore, historyLoadingMore]);
 
   useEffect(() => {
     // refresh / refreshHistory are async; setState is after await, not synchronous.
@@ -143,5 +178,6 @@ export function useApprovals() {
   }, [refresh, refreshHistory]);
 
   return { pending, history, loading, error, busy,
+           historyHasMore, historyLoadingMore, loadMoreHistory,
            refresh, refreshHistory, approve, reject, cancel, cancelMany };
 }
