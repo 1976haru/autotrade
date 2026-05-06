@@ -152,13 +152,16 @@ def _to_backtest_out(row: BacktestRun) -> BacktestSummaryOut:
 def list_order_audits(
     limit:  int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
+    include_archived: bool = Query(False, description="168: cold rows 포함 여부"),
     db:     Session = Depends(get_db),
 ) -> list[OrderAuditOut]:
-    rows = db.execute(
-        select(OrderAuditLog)
-        .order_by(OrderAuditLog.id.desc())
-        .limit(limit).offset(offset)
-    ).scalars().all()
+    """기본 hot rows만 반환 — 168 archival flag로 분리. 운영자가 cold도 보고
+    싶으면 ?include_archived=true."""
+    stmt = select(OrderAuditLog).order_by(OrderAuditLog.id.desc())
+    if not include_archived:
+        stmt = stmt.where(OrderAuditLog.archived.is_(False))
+    stmt = stmt.limit(limit).offset(offset)
+    rows = db.execute(stmt).scalars().all()
     return [_to_order_out(r) for r in rows]
 
 

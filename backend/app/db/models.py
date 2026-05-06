@@ -54,6 +54,13 @@ class OrderAuditLog(Base):
     # NULL이면 AI 외 경로로 만들어진 주문. 0010 마이그레이션 이전 row도 NULL.
     ai_decision_meta: Mapped[dict | None]  = mapped_column(JSON, nullable=True)
 
+    # 168: archival flag. cold storage로 분리된 row는 True. 기본 hot query
+    # (routes_audit /api/audit/orders 등)는 archived=False만 본다. 0012
+    # 마이그레이션 이전 row는 모두 False (default) — 자연스럽게 hot.
+    # 별도 테이블 분리 대신 partial index로 hot 쿼리 최적화 — 컬럼 drift 위험
+    # 없고 atomic.
+    archived:        Mapped[bool]           = mapped_column(Boolean, default=False, index=True)
+
     executed:        Mapped[bool]           = mapped_column(Boolean, default=False)
     broker_order_id: Mapped[str | None]     = mapped_column(String(64), nullable=True)
     broker_status:   Mapped[str | None]     = mapped_column(String(32), nullable=True)
