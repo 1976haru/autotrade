@@ -303,6 +303,77 @@ def test_approve_response_includes_reasons(client, monkeypatch):
     assert any("manual approval" in r for r in res["approval"]["reasons"])
 
 
+# ---------- AI provenance (190) ----------
+
+def test_pending_default_provenance_is_manual(client, monkeypatch):
+    """수동 주문 → requested_by_ai=False, ai_decision_meta=None."""
+    _enable_manual_approval(monkeypatch, client)
+    _submit_buy(client)
+    row = client.get("/api/approvals").json()[0]
+    assert row["requested_by_ai"]    is False
+    assert row["strategy"]           is None
+    assert row["signal_strength"]    is None
+    assert row["signal_confidence"]  is None
+    assert row["ai_decision_meta"]   is None
+
+
+def _patch_audit_as_ai(client, approval_id, **fields):
+    """결재 행의 audit_id를 조회 → audit row를 AI 출처로 패치."""
+    pending = client.get(f"/api/approvals/{approval_id}").json()
+    audit_id = pending["audit_id"]
+    with client.test_db_factory() as db:
+        row = db.execute(select(OrderAuditLog).where(OrderAuditLog.id == audit_id)).scalar_one()
+        for k, v in fields.items():
+            setattr(row, k, v)
+        db.commit()
+
+
+def test_pending_surfaces_ai_provenance_from_audit(client, monkeypatch):
+    """audit row에 AI 메타가 있으면 결재 endpoint가 그대로 surface."""
+    _enable_manual_approval(monkeypatch, client)
+    submit = client.post("/api/broker/orders", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1,
+        "strategy": "ai_orb", "signal_strength": 80, "signal_confidence": 65,
+    }).json()
+    _patch_audit_as_ai(
+        client, submit["approval_id"],
+        requested_by_ai=True,
+        ai_decision_meta={"confidence": 65, "reasons": ["entry+news"]},
+    )
+    pending = client.get("/api/approvals").json()
+    target = next(p for p in pending if p["id"] == submit["approval_id"])
+    assert target["requested_by_ai"]   is True
+    assert target["strategy"]          == "ai_orb"
+    assert target["signal_strength"]   == 80
+    assert target["signal_confidence"] == 65
+    assert target["ai_decision_meta"]  == {"confidence": 65, "reasons": ["entry+news"]}
+
+
+def test_history_surfaces_ai_provenance(client, monkeypatch):
+    _enable_manual_approval(monkeypatch, client)
+    submit = client.post("/api/broker/orders", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1, "strategy": "ai_rsi",
+    }).json()
+    _patch_audit_as_ai(client, submit["approval_id"], requested_by_ai=True)
+    client.post(f"/api/approvals/{submit['approval_id']}/cancel")
+    history = client.get("/api/approvals/history").json()
+    assert history[0]["requested_by_ai"] is True
+    assert history[0]["strategy"]        == "ai_rsi"
+
+
+def test_get_single_approval_surfaces_ai_provenance(client, monkeypatch):
+    _enable_manual_approval(monkeypatch, client)
+    submit = _submit_buy(client).json()
+    _patch_audit_as_ai(
+        client, submit["approval_id"],
+        requested_by_ai=True,
+        ai_decision_meta={"confidence": 50},
+    )
+    res = client.get(f"/api/approvals/{submit['approval_id']}").json()
+    assert res["requested_by_ai"] is True
+    assert res["ai_decision_meta"] == {"confidence": 50}
+
+
 # ---------- 070: re-eval at approve time (route layer) ----------
 
 def test_approve_returns_409_when_emergency_stop_toggled_after_submit(client, monkeypatch):
