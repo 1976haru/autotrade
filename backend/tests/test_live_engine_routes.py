@@ -342,6 +342,30 @@ def test_registry_payload_round_trips_through_configure(client):
     assert res.json()["strategy"] == "sma_crossover"
 
 
+# 131: registry response includes contract metadata for each strategy.
+def test_registry_includes_contract_metadata(client):
+    body = client.get("/api/strategies/registry").json()
+    by_name = {s["name"]: s for s in body}
+    sma = by_name["sma_crossover"]
+    assert "이동평균" in sma["entry"] or "SMA" in sma["entry"].upper()
+    assert sma["required_regime"] == "trending"
+    assert sma["risk_profile"]["position_size_pct"] == 5
+
+
+def test_registry_includes_stub_strategies_with_metadata(client):
+    """orb_vwap / rsi_reversion stubs are registered and surface their
+    entry/exit/invalidation/regime/risk_profile through the response model."""
+    body = client.get("/api/strategies/registry").json()
+    by_name = {s["name"]: s for s in body}
+    for name in ("orb_vwap", "rsi_reversion"):
+        assert name in by_name, f"{name} must be in registry"
+        assert by_name[name]["entry"]
+        assert by_name[name]["exit"]
+        assert by_name[name]["invalidation"]
+        assert by_name[name]["required_regime"] != "any"
+        assert by_name[name]["risk_profile"]
+
+
 # ---------- position tracking ----------
 
 def test_status_position_fields_null_before_buy(client):

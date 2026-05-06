@@ -110,6 +110,56 @@ function _initialParamValues(strategy) {
 }
 
 
+// 131: 전략 contract 정보를 운영자가 ConfigureCard에서 한 번에 검토할 수
+// 있도록 surface. 미작성 필드는 "(미작성)"으로 표시 — 운영자가 Strategy
+// contract가 미완인 stub을 즉시 인지. 본 panel은 read-only이고 추가 chip이나
+// 필터를 만들지 않는다 — 단순 정보 표시 (MUST 항목, NICE 아님).
+export function StrategyContractPanel({ strategy }) {
+  if (!strategy) return null;
+  const entry        = strategy.entry        || "";
+  const exit         = strategy.exit         || "";
+  const invalidation = strategy.invalidation || "";
+  const regime       = strategy.required_regime || "any";
+  const risk         = strategy.risk_profile  || {};
+  const _row = (label, value, missing) => (
+    <div style={{ marginBottom: 4 }}>
+      <span style={{ color: "#475569", marginRight: 6 }}>{label}:</span>
+      <span style={{ color: missing ? "#f59e0b" : "#94a3b8" }}>
+        {missing ? "(미작성)" : value}
+      </span>
+    </div>
+  );
+  const _riskFields = Object.keys(risk);
+  return (
+    <div data-testid="strategy-contract-panel"
+         style={{
+           fontSize: 10, padding: "8px 10px", marginBottom: 10,
+           background: "#010a14", border: "1px solid #0c2035", borderRadius: 4,
+           lineHeight: 1.5,
+         }}>
+      <div style={{ color: "#7dd3fc", fontWeight: 700, marginBottom: 4,
+                     letterSpacing: "0.04em", fontSize: 9 }}>
+        STRATEGY CONTRACT
+      </div>
+      {_row("진입",   entry,        !entry)}
+      {_row("청산",   exit,         !exit)}
+      {_row("무효화", invalidation, !invalidation)}
+      {_row("시장 체제", regime,    regime === "any")}
+      <div>
+        <span style={{ color: "#475569", marginRight: 6 }}>리스크 프로파일:</span>
+        {_riskFields.length === 0 ? (
+          <span style={{ color: "#f59e0b" }}>(미작성)</span>
+        ) : (
+          <span style={{ color: "#94a3b8" }}>
+            {_riskFields.map((k) => `${k}=${risk[k]}`).join(" · ")}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 export function ConfigureCard({ busy, registry, onConfigure }) {
   // userSelectedName falls through to the first registry entry until the user
   // explicitly picks one. This avoids the "setState in useEffect" anti-pattern
@@ -195,6 +245,8 @@ export function ConfigureCard({ busy, registry, onConfigure }) {
           </div>
         )}
       </div>
+
+      <StrategyContractPanel strategy={selected} />
 
       {selected && selected.params.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>

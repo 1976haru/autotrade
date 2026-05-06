@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ConfigureCard, PositionBlock } from "./LiveEngine";
+import { ConfigureCard, PositionBlock, StrategyContractPanel } from "./LiveEngine";
 
 
 const _REGISTRY = [
@@ -167,5 +167,75 @@ describe("<PositionBlock>", () => {
     const block = container.querySelector('[data-testid="position-block"]');
     expect(block.textContent).toContain("75,000원");
     expect(block.textContent).toContain("—"); // last_price + pnl
+  });
+});
+
+
+describe("<StrategyContractPanel> (131)", () => {
+  afterEach(cleanup);
+
+  it("renders nothing for null/undefined strategy", () => {
+    const { container } = render(<StrategyContractPanel strategy={null} />);
+    expect(container.querySelector('[data-testid="strategy-contract-panel"]')).toBeNull();
+  });
+
+  it("surfaces all 5 contract fields when populated", () => {
+    const strategy = {
+      name: "sma_crossover",
+      entry: "단기 SMA 상향 돌파",
+      exit:  "단기 SMA 하향 돌파",
+      invalidation: "추세 전환",
+      required_regime: "trending",
+      risk_profile: { position_size_pct: 5, stop_loss_pct: 2 },
+    };
+    const { getByTestId } = render(<StrategyContractPanel strategy={strategy} />);
+    const panel = getByTestId("strategy-contract-panel");
+    expect(panel.textContent).toContain("진입");
+    expect(panel.textContent).toContain("단기 SMA 상향 돌파");
+    expect(panel.textContent).toContain("청산");
+    expect(panel.textContent).toContain("단기 SMA 하향 돌파");
+    expect(panel.textContent).toContain("무효화");
+    expect(panel.textContent).toContain("추세 전환");
+    expect(panel.textContent).toContain("trending");
+    expect(panel.textContent).toContain("position_size_pct=5");
+    expect(panel.textContent).toContain("stop_loss_pct=2");
+  });
+
+  it("flags missing entry/exit/invalidation as '(미작성)'", () => {
+    const { getByTestId } = render(
+      <StrategyContractPanel strategy={{
+        name: "bare", entry: "", exit: "", invalidation: "",
+        required_regime: "any", risk_profile: {},
+      }} />,
+    );
+    const panel = getByTestId("strategy-contract-panel");
+    // "(미작성)" appears 4 times: entry, exit, invalidation, risk_profile.
+    // required_regime="any" also flags missing.
+    const occurrences = panel.textContent.match(/미작성/g) || [];
+    expect(occurrences.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("treats required_regime='any' as missing (regime hint not declared)", () => {
+    const { getByTestId } = render(
+      <StrategyContractPanel strategy={{
+        name: "bare", entry: "x", exit: "x", invalidation: "x",
+        required_regime: "any", risk_profile: { x: 1 },
+      }} />,
+    );
+    expect(getByTestId("strategy-contract-panel").textContent).toContain("(미작성)");
+  });
+
+  it("renders risk_profile as 'k=v · k=v' inline", () => {
+    const { getByTestId } = render(
+      <StrategyContractPanel strategy={{
+        name: "x", entry: "x", exit: "x", invalidation: "x",
+        required_regime: "trending",
+        risk_profile: { position_size_pct: 5, stop_loss_pct: 2, max_concurrent: 1 },
+      }} />,
+    );
+    const text = getByTestId("strategy-contract-panel").textContent;
+    expect(text).toContain("position_size_pct=5");
+    expect(text).toContain("stop_loss_pct=2");
+    expect(text).toContain("max_concurrent=1");
   });
 });

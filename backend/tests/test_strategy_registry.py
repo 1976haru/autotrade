@@ -65,3 +65,68 @@ def test_required_flag_when_no_default():
         ]
     finally:
         STRATEGY_REGISTRY.pop("_synthetic")
+
+
+# 131: contract metadata — entry/exit/invalidation/required_regime/risk_profile
+# 가 describe 응답에 항상 포함되며, 미작성 strategy는 base.py의 default를 그대로
+# surface해 운영자에게 "미완성" 신호로 인지.
+def test_describe_strategy_includes_contract_metadata():
+    d = describe_strategy("sma_crossover")
+    # 실제 작성된 SmaCrossoverStrategy는 모든 필드를 채움.
+    assert d["entry"]
+    assert d["exit"]
+    assert d["invalidation"]
+    assert d["required_regime"] == "trending"
+    assert d["risk_profile"]["position_size_pct"] == 5
+    assert d["risk_profile"]["stop_loss_pct"]     == 2
+    assert d["risk_profile"]["max_concurrent"]    == 1
+
+
+def test_stub_strategies_are_registered_with_metadata_but_no_signals():
+    """orb_vwap / rsi_reversion은 stub — metadata는 명시되어 있지만 on_bar는
+    HOLD만 반환해 자동매매 안전성에 영향이 없다."""
+    from app.backtest.types import Bar, Signal
+    from app.strategies.concrete import build_strategy
+
+    from datetime import datetime, timedelta, timezone
+    base = datetime(2026, 5, 7, 9, 0, tzinfo=timezone.utc)
+    for name in ("orb_vwap", "rsi_reversion"):
+        d = describe_strategy(name)
+        assert d["entry"], f"{name} must have entry metadata"
+        assert d["exit"],  f"{name} must have exit metadata"
+        assert d["invalidation"], f"{name} must have invalidation metadata"
+        assert d["required_regime"] != "any", f"{name} must declare a regime hint"
+        assert d["risk_profile"], f"{name} must declare a risk_profile"
+
+        strat = build_strategy(name, None)
+        # Stub은 어떤 봉 스트림에서도 BUY/SELL을 만들지 않아야 한다.
+        bars = [Bar(symbol="X",
+                    timestamp=base + timedelta(minutes=i),
+                    open=100, high=101, low=99, close=100, volume=10)
+                for i in range(50)]
+        assert strat.on_bar(bars) == Signal.HOLD, f"{name} stub must not emit signals"
+
+
+def test_unannotated_strategy_falls_back_to_base_metadata_defaults():
+    """Strategy 클래스가 metadata를 명시 안 하면 base.py의 default(""/any/{}) 가
+    그대로 응답에 노출 — 'unfilled contract' 신호."""
+    from app.backtest.types import Bar, Signal
+    from app.strategies.base import Strategy
+
+    class _Bare(Strategy):
+        def __init__(self):
+            pass
+
+        def on_bar(self, bars: list[Bar]) -> Signal:
+            return Signal.HOLD
+
+    STRATEGY_REGISTRY["_bare"] = _Bare
+    try:
+        d = describe_strategy("_bare")
+        assert d["entry"] == ""
+        assert d["exit"] == ""
+        assert d["invalidation"] == ""
+        assert d["required_regime"] == "any"
+        assert d["risk_profile"] == {}
+    finally:
+        STRATEGY_REGISTRY.pop("_bare")
