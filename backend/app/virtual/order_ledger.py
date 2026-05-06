@@ -45,9 +45,14 @@ _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     STATUS_ACCEPTED: frozenset({
         STATUS_PARTIALLY_FILLED, STATUS_FILLED,
         STATUS_CANCELLED, STATUS_EXPIRED,
+        # 149: 체결 단계의 hard-reject (emergency_stop, stale_price 등)는
+        # ACCEPTED → REJECTED로 surface. 운영자 cancel과 구분하기 위해 별도.
+        STATUS_REJECTED,
     }),
     STATUS_PARTIALLY_FILLED: frozenset({
         STATUS_FILLED, STATUS_CANCELLED, STATUS_EXPIRED,
+        # 부분 체결 후 emergency_stop이 켜지면 잔량은 REJECTED.
+        STATUS_REJECTED,
     }),
     # terminal states는 어떤 전이도 허용 안 함.
     STATUS_FILLED:    frozenset(),
