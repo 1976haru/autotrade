@@ -32,6 +32,8 @@ class OrderAuditOut(BaseModel):
     # 139: 신호 quality 0-100. 산출 안 된 경로 + 0007 이전 row는 NULL.
     signal_strength:   int | None = None
     signal_confidence: int | None = None
+    # 140: idempotency 키 (호출자 발급). 미명시 + 0008 이전 row는 NULL.
+    client_order_id:   str | None = None
     executed:        bool
     broker_order_id: str | None = None
     broker_status:   str | None = None
@@ -99,6 +101,7 @@ def _to_order_out(row: OrderAuditLog) -> OrderAuditOut:
         strategy=row.strategy,
         signal_strength=row.signal_strength,
         signal_confidence=row.signal_confidence,
+        client_order_id=row.client_order_id,
         executed=row.executed,
         broker_order_id=row.broker_order_id,
         broker_status=row.broker_status,

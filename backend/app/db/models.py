@@ -44,6 +44,11 @@ class OrderAuditLog(Base):
     signal_strength:   Mapped[int | None]   = mapped_column(Integer, nullable=True)
     signal_confidence: Mapped[int | None]   = mapped_column(Integer, nullable=True)
 
+    # 140: idempotency 키. 호출자가 보낸 client_order_id를 그대로 저장 —
+    # order_router가 같은 id가 이미 audit에 있으면 거부해 double-fire 사고를
+    # 방지한다 (broker 단의 broker_order_id와는 별개 — 그건 broker가 발급).
+    client_order_id: Mapped[str | None]    = mapped_column(String(64), nullable=True, index=True)
+
     executed:        Mapped[bool]           = mapped_column(Boolean, default=False)
     broker_order_id: Mapped[str | None]     = mapped_column(String(64), nullable=True)
     broker_status:   Mapped[str | None]     = mapped_column(String(32), nullable=True)
