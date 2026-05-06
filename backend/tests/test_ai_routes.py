@@ -137,3 +137,28 @@ def test_can_execute_order_always_false_even_when_signal_is_entry(client):
     _override(_ScriptedClient(text=text))
     body = client.post("/api/ai/analyze", json={"ticker": "005930"}).json()
     assert body["can_execute_order"] is False
+
+
+def test_analyze_persists_default_mode_on_audit_row(client):
+    """123: AiAnalysisLog.mode is populated with settings.default_mode at call time
+    so timeline/AI sub-tab can render 092/108 ModeBadge for AI rows."""
+    _override(_ScriptedClient(text="ok"))
+    client.post("/api/ai/analyze", json={"ticker": "005930"})
+
+    with client.test_db_factory() as db:
+        log = db.execute(select(AiAnalysisLog)).scalar_one()
+        # default_mode in tests is SIMULATION (env unset)
+        assert log.mode == "SIMULATION"
+
+
+def test_analyze_audit_row_carries_mode_even_on_provider_error(client):
+    """Failed calls still write the audit row — the mode column should be set
+    so partial-success records still classify correctly by mode."""
+    _override(_ScriptedClient(raises=RuntimeError("upstream gone")))
+    res = client.post("/api/ai/analyze", json={"ticker": "005930"})
+    assert res.status_code == 502
+
+    with client.test_db_factory() as db:
+        log = db.execute(select(AiAnalysisLog)).scalar_one()
+        assert log.mode == "SIMULATION"
+        assert log.error == "upstream gone"

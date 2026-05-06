@@ -40,6 +40,9 @@ class AiAuditOut(BaseModel):
     extra:         str
     active_strats: list
     risk_params:   dict
+    # 123: 호출 시점 운용모드. 0004 마이그레이션 이전 row는 NULL (FE의 ModeBadge가
+    # null이면 미렌더해 자연스럽게 hidden).
+    mode:          str | None = None
     text:          str | None = None
     model:         str | None = None
     input_tokens:  int
@@ -102,6 +105,7 @@ def _to_ai_out(row: AiAnalysisLog) -> AiAuditOut:
         extra=row.extra,
         active_strats=list(row.active_strats or []),
         risk_params=dict(row.risk_params or {}),
+        mode=row.mode,
         text=row.text,
         model=row.model,
         input_tokens=row.input_tokens,

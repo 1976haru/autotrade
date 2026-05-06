@@ -1006,12 +1006,36 @@ describe("<AiAuditView> model filter (094)", () => {
     expect(labels).toContain("claude-haiku-4-5");
   });
 
-  it("does not render a badge when row has no model", () => {
+  it("does not render a model badge when row has no model", () => {
     _resetAiHook({
       items: [_ai({ id: 1, ticker: "AAA", model: null })],
     });
     const { container } = render(<AiAuditView />);
     expect(container.querySelector('[data-testid="ai-model-badge"]')).toBeNull();
+  });
+
+  // 123: backend AiAnalysisLog now carries `mode`; AiAuditView renders it as
+  // a ModeBadge so AI sub-tab rows match the 092/108 visual language.
+  it("renders ModeBadge for rows that carry r.mode (123)", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, ticker: "AAA", model: "claude-sonnet-4-6",
+              mode: "LIVE_AI_ASSIST" }),
+      ],
+    });
+    const { container } = render(<AiAuditView />);
+    const badge = container.querySelector('[data-testid="mode-badge"]');
+    expect(badge).toBeTruthy();
+    expect(badge.textContent).toBe("AI 보조");
+  });
+
+  it("does not render a mode badge when r.mode is null (pre-0004)", () => {
+    _resetAiHook({
+      items: [_ai({ id: 1, ticker: "AAA", model: "claude-sonnet-4-6",
+                     mode: null })],
+    });
+    const { container } = render(<AiAuditView />);
+    expect(container.querySelector('[data-testid="mode-badge"]')).toBeNull();
   });
 });
 
@@ -2890,6 +2914,22 @@ describe("<AiTimelineRow> (122)", () => {
   it("surfaces an error line when r.error is set", () => {
     const { container } = render(<AiTimelineRow r={_row({ error: "rate limit" })} />);
     expect(container.textContent).toContain("오류: rate limit");
+  });
+
+  // 123: backend now sets r.mode on AiAnalysisLog rows; AiTimelineRow surfaces
+  // it as a ModeBadge so timeline rows match the 092/108 visual language.
+  it("renders ModeBadge when r.mode is provided (123)", () => {
+    const { getByTestId } = render(
+      <AiTimelineRow r={_row({ mode: "LIVE_AI_ASSIST" })} />,
+    );
+    const badge = getByTestId("mode-badge");
+    expect(badge.textContent).toBe("AI 보조");
+    expect(badge.dataset.mode).toBe("LIVE_AI_ASSIST");
+  });
+
+  it("does not render ModeBadge when r.mode is null (pre-0004 row)", () => {
+    const { container } = render(<AiTimelineRow r={_row({ mode: null })} />);
+    expect(container.querySelector('[data-testid="mode-badge"]')).toBeNull();
   });
 });
 

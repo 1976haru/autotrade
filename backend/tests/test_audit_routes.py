@@ -97,6 +97,31 @@ def test_list_ai_audits_includes_error_field_when_set(client):
     assert row["score"] is None
 
 
+# 123: mode column propagated through the audit response.
+def test_list_ai_audits_includes_mode_when_set(client):
+    with client.test_db_factory() as db:
+        db.add(AiAnalysisLog(
+            ticker="005930", extra="", active_strats=[], risk_params={},
+            mode="LIVE_AI_ASSIST",
+        ))
+        db.commit()
+    row = client.get("/api/audit/ai").json()[0]
+    assert row["mode"] == "LIVE_AI_ASSIST"
+
+
+def test_list_ai_audits_mode_is_null_for_pre_0004_rows(client):
+    """0004 마이그레이션 이전에 만들어진 row는 mode를 모른다 — NULL이 그대로
+    응답에 surface되어 FE의 ModeBadge가 미렌더 결정을 내린다."""
+    with client.test_db_factory() as db:
+        db.add(AiAnalysisLog(
+            ticker="005930", extra="", active_strats=[], risk_params={},
+            # mode= 명시 안 함 → NULL
+        ))
+        db.commit()
+    row = client.get("/api/audit/ai").json()[0]
+    assert row["mode"] is None
+
+
 # ---------- /api/audit/backtests ----------
 
 def test_list_backtest_runs_empty(client):

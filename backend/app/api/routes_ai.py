@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.ai.client import AiClient, AiNotConfiguredError
 from app.ai.service import analyze as run_analysis
 from app.api.deps import get_ai_client
+from app.core.config import get_settings
 from app.db.models import AiAnalysisLog
 from app.db.session import get_db
 
@@ -62,6 +63,9 @@ async def analyze_route(
         extra=payload.extra or "",
         active_strats=list(payload.activeStrats),
         risk_params=dict(payload.risk),
+        # 123: 호출 시점의 운용모드 기록 — frontend ModeBadge가 timeline/AI
+        # sub-tab에서 자동 표시. 미래 mode별 cost 분포 분석에도 활용.
+        mode=get_settings().default_mode.value,
     )
 
     try:
