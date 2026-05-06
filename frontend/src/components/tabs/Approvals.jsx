@@ -225,14 +225,19 @@ function _StaleApprovalList({ stale }) {
       maxHeight: 140, overflowY: "auto",
     }}>
       {visible.map((a) => (
-        <div key={a.id} style={{ display: "flex", justifyContent: "space-between",
-                                   fontSize: 10, padding: "2px 0" }}>
-          <span>
+        <div key={a.id}
+             data-testid={`stale-approval-row-${a.id}`}
+             style={{ display: "flex", justifyContent: "space-between",
+                       alignItems: "center", fontSize: 10, padding: "2px 0",
+                       gap: 6 }}>
+          <span style={{ display: "flex", alignItems: "center",
+                          gap: 6, flexWrap: "wrap" }}>
             <span style={{ color: "#7dd3fc", fontWeight: 700 }}>{a.symbol}</span>
-            <span style={{ marginLeft: 6, color: a.side === "BUY" ? "#22c55e" : "#ef4444" }}>
+            <span style={{ color: a.side === "BUY" ? "#22c55e" : "#ef4444" }}>
               {a.side}
             </span>
-            <span style={{ marginLeft: 6 }}>{a.quantity}주</span>
+            <span>{a.quantity}주</span>
+            <ModeBadge mode={a.mode} />
           </span>
           <span style={{ color: "#f59e0b" }}>{formatPendingAge(a.created_at)}</span>
         </div>
