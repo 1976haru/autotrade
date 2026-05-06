@@ -86,6 +86,10 @@ class RiskPolicy:
     # 181: 종목별 노출의 자본 대비 % 한도. max_symbol_exposure (절대값)에 보완 —
     # 자본 증감 시 자동 스케일. 0이면 비활성 (기본).
     max_symbol_exposure_pct: float = 0.0
+    # 182: 최근 N건의 audit row가 모두 REJECTED이면 자동으로 emergency_stop 토글.
+    # 시스템 이상 자동 감지 — LLM bug, broker 장애, stale price 연속 발생 등.
+    # 0이면 비활성 (기본). 권장 5~10건.
+    auto_stop_consecutive_rejections: int = 0
 
     @classmethod
     def from_settings(cls, settings) -> "RiskPolicy":
@@ -117,6 +121,7 @@ class RiskPolicy:
             max_total_exposure               = settings.max_total_exposure,
             max_total_exposure_pct           = settings.max_total_exposure_pct,
             max_symbol_exposure_pct          = settings.max_symbol_exposure_pct,
+            auto_stop_consecutive_rejections = settings.auto_stop_consecutive_rejections,
         )
 
 

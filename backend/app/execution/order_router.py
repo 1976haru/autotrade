@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ai.rate_limit import check_global_rate_limit, check_rate_limit
+from app.risk.auto_stop import maybe_trigger_auto_stop
 from app.brokers.base import BrokerAdapter, OrderRequest, OrderResult
 from app.core.modes import OperationMode
 from app.db.models import OrderAuditLog, PendingApproval
@@ -173,6 +174,12 @@ async def route_order(
 
     if decision.decision == RiskDecision.REJECTED:
         db.commit()
+        # 182: 연속 REJECTED 누적 임계 도달 시 자동 emergency_stop. 이미 켜져
+        # 있거나 임계 0이면 no-op.
+        maybe_trigger_auto_stop(
+            db, risk=risk,
+            threshold=risk.policy.auto_stop_consecutive_rejections,
+        )
         return OrderRoutingResult(
             decision=decision.decision,
             reasons=list(decision.reasons),
