@@ -248,6 +248,33 @@ def test_history_empty_when_nothing_decided(client, monkeypatch):
     assert client.get("/api/approvals/history").json() == []
 
 
+def test_history_status_filter_accepts_expired(client, monkeypatch):
+    """196: 167 자동 만료된 row를 EXPIRED 필터로 조회 가능해야 한다."""
+    from app.db.models import PendingApproval
+    _enable_manual_approval(monkeypatch, client)
+    a = _submit_buy(client).json()
+    # 직접 EXPIRED로 전환 (167 TTL trigger를 직접 흉내).
+    from datetime import datetime, timezone
+    from sqlalchemy import select as _select
+    with client.test_db_factory() as db:
+        row = db.execute(_select(PendingApproval).where(
+            PendingApproval.id == a["approval_id"]
+        )).scalar_one()
+        row.status      = "EXPIRED"
+        row.decided_at  = datetime.now(timezone.utc)
+        row.decided_by  = "system"
+        row.note        = "auto-expired after TTL"
+        db.commit()
+    rows = client.get("/api/approvals/history?status=EXPIRED").json()
+    assert len(rows) == 1
+    assert rows[0]["status"] == "EXPIRED"
+
+    # 필터 미지정 시에도 EXPIRED 행이 보여야 한다 (이 동작은 list_decided가
+    # !=PENDING 모든 row를 반환하므로 이미 정상 — 회귀 방지 가드).
+    all_rows = client.get("/api/approvals/history").json()
+    assert any(r["status"] == "EXPIRED" for r in all_rows)
+
+
 def test_history_rejects_invalid_status_filter(client):
     res = client.get("/api/approvals/history?status=PENDING")
     assert res.status_code == 422  # FastAPI's Literal validation rejects PENDING

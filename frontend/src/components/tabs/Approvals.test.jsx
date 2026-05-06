@@ -674,13 +674,15 @@ describe("<HistoryTimeBucketBar>", () => {
 describe("<HistoryStatusFilterBar>", () => {
   afterEach(cleanup);
 
-  it("renders four chips and highlights the active one", () => {
+  it("renders five chips and highlights the active one", () => {
     const { getByRole } = render(<HistoryStatusFilterBar active="all" onChange={() => {}} />);
     expect(getByRole("radiogroup", { name: "처리 내역 상태 필터" })).toBeTruthy();
     expect(getByRole("radio", { name: "전체" }).getAttribute("aria-checked")).toBe("true");
     expect(getByRole("radio", { name: "승인" }).getAttribute("aria-checked")).toBe("false");
     expect(getByRole("radio", { name: "거부" }).getAttribute("aria-checked")).toBe("false");
     expect(getByRole("radio", { name: "취소" }).getAttribute("aria-checked")).toBe("false");
+    // 196: EXPIRED chip
+    expect(getByRole("radio", { name: "만료" }).getAttribute("aria-checked")).toBe("false");
   });
 
   it("calls onChange with the chip's status id", () => {
@@ -692,16 +694,19 @@ describe("<HistoryStatusFilterBar>", () => {
     expect(onChange).toHaveBeenLastCalledWith("REJECTED");
     fireEvent.click(getByRole("radio", { name: "취소" }));
     expect(onChange).toHaveBeenLastCalledWith("CANCELLED");
+    fireEvent.click(getByRole("radio", { name: "만료" }));
+    expect(onChange).toHaveBeenLastCalledWith("EXPIRED");
   });
 });
 
 
 describe("isValidHistoryStatus", () => {
-  it("accepts the four canonical ids", () => {
+  it("accepts the five canonical ids", () => {
     expect(isValidHistoryStatus("all")).toBe(true);
     expect(isValidHistoryStatus("APPROVED")).toBe(true);
     expect(isValidHistoryStatus("REJECTED")).toBe(true);
     expect(isValidHistoryStatus("CANCELLED")).toBe(true);
+    expect(isValidHistoryStatus("EXPIRED")).toBe(true);  // 196
   });
 
   it("rejects unknown values (forward-compat against future builds)", () => {
