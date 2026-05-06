@@ -41,6 +41,10 @@ class ApprovalOut(BaseModel):
     # RiskManager가 NEEDS_APPROVAL로 분류한 사유. 운영자가 승인/거부 결정 전
     # 컨텍스트를 즉시 보도록 audit row의 reasons를 join해 노출한다.
     reasons:     list[str] = []
+    # 076: 070 재평가에서 거부된 시도 이력. 한 행이 여러 번 거부되면 그때마다
+    # {at, decided_by, reasons} 항목이 누적된다. 운영자 인계/restart 후에도
+    # "이 결재는 막혔던 적 있다" 단서가 보존된다.
+    attempts:    list[dict] = []
 
 
 class ApprovalDecision(BaseModel):
@@ -69,6 +73,7 @@ def _to_out(approval, reasons: list[str] | None = None) -> ApprovalOut:
         decided_by=approval.decided_by,
         note=approval.note,
         reasons=list(reasons or []),
+        attempts=list(approval.attempts or []),
     )
 
 

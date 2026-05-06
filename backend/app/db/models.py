@@ -91,6 +91,11 @@ class PendingApproval(Base):
     decided_by:  Mapped[str | None]     = mapped_column(String(64), nullable=True)
     note:        Mapped[str | None]     = mapped_column(String(500), nullable=True)
 
+    # 076: 070 재평가에서 거부된 시도 이력. 한 행이 여러 번 거부되면 그때마다
+    # {at, decided_by, reasons} 항목이 append 된다. 075가 frontend session 메모리로
+    # 같은 정보를 보여줬지만, 새로고침/운영자 인계 시 잃었다 — 이 필드로 영속화.
+    attempts:    Mapped[list]           = mapped_column(JSON, default=list)
+
 
 class AiAnalysisLog(Base):
     """AI 분석 요청과 응답을 한 행에 기록. 호출 실패도 audit 목적으로 남긴다."""

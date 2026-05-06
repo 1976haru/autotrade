@@ -18,11 +18,6 @@ export function useApprovals() {
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState("");
   const [busy,    setBusy]    = useState(false);
-  // 075: per-row session memory of the last failed approve attempt. Modal
-  // close clears the inline error (072), but the row itself loses the
-  // signal that something went wrong. This map keeps {at, message} keyed by
-  // approval id so the row can render a small "X분 전 거부" hint.
-  const [lastFailures, setLastFailures] = useState({});
 
   const refresh = useCallback(async () => {
     try {
@@ -75,23 +70,13 @@ export function useApprovals() {
       await backendApi.approveApproval(id, _normalize(decision));
       await refresh();
       await refreshHistory();
-      // Success → clear any stale failure note for this id.
-      setLastFailures((prev) => {
-        if (!(id in prev)) return prev;
-        const next = { ...prev };
-        delete next[id];
-        return next;
-      });
       return { ok: true };
     } catch (e) {
       setError(e.message);
-      // 075: stamp the row so the operator can see the row kept failing even
-      // after closing the dialog. Stays only for this React session — refresh
-      // wipes it, which is fine because the broker conditions may have
-      // changed too.
-      setLastFailures((prev) => ({
-        ...prev, [id]: { at: Date.now(), message: e.message },
-      }));
+      // 076: backend appends to PendingApproval.attempts on re-eval-blocked
+      // failure; refresh so the local row picks up the new attempts entry
+      // immediately instead of waiting for the 5s polling tick.
+      await refresh();
       return { ok: false, message: e.message };
     } finally {
       setBusy(false);
@@ -158,6 +143,5 @@ export function useApprovals() {
   }, [refresh, refreshHistory]);
 
   return { pending, history, loading, error, busy,
-           lastFailures,
            refresh, refreshHistory, approve, reject, cancel, cancelMany };
 }
