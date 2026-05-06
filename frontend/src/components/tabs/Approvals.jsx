@@ -4,7 +4,13 @@ import { Btn, Card, Inp, SectionLabel } from "../common";
 import { ChipFilterBar } from "../common/ChipFilterBar";
 import { DecisionDialog } from "../common/DecisionDialog";
 import { usePersistedState } from "../../store/usePersistedState";
-import { fmtKRW } from "../../utils/format";
+import { fmtKRW, formatPendingAge, isPendingStale } from "../../utils/format";
+
+// 087: formatPendingAge / isPendingStale moved to utils/format.js once
+// Dashboard + App started importing them across tabs. Re-export from this
+// module so 058~077 callers (and tests asserting the export shape) keep
+// working without churn.
+export { formatPendingAge, isPendingStale };
 
 
 const STATUS_COLOR = {
@@ -21,26 +27,6 @@ const ACTION_META = {
   cancel:  { label: "주문 취소", confirmLabel: "⊘ 취소", color: "#94a3b8" },
 };
 
-
-// 단타 운영에서 결재 지연은 기회 손실로 직결. PENDING 행에 상대 시간 배지를
-// 붙여 신호 노후화를 즉시 인지시킨다 — 10분 이상이면 stale로 간주해 강조.
-// useApprovals가 5초마다 폴링하며 리렌더하므로 별도 타이머 없이 자동 갱신.
-const PENDING_STALE_THRESHOLD_MS = 10 * 60 * 1000;
-const _MIN  = 60_000;
-const _HOUR = 60 * _MIN;
-const _DAY  = 24 * _HOUR;
-
-export function formatPendingAge(createdAtIso, now = Date.now()) {
-  const elapsed = Math.max(0, now - new Date(createdAtIso).getTime());
-  if (elapsed < 30_000) return "방금";
-  if (elapsed < _HOUR)  return `${Math.floor(elapsed / _MIN)}분 전`;
-  if (elapsed < _DAY)   return `${Math.floor(elapsed / _HOUR)}시간 전`;
-  return `${Math.floor(elapsed / _DAY)}일 전`;
-}
-
-export function isPendingStale(createdAtIso, now = Date.now()) {
-  return (now - new Date(createdAtIso).getTime()) >= PENDING_STALE_THRESHOLD_MS;
-}
 
 export function PendingAgeBadge({ createdAt, now }) {
   const stale = isPendingStale(createdAt, now);

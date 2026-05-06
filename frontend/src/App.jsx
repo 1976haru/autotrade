@@ -12,7 +12,7 @@ import { AISignal }     from "./components/tabs/AISignal";
 import { LiveEngine }   from "./components/tabs/LiveEngine";
 import { Futures }      from "./components/tabs/Futures";
 import { Settings }     from "./components/tabs/Settings";
-import { isPendingStale } from "./components/tabs/Approvals";
+import { isPendingStale } from "./utils/format";
 import { emergencyStopOnSince } from "./components/tabs/Dashboard";
 import { useApprovals }  from "./store/useApprovals";
 import { usePortfolio }  from "./store/usePortfolio";
