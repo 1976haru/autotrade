@@ -1191,7 +1191,7 @@ export function BacktestExtremesSummary({ items, onJump }) {
 }
 
 
-export function BacktestStrategyMiniTable({ items }) {
+export function BacktestStrategyMiniTable({ items, onJumpStrategy }) {
   const rows = summarizeBacktestByStrategy(items);
   // 0개거나 1개면 비교가 의미 없어 hide — 단일 strategy의 합계는 098 list
   // 자체 + 정렬로 충분.
@@ -1199,6 +1199,33 @@ export function BacktestStrategyMiniTable({ items }) {
   const _td = { padding: "3px 6px", fontSize: 10 };
   const _th = { ..._td, color: "#475569", fontWeight: 700,
                  borderBottom: "1px solid #1a3a5c", textAlign: "left" };
+  // 129: strategy 셀을 클릭 가능 button으로 — 126의 jump-to-row 패턴을 strategy
+  // 단위로 확장. onJumpStrategy 미제공 시 plain text fallback (테스트 단독
+  // render 경로 호환).
+  const _StrategyCell = ({ strategy }) => {
+    if (onJumpStrategy) {
+      return (
+        <button
+          type="button"
+          data-testid={`backtest-strategy-cell-${strategy}`}
+          onClick={() => onJumpStrategy(strategy)}
+          style={{
+            background: "transparent", border: "none", padding: 0, margin: 0,
+            color: "#7dd3fc", fontWeight: 700, fontSize: "inherit",
+            fontFamily: "inherit", cursor: "pointer", textAlign: "left",
+          }}
+        >
+          {strategy}
+        </button>
+      );
+    }
+    return (
+      <span data-testid={`backtest-strategy-cell-${strategy}`}
+            style={{ color: "#7dd3fc", fontWeight: 700 }}>
+        {strategy}
+      </span>
+    );
+  };
   return (
     <div data-testid="backtest-strategy-table"
          style={{ marginBottom: 8, padding: "4px 0",
@@ -1216,8 +1243,8 @@ export function BacktestStrategyMiniTable({ items }) {
           {rows.map((r) => (
             <tr key={r.strategy}
                 data-testid={`backtest-strategy-row-${r.strategy}`}>
-              <td style={{ ..._td, color: "#7dd3fc", fontWeight: 700 }}>
-                {r.strategy}
+              <td style={_td}>
+                <_StrategyCell strategy={r.strategy} />
               </td>
               <td style={{ ..._td, textAlign: "right", color: "#94a3b8" }}>
                 {r.count}건
@@ -1315,6 +1342,13 @@ export function BacktestRunsView() {
       setHighlightId((cur) => (cur === id ? null : cur));
     }, BACKTEST_ROW_HIGHLIGHT_MS);
   };
+  // 129: strategy mini-table 셀 클릭 → 정렬된 filteredItems의 첫 매칭 row.
+  // 운영자 흐름: "rsi_revert에 50번 돌렸는데 어떤 게 시작점이지?" — 첫 등장
+  // (= 정렬 기준에 따른 가장 prominent run)에서 검토 시작.
+  const _jumpToStrategy = (strategy) => {
+    const target = filteredItems.find((r) => r.strategy === strategy);
+    if (target) _jumpToRow(target.id);
+  };
 
   return (
     <Card>
@@ -1344,7 +1378,7 @@ export function BacktestRunsView() {
       </div>
 
       <BacktestExtremesSummary items={filteredItems} onJump={_jumpToRow} />
-      <BacktestStrategyMiniTable items={filteredItems} />
+      <BacktestStrategyMiniTable items={filteredItems} onJumpStrategy={_jumpToStrategy} />
 
       {error && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>}
 

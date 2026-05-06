@@ -3446,3 +3446,105 @@ describe("<EventTimelineView> AI rows integration (122)", () => {
     expect(container.textContent).not.toContain("AAA");
   });
 });
+
+
+describe("<BacktestStrategyMiniTable> jump-to-strategy (129)", () => {
+  afterEach(cleanup);
+
+  function _r(id, strategy, total_pnl = 0) {
+    return { id, strategy, total_pnl, win_count: 5, loss_count: 5 };
+  }
+
+  it("renders strategy as plain span when onJumpStrategy is omitted", () => {
+    const items = [_r(1, "sma"), _r(2, "rsi")];
+    const { getByTestId } = render(<BacktestStrategyMiniTable items={items} />);
+    expect(getByTestId("backtest-strategy-cell-sma").tagName).toBe("SPAN");
+    expect(getByTestId("backtest-strategy-cell-rsi").tagName).toBe("SPAN");
+  });
+
+  it("renders strategy as button when onJumpStrategy is provided", () => {
+    const items = [_r(1, "sma"), _r(2, "rsi")];
+    const { getByTestId } = render(
+      <BacktestStrategyMiniTable items={items} onJumpStrategy={() => {}} />,
+    );
+    expect(getByTestId("backtest-strategy-cell-sma").tagName).toBe("BUTTON");
+  });
+
+  it("calls onJumpStrategy with the strategy id when clicked", () => {
+    const items = [_r(1, "sma"), _r(2, "rsi")];
+    const onJump = vi.fn();
+    const { getByTestId } = render(
+      <BacktestStrategyMiniTable items={items} onJumpStrategy={onJump} />,
+    );
+    fireEvent.click(getByTestId("backtest-strategy-cell-rsi"));
+    expect(onJump).toHaveBeenCalledWith("rsi");
+  });
+});
+
+
+describe("<BacktestRunsView> strategy table jump-and-highlight (129)", () => {
+  beforeEach(() => { _resetBacktestHook(); localStorage.clear(); });
+  afterEach(() => { cleanup(); localStorage.clear(); vi.useRealTimers(); });
+
+  function _bt(overrides = {}) {
+    return {
+      id: 1, strategy: "sma_crossover",
+      params: {}, initial_cash: 10_000_000, quantity: 10, bars_processed: 100,
+      final_cash: 10_500_000, total_pnl: 0,
+      win_count: 5, loss_count: 5, max_drawdown: 0,
+      data_source: "bars", data_symbol: "005930",
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("clicking a strategy cell highlights the first matching row", () => {
+    vi.useFakeTimers();
+    Element.prototype.scrollIntoView = vi.fn();
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "sma_crossover", total_pnl: 100 }),
+        _bt({ id: 2, strategy: "rsi_revert",    total_pnl: 200 }),
+        _bt({ id: 3, strategy: "rsi_revert",    total_pnl: 300 }),
+      ],
+    });
+    const { getByTestId } = render(<BacktestRunsView />);
+    fireEvent.click(getByTestId("backtest-strategy-cell-rsi_revert"));
+    // 정렬은 default 'recent' (created_at 동일이라 source 순서 유지). first
+    // matching 'rsi_revert'는 id=2.
+    expect(getByTestId("backtest-row-2").dataset.highlighted).toBe("true");
+    expect(getByTestId("backtest-row-1").dataset.highlighted).toBe("false");
+    expect(getByTestId("backtest-row-3").dataset.highlighted).toBe("false");
+  });
+
+  it("clicking a strategy cell triggers scrollIntoView", () => {
+    vi.useFakeTimers();
+    const scrollSpy = vi.fn();
+    Element.prototype.scrollIntoView = scrollSpy;
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "sma_crossover", total_pnl: 100 }),
+        _bt({ id: 2, strategy: "rsi_revert",    total_pnl: 200 }),
+      ],
+    });
+    const { getByTestId } = render(<BacktestRunsView />);
+    fireEvent.click(getByTestId("backtest-strategy-cell-rsi_revert"));
+    expect(scrollSpy).toHaveBeenCalled();
+  });
+
+  it("highlight clears after timeout", () => {
+    vi.useFakeTimers();
+    Element.prototype.scrollIntoView = vi.fn();
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "sma_crossover" }),
+        _bt({ id: 2, strategy: "rsi_revert" }),
+      ],
+    });
+    const { getByTestId } = render(<BacktestRunsView />);
+    fireEvent.click(getByTestId("backtest-strategy-cell-rsi_revert"));
+    expect(getByTestId("backtest-row-2").dataset.highlighted).toBe("true");
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(getByTestId("backtest-row-2").dataset.highlighted).toBe("false");
+  });
+});
