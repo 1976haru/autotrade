@@ -77,7 +77,7 @@ describe("mergeEvents", () => {
     const stops = [
       _STOP({ id: 1, created_at: "2026-05-05T12:05:00+00:00" }),
     ];
-    const events = mergeEvents(orders, stops);
+    const events = mergeEvents({ orders, stops });
     expect(events.map((e) => `${e.kind}-${e.row.id}`)).toEqual([
       "order-11", "stop-1", "order-10",
     ]);
@@ -87,7 +87,7 @@ describe("mergeEvents", () => {
     const orders = Array.from({ length: 60 }, (_, i) =>
       _ORDER({ id: i, created_at: new Date(2026, 4, 5, 12, 0, i).toISOString() }),
     );
-    const events = mergeEvents(orders, [], [], 50);
+    const events = mergeEvents({ orders, limit: 50 });
     expect(events).toHaveLength(50);
     // Most recent = highest second value (id 59)
     expect(events[0].row.id).toBe(59);
@@ -97,13 +97,15 @@ describe("mergeEvents", () => {
     const orders = Array.from({ length: 80 }, (_, i) =>
       _ORDER({ id: i, created_at: new Date(2026, 4, 5, 12, 0, i).toISOString() }),
     );
-    const events = mergeEvents(orders, []);
+    const events = mergeEvents({ orders });
     expect(events).toHaveLength(80);
     expect(events[0].row.id).toBe(79);
   });
 
-  it("returns an empty list when both sources are empty", () => {
-    expect(mergeEvents([], [])).toEqual([]);
+  it("returns an empty list when no sources are provided", () => {
+    expect(mergeEvents()).toEqual([]);
+    expect(mergeEvents({})).toEqual([]);
+    expect(mergeEvents({ orders: [], stops: [] })).toEqual([]);
   });
 });
 
@@ -228,13 +230,13 @@ describe("mergeEvents with attempts", () => {
       approval_id: 7, symbol: "X", side: "BUY", quantity: 1,
       at: "2026-05-05T12:10:00+00:00",
     }];
-    const events = mergeEvents(orders, stops, attempts);
+    const events = mergeEvents({ orders, stops, attempts });
     expect(events.map((e) => e.kind)).toEqual(["attempt", "stop", "order"]);
   });
 
-  it("defaults attempts to empty list (back-compat with pre-079 callers)", () => {
+  it("attempts default to empty list when key is omitted", () => {
     const orders = [{ id: 1, created_at: "2026-05-05T12:00:00+00:00" }];
-    const events = mergeEvents(orders, []);
+    const events = mergeEvents({ orders });
     expect(events).toHaveLength(1);
     expect(events[0].kind).toBe("order");
   });
