@@ -57,6 +57,7 @@
 |---|---|---:|---|
 | 단일 주문 자본 % | `max_position_size_pct` | 0 (비활성) | `MAX_POSITION_SIZE_PCT` |
 | 총 노출 자본 % | `max_total_exposure_pct` | 0 (비활성) | `MAX_TOTAL_EXPOSURE_PCT` |
+| 종목별 노출 자본 % | `max_symbol_exposure_pct` | 0 (비활성) | `MAX_SYMBOL_EXPOSURE_PCT` |
 
 ### 시간/window 한도
 
