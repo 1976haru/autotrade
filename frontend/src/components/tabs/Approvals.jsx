@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { Btn, Card, SectionLabel } from "../common";
+import { Btn, Card, Inp, SectionLabel } from "../common";
 import { DecisionDialog } from "../common/DecisionDialog";
 import { fmtKRW } from "../../utils/format";
 
@@ -235,6 +235,16 @@ export function BulkCancelStaleModal({
 }
 
 
+// 082: 처리 내역에서 종목 검색이 비었는지/필터 결과만 비었는지 구분.
+// 067 audit timeline 패턴과 동일 — 입력은 활성 필터의 진실 소스이고 메시지는
+// "필터 때문임"만 신호한다.
+export function historyEmptyMessage(history, symbolNeedle) {
+  if (!history || history.length === 0) return "결정된 항목이 없습니다";
+  if (symbolNeedle) return "해당 종목의 항목이 없습니다";
+  return "결정된 항목이 없습니다";
+}
+
+
 // 076: per-row failure hint sourced from PendingApproval.attempts.
 // Each entry is {at: ISO, decided_by, reasons}. Survives session/operator
 // changes. The badge shows the count + the most recent timestamp + reasons,
@@ -275,6 +285,14 @@ export function Approvals({ approvals, operatorName = "" }) {
   // 공유하고, 액션은 ACTION_META에서 분기한다.
   const [decisionTarget, setDecisionTarget] = useState(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  // 082: transient symbol filter for the 처리 내역 list. Not persisted —
+  // each investigation focuses on a different ticker, like the 067 audit
+  // timeline filter.
+  const [historySymbolFilter, setHistorySymbolFilter] = useState("");
+  const _historyNeedle = historySymbolFilter.trim().toLowerCase();
+  const filteredHistory = _historyNeedle
+    ? history.filter((a) => a.symbol.toLowerCase().includes(_historyNeedle))
+    : history;
 
   const dispatchByAction = { approve, reject, cancel };
 
@@ -366,11 +384,18 @@ export function Approvals({ approvals, operatorName = "" }) {
 
       <Card>
         <SectionLabel>처리 내역 (최근 50건)</SectionLabel>
-        {history.length === 0 ? (
+        <div style={{ marginBottom: 8 }}>
+          <Inp
+            value={historySymbolFilter}
+            onChange={setHistorySymbolFilter}
+            placeholder="🔍 종목 (예: 005930)"
+          />
+        </div>
+        {filteredHistory.length === 0 ? (
           <div style={{ color: "#1e3a5c", fontSize: 12, textAlign: "center", padding: 16 }}>
-            결정된 항목이 없습니다
+            {historyEmptyMessage(history, _historyNeedle)}
           </div>
-        ) : history.map((a) => <HistoryRow key={a.id} a={a} />)}
+        ) : filteredHistory.map((a) => <HistoryRow key={a.id} a={a} />)}
       </Card>
 
       <div style={{ fontSize: 10, color: "#1e3a5c", lineHeight: 1.6, padding: "0 4px" }}>
