@@ -59,6 +59,16 @@ export function EmergencyStopHistoryRow({ event }) {
         <span style={{ fontSize: 10, color: "#94a3b8" }}>
           {new Date(event.created_at).toLocaleString("ko-KR")}
         </span>
+        {/* 153: reason_code는 사고 분석 시 가장 빠르게 보이는 정보 — inline 배지. */}
+        {event.reason_code && (
+          <span data-testid="reason-code-badge" style={{
+            fontSize: 8, fontWeight: 700, letterSpacing: "0.04em",
+            color: "#a78bfa", padding: "1px 4px", borderRadius: 3,
+            border: "1px solid #a78bfa55", background: "#a78bfa15",
+          }}>
+            {event.reason_code}
+          </span>
+        )}
       </div>
       <div style={{ fontSize: 9, color: "#64748b", textAlign: "right" }}>
         {event.decided_by ? `by ${event.decided_by}` : ""}
@@ -67,6 +77,21 @@ export function EmergencyStopHistoryRow({ event }) {
     </div>
   );
 }
+
+
+// 153: enum from app.risk.emergency_reasons. 백엔드 라우트 /api/risk/emergency-stop/
+// reasons 호출로도 가져올 수 있지만 modal은 정적 dropdown — 9개 변동성 낮음.
+const _EMERGENCY_STOP_REASONS = [
+  { value: "manual_operator",          label: "수동 (운영자)" },
+  { value: "daily_loss_limit",         label: "일일 손실 한도" },
+  { value: "data_stale",               label: "시세 stale" },
+  { value: "broker_error",             label: "broker 오류" },
+  { value: "repeated_order_failure",   label: "주문 연속 실패" },
+  { value: "abnormal_slippage",        label: "비정상 슬리피지" },
+  { value: "agent_warning",            label: "AI 에이전트 경고" },
+  { value: "margin_risk",              label: "선물 증거금 위험" },
+  { value: "futures_liquidation_risk", label: "선물 강제청산 임박" },
+];
 
 
 export function EmergencyStopHistoryCard({ history }) {
@@ -92,6 +117,33 @@ export function EmergencyStopConfirmModal({
 }) {
   const action = targetEnabled ? "긴급 정지 활성화" : "긴급 정지 해제";
   const accent = targetEnabled ? "#ef4444"          : "#22c55e";
+  // 153: reason_code dropdown 자체 상태. 빈 문자열은 null로 변환해 backend로 전달.
+  const [reasonCode, setReasonCode] = useState("");
+
+  const reasonField = (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 10, color: "#64748b", marginBottom: 4 }}>
+        사유 코드 (reason_code) — 사고 분석 시 사용
+      </div>
+      <select
+        data-testid="emergency-stop-reason-select"
+        value={reasonCode}
+        onChange={(e) => setReasonCode(e.target.value)}
+        disabled={busy}
+        style={{
+          width: "100%", padding: "5px 6px",
+          background: "#0c2035", color: "#7dd3fc",
+          border: "1px solid #1a3a5c", borderRadius: 4,
+          fontSize: 11,
+        }}
+      >
+        <option value="">— 미지정 —</option>
+        {_EMERGENCY_STOP_REASONS.map((r) => (
+          <option key={r.value} value={r.value}>{r.label}</option>
+        ))}
+      </select>
+    </div>
+  );
 
   return (
     <DecisionDialog
@@ -99,10 +151,12 @@ export function EmergencyStopConfirmModal({
       accent={accent}
       cancelLabel="취소"
       confirmLabel="확인"
-      description="감사 추적을 위해 운영자명과 사유를 남겨주세요. 둘 다 선택 사항이지만, 기록된 값은 영구 저장되어 사고 분석 시 사용됩니다."
+      description="감사 추적을 위해 운영자명/사유/코드를 남겨주세요. 코드는 사고 분석 시 reason별 집계에 사용됩니다."
       notePlaceholder="예: vol spike, circuit-breaker"
       busy={busy}
       defaultDecidedBy={defaultDecidedBy}
+      extraFields={reasonField}
+      extraPayload={() => ({ reason_code: reasonCode || null })}
       onConfirm={onConfirm}
       onCancel={onCancel}
     />

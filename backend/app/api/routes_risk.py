@@ -1,13 +1,14 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_risk_manager
 from app.db.models import EmergencyStopEvent
 from app.db.session import get_db
+from app.risk.emergency_reasons import EMERGENCY_STOP_REASONS, EmergencyStopReason
 from app.risk.risk_manager import RiskManager, RiskPolicy
 
 router = APIRouter(prefix="/risk", tags=["risk"])
@@ -17,14 +18,28 @@ class EmergencyStopRequest(BaseModel):
     enabled:    bool
     decided_by: str | None = None
     note:       str | None = None
+    # 153: 구조화 사유 코드. None은 legacy / 미명시 호환을 위해 허용.
+    reason_code: str | None = None
+
+    @field_validator("reason_code")
+    @classmethod
+    def _validate_reason(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if v not in EMERGENCY_STOP_REASONS:
+            raise ValueError(
+                f"reason_code must be one of {sorted(EMERGENCY_STOP_REASONS)} or null"
+            )
+        return v
 
 
 class EmergencyStopEventOut(BaseModel):
-    id:         int
-    created_at: datetime
-    enabled:    bool
-    decided_by: str | None = None
-    note:       str | None = None
+    id:          int
+    created_at:  datetime
+    enabled:     bool
+    decided_by:  str | None = None
+    note:        str | None = None
+    reason_code: str | None = None  # 153
 
 
 @router.get("/policy")
@@ -51,9 +66,16 @@ def set_emergency_stop(
             enabled=payload.enabled,
             decided_by=payload.decided_by,
             note=payload.note,
+            reason_code=payload.reason_code,  # 153
         ))
         db.commit()
     return {"emergency_stop": risk.emergency_stop}
+
+
+@router.get("/emergency-stop/reasons")
+def emergency_stop_reasons() -> list[str]:
+    """153: 허용되는 reason_code 목록 — frontend가 dropdown 생성 시 사용."""
+    return [r.value for r in EmergencyStopReason]
 
 
 @router.get("/emergency-stop/history", response_model=list[EmergencyStopEventOut])
@@ -77,6 +99,7 @@ def emergency_stop_history(
         EmergencyStopEventOut(
             id=r.id, created_at=r.created_at, enabled=r.enabled,
             decided_by=r.decided_by, note=r.note,
+            reason_code=r.reason_code,  # 153
         )
         for r in rows
     ]
