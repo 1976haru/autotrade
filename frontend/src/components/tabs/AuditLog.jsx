@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Btn, Card, Inp, SectionLabel } from "../common";
+import { ChipFilterBar } from "../common/ChipFilterBar";
 import { fmtKRW, pnlColor } from "../../utils/format";
 import {
   useAiAudits,
@@ -261,58 +262,16 @@ export function emptyEventTimelineMessage(kind, symbolFilter, timeBucket) {
 
 export function TimeBucketBar({ active, onChange }) {
   return (
-    <div role="radiogroup" aria-label="시간 범위 필터"
-         style={{ display: "flex", gap: 4 }}>
-      {TIME_BUCKETS.map((b) => {
-        const isActive = active === b.id;
-        return (
-          <button
-            key={b.id}
-            role="radio"
-            aria-checked={isActive}
-            onClick={() => onChange(b.id)}
-            style={{
-              padding: "5px 10px", borderRadius: 12, cursor: "pointer",
-              fontFamily: "inherit", fontSize: 10, fontWeight: 700,
-              background: isActive ? `${b.color}22` : "transparent",
-              border:     `1px solid ${isActive ? b.color : "#1a3a5c"}`,
-              color:      isActive ? b.color : "#475569",
-            }}
-          >
-            {b.label}
-          </button>
-        );
-      })}
-    </div>
+    <ChipFilterBar items={TIME_BUCKETS} active={active}
+      onChange={onChange} ariaLabel="시간 범위 필터" />
   );
 }
 
 
 export function KindFilterBar({ active, onChange }) {
   return (
-    <div role="radiogroup" aria-label="이벤트 종류 필터"
-         style={{ display: "flex", gap: 4 }}>
-      {KIND_FILTERS.map((f) => {
-        const isActive = active === f.id;
-        return (
-          <button
-            key={f.id}
-            role="radio"
-            aria-checked={isActive}
-            onClick={() => onChange(f.id)}
-            style={{
-              padding: "5px 10px", borderRadius: 12, cursor: "pointer",
-              fontFamily: "inherit", fontSize: 10, fontWeight: 700,
-              background: isActive ? `${f.color}22` : "transparent",
-              border:     `1px solid ${isActive ? f.color : "#1a3a5c"}`,
-              color:      isActive ? f.color : "#475569",
-            }}
-          >
-            {f.label}
-          </button>
-        );
-      })}
-    </div>
+    <ChipFilterBar items={KIND_FILTERS} active={active}
+      onChange={onChange} ariaLabel="이벤트 종류 필터" />
   );
 }
 

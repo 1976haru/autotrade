@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { Btn, Card, Inp, SectionLabel } from "../common";
+import { ChipFilterBar } from "../common/ChipFilterBar";
 import { DecisionDialog } from "../common/DecisionDialog";
 import { usePersistedState } from "../../store/usePersistedState";
 import { fmtKRW } from "../../utils/format";
@@ -253,29 +254,8 @@ export const isValidHistoryStatus = (v) => _VALID_HISTORY_STATUSES.has(v);
 
 export function HistoryStatusFilterBar({ active, onChange }) {
   return (
-    <div role="radiogroup" aria-label="처리 내역 상태 필터"
-         style={{ display: "flex", gap: 4 }}>
-      {HISTORY_STATUS_FILTERS.map((f) => {
-        const isActive = active === f.id;
-        return (
-          <button
-            key={f.id}
-            role="radio"
-            aria-checked={isActive}
-            onClick={() => onChange(f.id)}
-            style={{
-              padding: "5px 10px", borderRadius: 12, cursor: "pointer",
-              fontFamily: "inherit", fontSize: 10, fontWeight: 700,
-              background: isActive ? `${f.color}22` : "transparent",
-              border:     `1px solid ${isActive ? f.color : "#1a3a5c"}`,
-              color:      isActive ? f.color : "#475569",
-            }}
-          >
-            {f.label}
-          </button>
-        );
-      })}
-    </div>
+    <ChipFilterBar items={HISTORY_STATUS_FILTERS} active={active}
+      onChange={onChange} ariaLabel="처리 내역 상태 필터" />
   );
 }
 
