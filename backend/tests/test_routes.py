@@ -171,3 +171,56 @@ def test_mock_broker_order_rejected_by_risk(client):
         assert audit.executed is False
         assert audit.broker_order_id is None
         assert any("max_order_notional" in r for r in audit.reasons)
+
+
+# ---------- 208: emergency-stop summary ----------
+
+def test_emergency_stop_summary_empty(client):
+    body = client.get("/api/risk/emergency-stop/summary").json()
+    assert body["currently_active"]   is False
+    assert body["active_since"]       is None
+    assert body["total_toggles"]      == 0
+    assert body["total_activations"]  == 0
+    assert body["by_reason"]          == {}
+
+
+def test_emergency_stop_summary_aggregates_by_reason(client):
+    """3개 ON (각각 다른 사유) + 2개 OFF → activations=3, by_reason 그룹."""
+    # ON with reason
+    client.post("/api/risk/emergency-stop", json={
+        "enabled": True, "decided_by": "ops", "reason_code": "data_stale",
+    })
+    client.post("/api/risk/emergency-stop", json={"enabled": False, "decided_by": "ops"})
+    # ON with same reason
+    client.post("/api/risk/emergency-stop", json={
+        "enabled": True, "decided_by": "ops", "reason_code": "data_stale",
+    })
+    client.post("/api/risk/emergency-stop", json={"enabled": False, "decided_by": "ops"})
+    # ON with different reason
+    client.post("/api/risk/emergency-stop", json={
+        "enabled": True, "decided_by": "ops", "reason_code": "broker_error",
+    })
+
+    body = client.get("/api/risk/emergency-stop/summary").json()
+    assert body["currently_active"]  is True
+    assert body["active_since"]      is not None
+    assert body["total_toggles"]     == 5
+    assert body["total_activations"] == 3
+    assert body["by_reason"]["data_stale"]   == 2
+    assert body["by_reason"]["broker_error"] == 1
+
+
+def test_emergency_stop_summary_handles_missing_reason(client):
+    """reason_code 없이 ON → by_reason["(none)"]에 분류."""
+    client.post("/api/risk/emergency-stop", json={"enabled": True, "decided_by": "ops"})
+    body = client.get("/api/risk/emergency-stop/summary").json()
+    assert body["by_reason"].get("(none)") == 1
+    assert body["currently_active"] is True
+
+
+def test_emergency_stop_summary_active_since_clears_when_off(client):
+    client.post("/api/risk/emergency-stop", json={"enabled": True, "decided_by": "ops"})
+    client.post("/api/risk/emergency-stop", json={"enabled": False, "decided_by": "ops"})
+    body = client.get("/api/risk/emergency-stop/summary").json()
+    assert body["currently_active"] is False
+    assert body["active_since"]     is None

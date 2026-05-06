@@ -103,3 +103,54 @@ def emergency_stop_history(
         )
         for r in rows
     ]
+
+
+@router.get("/emergency-stop/summary")
+def emergency_stop_summary(
+    risk: RiskManager = Depends(get_risk_manager),
+    db:   Session = Depends(get_db),
+) -> dict:
+    """208: emergency-stop 집계.
+
+    - `currently_active`: 런타임 in-memory flag.
+    - `active_since`: 가장 최근 enabled=True row의 created_at (active일 때만 의미).
+    - `by_reason`: {reason_code | "(none)": count} — enabled=True row만 집계
+      해서 "어떤 사유로 가장 자주 stop이 켜졌나"를 보여준다. enabled=False
+      (해제) row는 사유로 분리하지 않는다.
+    - `total_toggles`: 전체 row 수 (on/off 모두).
+    - `total_activations`: enabled=True row 수.
+
+    CLAUDE.md 절대 원칙 준수: read-only, 가드 / 결정에 영향 X.
+    """
+    from sqlalchemy import func
+    by_reason: dict[str, int] = {}
+    rows = db.execute(
+        select(EmergencyStopEvent.reason_code, func.count(EmergencyStopEvent.id))
+        .where(EmergencyStopEvent.enabled.is_(True))
+        .group_by(EmergencyStopEvent.reason_code)
+    ).all()
+    for reason, n in rows:
+        key = reason if reason is not None else "(none)"
+        by_reason[key] = int(n or 0)
+    total_toggles = db.execute(
+        select(func.count(EmergencyStopEvent.id))
+    ).scalar_one() or 0
+    total_activations = sum(by_reason.values())
+
+    active_since = None
+    if risk.emergency_stop:
+        latest_active = db.execute(
+            select(EmergencyStopEvent)
+            .where(EmergencyStopEvent.enabled.is_(True))
+            .order_by(EmergencyStopEvent.id.desc()).limit(1)
+        ).scalar_one_or_none()
+        if latest_active is not None and latest_active.created_at is not None:
+            active_since = latest_active.created_at.isoformat()
+
+    return {
+        "currently_active":   bool(risk.emergency_stop),
+        "active_since":       active_since,
+        "by_reason":          by_reason,
+        "total_toggles":      int(total_toggles),
+        "total_activations":  total_activations,
+    }
