@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     max_total_exposure:     int   = 0
     max_total_exposure_pct: float = 0.0
 
+    # 181: 종목별 노출의 자본 대비 % 한도 (max_symbol_exposure 절대값에 보완).
+    max_symbol_exposure_pct: float = 0.0
+
     def symbol_whitelist_set(self) -> set[str]:
         """env 콤마 문자열을 set으로 파싱. 공백 strip."""
         if not self.symbol_whitelist:

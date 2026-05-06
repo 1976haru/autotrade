@@ -358,6 +358,7 @@ def _settings(**overrides):
         disable_ai_orders                = False,
         max_total_exposure               = 0,
         max_total_exposure_pct           = 0.0,
+        max_symbol_exposure_pct          = 0.0,
     )
     base.update(overrides)
     ns = SimpleNamespace(**base)
@@ -1195,3 +1196,75 @@ def test_policy_from_settings_propagates_total_exposure_caps():
     ))
     assert p.max_total_exposure == 5_000_000
     assert p.max_total_exposure_pct == 50.0
+
+
+# ---------- 181: symbol exposure pct ----------
+
+def test_symbol_exposure_pct_disabled_by_default():
+    risk = RiskManager(RiskPolicy())
+    result = risk.evaluate_order(
+        order=_buy(1), mode=OperationMode.SIMULATION,
+        balance=_balance(), positions=[],
+        latest_price=100,
+    )
+    assert not any("equity" in r and "symbol" in r for r in result.reasons)
+
+
+def test_symbol_exposure_pct_enforced():
+    """equity 1M, pct=20% → 단일 종목 200K cap. 250K 시도 거부."""
+    risk = RiskManager(RiskPolicy(
+        max_symbol_exposure_pct=20.0,
+        max_symbol_exposure=999_999_999,
+        max_order_notional=999_999_999,
+        max_positions=999,
+    ))
+    result = risk.evaluate_order(
+        order=_buy(2), mode=OperationMode.SIMULATION,
+        balance=_balance(cash=1_000_000),
+        positions=[_pos("005930", 1, 100_000)],  # 100K 기존
+        latest_price=150_000,  # 신규 150K → 종목 합 250K > 200K cap
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert any("symbol exposure" in r and "of equity" in r for r in result.reasons)
+
+
+def test_symbol_exposure_pct_within_cap_passes():
+    risk = RiskManager(RiskPolicy(
+        max_symbol_exposure_pct=20.0,
+        max_symbol_exposure=999_999_999,
+        max_order_notional=999_999_999,
+    ))
+    # equity 10M, 20% = 2M cap. 합 1M 통과.
+    result = risk.evaluate_order(
+        order=_buy(1), mode=OperationMode.SIMULATION,
+        balance=_balance(cash=10_000_000),
+        positions=[_pos("005930", 1, 500_000)],
+        latest_price=500_000,
+    )
+    assert result.decision == RiskDecision.APPROVED
+
+
+def test_symbol_exposure_pct_only_buy_side():
+    """SELL은 검사 우회 — 회귀 가드."""
+    risk = RiskManager(RiskPolicy(
+        max_symbol_exposure_pct=1.0,  # 매우 작은 한도
+        max_symbol_exposure=999_999_999,
+    ))
+    result = risk.evaluate_order(
+        order=OrderRequest(symbol="005930", side=OrderSide.SELL, quantity=10),
+        mode=OperationMode.SIMULATION,
+        balance=_balance(),
+        positions=[_pos("005930", 100, 100_000)],
+        latest_price=100_000,
+    )
+    assert not any("symbol exposure" in r and "of equity" in r for r in result.reasons)
+
+
+def test_policy_from_settings_propagates_symbol_exposure_pct():
+    p = RiskPolicy.from_settings(_settings(max_symbol_exposure_pct=15.0))
+    assert p.max_symbol_exposure_pct == 15.0
+
+
+def test_default_max_symbol_exposure_pct_zero():
+    p = RiskPolicy.from_settings(_settings())
+    assert p.max_symbol_exposure_pct == 0.0

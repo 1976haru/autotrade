@@ -83,6 +83,9 @@ class RiskPolicy:
     # max_total_exposure_pct로 별도.
     max_total_exposure:     int   = 0
     max_total_exposure_pct: float = 0.0
+    # 181: 종목별 노출의 자본 대비 % 한도. max_symbol_exposure (절대값)에 보완 —
+    # 자본 증감 시 자동 스케일. 0이면 비활성 (기본).
+    max_symbol_exposure_pct: float = 0.0
 
     @classmethod
     def from_settings(cls, settings) -> "RiskPolicy":
@@ -113,6 +116,7 @@ class RiskPolicy:
             disable_ai_orders                = settings.disable_ai_orders,
             max_total_exposure               = settings.max_total_exposure,
             max_total_exposure_pct           = settings.max_total_exposure_pct,
+            max_symbol_exposure_pct          = settings.max_symbol_exposure_pct,
         )
 
 
@@ -275,6 +279,19 @@ class RiskManager:
             result.reasons.append("symbol exposure limit exceeded")
         else:
             result.passed.append("symbol exposure within limit")
+
+        # 181: 종목별 자본 대비 % 한도 — max_symbol_exposure(절대값)와 보완.
+        sym_pct = self.policy.max_symbol_exposure_pct
+        if order.side == OrderSide.BUY and sym_pct > 0:
+            cap = balance.equity * sym_pct / 100.0
+            new_sym_exposure = current_exposure + order_notional
+            if new_sym_exposure > cap:
+                result.reasons.append(
+                    f"symbol exposure {new_sym_exposure} exceeds {sym_pct}% of "
+                    f"equity ({cap:.0f}) for {order.symbol}"
+                )
+            else:
+                result.passed.append("symbol exposure within equity-relative limit")
 
         # 179: 총 노출 한도 (모든 보유 포지션 합 + 신규 BUY 명목). max_symbol_exposure
         # 가 종목별, 본 가드는 전체 합. 절대값 + 자본 대비 % 둘 다 검사.
