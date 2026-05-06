@@ -168,6 +168,8 @@ def agent_decisions(
 
 @router.get("/agent-decisions/summary")
 def agent_decisions_summary(
+    lookback_days: int = Query(0, ge=0, le=365,
+                                description="210: 0이면 전체 기간, N>0이면 최근 N일"),
     db: Session = Depends(get_db),
 ) -> dict:
     """205: AgentDecisionLog 집계.
@@ -176,19 +178,32 @@ def agent_decisions_summary(
     - `total_decisions`: 전체 row 수.
     - `total_chains`: distinct chain_id 수 (None은 0개로 계산).
     - `recent_chains`: 최근 5개 chain의 (chain_id, chief_decision, created_at).
+    - `lookback_days`: echo back so frontend can verify which window was applied.
+
+    210: lookback_days=N으로 최근 N일 데이터만 집계. 운영자가 "이번 주 chief
+    decision 분포"를 볼 수 있도록.
 
     Read-only — broker / order side effect 0건. CLAUDE.md 절대 원칙 준수.
     """
     from collections import defaultdict
+    from datetime import datetime, timedelta, timezone
     from sqlalchemy import distinct, func, select
     from app.db.models import AgentDecisionLog
+
+    since = None
+    if lookback_days > 0:
+        since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+
+    def _scoped(stmt):
+        return stmt.where(AgentDecisionLog.created_at >= since) if since is not None else stmt
 
     by_agent: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     total_decisions = 0
     rows = db.execute(
-        select(AgentDecisionLog.agent_name, AgentDecisionLog.decision,
-               func.count(AgentDecisionLog.id))
-        .group_by(AgentDecisionLog.agent_name, AgentDecisionLog.decision)
+        _scoped(
+            select(AgentDecisionLog.agent_name, AgentDecisionLog.decision,
+                   func.count(AgentDecisionLog.id))
+        ).group_by(AgentDecisionLog.agent_name, AgentDecisionLog.decision)
     ).all()
     for agent_name, decision, n in rows:
         c = int(n or 0)
@@ -196,14 +211,18 @@ def agent_decisions_summary(
         total_decisions += c
 
     total_chains = db.execute(
-        select(func.count(distinct(AgentDecisionLog.chain_id)))
-        .where(AgentDecisionLog.chain_id.is_not(None))
+        _scoped(
+            select(func.count(distinct(AgentDecisionLog.chain_id)))
+            .where(AgentDecisionLog.chain_id.is_not(None))
+        )
     ).scalar_one() or 0
 
     # 최근 chain의 chief 결정 — frontend에서 history pin 형태로 보여줌.
     chief_rows = db.execute(
-        select(AgentDecisionLog).where(
-            AgentDecisionLog.agent_name == "ChiefTradingAgent"
+        _scoped(
+            select(AgentDecisionLog).where(
+                AgentDecisionLog.agent_name == "ChiefTradingAgent"
+            )
         ).order_by(AgentDecisionLog.id.desc()).limit(5)
     ).scalars().all()
     recent_chains = [
@@ -222,4 +241,5 @@ def agent_decisions_summary(
         "total_decisions": total_decisions,
         "total_chains":    int(total_chains),
         "recent_chains":   recent_chains,
+        "lookback_days":   lookback_days,
     }

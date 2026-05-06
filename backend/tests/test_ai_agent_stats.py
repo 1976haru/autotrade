@@ -535,6 +535,57 @@ def test_agent_decisions_filter_combined(client):
         assert r["decision"]   == "REJECT"
 
 
+def test_agent_decisions_summary_lookback_zero_means_all_time(client):
+    """210: lookback_days=0이 기본 + 명시 시에도 전체."""
+    from app.ai.agents import ChiefTradingAgent, CouncilContext, persist_decision
+    chief = ChiefTradingAgent()
+    with client.test_db_factory() as db:
+        d, members = chief.coordinate(CouncilContext(
+            symbol="005930", last_close=110, prev_close=100,
+            equity=10_000_000, notional=110_000, regime="trending_up",
+        ))
+        persist_decision(db, d, mode="VIRTUAL_AI_EXECUTION")
+        for m in members:
+            persist_decision(db, m, mode="VIRTUAL_AI_EXECUTION")
+        db.commit()
+    body0 = client.get("/api/ai/agent-decisions/summary?lookback_days=0").json()
+    body_default = client.get("/api/ai/agent-decisions/summary").json()
+    assert body0["total_decisions"] == 10
+    assert body_default["total_decisions"] == 10
+    assert body0["lookback_days"] == 0
+
+
+def test_agent_decisions_summary_lookback_filters_by_age(client):
+    """210: 오래된 row는 lookback 윈도우 밖이면 빠진다."""
+    from datetime import datetime, timedelta, timezone
+    from app.db.models import AgentDecisionLog
+    now = datetime.now(timezone.utc)
+    with client.test_db_factory() as db:
+        # 오래된 row 1개 (10일 전).
+        db.add(AgentDecisionLog(
+            agent_name="ChiefTradingAgent", symbol="OLD", mode="SIMULATION",
+            decision="BUY", confidence=70, reasons=[], meta={},
+            chain_id="old-1", created_at=now - timedelta(days=10),
+        ))
+        # 최근 row 1개.
+        db.add(AgentDecisionLog(
+            agent_name="ChiefTradingAgent", symbol="NEW", mode="SIMULATION",
+            decision="HOLD", confidence=40, reasons=[], meta={},
+            chain_id="new-1", created_at=now,
+        ))
+        db.commit()
+    body_all = client.get("/api/ai/agent-decisions/summary").json()
+    body_7d  = client.get("/api/ai/agent-decisions/summary?lookback_days=7").json()
+    assert body_all["total_decisions"] == 2
+    assert body_7d["total_decisions"]  == 1
+    assert body_7d["lookback_days"]    == 7
+
+
+def test_agent_decisions_summary_lookback_validates_range(client):
+    assert client.get("/api/ai/agent-decisions/summary?lookback_days=-1").status_code == 422
+    assert client.get("/api/ai/agent-decisions/summary?lookback_days=999").status_code == 422
+
+
 def test_agent_decisions_summary_recent_chains_capped_at_5(client):
     """6개 chain → recent_chains는 5개만 (id desc)."""
     from app.ai.agents import ChiefTradingAgent, CouncilContext, persist_decision

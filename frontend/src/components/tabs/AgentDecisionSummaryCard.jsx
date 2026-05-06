@@ -23,15 +23,24 @@ export function summarizeAgentRows(byAgent) {
   }).sort((a, b) => b.total - a.total);
 }
 
-export function AgentDecisionSummaryCard() {
-  const [data,  setData]  = useState(null);
-  const [busy,  setBusy]  = useState(false);
-  const [error, setError] = useState("");
+const LOOKBACK_OPTIONS = [
+  { id: 0,  label: "전체" },
+  { id: 1,  label: "1일" },
+  { id: 7,  label: "7일" },
+  { id: 30, label: "30일" },
+];
 
-  const load = async () => {
+export function AgentDecisionSummaryCard() {
+  const [data,    setData]    = useState(null);
+  const [busy,    setBusy]    = useState(false);
+  const [error,   setError]   = useState("");
+  // 210: lookback_days chip — 0 == all time.
+  const [lookback, setLookback] = useState(0);
+
+  const load = async (days = lookback) => {
     setBusy(true); setError("");
     try {
-      const d = await backendApi.aiAgentDecisionsSummary();
+      const d = await backendApi.aiAgentDecisionsSummary(days);
       setData(d);
     } catch (e) {
       setError("Agent 요약 조회 실패: " + e.message);
@@ -44,7 +53,7 @@ export function AgentDecisionSummaryCard() {
     (async () => {
       setBusy(true); setError("");
       try {
-        const d = await backendApi.aiAgentDecisionsSummary();
+        const d = await backendApi.aiAgentDecisionsSummary(0);
         if (!cancelled) setData(d);
       } catch (e) {
         if (!cancelled) setError("Agent 요약 조회 실패: " + e.message);
@@ -54,16 +63,44 @@ export function AgentDecisionSummaryCard() {
     return () => { cancelled = true; };
   }, []);
 
+  const onLookbackChange = (days) => {
+    setLookback(days);
+    load(days);
+  };
+
   return (
     <Card>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
         <SectionLabel>📊 Agent 결정 분포</SectionLabel>
-        <Btn onClick={load} disabled={busy} color="#7dd3fc" small>
+        <Btn onClick={() => load(lookback)} disabled={busy} color="#7dd3fc" small>
           {busy ? "⟳" : "↻ 새로고침"}
         </Btn>
       </div>
       <div style={{ fontSize: 11, color: "#475569", marginBottom: 8 }}>
-        AgentDecisionLog 전체 기간 집계 — 누가 어떤 결정을 얼마나 내렸는가.
+        AgentDecisionLog 집계 — 누가 어떤 결정을 얼마나 내렸는가.
+      </div>
+
+      {/* 210: lookback chip */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+        {LOOKBACK_OPTIONS.map((opt) => {
+          const active = lookback === opt.id;
+          return (
+            <button
+              key={opt.id}
+              onClick={() => onLookbackChange(opt.id)}
+              data-testid={`agent-summary-lookback-${opt.id}`}
+              style={{
+                fontSize: 10, padding: "3px 8px",
+                background: active ? "#0c2035" : "#010a14",
+                border: `1px solid ${active ? "#7dd3fc" : "#1e3a5c"}`,
+                color: active ? "#7dd3fc" : "#475569",
+                borderRadius: 3, cursor: "pointer",
+              }}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
       </div>
 
       {error && (
