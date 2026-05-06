@@ -1,10 +1,19 @@
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  ConfigureCard, PositionBlock, RegimeIndicator, SignalQualityBadge,
-  StrategyContractPanel,
+  ConfigureCard, PositionBlock, RegimeIndicator, ScoreboardCard,
+  SignalQualityBadge, StrategyContractPanel,
 } from "./LiveEngine";
+
+
+// 137: backend client 모킹 — 컴포넌트가 fetch하는 endpoint를 spy.
+vi.mock("../../services/backend/client", () => ({
+  backendApi: {
+    engineScoreboard: vi.fn(),
+  },
+}));
+import { backendApi } from "../../services/backend/client";
 
 
 const _REGISTRY = [
@@ -293,6 +302,53 @@ describe("<RegimeIndicator> (135)", () => {
     const ind = getByTestId("regime-indicator");
     expect(ind.dataset.regime).toBe("any");
     expect(ind.dataset.matches).toBe("true");
+  });
+});
+
+
+describe("<ScoreboardCard> (137)", () => {
+  beforeEach(() => { backendApi.engineScoreboard.mockReset(); });
+  afterEach(cleanup);
+
+  it("shows '아직 backtest 기록이 없습니다' when API returns empty", async () => {
+    backendApi.engineScoreboard.mockResolvedValue([]);
+    const { findByText } = render(<ScoreboardCard />);
+    expect(await findByText(/아직 backtest 기록이 없습니다/)).toBeTruthy();
+  });
+
+  it("renders a row per strategy with aggregated columns", async () => {
+    backendApi.engineScoreboard.mockResolvedValue([
+      { strategy: "sma_crossover", runs: 3, total_pnl: 500_000,
+        avg_pnl: 166_667, best_pnl: 300_000, worst_pnl: -100_000,
+        wins: 12, losses: 8, win_rate: 0.6 },
+      { strategy: "rsi_revert",   runs: 1, total_pnl: -50_000,
+        avg_pnl: -50_000, best_pnl: -50_000, worst_pnl: -50_000,
+        wins: 2, losses: 8, win_rate: 0.2 },
+    ]);
+    const { findByTestId } = render(<ScoreboardCard />);
+    const sma = await findByTestId("scoreboard-row-sma_crossover");
+    expect(sma.textContent).toContain("sma_crossover");
+    expect(sma.textContent).toContain("3");          // runs
+    expect(sma.textContent).toContain("+500,000");
+    expect(sma.textContent).toContain("60%");        // win rate
+    const rsi = await findByTestId("scoreboard-row-rsi_revert");
+    expect(rsi.textContent).toContain("-50,000");
+    expect(rsi.textContent).toContain("20%");
+  });
+
+  it("surfaces fetch error inline", async () => {
+    backendApi.engineScoreboard.mockRejectedValue(new Error("scoreboard down"));
+    const { findByText } = render(<ScoreboardCard />);
+    expect(await findByText(/scoreboard down/)).toBeTruthy();
+  });
+
+  it("clicking 새로고침 re-fetches", async () => {
+    backendApi.engineScoreboard.mockResolvedValue([]);
+    const { getByText, findByText } = render(<ScoreboardCard />);
+    await findByText(/아직/);
+    fireEvent.click(getByText("새로고침"));
+    // 1 mount + 1 click
+    expect(backendApi.engineScoreboard).toHaveBeenCalledTimes(2);
   });
 });
 
