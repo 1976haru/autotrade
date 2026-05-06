@@ -350,6 +350,7 @@ def _settings(**overrides):
         enforce_ai_reasoning      = True,
         ai_rate_limit_window_seconds = 60,
         ai_rate_limit_max_count   = 0,
+        max_position_size_pct     = 0.0,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -735,3 +736,95 @@ def test_stale_check_runs_before_other_checks():
 def test_policy_from_settings_propagates_stale_threshold():
     p = RiskPolicy.from_settings(_settings(stale_price_max_age_seconds=15))
     assert p.stale_price_max_age_seconds == 15
+
+
+# ---------- 174: equity-relative position size guard ----------
+
+def test_max_position_size_pct_disabled_by_default():
+    """기본값 0이면 검사 비활성 — 회귀 가드."""
+    risk = RiskManager(RiskPolicy())  # default
+    result = risk.evaluate_order(
+        order=_buy(100), mode=OperationMode.SIMULATION,
+        balance=_balance(cash=1_000_000),  # 작은 자본
+        positions=[], latest_price=75_000,
+    )
+    # max_order_notional은 100 * 75000 = 7.5M > 1M 거부지만 그건 별개.
+    # max_position_size_pct=0이라 본 검사 reasons에 없어야.
+    assert not any("equity" in r for r in result.reasons)
+
+
+def test_position_size_within_pct_of_equity_passes():
+    """equity 10M, pct=10%이면 1M까지 허용. 1M 정확히는 통과."""
+    risk = RiskManager(RiskPolicy(
+        max_order_notional=999_999_999,  # 절대값 가드 우회
+        max_position_size_pct=10.0,
+    ))
+    result = risk.evaluate_order(
+        order=_buy(10), mode=OperationMode.SIMULATION,
+        balance=_balance(cash=10_000_000),  # equity = 10M
+        positions=[], latest_price=100_000,  # notional = 1M = 10%
+    )
+    assert result.decision == RiskDecision.APPROVED
+
+
+def test_position_size_exceeds_pct_of_equity_rejected():
+    """equity 10M, pct=10% → 1M cap. 1.5M 시도 → 거부."""
+    risk = RiskManager(RiskPolicy(
+        max_order_notional=999_999_999,
+        max_position_size_pct=10.0,
+    ))
+    result = risk.evaluate_order(
+        order=_buy(15), mode=OperationMode.SIMULATION,
+        balance=_balance(cash=10_000_000),
+        positions=[], latest_price=100_000,  # notional = 1.5M > 1M cap
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert any("equity" in r and "1500000" in r for r in result.reasons), result.reasons
+
+
+def test_position_size_pct_scales_with_equity():
+    """equity 증가 시 cap 자동 증가 — 절대값 한도와의 차이점."""
+    risk = RiskManager(RiskPolicy(
+        max_order_notional=999_999_999,
+        max_position_size_pct=10.0,
+    ))
+    # equity 1M → cap 100K. 200K 주문 거부.
+    small_eq = risk.evaluate_order(
+        order=_buy(2), mode=OperationMode.SIMULATION,
+        balance=_balance(cash=1_000_000), positions=[], latest_price=100_000,
+    )
+    assert small_eq.decision == RiskDecision.REJECTED
+
+    # equity 100M → cap 10M. 같은 200K 주문 통과.
+    large_eq = risk.evaluate_order(
+        order=_buy(2), mode=OperationMode.SIMULATION,
+        balance=_balance(cash=100_000_000), positions=[], latest_price=100_000,
+    )
+    assert large_eq.decision == RiskDecision.APPROVED
+
+
+def test_position_size_pct_combines_with_other_violations():
+    """pct + notional 같이 위반 — 두 reason 모두 누적."""
+    risk = RiskManager(RiskPolicy(
+        max_order_notional=100_000,
+        max_position_size_pct=5.0,
+    ))
+    result = risk.evaluate_order(
+        order=_buy(10), mode=OperationMode.SIMULATION,
+        balance=_balance(cash=1_000_000),  # equity 1M, 5% = 50K cap
+        positions=[], latest_price=75_000,  # notional 750K
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert any("max_order_notional" in r for r in result.reasons)
+    assert any("equity" in r for r in result.reasons)
+
+
+def test_policy_from_settings_propagates_max_position_size_pct():
+    p = RiskPolicy.from_settings(_settings(max_position_size_pct=15.0))
+    assert p.max_position_size_pct == 15.0
+
+
+def test_policy_from_settings_default_max_position_size_pct_zero():
+    """default 0 — 회귀 가드."""
+    p = RiskPolicy.from_settings(_settings())
+    assert p.max_position_size_pct == 0.0
