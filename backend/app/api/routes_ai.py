@@ -154,3 +154,62 @@ def agent_decisions(
         }
         for r in rows
     ]
+
+
+@router.get("/agent-decisions/summary")
+def agent_decisions_summary(
+    db: Session = Depends(get_db),
+) -> dict:
+    """205: AgentDecisionLog 집계.
+
+    - `by_agent`: {agent_name: {decision: count}} — 각 agent별 결정 분포.
+    - `total_decisions`: 전체 row 수.
+    - `total_chains`: distinct chain_id 수 (None은 0개로 계산).
+    - `recent_chains`: 최근 5개 chain의 (chain_id, chief_decision, created_at).
+
+    Read-only — broker / order side effect 0건. CLAUDE.md 절대 원칙 준수.
+    """
+    from collections import defaultdict
+    from sqlalchemy import distinct, func, select
+    from app.db.models import AgentDecisionLog
+
+    by_agent: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    total_decisions = 0
+    rows = db.execute(
+        select(AgentDecisionLog.agent_name, AgentDecisionLog.decision,
+               func.count(AgentDecisionLog.id))
+        .group_by(AgentDecisionLog.agent_name, AgentDecisionLog.decision)
+    ).all()
+    for agent_name, decision, n in rows:
+        c = int(n or 0)
+        by_agent[agent_name][decision] += c
+        total_decisions += c
+
+    total_chains = db.execute(
+        select(func.count(distinct(AgentDecisionLog.chain_id)))
+        .where(AgentDecisionLog.chain_id.is_not(None))
+    ).scalar_one() or 0
+
+    # 최근 chain의 chief 결정 — frontend에서 history pin 형태로 보여줌.
+    chief_rows = db.execute(
+        select(AgentDecisionLog).where(
+            AgentDecisionLog.agent_name == "ChiefTradingAgent"
+        ).order_by(AgentDecisionLog.id.desc()).limit(5)
+    ).scalars().all()
+    recent_chains = [
+        {
+            "chain_id":   r.chain_id,
+            "decision":   r.decision,
+            "symbol":     r.symbol,
+            "confidence": r.confidence,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in chief_rows
+    ]
+
+    return {
+        "by_agent":        {k: dict(v) for k, v in by_agent.items()},
+        "total_decisions": total_decisions,
+        "total_chains":    int(total_chains),
+        "recent_chains":   recent_chains,
+    }

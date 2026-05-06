@@ -425,3 +425,60 @@ def test_agent_decisions_endpoint_validates_limit(client):
     assert res.status_code == 422
     res = client.get("/api/ai/agent-decisions?limit=999")
     assert res.status_code == 422
+
+
+# ---------- 205: agent-decisions/summary ----------
+
+def test_agent_decisions_summary_empty(client):
+    body = client.get("/api/ai/agent-decisions/summary").json()
+    assert body["total_decisions"] == 0
+    assert body["total_chains"]    == 0
+    assert body["by_agent"]        == {}
+    assert body["recent_chains"]   == []
+
+
+def test_agent_decisions_summary_aggregates_by_agent_and_decision(client):
+    """coordinate를 두 번 호출 → chief + 9 members × 2 chain = 20개 결정 / 2 chain."""
+    from app.ai.agents import ChiefTradingAgent, CouncilContext, persist_decision
+    chief = ChiefTradingAgent()
+    with client.test_db_factory() as db:
+        for symbol, last in [("005930", 110), ("000660", 200)]:
+            d, members = chief.coordinate(CouncilContext(
+                symbol=symbol, last_close=last, prev_close=last - 5,
+                equity=10_000_000, notional=last * 1000, regime="trending_up",
+            ))
+            persist_decision(db, d, mode="VIRTUAL_AI_EXECUTION")
+            for m in members:
+                persist_decision(db, m, mode="VIRTUAL_AI_EXECUTION")
+        db.commit()
+
+    body = client.get("/api/ai/agent-decisions/summary").json()
+    assert body["total_decisions"] == 20
+    assert body["total_chains"]    == 2
+    # ChiefTradingAgent 항목이 by_agent에 있어야 한다.
+    assert "ChiefTradingAgent" in body["by_agent"]
+    chief_counts = body["by_agent"]["ChiefTradingAgent"]
+    assert sum(chief_counts.values()) == 2
+    # recent_chains: 최신 first, 최대 5개 — 여기선 2개.
+    assert len(body["recent_chains"]) == 2
+    assert all(r["chain_id"] for r in body["recent_chains"])
+
+
+def test_agent_decisions_summary_recent_chains_capped_at_5(client):
+    """6개 chain → recent_chains는 5개만 (id desc)."""
+    from app.ai.agents import ChiefTradingAgent, CouncilContext, persist_decision
+    chief = ChiefTradingAgent()
+    with client.test_db_factory() as db:
+        for i in range(6):
+            d, members = chief.coordinate(CouncilContext(
+                symbol=f"00{i:04d}", last_close=110, prev_close=100,
+                equity=10_000_000, notional=110_000, regime="trending_up",
+            ))
+            persist_decision(db, d, mode="VIRTUAL_AI_EXECUTION")
+            for m in members:
+                persist_decision(db, m, mode="VIRTUAL_AI_EXECUTION")
+        db.commit()
+
+    body = client.get("/api/ai/agent-decisions/summary").json()
+    assert body["total_chains"]    == 6
+    assert len(body["recent_chains"]) == 5

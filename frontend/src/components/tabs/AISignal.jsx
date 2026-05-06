@@ -5,6 +5,7 @@ import { STRATEGIES } from "../../config/strategies";
 import { SIGNAL_COLOR, confluenceColor } from "../../utils/format";
 import { fmtKRW } from "../../utils/format";
 import { AgentCouncilCard } from "./AgentCouncilCard";
+import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 
 export function AISignal({ activeStratIds }) {
@@ -39,6 +40,7 @@ export function AISignal({ activeStratIds }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <AgentCouncilCard />
+      <AgentDecisionSummaryCard />
       <AgentStatsCard />
 
       {/* 입력 */}
