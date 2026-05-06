@@ -183,6 +183,8 @@ class ScoreboardEntry(BaseModel):
     pending_orders:        int
     approval_rate:         float
     rejection_rate:        float
+    # 173: backtest data_source 분포. {"market": 5, "bars": 2, ...}.
+    runs_by_data_source:   dict
 
 
 @router.get("/scoreboard", response_model=list[ScoreboardEntry])

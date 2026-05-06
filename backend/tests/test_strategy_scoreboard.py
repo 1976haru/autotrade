@@ -591,3 +591,74 @@ def test_scoreboard_endpoint_surface_extended_metrics(client):
     assert row["max_consecutive_loss"]  == 1
     assert row["approved_orders"]       == 1
     assert row["approval_rate"]         == 1.0
+
+
+# ---------- 173: data_source provenance ----------
+
+def _run_ds(strategy: str, data_source: str, total_pnl: int = 0) -> BacktestRun:
+    """data_source 명시 BacktestRun."""
+    return BacktestRun(
+        created_at=datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc),
+        strategy=strategy,
+        params={}, initial_cash=10_000_000, quantity=1, bars_processed=100,
+        final_cash=10_000_000 + total_pnl, total_pnl=total_pnl,
+        win_count=1, loss_count=0, max_drawdown=0,
+        data_source=data_source, data_symbol="005930",
+        trades_json=[],
+    )
+
+
+def test_runs_by_data_source_breakdown():
+    """173: per-strategy 응답에 data_source 분포 포함."""
+    Session = _make_session()
+    with Session() as db:
+        db.add_all([
+            _run_ds("a", "market"),
+            _run_ds("a", "market"),
+            _run_ds("a", "market"),
+            _run_ds("a", "bars"),
+        ])
+        for _ in range(5):
+            db.add(_run_ds("b", "bars"))
+        db.commit()
+        sb = compute_strategy_scoreboard(db)
+
+    by = {row["strategy"]: row for row in sb}
+    assert by["a"]["runs_by_data_source"] == {"market": 3, "bars": 1}
+    assert by["b"]["runs_by_data_source"] == {"bars": 5}
+
+
+def test_runs_by_data_source_empty_when_no_backtest():
+    """live만 있는 strategy는 backtest 없음 → 빈 dict."""
+    Session = _make_session()
+    with Session() as db:
+        db.add_all([
+            _audit(strategy="only_live", side="BUY",  qty=1, fill_price=100),
+            _audit(strategy="only_live", side="SELL", qty=1, fill_price=110),
+        ])
+        db.commit()
+        sb = compute_strategy_scoreboard(db)
+    by = {row["strategy"]: row for row in sb}
+    assert by["only_live"]["runs_by_data_source"] == {}
+
+
+def test_runs_by_data_source_handles_unknown_source():
+    """data_source가 빈 문자열이면 'unknown' bucket."""
+    Session = _make_session()
+    with Session() as db:
+        run = _run_ds("x", "")
+        db.add(run)
+        db.commit()
+        sb = compute_strategy_scoreboard(db)
+    assert sb[0]["runs_by_data_source"] == {"unknown": 1}
+
+
+def test_runs_by_data_source_endpoint_surface(client):
+    with client.test_db_factory() as db:
+        db.add_all([
+            _run_ds("real_only", "market"),
+            _run_ds("real_only", "market"),
+        ])
+        db.commit()
+    body = client.get("/api/strategies/scoreboard").json()
+    assert body[0]["runs_by_data_source"] == {"market": 2}

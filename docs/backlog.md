@@ -47,8 +47,8 @@
 ### 12. Dashboard 통합 — 가상 거래 위젯
 - VirtualOrder lifecycle 통계 (NEW / ACCEPTED / PARTIALLY_FILLED / FILLED / EXPIRED / REJECTED / CANCELLED 분포) 카드.
 
-### 13. Backtest 데이터 출처 검증
-- `BacktestRun.data_source`만 기록. 합성 데이터로 돌린 backtest를 LIVE 단계 승격에 쓰지 못하도록 promotion_policy 가드.
+### ~~13. Backtest 데이터 출처 검증~~ ✅ 173에서 해결
+- 173 진행: scoreboard `per_strategy[i].runs_by_data_source` (`{"market": 3, "bars": 1, ...}`) 분포 surface. 운영자가 LIVE 승격 결정 시 'market' 비율을 즉시 인지. 'bars'는 운영자 임의 데이터 가능성. backend +4 테스트.
 
 ### 14. 한국어 docs → 영어 번역 (선택)
 - 모든 docs가 한글 + 일부 영어. 국제 협업 시 영어 보충.
