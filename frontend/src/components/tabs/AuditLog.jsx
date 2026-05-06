@@ -222,19 +222,64 @@ export function ApprovalAttemptAuditRow({ r }) {
 }
 
 
-// id 충돌(주문 id, 긴급정지 id, 결재 시도는 모두 별도 시퀀스)을 피하려면 React
-// key로 종류를 함께 묶어야 한다. created_at(또는 at) 역순으로 병합. limit이
-// 명시되면 그만큼 자르지만, 064 이후 EventTimelineView는 페이징 누적 결과를
-// 통째로 넘기므로 기본은 한도 없음 (Infinity).
+// 122: AI 호출 timeline 행 — order/stop/attempt와 같은 형태(왼쪽 카테고리
+// 라벨, 오른쪽 부가 표시, 아래 metadata)로 통일. 089/094/098/101의 AI 도메인
+// 색상 팔레트(보라)를 라벨/카테고리에 사용. AiAuditView의 카드형 행보다 더
+// 컴팩트한 한 줄 형태로 — timeline은 "어느 시점에 무엇이 있었나" 컨텍스트
+// 신호이고, 자세한 분석은 AI sub-tab에서.
+export function AiTimelineRow({ r }) {
+  return (
+    <div style={{ padding: "8px 0", borderBottom: "1px solid #05121f" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <div>
+          <span style={{
+            fontSize: 9, fontWeight: 700, letterSpacing: "0.04em",
+            color: "#a78bfa", marginRight: 6,
+            padding: "1px 5px", borderRadius: 3,
+            border: "1px solid #a78bfa55", background: "#a78bfa15",
+          }}>AI 호출</span>
+          <span style={{ color: "#7dd3fc", fontSize: 11, fontWeight: 700 }}>{r.ticker}</span>
+          {r.score && (
+            <span style={{ color: "#a78bfa", fontSize: 10, marginLeft: 8, fontWeight: 700 }}>
+              total {r.score.total ?? "?"}
+            </span>
+          )}
+        </div>
+        <span style={{ color: "#475569", fontSize: 10 }}>
+          tok {r.input_tokens || 0}/{r.output_tokens || 0}
+        </span>
+      </div>
+      <div style={{ fontSize: 10, color: "#475569", marginTop: 3,
+                     display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <span>{new Date(r.created_at).toLocaleString("ko-KR")}</span>
+        <AiModelBadge model={r.model} />
+      </div>
+      {r.error && (
+        <div style={{ fontSize: 9, color: "#f87171", marginTop: 2 }}>오류: {r.error}</div>
+      )}
+    </div>
+  );
+}
+
+
+// id 충돌(주문 id, 긴급정지 id, 결재 시도, AI 호출은 모두 별도 시퀀스)을
+// 피하려면 React key로 종류를 함께 묶어야 한다. created_at(또는 at) 역순으로
+// 병합. limit이 명시되면 그만큼 자르지만, 064 이후 EventTimelineView는 페이징
+// 누적 결과를 통째로 넘기므로 기본은 한도 없음 (Infinity).
 //
 // 088: options-object 시그니처 — 050에서 시작한 (orders, stops)가 079에서
 // (orders, stops, attempts, limit) 4-positional로 늘어나면서 호출부 가독성이
 // 떨어졌다. 향후 새 source 종류가 추가되더라도 호출부가 깨지지 않도록 정리.
-export function mergeEvents({ orders = [], stops = [], attempts = [], limit = Infinity } = {}) {
+// 122: ai source 추가 — "결재 직전 어떤 AI 분석"을 timeline에서 한눈에 보기
+// 위함. 기존 호출자(ai 인자 안 넘김)는 default `[]`로 자연스럽게 흡수.
+export function mergeEvents({
+  orders = [], stops = [], attempts = [], ai = [], limit = Infinity,
+} = {}) {
   const tagged = [
-    ...orders.map((r) => ({ kind: "order", row: r, ts: new Date(r.created_at).getTime() })),
-    ...stops.map((r)  => ({ kind: "stop",  row: r, ts: new Date(r.created_at).getTime() })),
+    ...orders.map((r)   => ({ kind: "order",   row: r, ts: new Date(r.created_at).getTime() })),
+    ...stops.map((r)    => ({ kind: "stop",    row: r, ts: new Date(r.created_at).getTime() })),
     ...attempts.map((r) => ({ kind: "attempt", row: r, ts: new Date(r.at).getTime() })),
+    ...ai.map((r)       => ({ kind: "ai",      row: r, ts: new Date(r.created_at).getTime() })),
   ];
   tagged.sort((a, b) => b.ts - a.ts);
   return Number.isFinite(limit) ? tagged.slice(0, limit) : tagged;
@@ -246,6 +291,7 @@ const KIND_FILTERS = [
   { id: "order",   label: "주문",      color: "#7dd3fc" },
   { id: "stop",    label: "긴급정지",  color: "#fbbf24" },
   { id: "attempt", label: "결재 시도", color: "#ef4444" },
+  { id: "ai",      label: "AI 호출",   color: "#a78bfa" },
 ];
 
 const KIND_FILTER_STORAGE_KEY = "autotrade.eventKindFilter";
@@ -322,6 +368,7 @@ export function KindFilterBar({ active, onChange }) {
 export function EventTimelineView({ approvals = { pending: [], history: [] } }) {
   const orders = useOrderAudits();
   const stops  = useEmergencyStopAudits();
+  const ai     = useAiAudits();  // 122
   // Persisted filters share the 074 usePersistedState pattern; symbol stays
   // transient (each investigation session uses a different ticker).
   const [kind, setKind] = usePersistedState(KIND_FILTER_STORAGE_KEY, "all", _isValidKind);
@@ -332,7 +379,7 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
   );
   const _bucketWindowMs = TIME_BUCKET_MS[timeBucket]; // undefined for "all"
   const _now = Date.now();
-  // Orders/stops use created_at; attempts (079) use `at` — different field
+  // Orders/stops/ai use created_at; attempts (079) use `at` — different field
   // names, same elapsed-time semantics.
   const _withinBucket = (timestamp) =>
     _bucketWindowMs === undefined
@@ -342,9 +389,9 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
   // 필터를 mergeEvents *전에* 적용 — top-50 cap 안에서 한쪽 종류가 밀려나
   // 사라지는 일을 방지한다 ("긴급정지만" 선택 시 가장 최근 50건의 stop이
   // 보장되어야지, 시간상 우연히 50개 주문 사이에 끼어든 stop만 보여서는 안 됨).
-  // Symbol 필터는 symbol을 가진 행에만 의미 있음 (주문/결재 시도) — 긴급정지는
-  // mode-wide 이벤트라 검색 중에도 컨텍스트로서 유지 (kind로 명시 끄기 가능).
-  // 시간 bucket은 universal — 모든 종류에 적용.
+  // Symbol 필터는 symbol/ticker가 있는 행에만 의미 있음 (주문/결재 시도/AI) —
+  // 긴급정지는 mode-wide 이벤트라 검색 중에도 컨텍스트로서 유지 (kind로 명시
+  // 끄기 가능). 시간 bucket은 universal — 모든 종류에 적용.
   const flatAttempts = flattenApprovalAttempts(approvals.pending, approvals.history);
 
   const filteredOrders = (kind === "all" || kind === "order" ? orders.items : [])
@@ -355,17 +402,20 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
   const filteredAttempts = (kind === "all" || kind === "attempt" ? flatAttempts : [])
     .filter((r) => !symbolNeedle || r.symbol.toLowerCase().includes(symbolNeedle))
     .filter((r) => _withinBucket(r.at));
+  // 122: AI 호출은 ticker 필드(symbol 대신)에 substring 매칭.
+  const filteredAi = (kind === "all" || kind === "ai" ? ai.items : [])
+    .filter((r) => !symbolNeedle || (r.ticker && r.ticker.toLowerCase().includes(symbolNeedle)))
+    .filter((r) => _withinBucket(r.created_at));
   // 064: 페이징 누적 결과 전부 보여줌 (기본 Infinity).
   const events = mergeEvents({
-    orders: filteredOrders, stops: filteredStops, attempts: filteredAttempts,
+    orders: filteredOrders, stops: filteredStops,
+    attempts: filteredAttempts, ai: filteredAi,
   });
 
-  const loading = orders.loading || stops.loading;
-  // 두 소스 중 하나라도 실패하면 그 메시지를 보여줌. 둘 다 실패하면 주문 쪽
-  // 메시지가 우선 — 운영자 입장에선 어느 하나가 깨졌다는 사실이 중요하지
-  // 정확히 어느 쪽인지는 부차적.
-  const error = orders.error || stops.error;
-  const refresh = () => { orders.refresh(); stops.refresh(); };
+  const loading = orders.loading || stops.loading || ai.loading;
+  // 어느 source라도 실패하면 메시지 보여줌 — 어느 쪽이 깨졌는지는 부차적.
+  const error = orders.error || stops.error || ai.error;
+  const refresh = () => { orders.refresh(); stops.refresh(); ai.refresh(); };
 
   // "더 보기"는 현재 필터 종류에 해당하는 소스만 추가 페이지를 가져온다.
   // 전체 모드면 양쪽 모두 — 한쪽이 끝나도 다른 쪽이 더 있으면 버튼 유지.
@@ -374,6 +424,7 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
     if (kind === "order")   return orders.hasMore;
     if (kind === "stop")    return stops.hasMore;
     if (kind === "attempt") return false;
+    if (kind === "ai")      return false;  // 122: useAiAudits has no pagination
     return orders.hasMore || stops.hasMore;
   })();
   const sourceLoadingMore = orders.loadingMore || stops.loadingMore;
@@ -390,8 +441,9 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
       </div>
 
       <div style={{ fontSize: 9, color: "#334155", marginBottom: 8, lineHeight: 1.5 }}>
-        주문 감사 로그와 긴급정지 토글을 시간 역순으로 병합. 사고 분석 시 한 화면에서
-        "어떤 주문이 있었고 그 사이 긴급정지가 어떻게 움직였는지"를 함께 본다.
+        주문 / 긴급정지 / 결재 시도 / AI 호출을 시간 역순으로 병합. 사고 분석 시
+        한 화면에서 "어떤 주문 직전에 어떤 AI 분석이 있었고 결재 흐름이 어떻게
+        움직였는지"를 함께 본다.
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
@@ -424,6 +476,8 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
               return <OrderAuditRow         key={`order-${row.id}`} r={row} />;
             if (rowKind === "stop")
               return <EmergencyStopAuditRow key={`stop-${row.id}`}  r={row} />;
+            if (rowKind === "ai")
+              return <AiTimelineRow         key={`ai-${row.id}`}    r={row} />;
             return (
               <ApprovalAttemptAuditRow
                 key={`attempt-${row.approval_id}-${row.at}`}

@@ -7,6 +7,7 @@ import {
   AiAuditView,
   AiModelBadge,
   AiSortBar,
+  AiTimelineRow,
   AiTokenByModel,
   AiTokenSummary,
   ApprovalAttemptAuditRow,
@@ -2799,5 +2800,159 @@ describe("<BacktestRunsView> extremes integration (120)", () => {
     expect(container.querySelector('[data-testid="backtest-extremes-summary"]')).toBeTruthy();
     fireEvent.change(getByPlaceholderText(/전략/), { target: { value: "winner" } });
     expect(container.querySelector('[data-testid="backtest-extremes-summary"]')).toBeNull();
+  });
+});
+
+
+describe("mergeEvents AI source (122)", () => {
+  function _o(id, at) { return { id, decision: "APPROVED", symbol: "X",
+    side: "BUY", quantity: 1, order_type: "MARKET", reasons: [],
+    created_at: at, mode: "SIMULATION" }; }
+  function _ai(id, at) { return { id, ticker: "X", model: "claude-sonnet-4-6",
+    input_tokens: 0, output_tokens: 0, created_at: at }; }
+
+  it("interleaves AI rows with other kinds in created_at desc", () => {
+    const events = mergeEvents({
+      orders: [_o(1, "2026-05-06T11:00:00Z"), _o(2, "2026-05-06T11:30:00Z")],
+      ai:     [_ai(7, "2026-05-06T11:15:00Z"), _ai(8, "2026-05-06T12:00:00Z")],
+    });
+    expect(events.map((e) => `${e.kind}:${e.row.id}`))
+      .toEqual(["ai:8", "order:2", "ai:7", "order:1"]);
+  });
+
+  it("ai array defaults to empty (back-compat with pre-122 callers)", () => {
+    const events = mergeEvents({ orders: [_o(1, "2026-05-06T11:00:00Z")] });
+    expect(events.map((e) => e.kind)).toEqual(["order"]);
+  });
+});
+
+
+describe("KindFilterBar — AI chip (122)", () => {
+  afterEach(cleanup);
+
+  it("renders the new AI 호출 chip alongside 주문 / 긴급정지 / 결재 시도", () => {
+    const { getByRole } = render(<KindFilterBar active="all" onChange={() => {}} />);
+    expect(getByRole("radio", { name: "전체" })).toBeTruthy();
+    expect(getByRole("radio", { name: "주문" })).toBeTruthy();
+    expect(getByRole("radio", { name: "긴급정지" })).toBeTruthy();
+    expect(getByRole("radio", { name: "결재 시도" })).toBeTruthy();
+    expect(getByRole("radio", { name: "AI 호출" })).toBeTruthy();
+  });
+
+  it("calls onChange with 'ai' when the AI chip is clicked", () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(<KindFilterBar active="all" onChange={onChange} />);
+    fireEvent.click(getByRole("radio", { name: "AI 호출" }));
+    expect(onChange).toHaveBeenCalledWith("ai");
+  });
+});
+
+
+describe("<AiTimelineRow> (122)", () => {
+  afterEach(cleanup);
+
+  function _row(overrides = {}) {
+    return {
+      id: 7, ticker: "005930", model: "claude-sonnet-4-6",
+      input_tokens: 1000, output_tokens: 500,
+      score: { total: 75 }, error: null,
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("renders the 'AI 호출' category label and ticker", () => {
+    const { container } = render(<AiTimelineRow r={_row()} />);
+    expect(container.textContent).toContain("AI 호출");
+    expect(container.textContent).toContain("005930");
+  });
+
+  it("renders an AiModelBadge in the metadata line", () => {
+    const { getByTestId } = render(<AiTimelineRow r={_row()} />);
+    expect(getByTestId("ai-model-badge").textContent).toBe("claude-sonnet-4-6");
+  });
+
+  it("renders score total when provided", () => {
+    const { container } = render(<AiTimelineRow r={_row({ score: { total: 88 } })} />);
+    expect(container.textContent).toContain("total 88");
+  });
+
+  it("hides score when missing", () => {
+    const { container } = render(<AiTimelineRow r={_row({ score: null })} />);
+    expect(container.textContent).not.toContain("total");
+  });
+
+  it("renders token totals", () => {
+    const { container } = render(<AiTimelineRow r={_row()} />);
+    expect(container.textContent).toContain("tok 1000/500");
+  });
+
+  it("surfaces an error line when r.error is set", () => {
+    const { container } = render(<AiTimelineRow r={_row({ error: "rate limit" })} />);
+    expect(container.textContent).toContain("오류: rate limit");
+  });
+});
+
+
+describe("<EventTimelineView> AI rows integration (122)", () => {
+  beforeEach(() => {
+    _resetHooks();
+    _resetAiHook();
+    localStorage.clear();
+  });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _ai(overrides = {}) {
+    return {
+      id: 1, ticker: "005930", model: "claude-sonnet-4-6",
+      input_tokens: 0, output_tokens: 0,
+      score: { total: 75 }, error: null,
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("renders AI rows in the timeline by default ('all' kind)", () => {
+    _resetAiHook({ items: [_ai({ id: 7, ticker: "AAA" })] });
+    const { container } = render(<EventTimelineView />);
+    expect(container.textContent).toContain("AAA");
+  });
+
+  it("filters out AI rows when kind chip is set to a non-ai value", () => {
+    // 안내 문구와 chip label에도 'AI 호출' 문자열이 들어 있으니 행 안의
+    // 고유 ticker로 검증.
+    _resetAiHook({ items: [_ai({ id: 7, ticker: "AAA" })] });
+    _resetHooks({ items: [{ id: 1, mode: "SIMULATION", symbol: "ZZZ",
+      side: "BUY", quantity: 1, order_type: "MARKET", decision: "APPROVED",
+      reasons: [], executed: true, broker_status: "FILLED", filled_quantity: 1,
+      avg_fill_price: 1, message: "",
+      created_at: "2026-05-06T11:00:00+00:00" }] });
+    const { container, getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "주문" }));
+    expect(container.textContent).not.toContain("AAA");
+    expect(container.textContent).toContain("ZZZ");
+  });
+
+  it("ai chip filter narrows the timeline to AI rows only", () => {
+    _resetAiHook({ items: [_ai({ id: 7, ticker: "AAA" })] });
+    _resetHooks({ items: [{ id: 1, mode: "SIMULATION", symbol: "ZZZ",
+      side: "BUY", quantity: 1, order_type: "MARKET", decision: "APPROVED",
+      reasons: [], executed: true, broker_status: "FILLED", filled_quantity: 1,
+      avg_fill_price: 1, message: "",
+      created_at: "2026-05-06T11:00:00+00:00" }] });
+    const { container, getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "AI 호출" }));
+    expect(container.textContent).toContain("AAA");
+    expect(container.textContent).not.toContain("ZZZ");
+  });
+
+  it("symbol filter applies to AI ticker substring", () => {
+    _resetAiHook({
+      items: [_ai({ id: 1, ticker: "AAA" }), _ai({ id: 2, ticker: "BBB" })],
+    });
+    const { container, getByPlaceholderText } = render(<EventTimelineView />);
+    fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "BBB" } });
+    expect(container.textContent).toContain("BBB");
+    expect(container.textContent).not.toContain("AAA");
   });
 });
