@@ -2808,6 +2808,21 @@ describe("<OrderAuditRow> mode badge integration (108)", () => {
     expect(container.textContent).toContain("MANUAL");
     expect(container.textContent).not.toContain("LIVE_MANUAL_APPROVAL");
   });
+
+  // 134: trade_reason badge surface.
+  it("renders a trade-reason badge when r.trade_reason is set", () => {
+    const { getByTestId } = render(
+      <OrderAuditRow r={_row({ trade_reason: "strategy_signal" })} />,
+    );
+    expect(getByTestId("trade-reason-badge").textContent).toBe("strategy_signal");
+  });
+
+  it("does not render a trade-reason badge when trade_reason is null", () => {
+    const { container } = render(
+      <OrderAuditRow r={_row({ trade_reason: null })} />,
+    );
+    expect(container.querySelector('[data-testid="trade-reason-badge"]')).toBeNull();
+  });
 });
 
 

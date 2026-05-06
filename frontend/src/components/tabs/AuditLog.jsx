@@ -106,6 +106,19 @@ export function OrderAuditRow({ r }) {
             ? `${r.broker_status} ${r.filled_quantity}@${fmtKRW(r.avg_fill_price ?? 0)}`
             : "미체결"}
         </span>
+        {r.trade_reason && (
+          <>
+            <span>·</span>
+            <span data-testid="trade-reason-badge"
+                  style={{
+                    color: "#a78bfa", fontSize: 9, fontWeight: 700,
+                    padding: "1px 5px", borderRadius: 3,
+                    border: "1px solid #a78bfa55", background: "#a78bfa15",
+                  }}>
+              {r.trade_reason}
+            </span>
+          </>
+        )}
       </div>
       {r.reasons.length > 0 && (
         <div style={{ fontSize: 9, color: "#64748b", marginTop: 2 }}>

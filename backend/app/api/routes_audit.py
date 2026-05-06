@@ -25,6 +25,8 @@ class OrderAuditOut(BaseModel):
     latest_price:    int
     decision:        str
     reasons:         list
+    # 134: 자유 문자열 사유. 0005 이전 row + 호출자 미명시 입력은 NULL.
+    trade_reason:    str | None = None
     executed:        bool
     broker_order_id: str | None = None
     broker_status:   str | None = None
@@ -88,6 +90,7 @@ def _to_order_out(row: OrderAuditLog) -> OrderAuditOut:
         latest_price=row.latest_price,
         decision=row.decision,
         reasons=list(row.reasons or []),
+        trade_reason=row.trade_reason,
         executed=row.executed,
         broker_order_id=row.broker_order_id,
         broker_status=row.broker_status,

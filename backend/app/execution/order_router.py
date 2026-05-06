@@ -70,6 +70,9 @@ async def route_order(
         latest_price=quote.price,
         decision=decision.decision.value,
         reasons=list(decision.reasons),
+        # 134: 호출자가 명시한 진입/청산 사유. 미명시(None)는 그대로 NULL — 운영자가
+        # '미명시 주문'을 audit에서 식별 가능.
+        trade_reason=order.trade_reason,
     )
     db.add(audit)
 

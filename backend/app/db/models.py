@@ -30,6 +30,10 @@ class OrderAuditLog(Base):
     decision:        Mapped[str]            = mapped_column(String(32), index=True)
     reasons:         Mapped[list]           = mapped_column(JSON, default=list)
 
+    # 134: 운영자/전략이 명시한 진입/청산 사유. 자유 문자열 — 'strategy_signal',
+    # 'stop_loss', 'manual', 'ai_recommendation' 등. 0005 이전 row는 NULL.
+    trade_reason:    Mapped[str | None]     = mapped_column(String(64), nullable=True)
+
     executed:        Mapped[bool]           = mapped_column(Boolean, default=False)
     broker_order_id: Mapped[str | None]     = mapped_column(String(64), nullable=True)
     broker_status:   Mapped[str | None]     = mapped_column(String(32), nullable=True)
