@@ -122,14 +122,75 @@ export function EmergencyStopAuditRow({ r }) {
 }
 
 
-// id 충돌(주문 id와 긴급정지 id는 별도 시퀀스)을 피하려면 React key로 종류를
-// 함께 묶어야 한다. created_at 역순으로 병합. limit이 명시되면 그만큼 자르지만,
-// 064 이후 EventTimelineView는 페이징 누적 결과를 통째로 넘기므로 기본은 한도 없음
-// (Infinity). 호출자가 cap을 두고 싶을 때만 명시.
-export function mergeEvents(orders, stops, limit = Infinity) {
+// 079: approvals.pending + approvals.history each carry an attempts array
+// per 076. Flatten them into one event-shaped list — symbol/side/quantity
+// hoisted from the parent approval so each attempt is self-describing in
+// the timeline.
+export function flattenApprovalAttempts(pending, history) {
+  const _flatten = (rows) =>
+    (rows || []).flatMap((a) =>
+      (a.attempts || []).map((entry) => ({
+        ...entry,                  // {at, decided_by, reasons}
+        approval_id: a.id,
+        symbol:      a.symbol,
+        side:        a.side,
+        quantity:    a.quantity,
+      })),
+    );
+  return [..._flatten(pending), ..._flatten(history)];
+}
+
+
+export function ApprovalAttemptAuditRow({ r }) {
+  const reasons = Array.isArray(r.reasons) ? r.reasons.join(" / ") : "";
+  return (
+    <div style={{ padding: "8px 0", borderBottom: "1px solid #05121f" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <div>
+          <span style={{
+            fontSize: 9, fontWeight: 700, letterSpacing: "0.04em",
+            color: "#ef4444", marginRight: 6,
+            padding: "1px 5px", borderRadius: 3,
+            border: "1px solid #ef444466", background: "#ef444415",
+          }}>결재 시도</span>
+          <span style={{ color: "#7dd3fc", fontSize: 11, fontWeight: 700 }}>{r.symbol}</span>
+          <span style={{
+            color: r.side === "BUY" ? "#22c55e" : "#ef4444",
+            fontSize: 10, marginLeft: 8, fontWeight: 700,
+          }}>{r.side}</span>
+          <span style={{ color: "#94a3b8", fontSize: 11, marginLeft: 8 }}>
+            {r.quantity}주
+          </span>
+        </div>
+        <span style={{
+          color: "#ef4444", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
+          padding: "1px 5px", borderRadius: 3,
+          border: "1px solid #ef444455", background: "#ef444415",
+        }}>
+          거부됨
+        </span>
+      </div>
+      <div style={{ fontSize: 10, color: "#475569", marginTop: 3 }}>
+        승인 #{r.approval_id} · {new Date(r.at).toLocaleString("ko-KR")}
+        {r.decided_by ? ` · by ${r.decided_by}` : ""}
+      </div>
+      {reasons && (
+        <div style={{ fontSize: 9, color: "#64748b", marginTop: 2 }}>{reasons}</div>
+      )}
+    </div>
+  );
+}
+
+
+// id 충돌(주문 id, 긴급정지 id, 결재 시도는 모두 별도 시퀀스)을 피하려면 React
+// key로 종류를 함께 묶어야 한다. created_at(또는 at) 역순으로 병합. limit이
+// 명시되면 그만큼 자르지만, 064 이후 EventTimelineView는 페이징 누적 결과를
+// 통째로 넘기므로 기본은 한도 없음 (Infinity).
+export function mergeEvents(orders, stops, attempts = [], limit = Infinity) {
   const tagged = [
     ...orders.map((r) => ({ kind: "order", row: r, ts: new Date(r.created_at).getTime() })),
     ...stops.map((r)  => ({ kind: "stop",  row: r, ts: new Date(r.created_at).getTime() })),
+    ...attempts.map((r) => ({ kind: "attempt", row: r, ts: new Date(r.at).getTime() })),
   ];
   tagged.sort((a, b) => b.ts - a.ts);
   return Number.isFinite(limit) ? tagged.slice(0, limit) : tagged;
@@ -137,9 +198,10 @@ export function mergeEvents(orders, stops, limit = Infinity) {
 
 
 const KIND_FILTERS = [
-  { id: "all",   label: "전체",     color: "#7dd3fc" },
-  { id: "order", label: "주문",     color: "#7dd3fc" },
-  { id: "stop",  label: "긴급정지", color: "#fbbf24" },
+  { id: "all",     label: "전체",      color: "#7dd3fc" },
+  { id: "order",   label: "주문",      color: "#7dd3fc" },
+  { id: "stop",    label: "긴급정지",  color: "#fbbf24" },
+  { id: "attempt", label: "결재 시도", color: "#ef4444" },
 ];
 
 const KIND_FILTER_STORAGE_KEY = "autotrade.eventKindFilter";
@@ -242,7 +304,7 @@ export function KindFilterBar({ active, onChange }) {
 }
 
 
-export function EventTimelineView() {
+export function EventTimelineView({ approvals = { pending: [], history: [] } }) {
   const orders = useOrderAudits();
   const stops  = useEmergencyStopAudits();
   // Persisted filters share the 074 usePersistedState pattern; symbol stays
@@ -255,24 +317,31 @@ export function EventTimelineView() {
   );
   const _bucketWindowMs = TIME_BUCKET_MS[timeBucket]; // undefined for "all"
   const _now = Date.now();
-  const _matchesBucket = (r) =>
+  // Orders/stops use created_at; attempts (079) use `at` — different field
+  // names, same elapsed-time semantics.
+  const _withinBucket = (timestamp) =>
     _bucketWindowMs === undefined
       ? true
-      : _now - new Date(r.created_at).getTime() < _bucketWindowMs;
+      : _now - new Date(timestamp).getTime() < _bucketWindowMs;
 
   // 필터를 mergeEvents *전에* 적용 — top-50 cap 안에서 한쪽 종류가 밀려나
   // 사라지는 일을 방지한다 ("긴급정지만" 선택 시 가장 최근 50건의 stop이
   // 보장되어야지, 시간상 우연히 50개 주문 사이에 끼어든 stop만 보여서는 안 됨).
-  // Symbol 필터는 주문 행에만 적용 — 긴급정지는 mode-wide 이벤트라 종목 검색의
-  // 의미상 매칭 대상이 아니지만, 검색 중에도 그 시점에 무엇이 있었는지 보여주는
-  // 컨텍스트로서 유지된다 (kind 필터로 명시적으로 끌 수 있음).
-  // 시간 bucket은 universal — 주문/긴급정지 모두에 적용.
-  const filteredOrders = (kind === "stop" ? [] : orders.items)
+  // Symbol 필터는 symbol을 가진 행에만 의미 있음 (주문/결재 시도) — 긴급정지는
+  // mode-wide 이벤트라 검색 중에도 컨텍스트로서 유지 (kind로 명시 끄기 가능).
+  // 시간 bucket은 universal — 모든 종류에 적용.
+  const flatAttempts = flattenApprovalAttempts(approvals.pending, approvals.history);
+
+  const filteredOrders = (kind === "all" || kind === "order" ? orders.items : [])
     .filter((r) => !symbolNeedle || r.symbol.toLowerCase().includes(symbolNeedle))
-    .filter(_matchesBucket);
-  const filteredStops = (kind === "order" ? [] : stops.items).filter(_matchesBucket);
+    .filter((r) => _withinBucket(r.created_at));
+  const filteredStops = (kind === "all" || kind === "stop" ? stops.items : [])
+    .filter((r) => _withinBucket(r.created_at));
+  const filteredAttempts = (kind === "all" || kind === "attempt" ? flatAttempts : [])
+    .filter((r) => !symbolNeedle || r.symbol.toLowerCase().includes(symbolNeedle))
+    .filter((r) => _withinBucket(r.at));
   // 064: 페이징 누적 결과 전부 보여줌 (기본 Infinity).
-  const events = mergeEvents(filteredOrders, filteredStops);
+  const events = mergeEvents(filteredOrders, filteredStops, filteredAttempts);
 
   const loading = orders.loading || stops.loading;
   // 두 소스 중 하나라도 실패하면 그 메시지를 보여줌. 둘 다 실패하면 주문 쪽
@@ -283,15 +352,17 @@ export function EventTimelineView() {
 
   // "더 보기"는 현재 필터 종류에 해당하는 소스만 추가 페이지를 가져온다.
   // 전체 모드면 양쪽 모두 — 한쪽이 끝나도 다른 쪽이 더 있으면 버튼 유지.
+  // attempts는 approvals prop에서 통째로 와서 페이징 없음 — has-more는 항상 false.
   const sourceHasMore = (() => {
-    if (kind === "order") return orders.hasMore;
-    if (kind === "stop")  return stops.hasMore;
+    if (kind === "order")   return orders.hasMore;
+    if (kind === "stop")    return stops.hasMore;
+    if (kind === "attempt") return false;
     return orders.hasMore || stops.hasMore;
   })();
   const sourceLoadingMore = orders.loadingMore || stops.loadingMore;
   const loadMore = () => {
-    if (kind !== "stop"  && orders.hasMore) orders.loadMore();
-    if (kind !== "order" && stops.hasMore)  stops.loadMore();
+    if ((kind === "all" || kind === "order") && orders.hasMore) orders.loadMore();
+    if ((kind === "all" || kind === "stop")  && stops.hasMore)  stops.loadMore();
   };
 
   return (
@@ -331,11 +402,18 @@ export function EventTimelineView() {
         </div>
       ) : (
         <>
-          {events.map(({ kind: rowKind, row }) => (
-            rowKind === "order"
-              ? <OrderAuditRow         key={`order-${row.id}`} r={row} />
-              : <EmergencyStopAuditRow key={`stop-${row.id}`}  r={row} />
-          ))}
+          {events.map(({ kind: rowKind, row }) => {
+            if (rowKind === "order")
+              return <OrderAuditRow         key={`order-${row.id}`} r={row} />;
+            if (rowKind === "stop")
+              return <EmergencyStopAuditRow key={`stop-${row.id}`}  r={row} />;
+            return (
+              <ApprovalAttemptAuditRow
+                key={`attempt-${row.approval_id}-${row.at}`}
+                r={row}
+              />
+            );
+          })}
           <div style={{ marginTop: 10, textAlign: "center" }}>
             {sourceHasMore ? (
               <Btn
@@ -450,12 +528,12 @@ function BacktestRunsView() {
 }
 
 
-export function AuditLog() {
+export function AuditLog({ approvals }) {
   const [view, setView] = useState("events");
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <SubTabBar active={view} onChange={setView} />
-      {view === "events"    && <EventTimelineView />}
+      {view === "events"    && <EventTimelineView approvals={approvals} />}
       {view === "ai"        && <AiAuditView />}
       {view === "backtests" && <BacktestRunsView />}
     </div>

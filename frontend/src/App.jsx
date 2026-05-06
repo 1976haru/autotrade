@@ -55,7 +55,7 @@ export default function App() {
       case "approve":  return <Approvals approvals={approvals} operatorName={settings.operatorName} />;
       case "chart":    return <MarketChart />;
       case "backtest": return <Backtest />;
-      case "audit":    return <AuditLog />;
+      case "audit":    return <AuditLog approvals={approvals} />;
       case "signal":   return <AISignal activeStratIds={strategy.activeIds} />;
       case "engine":   return <LiveEngine />;
       case "futures":  return <Futures />;
