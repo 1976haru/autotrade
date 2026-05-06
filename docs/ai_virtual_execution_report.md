@@ -90,6 +90,16 @@ NULL은 AI 외 경로 주문 (수동 / strategy 신호). 사후 분석:
 - AI 신호 강도 → 실제 PnL 상관관계 추적.
 - 거부된 AI 제안의 reason 분포 (RiskManager가 거부한 사유 + AI가 만든 사유).
 
+## 158: AI confidence threshold gate
+
+운영자가 `RiskPolicy.min_ai_confidence`(또는 `MIN_AI_CONFIDENCE` env)를 1-100 사이로 설정하면, `requested_by_ai=True`인 주문은 `signal_confidence` 가 임계 미달일 때 RiskManager가 REJECTED. AI 외 경로 주문은 영향 받지 않음.
+
+- 임계 0 (기본): 검사 비활성 — backwards compat.
+- `signal_confidence=None` + 임계 ≥ 1: 거부 (안전 측 — confidence를 모르는 AI 제안은 통과시키지 않음).
+- 다른 위반(notional / stale price / daily loss)과 함께 누적 거부 가능 — reasons 모두 surface.
+
+이 가드는 `route_order` / `PermissionGate.approve` 양쪽 모두에서 적용된다 (146 일관성).
+
 ## VirtualAiAgent (`backend/app/ai/virtual_agent.py`)
 
 - `propose_stub(symbol, last_close, prev_close, confidence=70)` — 결정적 신호.
