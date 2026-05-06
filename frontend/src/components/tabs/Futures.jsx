@@ -1,4 +1,5 @@
 import { Btn, Card, SectionLabel } from "../common";
+import { FuturesOrderAuditCard } from "./FuturesOrderAuditCard";
 
 
 function GateRow({ label, value, ok }) {
@@ -72,6 +73,10 @@ export function Futures() {
           포지션 데이터 없음
         </div>
       </Card>
+
+      {/* 194: FuturesOrderAuditLog (169) read-only surface — MockFuturesBroker가
+          만든 행만 누적되며 LIVE 호출은 여전히 비활성화되어 있다. */}
+      <FuturesOrderAuditCard />
 
       {/* Disabled order form */}
       <Card accentColor="#33415555">
