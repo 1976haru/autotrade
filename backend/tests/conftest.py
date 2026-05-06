@@ -64,5 +64,8 @@ def client():
     with TestClient(app) as c:
         c.test_db_factory = TestSession
         c.test_risk_manager = risk
+        # 143: tests that need to inject stale prices (or otherwise mutate the
+        # broker fixture) reach for it via this attribute.
+        c.test_broker = broker
         yield c
     app.dependency_overrides.clear()

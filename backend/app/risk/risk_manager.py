@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import StrEnum
 
 from app.brokers.base import Balance, OrderRequest, OrderSide, Position
@@ -19,6 +20,9 @@ class RiskPolicy:
     max_symbol_exposure: int = 1_500_000
     enable_live_trading: bool = False
     enable_ai_execution: bool = False
+    # 143: 시세 데이터의 최대 허용 age (초). RiskManager가 정책 위반으로 즉시 REJECT.
+    # 0 또는 음수는 검사 비활성 — 기존 호출 경로가 timestamp를 안 보내는 경우와 동일.
+    stale_price_max_age_seconds: int = 60
 
     @classmethod
     def from_settings(cls, settings) -> "RiskPolicy":
@@ -36,6 +40,7 @@ class RiskPolicy:
             max_symbol_exposure = settings.risk_max_symbol_exposure,
             enable_live_trading = settings.enable_live_trading,
             enable_ai_execution = settings.enable_ai_execution,
+            stale_price_max_age_seconds = settings.stale_price_max_age_seconds,
         )
 
 
@@ -68,6 +73,7 @@ class RiskManager:
         positions: list[Position],
         latest_price: int,
         requested_by_ai: bool = False,
+        latest_price_timestamp: datetime | None = None,
     ) -> RiskCheckResult:
         # Hard short-circuit: emergency_stop is the operator's "stop everything"
         # signal. It must REJECT across every mode — including LIVE_MANUAL_APPROVAL
@@ -80,6 +86,25 @@ class RiskManager:
                 decision=RiskDecision.REJECTED,
                 reasons=["emergency stop is enabled"],
             )
+
+        # 143: stale price도 emergency_stop과 같은 hard-reject — broker 응답이
+        # 너무 오래되면 RiskManager가 사이즈/포지션을 평가할 수 있는 근거가 없다.
+        # threshold ≤ 0 또는 timestamp 미제공이면 검사 우회 (기존 호출 경로 호환).
+        threshold = self.policy.stale_price_max_age_seconds
+        if latest_price_timestamp is not None and threshold > 0:
+            now = datetime.now(timezone.utc)
+            ts  = latest_price_timestamp
+            if ts.tzinfo is None:
+                # naive timestamp는 UTC로 가정 — broker는 UTC isoformat을 약속.
+                ts = ts.replace(tzinfo=timezone.utc)
+            age = (now - ts).total_seconds()
+            if age > threshold:
+                return RiskCheckResult(
+                    decision=RiskDecision.REJECTED,
+                    reasons=[
+                        f"latest price is stale ({age:.0f}s > {threshold}s threshold)"
+                    ],
+                )
 
         result = RiskCheckResult(decision=RiskDecision.APPROVED)
 
