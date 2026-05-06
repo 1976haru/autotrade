@@ -90,6 +90,44 @@ export function ReasonsLine({ reasons }) {
 }
 
 
+// 121/127: PENDING과 HistoryRow가 같은 attempts list shape를 공유. 추출 후
+// prefix prop("history"/"pending")으로 testid 분기 — 121 테스트(approval-history-
+// attempts-*)와 회귀 호환을 유지하면서 PENDING(approval-pending-attempts-*)도
+// 동일 layout으로 노출.
+function _AttemptsList({ approvalId, attempts, prefix }) {
+  if (!attempts || attempts.length === 0) return null;
+  return (
+    <div data-testid={`approval-${prefix}-attempts-${approvalId}`}
+         style={{ marginTop: 6, paddingLeft: 10,
+                  borderLeft: "2px solid #fbbf2455" }}>
+      {attempts.map((entry, idx) => (
+        <div key={idx}
+             data-testid={`approval-${prefix}-attempt-${approvalId}-${idx}`}
+             style={{ fontSize: 9, color: "#94a3b8",
+                      padding: "3px 0", lineHeight: 1.4 }}>
+          <span style={{ color: "#fbbf24", fontWeight: 700, marginRight: 6 }}>
+            {idx + 1}회
+          </span>
+          <span>{new Date(entry.at).toLocaleString("ko-KR")}</span>
+          <span style={{ color: "#64748b", marginLeft: 4 }}>
+            ({formatPendingAge(entry.at)})
+          </span>
+          {entry.decided_by && (
+            <span style={{ marginLeft: 6 }}>· by {entry.decided_by}</span>
+          )}
+          {Array.isArray(entry.reasons) && entry.reasons.length > 0 && (
+            <div style={{ fontSize: 9, color: "#fca5a5",
+                          marginTop: 2, paddingLeft: 6 }}>
+              {entry.reasons.join(" / ")}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+
 export function HistoryRow({ a, focused = false, expanded = false, onClick }) {
   const color = STATUS_COLOR[a.status] || "#475569";
   const hasAttempts = a.attempts && a.attempts.length > 0;
@@ -162,33 +200,7 @@ export function HistoryRow({ a, focused = false, expanded = false, onClick }) {
       </div>
       <ReasonsLine reasons={a.reasons} />
       {expanded && hasAttempts && (
-        <div data-testid={`approval-history-attempts-${a.id}`}
-             style={{ marginTop: 6, paddingLeft: 10,
-                      borderLeft: "2px solid #fbbf2455" }}>
-          {a.attempts.map((entry, idx) => (
-            <div key={idx}
-                 data-testid={`approval-history-attempt-${a.id}-${idx}`}
-                 style={{ fontSize: 9, color: "#94a3b8",
-                          padding: "3px 0", lineHeight: 1.4 }}>
-              <span style={{ color: "#fbbf24", fontWeight: 700, marginRight: 6 }}>
-                {idx + 1}회
-              </span>
-              <span>{new Date(entry.at).toLocaleString("ko-KR")}</span>
-              <span style={{ color: "#64748b", marginLeft: 4 }}>
-                ({formatPendingAge(entry.at)})
-              </span>
-              {entry.decided_by && (
-                <span style={{ marginLeft: 6 }}>· by {entry.decided_by}</span>
-              )}
-              {Array.isArray(entry.reasons) && entry.reasons.length > 0 && (
-                <div style={{ fontSize: 9, color: "#fca5a5",
-                              marginTop: 2, paddingLeft: 6 }}>
-                  {entry.reasons.join(" / ")}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+        <_AttemptsList approvalId={a.id} attempts={a.attempts} prefix="history" />
       )}
     </div>
   );
@@ -668,6 +680,18 @@ export function Approvals({ approvals, operatorName = "" }) {
       return next;
     });
   };
+  // 127: PENDING 측에도 같은 패턴 — focus는 103/103/107의 focusedIndex가 담당
+  // 하고, expand는 별도 Set state. id-keyed라 polling이 행을 추가/제거해도
+  // 안정.
+  const [expandedPendingIds, setExpandedPendingIds] = useState(() => new Set());
+  const _togglePendingExpand = (id) => {
+    setExpandedPendingIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   // pending 폴링이 행을 추가/제거하면 인덱스가 invalid 될 수 있다 — clamp.
   useEffect(() => {
@@ -781,12 +805,19 @@ export function Approvals({ approvals, operatorName = "" }) {
           <div style={{ color: "#1e3a5c", fontSize: 12, textAlign: "center", padding: 16 }}>
             승인 대기 중인 주문 없음
           </div>
-        ) : pending.map((a, idx) => (
+        ) : pending.map((a, idx) => {
+          const hasAttempts = a.attempts && a.attempts.length > 0;
+          const isExpanded  = expandedPendingIds.has(a.id);
+          return (
           <div
             key={a.id}
             data-testid={`approval-pending-row-${a.id}`}
             data-focused={idx === focusedIndex ? "true" : "false"}
-            onClick={() => setFocusedIndex(idx)}
+            data-expanded={isExpanded ? "true" : "false"}
+            onClick={() => {
+              setFocusedIndex(idx);
+              if (hasAttempts) _togglePendingExpand(a.id);
+            }}
             style={{
               padding: "10px 0 10px 8px", borderBottom: "1px solid #05121f",
               borderLeft: idx === focusedIndex
@@ -831,8 +862,17 @@ export function Approvals({ approvals, operatorName = "" }) {
 
             <ReasonsLine reasons={a.reasons} />
             <ApproveAttemptFailureBadge attempts={a.attempts} />
+            {isExpanded && hasAttempts && (
+              <_AttemptsList approvalId={a.id} attempts={a.attempts} prefix="pending" />
+            )}
 
-            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            <div
+              style={{ display: "flex", gap: 6, marginTop: 8 }}
+              // 액션 버튼 클릭 시 row의 onClick이 같이 fire되어 토글이 의도와
+              // 반대로 발생하는 사고를 막는다. focus는 이미 PENDING row 단위라
+              // 실수로 다른 row가 선택되는 일은 없지만, expand 토글은 잡음.
+              onClick={(e) => e.stopPropagation()}
+            >
               <Btn color="#22c55e" onClick={() => setDecisionTarget({ action: "approve", approval: a })} disabled={busy} small>
                 ✓ 승인
               </Btn>
@@ -844,7 +884,8 @@ export function Approvals({ approvals, operatorName = "" }) {
               </Btn>
             </div>
           </div>
-        ))}
+          );
+        })}
       </Card>
 
       <Card>

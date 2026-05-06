@@ -2399,3 +2399,86 @@ describe("<HistoryStaleBanner> (116)", () => {
     expect(HISTORY_STALE_BANNER_THRESHOLD).toBe(0.25);
   });
 });
+
+
+describe("<Approvals> PENDING attempts expandable (127)", () => {
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _p(id, overrides = {}) {
+    return {
+      id, symbol: "005930", side: "BUY", quantity: 1,
+      order_type: "MARKET", limit_price: null,
+      mode: "LIVE_MANUAL_APPROVAL",
+      created_at: "2026-05-06T11:55:00+00:00",
+      reasons: [],
+      attempts: [
+        { at: "2026-05-06T11:56:00+00:00", decided_by: "ops1",
+          reasons: ["max_order_notional_exceeded"] },
+        { at: "2026-05-06T11:58:00+00:00", decided_by: "ops1",
+          reasons: ["risk_check_failed_at_approve"] },
+      ],
+      ...overrides,
+    };
+  }
+
+  it("collapsed by default — no attempts list visible", () => {
+    const approvals = _makeApprovals({ pending: [_p(1)] });
+    const { container } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(container.querySelector('[data-testid="approval-pending-attempts-1"]')).toBeNull();
+  });
+
+  it("clicking a row with attempts expands it", () => {
+    const approvals = _makeApprovals({ pending: [_p(1)] });
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.click(getByTestId("approval-pending-row-1"));
+    const list = getByTestId("approval-pending-attempts-1");
+    expect(list).toBeTruthy();
+    expect(getByTestId("approval-pending-attempt-1-0").textContent).toContain("ops1");
+    expect(getByTestId("approval-pending-attempt-1-0").textContent).toContain("max_order_notional_exceeded");
+    expect(getByTestId("approval-pending-row-1").dataset.expanded).toBe("true");
+  });
+
+  it("clicking the expanded row again collapses it", () => {
+    const approvals = _makeApprovals({ pending: [_p(1)] });
+    const { getByTestId, queryByTestId } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    fireEvent.click(getByTestId("approval-pending-row-1"));
+    fireEvent.click(getByTestId("approval-pending-row-1"));
+    expect(queryByTestId("approval-pending-attempts-1")).toBeNull();
+    expect(getByTestId("approval-pending-row-1").dataset.expanded).toBe("false");
+  });
+
+  it("rows without attempts only set focus on click, don't toggle expansion", () => {
+    const approvals = _makeApprovals({ pending: [_p(1, { attempts: [] })] });
+    const { getByTestId, container } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    fireEvent.click(getByTestId("approval-pending-row-1"));
+    expect(getByTestId("approval-pending-row-1").dataset.focused).toBe("true");
+    expect(container.querySelector('[data-testid="approval-pending-attempts-1"]')).toBeNull();
+  });
+
+  it("multiple PENDING rows can be expanded simultaneously", () => {
+    const approvals = _makeApprovals({
+      pending: [_p(1), _p(2), _p(3)],
+    });
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.click(getByTestId("approval-pending-row-1"));
+    fireEvent.click(getByTestId("approval-pending-row-3"));
+    expect(getByTestId("approval-pending-attempts-1")).toBeTruthy();
+    expect(getByTestId("approval-pending-attempts-3")).toBeTruthy();
+    expect(getByTestId("approval-pending-row-2").dataset.expanded).toBe("false");
+  });
+
+  it("clicking the action button does not toggle expansion (stopPropagation)", () => {
+    const approvals = _makeApprovals({ pending: [_p(1)] });
+    approvals.approve.mockResolvedValue({ ok: true });
+    const { getByTestId, queryByTestId, getByText } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    // click the approve button — modal opens but expansion should NOT toggle
+    fireEvent.click(getByText(/✓ 승인/));
+    expect(queryByTestId("approval-pending-attempts-1")).toBeNull();
+  });
+});
