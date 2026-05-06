@@ -413,23 +413,51 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
 }
 
 
-function AiAuditView() {
+// 089: distinguish "the AI call log is genuinely empty" from "ticker filter
+// narrowed it to zero" — same shape as 081 audit timeline / 082 history.
+export function aiAuditEmptyMessage(items, tickerNeedle) {
+  if (!items || items.length === 0) return "AI 호출 기록 없음";
+  if (tickerNeedle) return "해당 종목의 AI 호출 없음";
+  return "AI 호출 기록 없음";
+}
+
+
+export function AiAuditView() {
   const { items, loading, error, refresh } = useAiAudits();
+  // 089: transient ticker filter (not persisted) — same reasoning as the
+  // audit timeline symbol filter (067) and the approvals symbol filter (082):
+  // each investigation focuses on a different ticker, and clearing on remount
+  // matches that workflow.
+  const [tickerFilter, setTickerFilter] = useState("");
+  const _tickerNeedle = tickerFilter.trim().toLowerCase();
+  const filteredItems = _tickerNeedle
+    ? items.filter((r) => r.ticker && r.ticker.toLowerCase().includes(_tickerNeedle))
+    : items;
 
   return (
     <Card>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <SectionLabel>AI 분석 감사 로그 ({items.length})</SectionLabel>
+        <SectionLabel>AI 분석 감사 로그 ({filteredItems.length})</SectionLabel>
         <Btn color="#334155" onClick={refresh} disabled={loading} small>새로고침</Btn>
+      </div>
+
+      <div style={{ marginBottom: 8 }}>
+        <Inp
+          value={tickerFilter}
+          onChange={setTickerFilter}
+          placeholder="🔍 종목 (예: 005930)"
+        />
       </div>
 
       {error && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>}
 
       {loading ? (
         <div style={{ color: "#475569", fontSize: 11, padding: 12, textAlign: "center" }}>로딩 중…</div>
-      ) : items.length === 0 ? (
-        <div style={{ color: "#1e3a5c", fontSize: 12, padding: 16, textAlign: "center" }}>AI 호출 기록 없음</div>
-      ) : items.map((r) => (
+      ) : filteredItems.length === 0 ? (
+        <div style={{ color: "#1e3a5c", fontSize: 12, padding: 16, textAlign: "center" }}>
+          {aiAuditEmptyMessage(items, _tickerNeedle)}
+        </div>
+      ) : filteredItems.map((r) => (
         <div key={r.id} style={{ padding: "8px 0", borderBottom: "1px solid #05121f" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
             <div>

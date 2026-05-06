@@ -2,12 +2,14 @@ import { cleanup, fireEvent, render, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  AiAuditView,
   ApprovalAttemptAuditRow,
   EmergencyStopAuditRow,
   EventTimelineView,
   KindFilterBar,
   OrderAuditRow,
   TimeBucketBar,
+  aiAuditEmptyMessage,
   emptyEventTimelineMessage,
   flattenApprovalAttempts,
   mergeEvents,
@@ -25,13 +27,21 @@ const _stopHook  = {
   items: [], loading: false, loadingMore: false, hasMore: false,
   error: "", refresh: vi.fn(), loadMore: vi.fn(),
 };
+const _aiHook = { items: [], loading: false, error: "", refresh: vi.fn() };
 
 vi.mock("../../store/useAuditLogs", () => ({
   useOrderAudits:          () => _orderHook,
-  useAiAudits:             () => ({ items: [], loading: false, error: "", refresh: vi.fn() }),
+  useAiAudits:             () => _aiHook,
   useBacktestRuns:         () => ({ items: [], loading: false, error: "", refresh: vi.fn() }),
   useEmergencyStopAudits:  () => _stopHook,
 }));
+
+function _resetAiHook(overrides = {}) {
+  Object.assign(_aiHook, {
+    items: [], loading: false, error: "", ...overrides,
+  });
+  _aiHook.refresh = vi.fn();
+}
 
 
 function _resetHooks(orderOverrides = {}, stopOverrides = {}) {
@@ -767,6 +777,99 @@ describe("<EventTimelineView> time-bucket filter", () => {
     fireEvent.click(getByRole("radio", { name: "1시간" }));
     expect(container.textContent).toContain("(2)");
     fireEvent.click(getByRole("radio", { name: "주문" }));
+    expect(container.textContent).toContain("(1)");
+  });
+});
+
+
+describe("aiAuditEmptyMessage", () => {
+  it("returns plain '없음' message when items is empty", () => {
+    expect(aiAuditEmptyMessage([], "")).toBe("AI 호출 기록 없음");
+    expect(aiAuditEmptyMessage(undefined, "")).toBe("AI 호출 기록 없음");
+  });
+
+  it("returns the filter-narrowed variant when items exist but ticker matches none", () => {
+    expect(aiAuditEmptyMessage([{ id: 1 }], "005930"))
+      .toBe("해당 종목의 AI 호출 없음");
+  });
+
+  it("falls back to plain message when no ticker filter active", () => {
+    expect(aiAuditEmptyMessage([{ id: 1 }], "")).toBe("AI 호출 기록 없음");
+  });
+});
+
+
+describe("<AiAuditView> ticker filter", () => {
+  beforeEach(() => { _resetAiHook(); });
+  afterEach(cleanup);
+
+  function _ai(overrides = {}) {
+    return {
+      id: 1, ticker: "005930", extra: "", active_strats: [], risk_params: {},
+      text: "...", model: "claude-test", input_tokens: 100, output_tokens: 200,
+      score: { total: 75 }, error: null,
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("renders the ticker search input with placeholder hint", () => {
+    const { getByPlaceholderText } = render(<AiAuditView />);
+    expect(getByPlaceholderText(/종목/)).toBeTruthy();
+  });
+
+  it("default empty filter shows all rows", () => {
+    _resetAiHook({
+      items: [_ai({ id: 1, ticker: "005930" }), _ai({ id: 2, ticker: "000660" })],
+    });
+    const { container } = render(<AiAuditView />);
+    expect(container.textContent).toContain("005930");
+    expect(container.textContent).toContain("000660");
+    expect(container.textContent).toContain("(2)");
+  });
+
+  it("typing a matching ticker narrows the list (case-insensitive substring)", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, ticker: "005930" }),
+        _ai({ id: 2, ticker: "000660" }),
+        _ai({ id: 3, ticker: "AAPL" }),
+      ],
+    });
+    const { container, getByPlaceholderText } = render(<AiAuditView />);
+    fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "0066" } });
+    expect(container.textContent).toContain("000660");
+    expect(container.textContent).not.toContain("005930");
+    expect(container.textContent).not.toContain("AAPL");
+    expect(container.textContent).toContain("(1)");
+  });
+
+  it("trims whitespace before matching", () => {
+    _resetAiHook({ items: [_ai({ id: 1, ticker: "005930" })] });
+    const { container, getByPlaceholderText } = render(<AiAuditView />);
+    fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "  005930  " } });
+    expect(container.textContent).toContain("005930");
+    expect(container.textContent).toContain("(1)");
+  });
+
+  it("non-matching filter shows the filter-narrowed empty message", () => {
+    _resetAiHook({ items: [_ai({ id: 1, ticker: "005930" })] });
+    const { getByText, getByPlaceholderText } = render(<AiAuditView />);
+    fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "999999" } });
+    expect(getByText("해당 종목의 AI 호출 없음")).toBeTruthy();
+  });
+
+  it("plain '없음' message when items list itself is empty", () => {
+    _resetAiHook({ items: [] });
+    const { getByText } = render(<AiAuditView />);
+    expect(getByText("AI 호출 기록 없음")).toBeTruthy();
+  });
+
+  it("rows missing a ticker field are filtered out gracefully", () => {
+    _resetAiHook({ items: [_ai({ id: 1, ticker: null }), _ai({ id: 2, ticker: "AAA" })] });
+    const { container, getByPlaceholderText } = render(<AiAuditView />);
+    fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "AAA" } });
+    expect(container.textContent).toContain("AAA");
     expect(container.textContent).toContain("(1)");
   });
 });
