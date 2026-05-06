@@ -86,6 +86,8 @@ def test_buy_signal_creates_market_buy_when_flat():
     assert order.side == OrderSide.BUY
     assert order.quantity == 5
     assert order.order_type == OrderType.MARKET
+    # 134: 전략 엔진이 만든 주문은 trade_reason="strategy_signal"로 자동 채워진다.
+    assert order.trade_reason == "strategy_signal"
     assert eng.holding is True
 
 

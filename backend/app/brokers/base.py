@@ -42,6 +42,10 @@ class OrderRequest(BaseModel):
     order_type: OrderType = OrderType.MARKET
     limit_price: int | None = Field(default=None, ge=0)
     client_order_id: str | None = None
+    # 134: 진입/청산 사유. 자유 문자열 — 'strategy_signal', 'stop_loss',
+    # 'manual', 'ai_recommendation' 등. None이면 audit row에서 NULL로 surface
+    # 되어 운영자가 '미명시 주문'을 식별할 수 있다.
+    trade_reason: str | None = None
 
 
 class OrderResult(BaseModel):

@@ -91,6 +91,10 @@ class LiveStrategyEngine:
                 side=OrderSide.BUY,
                 quantity=self.quantity,
                 order_type=OrderType.MARKET,
+                # 134: 전략 엔진이 직접 만든 주문은 사유가 명백 — audit row의
+                # trade_reason으로 자동 surface해 사후 분석 시 'A주문이 왜
+                # 들어갔나'가 즉답된다.
+                trade_reason="strategy_signal",
             )
             self._entry_price = bar.close
             self._holding = True
@@ -100,6 +104,7 @@ class LiveStrategyEngine:
                 side=OrderSide.SELL,
                 quantity=self.quantity,
                 order_type=OrderType.MARKET,
+                trade_reason="strategy_signal",
             )
             # Snapshot for rollback — without this a rejected SELL would leave
             # the engine in "holding but no entry_price" state, breaking PnL.

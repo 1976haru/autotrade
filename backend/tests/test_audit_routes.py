@@ -57,6 +57,28 @@ def test_order_audit_normalizes_naive_created_at_to_utc(client):
     assert row["created_at"].endswith("+00:00") or row["created_at"].endswith("Z")
 
 
+# 134: trade_reason column propagated through the audit response.
+def test_order_audit_persists_explicit_trade_reason(client):
+    """OrderRequest에 trade_reason을 명시하면 audit row + 응답에 surface."""
+    res = client.post("/api/broker/orders", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1,
+        "trade_reason": "stop_loss",
+    })
+    assert res.status_code == 200
+    row = client.get("/api/audit/orders").json()[0]
+    assert row["trade_reason"] == "stop_loss"
+
+
+def test_order_audit_trade_reason_is_null_when_omitted(client):
+    """OrderRequest에 trade_reason 미명시 — audit row에 NULL 그대로."""
+    res = client.post("/api/broker/orders", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1,
+    })
+    assert res.status_code == 200
+    row = client.get("/api/audit/orders").json()[0]
+    assert row["trade_reason"] is None
+
+
 # ---------- /api/audit/ai ----------
 
 def test_list_ai_audits_empty(client):
