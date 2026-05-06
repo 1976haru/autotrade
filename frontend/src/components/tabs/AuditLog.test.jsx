@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   AiAuditView,
+  AiModelBadge,
   ApprovalAttemptAuditRow,
   BacktestRunsView,
   EmergencyStopAuditRow,
@@ -15,6 +16,7 @@ import {
   emptyEventTimelineMessage,
   flattenApprovalAttempts,
   mergeEvents,
+  modelAccent,
   setEventKindFilter,
 } from "./AuditLog";
 
@@ -819,6 +821,170 @@ describe("aiAuditEmptyMessage", () => {
 
   it("undefined time bucket arg behaves as 'no time filter' (back-compat)", () => {
     expect(aiAuditEmptyMessage([{ id: 1 }], "", undefined)).toBe("AI 호출 기록 없음");
+  });
+
+  it("returns the filter-narrowed variant when model filter narrows to zero (094)", () => {
+    expect(aiAuditEmptyMessage([{ id: 1 }], "", "all", "sonnet"))
+      .toBe("해당 조건의 AI 호출 없음");
+  });
+
+  it("treats model + ticker + bucket all as multi-axis filters (094)", () => {
+    expect(aiAuditEmptyMessage([{ id: 1 }], "005930", "1h", "opus"))
+      .toBe("해당 조건의 AI 호출 없음");
+  });
+
+  it("undefined model arg falls back to 'no model filter' (back-compat, 094)", () => {
+    expect(aiAuditEmptyMessage([{ id: 1 }], "", "all", undefined))
+      .toBe("AI 호출 기록 없음");
+  });
+});
+
+
+describe("modelAccent (094)", () => {
+  it("returns purple for opus models", () => {
+    expect(modelAccent("claude-opus-4-7")).toBe("#c084fc");
+    expect(modelAccent("claude-OPUS-4-6")).toBe("#c084fc"); // case-insensitive
+  });
+
+  it("returns cyan for sonnet models", () => {
+    expect(modelAccent("claude-sonnet-4-6")).toBe("#67e8f9");
+    expect(modelAccent("claude-3-7-sonnet")).toBe("#67e8f9");
+  });
+
+  it("returns yellow for haiku models", () => {
+    expect(modelAccent("claude-haiku-4-5-20251001")).toBe("#fbbf24");
+  });
+
+  it("returns neutral gray for unknown / empty / null", () => {
+    expect(modelAccent("gpt-4")).toBe("#475569");
+    expect(modelAccent("")).toBe("#475569");
+    expect(modelAccent(null)).toBe("#475569");
+    expect(modelAccent(undefined)).toBe("#475569");
+  });
+});
+
+
+describe("<AiModelBadge> (094)", () => {
+  afterEach(cleanup);
+
+  it("renders nothing when model is missing", () => {
+    const { container } = render(<AiModelBadge model={null} />);
+    expect(container.querySelector('[data-testid="ai-model-badge"]')).toBeNull();
+    cleanup();
+    const { container: c2 } = render(<AiModelBadge model="" />);
+    expect(c2.querySelector('[data-testid="ai-model-badge"]')).toBeNull();
+  });
+
+  it("renders the model id with the family-mapped color", () => {
+    const { getByTestId } = render(<AiModelBadge model="claude-sonnet-4-6" />);
+    const badge = getByTestId("ai-model-badge");
+    expect(badge.textContent).toBe("claude-sonnet-4-6");
+    expect(badge.style.color).toBeTruthy();
+  });
+});
+
+
+describe("<AiAuditView> model filter (094)", () => {
+  beforeEach(() => { _resetAiHook(); });
+  afterEach(cleanup);
+
+  function _ai(overrides = {}) {
+    return {
+      id: 1, ticker: "005930", extra: "", active_strats: [], risk_params: {},
+      text: "...", model: "claude-sonnet-4-6", input_tokens: 100, output_tokens: 200,
+      score: { total: 75 }, error: null,
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("renders the model search input with placeholder hint", () => {
+    const { getByPlaceholderText } = render(<AiAuditView />);
+    expect(getByPlaceholderText(/모델/)).toBeTruthy();
+  });
+
+  it("typing 'sonnet' narrows to sonnet rows only", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, ticker: "AAA", model: "claude-sonnet-4-6" }),
+        _ai({ id: 2, ticker: "BBB", model: "claude-haiku-4-5" }),
+        _ai({ id: 3, ticker: "CCC", model: "claude-opus-4-7" }),
+      ],
+    });
+    const { container, getByPlaceholderText } = render(<AiAuditView />);
+    fireEvent.change(getByPlaceholderText(/모델/), { target: { value: "sonnet" } });
+    expect(container.textContent).toContain("AAA");
+    expect(container.textContent).not.toContain("BBB");
+    expect(container.textContent).not.toContain("CCC");
+    expect(container.textContent).toContain("(1)");
+  });
+
+  it("matches case-insensitively", () => {
+    _resetAiHook({
+      items: [_ai({ id: 1, ticker: "AAA", model: "claude-OPUS-4-7" })],
+    });
+    const { container, getByPlaceholderText } = render(<AiAuditView />);
+    fireEvent.change(getByPlaceholderText(/모델/), { target: { value: "opus" } });
+    expect(container.textContent).toContain("AAA");
+  });
+
+  it("composes with ticker filter (model × ticker)", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, ticker: "005930", model: "claude-sonnet-4-6" }),
+        _ai({ id: 2, ticker: "000660", model: "claude-sonnet-4-6" }),
+        _ai({ id: 3, ticker: "005930", model: "claude-haiku-4-5" }),
+      ],
+    });
+    const { container, getByPlaceholderText } = render(<AiAuditView />);
+    fireEvent.change(getByPlaceholderText(/모델/), { target: { value: "sonnet" } });
+    fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "005930" } });
+    expect(container.textContent).toContain("(1)");
+  });
+
+  it("rows missing a model field are filtered out gracefully", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, ticker: "AAA", model: "claude-sonnet-4-6" }),
+        _ai({ id: 2, ticker: "BBB", model: null }),
+      ],
+    });
+    const { container, getByPlaceholderText } = render(<AiAuditView />);
+    fireEvent.change(getByPlaceholderText(/모델/), { target: { value: "sonnet" } });
+    expect(container.textContent).toContain("AAA");
+    expect(container.textContent).not.toContain("BBB");
+  });
+
+  it("non-matching model filter shows the filter-narrowed empty message", () => {
+    _resetAiHook({
+      items: [_ai({ id: 1, ticker: "AAA", model: "claude-sonnet-4-6" })],
+    });
+    const { getByText, getByPlaceholderText } = render(<AiAuditView />);
+    fireEvent.change(getByPlaceholderText(/모델/), { target: { value: "gpt" } });
+    expect(getByText("해당 조건의 AI 호출 없음")).toBeTruthy();
+  });
+
+  it("renders an AiModelBadge for each row when model is present", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, ticker: "AAA", model: "claude-sonnet-4-6" }),
+        _ai({ id: 2, ticker: "BBB", model: "claude-haiku-4-5" }),
+      ],
+    });
+    const { container } = render(<AiAuditView />);
+    const badges = container.querySelectorAll('[data-testid="ai-model-badge"]');
+    expect(badges.length).toBe(2);
+    const labels = Array.from(badges).map((b) => b.textContent);
+    expect(labels).toContain("claude-sonnet-4-6");
+    expect(labels).toContain("claude-haiku-4-5");
+  });
+
+  it("does not render a badge when row has no model", () => {
+    _resetAiHook({
+      items: [_ai({ id: 1, ticker: "AAA", model: null })],
+    });
+    const { container } = render(<AiAuditView />);
+    expect(container.querySelector('[data-testid="ai-model-badge"]')).toBeNull();
   });
 });
 
