@@ -76,6 +76,9 @@ async def route_order(
         # 138: 주문을 만든 전략. LiveEngine이 자동 채우고, 수동 주문은 NULL —
         # 두 경우 모두 audit에서 사후 식별 가능.
         strategy=order.strategy,
+        # 139: 신호 quality (136) 영구화. 산출되지 않은 경로는 NULL.
+        signal_strength=order.signal_strength,
+        signal_confidence=order.signal_confidence,
     )
     db.add(audit)
 

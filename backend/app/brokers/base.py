@@ -49,6 +49,9 @@ class OrderRequest(BaseModel):
     # 138: 주문을 만든 전략 이름 (registry 키와 동일 — 'sma_crossover' 등).
     # LiveEngine이 자동 채움, 운영자 수동 주문은 None.
     strategy: str | None = None
+    # 139: 신호 quality (0-100). LiveEngine이 산출 시 채움, 수동 주문은 None.
+    signal_strength:   int | None = Field(default=None, ge=0, le=100)
+    signal_confidence: int | None = Field(default=None, ge=0, le=100)
 
 
 class OrderResult(BaseModel):

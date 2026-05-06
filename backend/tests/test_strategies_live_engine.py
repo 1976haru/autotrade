@@ -103,6 +103,20 @@ def test_strategy_name_propagates_to_intended_order():
     assert result.intended_order.strategy == "sma_crossover"
 
 
+def test_signal_quality_carried_from_tick_to_intended_order():
+    """139: TickResult.quality와 OrderRequest.signal_strength/confidence가
+    같은 산출 — audit row에 영구 저장될 두 값이 view-time과 동일."""
+    eng = LiveStrategyEngine(_FixedSignals([Signal.BUY]),
+                             strategy_name="sma_crossover")
+    result = eng.run_tick(_bar(0, 100))
+    order = result.intended_order
+    quality = result.quality
+    assert order is not None
+    assert quality is not None
+    assert order.signal_strength   == quality["strength"]
+    assert order.signal_confidence == quality["confidence"]
+
+
 def test_repeated_buy_does_not_stack_position():
     eng = LiveStrategyEngine(_FixedSignals([Signal.BUY, Signal.BUY, Signal.BUY]))
     first = eng.run_tick(_bar(0, 100))

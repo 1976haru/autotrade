@@ -91,20 +91,31 @@ class LiveStrategyEngine:
         self._bars.append(bar)
         self._last_price = bar.close
         signal = self.strategy.on_bar(self._bars)
-        intended: OrderRequest | None = None
 
+        # 139: quality는 BUY/SELL 결정 *전에* 산출 — 같은 quality 값을 (a)
+        # TickResult에 노출하고 (b) intended OrderRequest에 carry해 audit
+        # row까지 영구 저장한다. HOLD 신호도 0/0으로 채워 두 경로가 일관.
+        from app.strategies.quality import signal_quality
+        from app.market.regime import matches_required_regime
+        regime = self.current_regime
+        required = getattr(self.strategy, "required_regime", "any")
+        quality = signal_quality(self._bars, signal,
+                                 regime_matches=matches_required_regime(regime, required))
+
+        intended: OrderRequest | None = None
         if signal == Signal.BUY and not self._holding:
             intended = OrderRequest(
                 symbol=bar.symbol,
                 side=OrderSide.BUY,
                 quantity=self.quantity,
                 order_type=OrderType.MARKET,
-                # 134: 전략 엔진이 직접 만든 주문은 사유가 명백 — audit row의
-                # trade_reason으로 자동 surface해 사후 분석 시 'A주문이 왜
-                # 들어갔나'가 즉답된다.
+                # 134: 전략 엔진이 직접 만든 주문은 사유가 명백.
                 trade_reason="strategy_signal",
                 # 138: 어느 전략이 만든 주문인지 audit row까지 carry.
                 strategy=self.strategy_name,
+                # 139: signal quality도 같은 audit row에 영구화.
+                signal_strength=quality["strength"],
+                signal_confidence=quality["confidence"],
             )
             self._entry_price = bar.close
             self._holding = True
@@ -116,22 +127,14 @@ class LiveStrategyEngine:
                 order_type=OrderType.MARKET,
                 trade_reason="strategy_signal",
                 strategy=self.strategy_name,
+                signal_strength=quality["strength"],
+                signal_confidence=quality["confidence"],
             )
             # Snapshot for rollback — without this a rejected SELL would leave
             # the engine in "holding but no entry_price" state, breaking PnL.
             self._prev_entry_price = self._entry_price
             self._entry_price = None
             self._holding = False
-
-        # 136: signal quality는 advisory — 신호를 차단하지 않고 운영자에게
-        # 강도/신뢰도 두 축으로 점수 노출. HOLD 신호도 0/0으로 채워 응답
-        # 클라이언트가 '신호 없음'과 '약한 신호'를 명확히 구분 가능.
-        from app.strategies.quality import signal_quality
-        from app.market.regime import matches_required_regime
-        regime = self.current_regime
-        required = getattr(self.strategy, "required_regime", "any")
-        quality = signal_quality(self._bars, signal,
-                                 regime_matches=matches_required_regime(regime, required))
 
         return TickResult(bar=bar, signal=signal, intended_order=intended,
                           quality=quality)

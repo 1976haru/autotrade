@@ -101,6 +101,37 @@ def test_order_audit_strategy_is_null_for_manual_orders(client):
     assert row["strategy"] is None
 
 
+# 139: signal_strength + signal_confidence persisted via the audit row.
+def test_order_audit_persists_explicit_signal_quality(client):
+    res = client.post("/api/broker/orders", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1,
+        "signal_strength": 85, "signal_confidence": 70,
+    })
+    assert res.status_code == 200, res.text
+    row = client.get("/api/audit/orders").json()[0]
+    assert row["signal_strength"]   == 85
+    assert row["signal_confidence"] == 70
+
+
+def test_order_audit_signal_quality_null_for_manual_orders(client):
+    res = client.post("/api/broker/orders", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1,
+    })
+    assert res.status_code == 200
+    row = client.get("/api/audit/orders").json()[0]
+    assert row["signal_strength"]   is None
+    assert row["signal_confidence"] is None
+
+
+def test_order_audit_signal_quality_clamped_at_pydantic_layer(client):
+    """OrderRequest의 ge=0 le=100 제약 — out-of-range는 422."""
+    res = client.post("/api/broker/orders", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1,
+        "signal_strength": 999,
+    })
+    assert res.status_code == 422
+
+
 # ---------- /api/audit/ai ----------
 
 def test_list_ai_audits_empty(client):

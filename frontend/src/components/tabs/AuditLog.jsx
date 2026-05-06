@@ -132,6 +132,17 @@ export function OrderAuditRow({ r }) {
             </span>
           </>
         )}
+        {(r.signal_strength != null || r.signal_confidence != null) && (
+          <>
+            <span>·</span>
+            <span data-testid="audit-signal-quality"
+                  data-strength={r.signal_strength ?? ""}
+                  data-confidence={r.signal_confidence ?? ""}
+                  style={{ color: "#94a3b8", fontSize: 9 }}>
+              quality {r.signal_strength ?? "?"}/{r.signal_confidence ?? "?"}
+            </span>
+          </>
+        )}
       </div>
       {r.reasons.length > 0 && (
         <div style={{ fontSize: 9, color: "#64748b", marginTop: 2 }}>
