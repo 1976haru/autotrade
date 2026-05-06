@@ -114,6 +114,15 @@ export function HistoryRow({ a }) {
         ) : "—"}
         {a.decided_by ? ` · by ${a.decided_by}` : ""}
         {a.note ? ` · ${a.note}` : ""}
+        {a.attempts && a.attempts.length > 0 && (
+          <>
+            {" · "}
+            <span data-testid="history-attempts-summary"
+                  style={{ color: "#fbbf24" }}>
+              ⚠ {a.attempts.length}회 시도
+            </span>
+          </>
+        )}
       </div>
       <ReasonsLine reasons={a.reasons} />
     </div>
