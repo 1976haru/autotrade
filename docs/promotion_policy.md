@@ -27,6 +27,8 @@
   - 기대값(평균 손익) 양수.
   - 수수료·세금·슬리피지 반영.
   - Profit Factor ≥ 1.2.
+  - **(137)** Strategy Scoreboard (`/api/strategies/scoreboard`)에서 해당 strategy의 누적 metrics 검토 — `runs ≥ 100`, `total_pnl > 0`, `win_rate ≥ 0.45`.
+  - **(131)** Strategy contract metadata(entry / exit / invalidation / required_regime / risk_profile)가 모두 작성됨 — `base.py` default가 그대로 노출되는 strategy는 승격 불가. `docs/strategies.md` 검토.
 
 ### 2. Shadow (`LIVE_SHADOW`)
 
@@ -40,6 +42,8 @@
   - 4주 이상 무중단 운영.
   - 시세/잔고 폴링 누락 0건.
   - 리스크 평가 결과의 reason 분포가 의도와 일치.
+  - **(135)** `current_regime` 분포 검토 — 운영 시간대의 regime이 strategy `required_regime`과 매칭되는 비율 측정. 매칭 비율이 50% 미만이면 strategy 자체를 재검토하거나 `required_regime`을 보정.
+  - **(136)** Signal Quality 분포 — strength/confidence 점수의 평균이 운영 정책에 부합 (예: confidence 평균 ≥ 60).
 
 ### 3. Paper (`PAPER`)
 
@@ -54,6 +58,10 @@
   - RiskPolicy 한도 위반 0회.
   - 부분 체결/거부 응답에 audit 정합성 유지.
   - `ENABLE_FILL_POLLING=true`로 체결 자동 갱신 검증.
+  - **(132)** E2E 테스트 (`backend/tests/test_e2e_approval_order_flow.py`) 모두 PASS — 단일 주문 진입점이 PAPER 모드에서도 invariant 유지.
+  - **(133)** Stress 테스트 모든 시나리오 PASS (skip 제외) — 대량/비정상 입력 invariant 검증.
+  - **(140)** Idempotency: 같은 `client_order_id`로 두 번째 주문이 들어와도 audit row가 정확히 1건 — frontend가 client_order_id를 매 주문마다 발급하는지 확인.
+  - **(138, 139)** PAPER 단계 audit row 표본 검사 — `strategy`, `signal_strength`, `signal_confidence`가 `LiveStrategyEngine` 발신 주문에서 모두 채워지는지.
 
 ### 4. Live Manual (`LIVE_MANUAL_APPROVAL`)
 
@@ -71,10 +79,17 @@
   - `KisBrokerAdapter.cancel_order` 구현 (`order-rvsecncl`).
   - 운영자 가이드 (`live_manual_mode.md`).
 - **환경**: `DEFAULT_MODE=LIVE_MANUAL_APPROVAL`, `ENABLE_LIVE_TRADING=true`, `KIS_IS_PAPER=false`, `ENABLE_FILL_POLLING=true`.
+- **추가 invariant** (134~140 도메인이 LIVE 단계에서 강제됨):
+  - **(134)** 모든 LIVE 주문은 `trade_reason`을 명시 — `strategy_signal` / `manual` / `stop_loss` / `take_profit` / `signal_invalidation` 중 하나. NULL trade_reason 주문은 사후 분석에서 '왜 들어갔나'를 답할 수 없으므로 LIVE 단계에서는 anti-pattern.
+  - **(138)** 모든 strategy-driven LIVE 주문은 `OrderAuditLog.strategy`가 채워짐 — Strategy Scoreboard의 LIVE 통합(137-followup)에 누락 없이 합산되도록.
+  - **(139)** Strategy-driven 주문은 `signal_strength` + `signal_confidence`가 영구화 — 사후 분석에서 quality와 PnL 상관관계 추적.
+  - **(140)** Frontend는 매 주문마다 unique `client_order_id` (UUID v4 권장) 발급 — onClick double-fire / 네트워크 재시도로 인한 중복 체결 차단.
+  - **(135)** Strategy의 `required_regime`과 운영 시간대 `current_regime` 매칭이 50% 이상 — advisory이지만 LIVE 단계에서는 운영자가 `regime_matches_strategy=False`인 신호에 추가 주의.
 - **승격 기준**:
   - 1~2개월 소액 운영.
   - 모든 주문이 인간 승인을 거침.
   - 거부/취소 시나리오 모두 검증.
+  - 위 invariant 모두 audit log 표본 검사로 통과.
 
 ### 5. AI Assist (`LIVE_AI_ASSIST`)
 
@@ -92,6 +107,8 @@
   - AI 추천 정확도 보고.
   - 거절 사유 분포 분석.
   - 인간 승인율 측정.
+  - **(123)** AI 호출 audit (`AiAnalysisLog.mode`)에 `LIVE_AI_ASSIST`로 분류된 호출의 평균 비용/모델 분포 — `docs/strategies.md` Signal Quality 섹션 참조.
+  - **(139)** AI 추천이 만든 LIVE 주문은 `signal_strength` / `signal_confidence`에 AI confluence score(004)를 매핑해서 영구화 — 사후 분석에서 AI 신호 강도와 PnL 상관관계 추적.
 
 ### 6. AI Execution (`LIVE_AI_EXECUTION`)
 
@@ -114,6 +131,21 @@
 - AI 실행 단계 도달 전까지 `ENABLE_AI_EXECUTION=true` 금지.
 - 검증 안 된 단계 건너뛰기 금지 (예: Backtest → Live Manual 직행 불가).
 
+## Audit row invariant 매트릭스 (134~140)
+
+각 단계에서 `OrderAuditLog`에 어떤 컬럼이 *반드시* 채워져야 하는지. NULL이 허용되더라도 LIVE 단계에서는 사후 분석/감사 가능성을 위해 채우는 것이 원칙. 수동 운영자 주문은 frontend UI가 사유를 받아 채워야 한다.
+
+| 컬럼 | Backtest | Shadow | Paper | Live Manual | AI Assist | AI Exec |
+|---|---|---|---|---|---|---|
+| `mode` (000) | (BacktestRun) | 자동 | 자동 | 자동 | 자동 | 자동 |
+| `decision` / `reasons` (000) | (BacktestRun) | 자동 | 자동 | 자동 | 자동 | 자동 |
+| `trade_reason` (134) | — | 권장 | 권장 | **필수** | **필수** | **필수** |
+| `strategy` (138) | (BacktestRun) | strategy 발신 시 채움 | strategy 발신 시 채움 | **strategy 발신 시 필수** | **AI 발신 시 필수** | **필수** |
+| `signal_strength` / `signal_confidence` (139) | — | strategy 발신 시 채움 | strategy 발신 시 채움 | **strategy 발신 시 필수** | **AI quality score 매핑** | **필수** |
+| `client_order_id` (140) | — | — | 권장 | **필수 (idempotency)** | **필수** | **필수** |
+
+표의 "필수"는 LIVE 단계에서 운영자가 사후 분석할 때 누락되면 안 된다는 의미. 코드 단에서는 NULL을 허용하지만 운영 절차로 강제한다 (frontend가 trade_reason / client_order_id 입력을 받기 전까지는 주문 button 비활성).
+
 ## 환경 플래그 한눈에
 
 | 변수 | Backtest | Shadow | Paper | Live Manual | AI Assist | AI Exec |
@@ -131,3 +163,11 @@
 ## 변경 이력
 
 이 문서는 코드와 동기화되어야 한다. 운용모드/플래그/안전 가드를 변경하는 PR은 본 문서도 같이 업데이트할 것.
+
+- **141 (2026-05-06)** 134~140 도메인 반영:
+  - Backtest 단계에 (137) Strategy Scoreboard / (131) contract metadata 기준 추가.
+  - Shadow에 (135) regime 매칭 / (136) signal quality 분포 검토 추가.
+  - Paper에 (132) E2E / (133) Stress / (140) idempotency / (138, 139) audit 표본 검사 추가.
+  - Live Manual 섹션에 134~140 invariant (`trade_reason`, `strategy`, `signal_strength/confidence`, `client_order_id`, `regime` advisory) 명시.
+  - AI Assist에 (123) AiAnalysisLog.mode / (139) AI confluence → signal_strength/confidence 매핑 추가.
+  - 새 섹션 "Audit row invariant 매트릭스 (134~140)" — 단계별로 어떤 audit 컬럼이 채워져야 하는지 매트릭스화.
