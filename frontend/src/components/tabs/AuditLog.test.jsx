@@ -5,6 +5,7 @@ import {
   AI_MODEL_PRICING,
   AI_SORT_STORAGE_KEY,
   AiAuditView,
+  ArchivedAuditView,
   AiCostByMode,
   AiModelBadge,
   AiSortBar,
@@ -72,6 +73,12 @@ vi.mock("../../store/useAuditLogs", () => ({
   useBacktestRuns:         () => _backtestHook,
   useEmergencyStopAudits:  () => _stopHook,
 }));
+
+// 198: ArchivedAuditView calls backendApi directly. Mock that import path.
+vi.mock("../../services/backend/client", () => ({
+  backendApi: { listOrderAudits: vi.fn() },
+}));
+import { backendApi } from "../../services/backend/client";
 
 function _resetAiHook(overrides = {}) {
   Object.assign(_aiHook, {
@@ -3635,5 +3642,62 @@ describe("<BacktestRunsView> strategy table jump-and-highlight (129)", () => {
     expect(getByTestId("backtest-row-2").dataset.highlighted).toBe("true");
     act(() => { vi.advanceTimersByTime(2000); });
     expect(getByTestId("backtest-row-2").dataset.highlighted).toBe("false");
+  });
+});
+
+
+describe("<ArchivedAuditView>", () => {
+  afterEach(() => { cleanup(); vi.clearAllMocks(); });
+
+  const _ARCHIVED = (overrides = {}) => ({
+    id: 99, mode: "SIMULATION", requested_by_ai: false,
+    symbol: "005930", side: "BUY", quantity: 1, order_type: "MARKET",
+    limit_price: null, latest_price: 70_000,
+    decision: "APPROVED", reasons: [],
+    executed: true, broker_order_id: "MOCK-99", broker_status: "FILLED",
+    filled_quantity: 1, avg_fill_price: 70_000, message: "",
+    created_at: "2026-01-05T12:00:00+00:00",
+    archived: true,
+    ...overrides,
+  });
+
+  it("requests audits with include_archived=true on mount", async () => {
+    backendApi.listOrderAudits.mockResolvedValueOnce([]);
+    render(<ArchivedAuditView />);
+    await Promise.resolve(); await Promise.resolve();
+    expect(backendApi.listOrderAudits).toHaveBeenCalledWith({
+      limit: 200, include_archived: true,
+    });
+  });
+
+  it("filters response down to archived=true rows only", async () => {
+    backendApi.listOrderAudits.mockResolvedValueOnce([
+      _ARCHIVED({ id: 1, archived: false }),
+      _ARCHIVED({ id: 2, archived: true }),
+      _ARCHIVED({ id: 3, archived: true }),
+    ]);
+    const { findByText } = render(<ArchivedAuditView />);
+    await findByText(/2건/);
+  });
+
+  it("renders empty state when no archived rows", async () => {
+    backendApi.listOrderAudits.mockResolvedValueOnce([]);
+    const { findByTestId } = render(<ArchivedAuditView />);
+    await findByTestId("archived-empty");
+  });
+
+  it("renders error state when backend fails", async () => {
+    backendApi.listOrderAudits.mockRejectedValueOnce(new Error("offline"));
+    const { findByText } = render(<ArchivedAuditView />);
+    await findByText(/아카이브 조회 실패: offline/);
+  });
+
+  it("refresh button re-queries", async () => {
+    backendApi.listOrderAudits.mockResolvedValue([]);
+    const { findByText } = render(<ArchivedAuditView />);
+    await findByText(/아카이브된 주문 없음/);
+    fireEvent.click(await findByText(/새로고침/));
+    // 1 from mount, 1 from click — should be ≥ 2.
+    expect(backendApi.listOrderAudits.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });
