@@ -158,6 +158,7 @@ def get_registry() -> list[StrategyDescription]:
 
 class ScoreboardEntry(BaseModel):
     strategy:  str
+    # backtest aggregate (137)
     runs:      int
     total_pnl: int
     avg_pnl:   int
@@ -166,12 +167,18 @@ class ScoreboardEntry(BaseModel):
     wins:      int
     losses:    int
     win_rate:  float
+    # live aggregate (144) — OrderAuditLog FIFO 페어매칭으로 산출한 realized PnL.
+    live_trades:   int
+    live_pnl:      int
+    live_wins:     int
+    live_losses:   int
+    live_win_rate: float
 
 
 @router.get("/scoreboard", response_model=list[ScoreboardEntry])
 def get_scoreboard(db: Session = Depends(get_db)) -> list[ScoreboardEntry]:
-    """137: 전략별 누적 성과(BacktestRun 기반). LIVE 주문의 strategy 추적은
-    OrderAuditLog.strategy 컬럼 추가 후 통합 예정 (TODO 137-followup)."""
+    """137 + 144: 전략별 누적 성과. backtest(BacktestRun) + LIVE 체결 audit
+    (OrderAuditLog FIFO 페어매칭) 두 출처를 한 응답에 surface."""
     from app.strategies.scoreboard import compute_strategy_scoreboard
     return [ScoreboardEntry(**r) for r in compute_strategy_scoreboard(db)]
 

@@ -320,10 +320,12 @@ describe("<ScoreboardCard> (137)", () => {
     backendApi.engineScoreboard.mockResolvedValue([
       { strategy: "sma_crossover", runs: 3, total_pnl: 500_000,
         avg_pnl: 166_667, best_pnl: 300_000, worst_pnl: -100_000,
-        wins: 12, losses: 8, win_rate: 0.6 },
+        wins: 12, losses: 8, win_rate: 0.6,
+        live_trades: 0, live_pnl: 0, live_wins: 0, live_losses: 0, live_win_rate: 0 },
       { strategy: "rsi_revert",   runs: 1, total_pnl: -50_000,
         avg_pnl: -50_000, best_pnl: -50_000, worst_pnl: -50_000,
-        wins: 2, losses: 8, win_rate: 0.2 },
+        wins: 2, losses: 8, win_rate: 0.2,
+        live_trades: 0, live_pnl: 0, live_wins: 0, live_losses: 0, live_win_rate: 0 },
     ]);
     const { findByTestId } = render(<ScoreboardCard />);
     const sma = await findByTestId("scoreboard-row-sma_crossover");
@@ -334,6 +336,40 @@ describe("<ScoreboardCard> (137)", () => {
     const rsi = await findByTestId("scoreboard-row-rsi_revert");
     expect(rsi.textContent).toContain("-50,000");
     expect(rsi.textContent).toContain("20%");
+  });
+
+  // 144: live PnL columns surface
+  it("renders live trade/PnL columns when scoreboard returns live aggregates", async () => {
+    backendApi.engineScoreboard.mockResolvedValue([
+      { strategy: "sma_crossover", runs: 1, total_pnl: 100_000,
+        avg_pnl: 100_000, best_pnl: 100_000, worst_pnl: 100_000,
+        wins: 5, losses: 5, win_rate: 0.5,
+        live_trades: 4, live_pnl: 25_000,
+        live_wins: 3, live_losses: 1, live_win_rate: 0.75 },
+    ]);
+    const { findByTestId } = render(<ScoreboardCard />);
+    const trades = await findByTestId("scoreboard-live-trades-sma_crossover");
+    expect(trades.textContent).toContain("4");
+    const pnl = await findByTestId("scoreboard-live-pnl-sma_crossover");
+    expect(pnl.textContent).toContain("+25,000");
+    const row = await findByTestId("scoreboard-row-sma_crossover");
+    expect(row.textContent).toContain("75%"); // live_win_rate
+  });
+
+  it("defaults live columns to 0 when backend omits them (back-compat)", async () => {
+    // Older backend (pre-144) doesn't include live_* fields — FE should not NaN.
+    backendApi.engineScoreboard.mockResolvedValue([
+      { strategy: "old_strat", runs: 2, total_pnl: 1000,
+        avg_pnl: 500, best_pnl: 1000, worst_pnl: 0,
+        wins: 1, losses: 1, win_rate: 0.5 },
+    ]);
+    const { findByTestId } = render(<ScoreboardCard />);
+    const trades = await findByTestId("scoreboard-live-trades-old_strat");
+    expect(trades.textContent).toContain("0");
+    const pnl = await findByTestId("scoreboard-live-pnl-old_strat");
+    // "+0" formatted — fmtKRW(0) might output "0" or "+0"; just verify no NaN/undefined.
+    expect(pnl.textContent).not.toContain("NaN");
+    expect(pnl.textContent).not.toContain("undefined");
   });
 
   it("surfaces fetch error inline", async () => {
