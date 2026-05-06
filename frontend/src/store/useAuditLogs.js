@@ -130,13 +130,18 @@ export const useBacktestRuns = () => {
 // 직전에 ref를 갱신해 React commit timing race를 회피.
 function useAdaptivePollingByTopId(refresh, items) {
   const _lastTopIdRef    = useRef(null);
-  const _lastActivityRef = useRef(Date.now());
+  // 157: useRef(Date.now())는 react-hooks/purity 위반 — null 초기 + useEffect로
+  // mount 시점에 lazy init.
+  const _lastActivityRef = useRef(null);
   // 125: visibility 추적 — 100/useApprovals와 동일 패턴.
   const _hiddenRef = useRef(
     typeof document !== "undefined" && document.visibilityState === "hidden"
   );
 
   useEffect(() => {
+    if (_lastActivityRef.current === null) {
+      _lastActivityRef.current = Date.now();
+    }
     const topId = items[0]?.id ?? null;
     if (topId !== null && topId !== _lastTopIdRef.current) {
       _lastActivityRef.current = Date.now();

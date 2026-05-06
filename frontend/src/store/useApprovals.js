@@ -57,7 +57,10 @@ export function useApprovals() {
   // timer chain on every fetch. Refs sidestep that while still letting the
   // schedule react to live data.
   const _pendingCountRef  = useRef(0);
-  const _lastActivityRef  = useRef(Date.now());
+  // 157: useRef(Date.now())는 react-hooks/purity 위반 — null 초기 + useEffect로
+  // mount 시점에 채운다. 첫 polling tick 전에 lazy init 보장 (mount 후 즉시
+  // useEffect 실행).
+  const _lastActivityRef  = useRef(null);
   // 125: visibility 상태도 ref로 추적. visibilitychange 이벤트가 ref만 갱신
   // 하면 다음 polling tick의 schedule 결정에서 자연스럽게 반영. visible 복귀
   // 시점에 _lastActivityRef도 갱신해 즉시 active로 복귀.
@@ -144,6 +147,10 @@ export function useApprovals() {
   // 다시 계산한다. setInterval로는 동적 변경이 어렵고, hook 재마운트로 강제
   // 재시작하면 다른 effect deps까지 영향을 받는다.
   useEffect(() => {
+    // 157 lazy init: mount 시점에 lastActivity 초기값 주입.
+    if (_lastActivityRef.current === null) {
+      _lastActivityRef.current = Date.now();
+    }
     let cancelled = false;
     let timerId = null;
     const scheduleNext = () => {

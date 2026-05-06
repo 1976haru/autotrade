@@ -12,9 +12,12 @@ on:
       - 'backend/**'
       - '.github/workflows/backend-ci.yml'
 
+# 157: 일반 CI는 fast unit + lint만. stress / volume / timing-sensitive
+# 테스트는 backend-ci-nightly.yml에서 별도 실행.
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -29,7 +32,8 @@ jobs:
         run: |
           cd backend
           ruff check app tests
-      - name: Test
+      - name: Test (fast)
+        # pyproject.toml의 addopts = "-m 'not slow'"로 stress 자동 제외.
         run: |
           cd backend
           pytest -q

@@ -445,6 +445,9 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
     EVENT_MODE_STORAGE_KEY, "all", isValidEventMode,
   );
   const _bucketWindowMs = TIME_BUCKET_MS[timeBucket]; // undefined for "all"
+  // 157: time bucket 필터가 "최근 1h" 등 현재 시각 기준 의미라 Date.now()
+  // 호출이 본질적으로 render 의존. 한 render 내 일관성 위해 한 번만 snapshot.
+  // eslint-disable-next-line react-hooks/purity
   const _now = Date.now();
   // Orders/stops/ai use created_at; attempts (079) use `at` — different field
   // names, same elapsed-time semantics.
@@ -975,6 +978,8 @@ export function AiAuditView() {
     AI_TIME_BUCKET_STORAGE_KEY, "all", _isValidBucket,
   );
   const _bucketWindowMs = TIME_BUCKET_MS[timeBucket];
+  // 157: time bucket 필터 — 현재 시각 기준이라 Date.now() snapshot 1회.
+  // eslint-disable-next-line react-hooks/purity
   const _now = Date.now();
   const _withinBucket = (r) =>
     _bucketWindowMs === undefined

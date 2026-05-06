@@ -39,6 +39,10 @@ export function emergencyStopOnSince(emergencyStop, history) {
 }
 
 
+// 157: now prop은 테스트용 — render time elapsed 계산이 본 의도라 Date.now()
+// 호출이 정상. react-hooks/purity는 이 패턴을 일반화해서 막지만 본 컴포넌트는
+// "stuck banner — 30분 이상 stop ON일 때 노출"이라 매 render 갱신이 의도된 동작.
+// eslint-disable-next-line react-hooks/purity
 export function EmergencyStopStuckBanner({ since, now = Date.now(), onClick }) {
   if (!since) return null;
   const elapsed = now - new Date(since).getTime();
