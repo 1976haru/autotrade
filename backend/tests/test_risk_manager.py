@@ -342,6 +342,7 @@ def _settings(**overrides):
         risk_max_symbol_exposure  = 1_500_000,
         enable_live_trading       = False,
         enable_ai_execution       = False,
+        stale_price_max_age_seconds = 60,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -357,6 +358,7 @@ def test_policy_from_settings_at_defaults_matches_dataclass_defaults():
     assert fs.max_symbol_exposure  == bare.max_symbol_exposure
     assert fs.enable_live_trading  == bare.enable_live_trading
     assert fs.enable_ai_execution  == bare.enable_ai_execution
+    assert fs.stale_price_max_age_seconds == bare.stale_price_max_age_seconds
 
 
 def test_policy_from_settings_propagates_threshold_overrides():
@@ -400,3 +402,112 @@ def test_lowered_notional_threshold_rejects_orders_that_default_would_approve():
     )
     assert result.decision == RiskDecision.REJECTED
     assert "order notional exceeds max_order_notional" in result.reasons
+
+
+# ---------- 143: stale price detection ----------
+
+from datetime import datetime, timedelta, timezone
+
+
+def test_stale_price_rejects_with_explicit_reason():
+    """timestamp가 threshold보다 오래된 경우 RiskManager가 즉시 REJECTED.
+    invariant: '시세가 stale이면 사이즈/포지션 평가의 근거가 없으므로 차단'."""
+    risk = RiskManager(RiskPolicy(stale_price_max_age_seconds=30))
+    stale_ts = datetime.now(timezone.utc) - timedelta(seconds=120)
+    result = risk.evaluate_order(
+        order=_buy(1),
+        mode=OperationMode.SIMULATION,
+        balance=_balance(),
+        positions=[],
+        latest_price=75_000,
+        latest_price_timestamp=stale_ts,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert any("stale" in r for r in result.reasons), result.reasons
+
+
+def test_fresh_price_passes_stale_check():
+    """timestamp가 threshold 이내면 stale 검사를 통과 — 다른 검증으로 결정."""
+    risk = RiskManager(RiskPolicy(stale_price_max_age_seconds=60))
+    fresh_ts = datetime.now(timezone.utc)
+    result = risk.evaluate_order(
+        order=_buy(1),
+        mode=OperationMode.SIMULATION,
+        balance=_balance(),
+        positions=[],
+        latest_price=75_000,
+        latest_price_timestamp=fresh_ts,
+    )
+    assert result.decision == RiskDecision.APPROVED
+
+
+def test_stale_check_skipped_when_timestamp_is_none():
+    """timestamp 미제공 — 기존 호출 경로 호환. 검사 자체를 건너뛴다."""
+    risk = RiskManager(RiskPolicy(stale_price_max_age_seconds=60))
+    result = risk.evaluate_order(
+        order=_buy(1),
+        mode=OperationMode.SIMULATION,
+        balance=_balance(),
+        positions=[],
+        latest_price=75_000,
+        # latest_price_timestamp 미제공
+    )
+    assert result.decision == RiskDecision.APPROVED
+
+
+def test_stale_check_disabled_when_threshold_is_zero():
+    """policy.stale_price_max_age_seconds=0 → 검사 비활성. 운영자가 의도적으로
+    꺼둘 수 있다 (예: backtest fixture 환경)."""
+    risk = RiskManager(RiskPolicy(stale_price_max_age_seconds=0))
+    very_stale = datetime.now(timezone.utc) - timedelta(days=365)
+    result = risk.evaluate_order(
+        order=_buy(1),
+        mode=OperationMode.SIMULATION,
+        balance=_balance(),
+        positions=[],
+        latest_price=75_000,
+        latest_price_timestamp=very_stale,
+    )
+    assert result.decision == RiskDecision.APPROVED
+
+
+def test_stale_check_normalizes_naive_timestamp_as_utc():
+    """naive datetime은 UTC로 가정 — broker의 timestamp 약속과 일치."""
+    risk = RiskManager(RiskPolicy(stale_price_max_age_seconds=30))
+    naive_old = (datetime.now(timezone.utc) - timedelta(seconds=120)).replace(tzinfo=None)
+    result = risk.evaluate_order(
+        order=_buy(1),
+        mode=OperationMode.SIMULATION,
+        balance=_balance(),
+        positions=[],
+        latest_price=75_000,
+        latest_price_timestamp=naive_old,
+    )
+    assert result.decision == RiskDecision.REJECTED
+
+
+def test_stale_check_runs_before_other_checks():
+    """stale은 emergency_stop과 같은 hard-reject — notional / cash 같은 다른
+    위반과 같이 누적되지 않고 단독 reason으로 surface."""
+    # notional 위반과 stale을 동시에 발생시키면 — stale만 reason에 들어가야.
+    risk = RiskManager(RiskPolicy(
+        max_order_notional=100_000,
+        stale_price_max_age_seconds=30,
+    ))
+    stale_ts = datetime.now(timezone.utc) - timedelta(seconds=120)
+    result = risk.evaluate_order(
+        order=_buy(10),  # 10 * 75_000 = 750_000 > 100_000 cap
+        mode=OperationMode.SIMULATION,
+        balance=_balance(),
+        positions=[],
+        latest_price=75_000,
+        latest_price_timestamp=stale_ts,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert len(result.reasons) == 1
+    assert "stale" in result.reasons[0]
+
+
+def test_policy_from_settings_propagates_stale_threshold():
+    p = RiskPolicy.from_settings(_settings(stale_price_max_age_seconds=15))
+    assert p.stale_price_max_age_seconds == 15

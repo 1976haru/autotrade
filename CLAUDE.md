@@ -61,6 +61,7 @@ env 변수로 모든 위험 동작을 차단한다. 자세한 매트릭스는 [`
 | `KIS_IS_PAPER` | `true` | KisClient host + tr_id, KisBrokerAdapter.place_order 가드 |
 | `MARKET_DATA_PROVIDER` | `mock` | 시장 데이터 소스 |
 | `ENABLE_FILL_POLLING` | `false` | 백그라운드 체결 갱신 |
+| `STALE_PRICE_MAX_AGE_SECONDS` | `60` | RiskManager step 1.5 — 시세 timestamp가 N초 초과 oldness이면 hard-reject (143) |
 
 ## 다층 안전 가드
 

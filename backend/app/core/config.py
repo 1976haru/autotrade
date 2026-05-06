@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     risk_max_daily_loss:       int = 200_000
     risk_max_positions:        int = 5
     risk_max_symbol_exposure:  int = 1_500_000
+    # 143: 시세 응답이 N초보다 오래된 경우 RiskManager가 REJECTED. broker가 죽었거나
+    # 데이터 피드가 멈춘 상태에서의 주문을 차단한다. 너무 짧으면 정상 운영을 방해하고
+    # 너무 길면 stale 의미가 흐려진다 — 60초 기본은 KIS 분봉 운영을 가정.
+    stale_price_max_age_seconds: int = 60
 
     kis_app_key: str = ""
     kis_app_secret: str = ""

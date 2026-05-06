@@ -156,6 +156,7 @@
 | `KIS_IS_PAPER` | — | true* | **true** | **false** | **false** | **false** |
 | `KIS_APP_KEY/SECRET` | — | 필요 | 필요 | 필요 | 필요 | 필요 |
 | `ENABLE_FILL_POLLING` | false | false | true (권장) | true (권장) | true (권장) | true (권장) |
+| `STALE_PRICE_MAX_AGE_SECONDS` | (검사 안 함) | 60 | 60 | 60 (권장 — 더 짧게도 가능) | 60 | 30 (보수적 권장) |
 | `ANTHROPIC_API_KEY` | — | — | — | — | 필요 | 필요 |
 
 *Shadow는 read-only라 모의/실전 환경 모두 가능하지만 운영 안전상 모의 권장.

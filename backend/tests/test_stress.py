@@ -137,19 +137,35 @@ def test_stress_emergency_stop_blocks_all_submissions(client):
         assert all(r.executed is False for r in rows)
 
 
-@pytest.mark.skip(reason=(
-    "MockBroker는 unknown symbol에도 default 50000을 반환해 stale detection을 "
-    "구현하지 않는다. 운영 broker(KIS adapter)에서는 timestamp 기반 stale 검사 "
-    "추가 후 본 시나리오 활성화 — docs/stress_test_report.md '미구현 invariant' "
-    "섹션 참조."
-))
 def test_stress_stale_price_rejects_order(client):
-    """5) broker가 시세를 못 가져오면(또는 0 반환) RiskManager가 notional 계산
-    못 해 거부. invariant: '시세 없으면 주문 안 간다'."""
+    """5) broker 시세가 stale_price_max_age_seconds 초과로 오래되면 RiskManager가
+    REJECTED. invariant: '시세 없으면 / 시세가 stale이면 주문 안 간다' (143).
+
+    MockBroker.set_stale_price_for_test로 특정 symbol에 인공적인 stale timestamp
+    를 주입한 뒤 주문 → 400 + audit row REJECTED 확인."""
+    threshold = client.test_risk_manager.policy.stale_price_max_age_seconds
+    # threshold가 0/음수면 이 검사가 비활성 — 테스트 의도와 어긋나므로 명시.
+    assert threshold > 0, "stale check must be enabled for this test"
+    # threshold + 여유로 set — flaky 회피.
+    client.test_broker.set_stale_price_for_test("005930", age_seconds=threshold + 30)
+
     res = client.post("/api/broker/orders", json={
-        "symbol": "ZZZZUNKNOWN", "side": "BUY", "quantity": 1,
+        "symbol": "005930", "side": "BUY", "quantity": 1,
     })
-    assert res.status_code in (400, 422), res.text
+    assert res.status_code == 400, res.text
+    body = res.json()
+    # FastAPI HTTPException → {"detail": ...}. 상세는 reason list로 확인.
+    detail = body.get("detail")
+    if isinstance(detail, dict):
+        reasons = detail.get("reasons", [])
+    else:
+        reasons = []
+    # error envelope이 reasons를 surface 안 하더라도 audit에 남아 있어야 한다.
+    with client.test_db_factory() as db:
+        rows = db.execute(select(OrderAuditLog)).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].decision == "REJECTED"
+        assert any("stale" in r for r in rows[0].reasons), rows[0].reasons
 
 
 def test_stress_duplicate_approval_returns_409(client, monkeypatch):

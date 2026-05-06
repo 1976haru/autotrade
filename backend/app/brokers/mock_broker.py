@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from app.brokers.base import (
@@ -27,6 +27,10 @@ class MockBrokerAdapter(BrokerAdapter):
             "035720": 61000,
             "005380": 245000,
         }
+        # 143: 테스트용 stale price 시뮬레이터 — 특정 symbol에 대해 get_price가
+        # N초 전의 timestamp를 가진 Quote를 반환하도록 강제. 운영에서는 항상 비어
+        # 있다. value > 0만 적용된다.
+        self.stale_age_overrides: dict[str, float] = {}
 
     def set_price(self, symbol: str, price: int) -> None:
         self.prices[symbol] = price
@@ -34,12 +38,21 @@ class MockBrokerAdapter(BrokerAdapter):
             pos = self.positions[symbol]
             self.positions[symbol] = pos.model_copy(update={"market_price": price})
 
+    def set_stale_price_for_test(self, symbol: str, age_seconds: float) -> None:
+        """143 testing aid: subsequent get_price(symbol) responses carry a
+        timestamp that is `age_seconds` in the past. RiskManager의 stale 검사
+        활성화 검증용 — 운영 코드에서는 호출되지 않아야 한다."""
+        self.stale_age_overrides[symbol] = age_seconds
+
     async def get_price(self, symbol: str) -> Quote:
         price = self.prices.get(symbol, 50_000)
+        now = datetime.now(timezone.utc)
+        age = self.stale_age_overrides.get(symbol, 0.0)
+        ts  = now - timedelta(seconds=age) if age > 0 else now
         return Quote(
             symbol=symbol,
             price=price,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=ts.isoformat(),
             source="mock",
         )
 

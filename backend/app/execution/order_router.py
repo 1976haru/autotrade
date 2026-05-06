@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -72,6 +73,15 @@ async def route_order(
     balance   = await broker.get_balance()
     positions = await broker.get_positions()
 
+    # 143: Quote.timestamp는 ISO 문자열. RiskManager가 stale 검사를 수행하려면
+    # datetime이 필요하므로 여기서 파싱한다. 파싱 실패는 broker 계약 위반이지만
+    # 안전 측 — None으로 두면 RiskManager가 검사를 건너뛴다 (기존 동작 유지).
+    quote_ts: datetime | None = None
+    try:
+        quote_ts = datetime.fromisoformat(quote.timestamp)
+    except (TypeError, ValueError):
+        quote_ts = None
+
     decision = risk.evaluate_order(
         order=order,
         mode=mode,
@@ -79,6 +89,7 @@ async def route_order(
         positions=positions,
         latest_price=quote.price,
         requested_by_ai=requested_by_ai,
+        latest_price_timestamp=quote_ts,
     )
 
     audit = OrderAuditLog(
