@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     ai_rate_limit_window_seconds: int = 60
     ai_rate_limit_max_count:      int = 0
 
+    # 174: equity 대비 단일 주문 명목 비율 한도 (%). 0이면 비활성. max_order_notional
+    # 이 절대값 한도라면 본 항목은 자본 대비 자동 스케일.
+    max_position_size_pct: float = 0.0
+
     # 167: PendingApproval TTL. 0이면 만료 안 함 (기본). 운영자가 명시적으로
     # 켜야만 자동 EXPIRED 전환. 권장 600~1800 (10~30분) — 시세 stale 임계와 맞춤.
     approval_ttl_seconds: int = 0

@@ -37,6 +37,10 @@ class RiskPolicy:
     # 카운트 임계. 0이면 검사 비활성 (기본). LLM bug / 무한 루프 방어.
     ai_rate_limit_window_seconds: int = 60
     ai_rate_limit_max_count:      int = 0
+    # 174: equity 대비 단일 주문 명목의 비율 한도 (%). 0이면 검사 비활성 (기본).
+    # max_order_notional이 절대값 한도라면 본 가드는 자본 대비 *상대* 한도 —
+    # 운영자 자본이 증감해도 자동 스케일. 권장 5~15% (단타 운영 가정).
+    max_position_size_pct: float = 0.0
 
     @classmethod
     def from_settings(cls, settings) -> "RiskPolicy":
@@ -59,6 +63,7 @@ class RiskPolicy:
             enforce_ai_reasoning = settings.enforce_ai_reasoning,
             ai_rate_limit_window_seconds = settings.ai_rate_limit_window_seconds,
             ai_rate_limit_max_count      = settings.ai_rate_limit_max_count,
+            max_position_size_pct        = settings.max_position_size_pct,
         )
 
 
@@ -156,6 +161,18 @@ class RiskManager:
             result.reasons.append("order notional exceeds max_order_notional")
         else:
             result.passed.append("order notional within limit")
+
+        # 174: equity 대비 비율 한도 — 자본이 변해도 자동 스케일.
+        pct = self.policy.max_position_size_pct
+        if pct > 0:
+            cap = balance.equity * pct / 100.0
+            if order_notional > cap:
+                result.reasons.append(
+                    f"order notional {order_notional} exceeds "
+                    f"{pct}% of equity ({cap:.0f})"
+                )
+            else:
+                result.passed.append("order notional within equity-relative cap")
 
         if self.daily_realized_pnl <= -abs(self.policy.max_daily_loss):
             result.reasons.append("daily loss limit reached")
