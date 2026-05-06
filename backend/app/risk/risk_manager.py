@@ -33,6 +33,10 @@ class RiskPolicy:
     # 기본 True — 새 에이전트가 reasoning 없이 주문 만들면 거부. 운영자가 backwards
     # compat 위해 끌 수도 있지만 LIVE 단계에서는 절대 끄지 말 것 (운영 가이드).
     enforce_ai_reasoning: bool = True
+    # 161: AI 제안 rate limit — (strategy, symbol)별 윈도우 안에서 AI 주문 수
+    # 카운트 임계. 0이면 검사 비활성 (기본). LLM bug / 무한 루프 방어.
+    ai_rate_limit_window_seconds: int = 60
+    ai_rate_limit_max_count:      int = 0
 
     @classmethod
     def from_settings(cls, settings) -> "RiskPolicy":
@@ -53,6 +57,8 @@ class RiskPolicy:
             stale_price_max_age_seconds = settings.stale_price_max_age_seconds,
             min_ai_confidence   = settings.min_ai_confidence,
             enforce_ai_reasoning = settings.enforce_ai_reasoning,
+            ai_rate_limit_window_seconds = settings.ai_rate_limit_window_seconds,
+            ai_rate_limit_max_count      = settings.ai_rate_limit_max_count,
         )
 
 

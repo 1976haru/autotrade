@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     # 운영자가 backwards-compat 위해 끌 수 있지만 LIVE 단계에서는 절대 false 금지.
     enforce_ai_reasoning: bool = True
 
+    # 161: AI 제안 rate limit. (strategy, symbol)별 N초 안의 제안 카운트가
+    # max_count 이상이면 추가 제안 차단. max_count=0이면 비활성 (기본).
+    ai_rate_limit_window_seconds: int = 60
+    ai_rate_limit_max_count:      int = 0
+
     kis_app_key: str = ""
     kis_app_secret: str = ""
     kis_account_no: str = ""

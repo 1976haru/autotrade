@@ -348,6 +348,8 @@ def _settings(**overrides):
         stale_price_max_age_seconds = 60,
         min_ai_confidence         = 0,
         enforce_ai_reasoning      = True,
+        ai_rate_limit_window_seconds = 60,
+        ai_rate_limit_max_count   = 0,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
