@@ -6,12 +6,15 @@ import {
   ApproveAttemptFailureBadge,
   Approvals,
   BulkCancelStaleModal,
+  HISTORY_STATUS_STORAGE_KEY,
   HistoryRow,
+  HistoryStatusFilterBar,
   PendingAgeBadge,
   ReasonsLine,
   formatPendingAge,
   historyEmptyMessage,
   isPendingStale,
+  isValidHistoryStatus,
 } from "./Approvals";
 
 
@@ -498,18 +501,149 @@ describe("<Approvals> approve-attempt failure badge on PENDING row", () => {
 
 describe("historyEmptyMessage", () => {
   it("returns plain '결정된 항목이 없습니다' when history is empty", () => {
-    expect(historyEmptyMessage([], "")).toBe("결정된 항목이 없습니다");
-    expect(historyEmptyMessage(undefined, "")).toBe("결정된 항목이 없습니다");
+    expect(historyEmptyMessage([], "", "all")).toBe("결정된 항목이 없습니다");
+    expect(historyEmptyMessage(undefined, "", "all")).toBe("결정된 항목이 없습니다");
   });
 
-  it("returns the filtered variant when history exists but symbol filter narrowed it to zero", () => {
-    expect(historyEmptyMessage([{ id: 1 }], "005930"))
-      .toBe("해당 종목의 항목이 없습니다");
+  it("returns the filtered variant when symbol filter narrows non-empty history to zero", () => {
+    expect(historyEmptyMessage([{ id: 1 }], "005930", "all"))
+      .toBe("해당 조건의 항목이 없습니다");
   });
 
-  it("returns plain message when no symbol filter even if logic is reached", () => {
-    // Defensive — caller might call this with empty needle
-    expect(historyEmptyMessage([{ id: 1 }], "")).toBe("결정된 항목이 없습니다");
+  it("returns the filtered variant when status filter narrows non-empty history", () => {
+    expect(historyEmptyMessage([{ id: 1 }], "", "REJECTED"))
+      .toBe("해당 조건의 항목이 없습니다");
+  });
+
+  it("returns the filtered variant when both symbol + status are active", () => {
+    expect(historyEmptyMessage([{ id: 1 }], "005930", "APPROVED"))
+      .toBe("해당 조건의 항목이 없습니다");
+  });
+
+  it("returns plain message when no filter active", () => {
+    expect(historyEmptyMessage([{ id: 1 }], "", "all")).toBe("결정된 항목이 없습니다");
+  });
+});
+
+
+describe("<HistoryStatusFilterBar>", () => {
+  afterEach(cleanup);
+
+  it("renders four chips and highlights the active one", () => {
+    const { getByRole } = render(<HistoryStatusFilterBar active="all" onChange={() => {}} />);
+    expect(getByRole("radiogroup", { name: "처리 내역 상태 필터" })).toBeTruthy();
+    expect(getByRole("radio", { name: "전체" }).getAttribute("aria-checked")).toBe("true");
+    expect(getByRole("radio", { name: "승인" }).getAttribute("aria-checked")).toBe("false");
+    expect(getByRole("radio", { name: "거부" }).getAttribute("aria-checked")).toBe("false");
+    expect(getByRole("radio", { name: "취소" }).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("calls onChange with the chip's status id", () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(<HistoryStatusFilterBar active="all" onChange={onChange} />);
+    fireEvent.click(getByRole("radio", { name: "승인" }));
+    expect(onChange).toHaveBeenCalledWith("APPROVED");
+    fireEvent.click(getByRole("radio", { name: "거부" }));
+    expect(onChange).toHaveBeenLastCalledWith("REJECTED");
+    fireEvent.click(getByRole("radio", { name: "취소" }));
+    expect(onChange).toHaveBeenLastCalledWith("CANCELLED");
+  });
+});
+
+
+describe("isValidHistoryStatus", () => {
+  it("accepts the four canonical ids", () => {
+    expect(isValidHistoryStatus("all")).toBe(true);
+    expect(isValidHistoryStatus("APPROVED")).toBe(true);
+    expect(isValidHistoryStatus("REJECTED")).toBe(true);
+    expect(isValidHistoryStatus("CANCELLED")).toBe(true);
+  });
+
+  it("rejects unknown values (forward-compat against future builds)", () => {
+    expect(isValidHistoryStatus("PENDING")).toBe(false);
+    expect(isValidHistoryStatus("garbage")).toBe(false);
+    expect(isValidHistoryStatus("")).toBe(false);
+  });
+});
+
+
+describe("<Approvals> 처리 내역 status filter", () => {
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _h(overrides = {}) {
+    return {
+      id: 1, symbol: "005930", side: "BUY", quantity: 1, order_type: "MARKET",
+      limit_price: null, status: "APPROVED", mode: "LIVE_MANUAL_APPROVAL",
+      decided_at: "2026-05-06T12:00:00+00:00", decided_by: "user", note: "",
+      created_at: "2026-05-06T11:55:00+00:00", audit_id: 1,
+      ...overrides,
+    };
+  }
+
+  it("default '전체' shows all status rows", () => {
+    const approvals = _makeApprovals({
+      history: [
+        _h({ id: 1, symbol: "AAA", status: "APPROVED" }),
+        _h({ id: 2, symbol: "BBB", status: "REJECTED" }),
+        _h({ id: 3, symbol: "CCC", status: "CANCELLED" }),
+      ],
+    });
+    const { container } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(container.textContent).toContain("AAA");
+    expect(container.textContent).toContain("BBB");
+    expect(container.textContent).toContain("CCC");
+  });
+
+  it("clicking 거부 narrows to REJECTED rows only", () => {
+    const approvals = _makeApprovals({
+      history: [
+        _h({ id: 1, symbol: "AAA", status: "APPROVED" }),
+        _h({ id: 2, symbol: "BBB", status: "REJECTED" }),
+        _h({ id: 3, symbol: "CCC", status: "CANCELLED" }),
+      ],
+    });
+    const { container, getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.click(getByRole("radio", { name: "거부" }));
+    expect(container.textContent).not.toContain("AAA");
+    expect(container.textContent).toContain("BBB");
+    expect(container.textContent).not.toContain("CCC");
+  });
+
+  it("composes with symbol filter (status × symbol)", () => {
+    const approvals = _makeApprovals({
+      history: [
+        _h({ id: 1, symbol: "AAA", status: "REJECTED" }),
+        _h({ id: 2, symbol: "BBB", status: "REJECTED" }),
+        _h({ id: 3, symbol: "AAA", status: "APPROVED" }),
+      ],
+    });
+    const { container, getByRole, getAllByPlaceholderText } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    fireEvent.click(getByRole("radio", { name: "거부" }));
+    const inputs = getAllByPlaceholderText(/종목/);
+    fireEvent.change(inputs[0], { target: { value: "AAA" } });
+    // Only id 1 (AAA + REJECTED) should remain
+    expect(container.textContent).toContain("#1");
+    expect(container.textContent).not.toContain("#2"); // BBB rejected
+    expect(container.textContent).not.toContain("#3"); // AAA approved
+  });
+
+  it("persists selection to localStorage", () => {
+    const approvals = _makeApprovals({ history: [_h()] });
+    const { getByRole, unmount } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.click(getByRole("radio", { name: "취소" }));
+    expect(localStorage.getItem(HISTORY_STATUS_STORAGE_KEY)).toBe("CANCELLED");
+    unmount();
+    const { getByRole: g2 } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(g2("radio", { name: "취소" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("falls back to 전체 when stored value is unknown", () => {
+    localStorage.setItem(HISTORY_STATUS_STORAGE_KEY, "garbage");
+    const approvals = _makeApprovals({ history: [_h()] });
+    const { getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(getByRole("radio", { name: "전체" }).getAttribute("aria-checked")).toBe("true");
   });
 });
 
@@ -562,7 +696,7 @@ describe("<Approvals> 처리 내역 symbol filter", () => {
     );
     const inputs = getAllByPlaceholderText(/종목/);
     fireEvent.change(inputs[0], { target: { value: "999999" } });
-    expect(getByText("해당 종목의 항목이 없습니다")).toBeTruthy();
+    expect(getByText("해당 조건의 항목이 없습니다")).toBeTruthy();
   });
 
   it("shows the plain empty message when history is empty (no filter applied)", () => {

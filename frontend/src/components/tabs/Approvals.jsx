@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { Btn, Card, Inp, SectionLabel } from "../common";
 import { DecisionDialog } from "../common/DecisionDialog";
+import { usePersistedState } from "../../store/usePersistedState";
 import { fmtKRW } from "../../utils/format";
 
 
@@ -235,13 +236,59 @@ export function BulkCancelStaleModal({
 }
 
 
-// 082: 처리 내역에서 종목 검색이 비었는지/필터 결과만 비었는지 구분.
-// 067 audit timeline 패턴과 동일 — 입력은 활성 필터의 진실 소스이고 메시지는
+// 083: status filter chips on the 처리 내역 list, mirroring 052's
+// KindFilterBar pattern. Persisted across sessions because investigation
+// sessions tend to focus on one outcome type ("이번 주 거부 사례 보기").
+const HISTORY_STATUS_FILTERS = [
+  { id: "all",       label: "전체", color: "#7dd3fc" },
+  { id: "APPROVED",  label: "승인", color: "#22c55e" },
+  { id: "REJECTED",  label: "거부", color: "#ef4444" },
+  { id: "CANCELLED", label: "취소", color: "#94a3b8" },
+];
+
+export const HISTORY_STATUS_STORAGE_KEY = "autotrade.approvalsHistoryStatusFilter";
+const _VALID_HISTORY_STATUSES = new Set(HISTORY_STATUS_FILTERS.map((f) => f.id));
+export const isValidHistoryStatus = (v) => _VALID_HISTORY_STATUSES.has(v);
+
+
+export function HistoryStatusFilterBar({ active, onChange }) {
+  return (
+    <div role="radiogroup" aria-label="처리 내역 상태 필터"
+         style={{ display: "flex", gap: 4 }}>
+      {HISTORY_STATUS_FILTERS.map((f) => {
+        const isActive = active === f.id;
+        return (
+          <button
+            key={f.id}
+            role="radio"
+            aria-checked={isActive}
+            onClick={() => onChange(f.id)}
+            style={{
+              padding: "5px 10px", borderRadius: 12, cursor: "pointer",
+              fontFamily: "inherit", fontSize: 10, fontWeight: 700,
+              background: isActive ? `${f.color}22` : "transparent",
+              border:     `1px solid ${isActive ? f.color : "#1a3a5c"}`,
+              color:      isActive ? f.color : "#475569",
+            }}
+          >
+            {f.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+
+// 082+083: 처리 내역에서 두 축(종목/상태) 필터를 조합. 081 audit empty-state
+// 패턴과 같은 구조 — 칩/입력이 활성 필터의 진실 소스이고 메시지는 단순히
 // "필터 때문임"만 신호한다.
-export function historyEmptyMessage(history, symbolNeedle) {
+export function historyEmptyMessage(history, symbolNeedle, statusFilter) {
   if (!history || history.length === 0) return "결정된 항목이 없습니다";
-  if (symbolNeedle) return "해당 종목의 항목이 없습니다";
-  return "결정된 항목이 없습니다";
+  const hasFilter =
+    (symbolNeedle && symbolNeedle.length > 0)
+    || (statusFilter && statusFilter !== "all");
+  return hasFilter ? "해당 조건의 항목이 없습니다" : "결정된 항목이 없습니다";
 }
 
 
@@ -290,9 +337,15 @@ export function Approvals({ approvals, operatorName = "" }) {
   // timeline filter.
   const [historySymbolFilter, setHistorySymbolFilter] = useState("");
   const _historyNeedle = historySymbolFilter.trim().toLowerCase();
-  const filteredHistory = _historyNeedle
-    ? history.filter((a) => a.symbol.toLowerCase().includes(_historyNeedle))
-    : history;
+  // 083: persisted status filter — investigation sessions tend to lock onto
+  // one outcome type for a while ("거부 사례만"), so survives reload like
+  // 054 audit kind filter.
+  const [historyStatusFilter, setHistoryStatusFilter] = usePersistedState(
+    HISTORY_STATUS_STORAGE_KEY, "all", isValidHistoryStatus,
+  );
+  const filteredHistory = history
+    .filter((a) => historyStatusFilter === "all" || a.status === historyStatusFilter)
+    .filter((a) => !_historyNeedle || a.symbol.toLowerCase().includes(_historyNeedle));
 
   const dispatchByAction = { approve, reject, cancel };
 
@@ -384,16 +437,22 @@ export function Approvals({ approvals, operatorName = "" }) {
 
       <Card>
         <SectionLabel>처리 내역 (최근 50건)</SectionLabel>
-        <div style={{ marginBottom: 8 }}>
-          <Inp
-            value={historySymbolFilter}
-            onChange={setHistorySymbolFilter}
-            placeholder="🔍 종목 (예: 005930)"
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <HistoryStatusFilterBar
+            active={historyStatusFilter}
+            onChange={setHistoryStatusFilter}
           />
+          <div style={{ flex: 1, minWidth: 100 }}>
+            <Inp
+              value={historySymbolFilter}
+              onChange={setHistorySymbolFilter}
+              placeholder="🔍 종목 (예: 005930)"
+            />
+          </div>
         </div>
         {filteredHistory.length === 0 ? (
           <div style={{ color: "#1e3a5c", fontSize: 12, textAlign: "center", padding: 16 }}>
-            {historyEmptyMessage(history, _historyNeedle)}
+            {historyEmptyMessage(history, _historyNeedle, historyStatusFilter)}
           </div>
         ) : filteredHistory.map((a) => <HistoryRow key={a.id} a={a} />)}
       </Card>
