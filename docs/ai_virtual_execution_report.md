@@ -90,6 +90,23 @@ NULL은 AI 외 경로 주문 (수동 / strategy 신호). 사후 분석:
 - AI 신호 강도 → 실제 PnL 상관관계 추적.
 - 거부된 AI 제안의 reason 분포 (RiskManager가 거부한 사유 + AI가 만든 사유).
 
+## 161: AI proposal rate limit
+
+LLM bug / 무한 루프 / 동일 신호 spam 등으로 AI 에이전트가 같은 (strategy,
+symbol)에 대해 짧은 시간 내 다수 제안을 만드는 사고를 audit log를 walk해
+사전 차단.
+
+- `RiskPolicy.ai_rate_limit_max_count`(기본 0=비활성) + `ai_rate_limit_window_seconds`(기본 60s).
+- `route_order` Step 0.5 (idempotency 다음, broker 호출 전): `requested_by_ai=True` + `max_count > 0`이면 `count_recent_ai_proposals`로 누적 카운트 검사.
+- 임계 도달 시 RiskManager 결과를 REJECTED로 덮고 reason `"AI rate limit exceeded: N proposals in Ws window..."` 누적.
+- (strategy, symbol)별 격리 — 한 strategy 한도가 다른 strategy에 영향 X.
+- non-AI 주문은 검사 우회 (회귀 가드).
+
+기본 비활성인 이유: 운영자 의도 없이 stress test나 정상 흐름이 차단되지 않도록. 옵트인 권장값:
+- 개발 / 검증: 비활성 (기본).
+- VIRTUAL_AI_EXECUTION 운영: 60s window / 10 max (실제 시장 대비 과한 빈도 차단).
+- LIVE_AI_EXECUTION 활성화 시: 60s / 5 max (보수적).
+
 ## 159: AI proposal reasoning required
 
 CLAUDE.md '감사 로그 우선' invariant의 AI 영역 강제. `RiskPolicy.enforce_ai_reasoning` (기본 True)일 때 `requested_by_ai=True`인 주문이 `ai_decision_meta`가 None이거나 `reasons`가 비어있으면 RiskManager가 REJECTED. AI 외 경로 주문(운영자 수동 / strategy 신호)은 영향 받지 않음.

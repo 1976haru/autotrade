@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.ai.rate_limit import check_rate_limit
 from app.brokers.base import BrokerAdapter, OrderRequest, OrderResult
 from app.core.modes import OperationMode
 from app.db.models import OrderAuditLog, PendingApproval
@@ -70,6 +71,20 @@ async def route_order(
                 f"client_order_id={order.client_order_id} already processed"
             )
 
+    # 161: AI rate limit — flooding 방어. broker/risk 호출 비용 들이기 전에 차단.
+    # max_count <= 0이면 검사 비활성. AI 외 경로 주문은 검사 우회.
+    ai_rate_violation_count: int | None = None
+    if requested_by_ai and risk.policy.ai_rate_limit_max_count > 0:
+        within, current_count = check_rate_limit(
+            db,
+            strategy=order.strategy,
+            symbol=order.symbol,
+            window_seconds=risk.policy.ai_rate_limit_window_seconds,
+            max_count=risk.policy.ai_rate_limit_max_count,
+        )
+        if not within:
+            ai_rate_violation_count = current_count
+
     quote     = await broker.get_price(order.symbol)
     balance   = await broker.get_balance()
     positions = await broker.get_positions()
@@ -97,6 +112,17 @@ async def route_order(
         requested_by_ai=requested_by_ai,
         latest_price_timestamp=quote_ts,
     )
+
+    # 161: rate limit 위반은 RiskManager 결과를 REJECTED로 덮어쓴다 — 다른 가드
+    # 통과 여부와 무관하게 차단. reason은 누적 (운영자가 다른 위반도 같이 본다).
+    if ai_rate_violation_count is not None:
+        decision.reasons.append(
+            f"AI rate limit exceeded: {ai_rate_violation_count} proposals "
+            f"in {risk.policy.ai_rate_limit_window_seconds}s window "
+            f"(max {risk.policy.ai_rate_limit_max_count}) for "
+            f"({order.strategy}, {order.symbol})"
+        )
+        decision.decision = RiskDecision.REJECTED
 
     audit = OrderAuditLog(
         mode=mode.value,
