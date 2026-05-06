@@ -8,8 +8,8 @@ from app.strategies.concrete.sma_crossover import SmaCrossoverStrategy
 
 
 # 131: 등록되는 전략은 contract metadata(entry/exit/invalidation/required_regime/
-# risk_profile)를 base.py Strategy 클래스 attrs로 가진다. orb_vwap/rsi_reversion
-# 은 미완성 stub — TODO 표시 + on_bar는 항상 HOLD라 실거래에는 영향 없음.
+# risk_profile)를 base.py Strategy 클래스 attrs로 가진다. 142에서 orb_vwap/
+# rsi_reversion의 실제 신호 로직이 구현됐다 (이전엔 HOLD-only stub).
 STRATEGY_REGISTRY: dict[str, type[Strategy]] = {
     "sma_crossover": SmaCrossoverStrategy,
     "orb_vwap":      OrbVwapStrategy,

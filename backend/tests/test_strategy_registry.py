@@ -82,9 +82,10 @@ def test_describe_strategy_includes_contract_metadata():
     assert d["risk_profile"]["max_concurrent"]    == 1
 
 
-def test_stub_strategies_are_registered_with_metadata_but_no_signals():
-    """orb_vwap / rsi_reversion은 stub — metadata는 명시되어 있지만 on_bar는
-    HOLD만 반환해 자동매매 안전성에 영향이 없다."""
+def test_concrete_strategies_have_complete_metadata():
+    """142 이후로 orb_vwap / rsi_reversion은 실제 신호 로직을 가진다 — 다만
+    contract metadata는 모두 명시되어 있어야 한다 (base.py default를 그대로
+    surface하지 않음)."""
     from app.backtest.types import Bar, Signal
     from app.strategies.concrete import build_strategy
 
@@ -99,12 +100,18 @@ def test_stub_strategies_are_registered_with_metadata_but_no_signals():
         assert d["risk_profile"], f"{name} must declare a risk_profile"
 
         strat = build_strategy(name, None)
-        # Stub은 어떤 봉 스트림에서도 BUY/SELL을 만들지 않아야 한다.
+        # 평탄한 데이터는 어떤 trigger도 만들지 않아야 한다 — 양 전략 모두
+        # cross-back 또는 cross-up 이벤트로 발화하므로 close가 일정하면 HOLD.
         bars = [Bar(symbol="X",
                     timestamp=base + timedelta(minutes=i),
                     open=100, high=101, low=99, close=100, volume=10)
                 for i in range(50)]
-        assert strat.on_bar(bars) == Signal.HOLD, f"{name} stub must not emit signals"
+        # Strategy is stateful — feed bars one-by-one and verify never BUY/SELL.
+        for i in range(1, len(bars) + 1):
+            sig = strat.on_bar(bars[:i])
+            assert sig == Signal.HOLD, (
+                f"{name} must not emit signals on flat data, got {sig} at bar {i}"
+            )
 
 
 def test_unannotated_strategy_falls_back_to_base_metadata_defaults():
