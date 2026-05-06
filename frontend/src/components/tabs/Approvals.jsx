@@ -229,6 +229,18 @@ function _OrderSummary({ approval }) {
       <div style={{ fontSize: 9, color: "#475569", marginTop: 2 }}>
         #{approval.id} · {approval.mode}
       </div>
+      {approval.requested_by_ai && (
+        <div data-testid="approval-ai-provenance"
+             style={{ fontSize: 10, color: "#a78bfa", marginTop: 4 }}>
+          🤖 AI{approval.strategy ? ` · ${approval.strategy}` : ""}
+          {approval.signal_confidence != null
+            ? ` · conf ${approval.signal_confidence}` : ""}
+          {approval.ai_decision_meta && Array.isArray(approval.ai_decision_meta.reasons)
+            && approval.ai_decision_meta.reasons.length > 0
+              ? ` · ${approval.ai_decision_meta.reasons.slice(0, 2).join(" · ")}`
+              : ""}
+        </div>
+      )}
     </div>
   );
 }

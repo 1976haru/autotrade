@@ -1186,6 +1186,46 @@ describe("<ApprovalDecisionModal>", () => {
     expect(container.textContent).toContain("#17");
   });
 
+  // 190: AI provenance line — operator must distinguish AI vs manual at a glance.
+  it("does NOT render AI provenance line for manual orders", () => {
+    const { queryByTestId } = render(
+      <ApprovalDecisionModal
+        action="approve" approval={_PENDING} busy={false}
+        onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    expect(queryByTestId("approval-ai-provenance")).toBeNull();
+  });
+
+  it("renders AI provenance line with strategy + confidence + reasons", () => {
+    const aiApproval = {
+      ..._PENDING,
+      requested_by_ai: true,
+      strategy: "ai_orb",
+      signal_confidence: 65,
+      ai_decision_meta: { confidence: 65, reasons: ["entry+news", "vol_ok"] },
+    };
+    const { getByTestId } = render(
+      <ApprovalDecisionModal
+        action="approve" approval={aiApproval} busy={false}
+        onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    const node = getByTestId("approval-ai-provenance");
+    expect(node.textContent).toContain("AI");
+    expect(node.textContent).toContain("ai_orb");
+    expect(node.textContent).toContain("conf 65");
+    expect(node.textContent).toContain("entry+news");
+  });
+
+  it("renders AI line without strategy when only requested_by_ai is set", () => {
+    const aiApproval = { ..._PENDING, requested_by_ai: true };
+    const { getByTestId } = render(
+      <ApprovalDecisionModal
+        action="approve" approval={aiApproval} busy={false}
+        onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    expect(getByTestId("approval-ai-provenance").textContent).toContain("AI");
+  });
+
   it("pre-fills decided_by from defaultDecidedBy prop", () => {
     const onConfirm = vi.fn();
     const { getByText, getByPlaceholderText } = render(
