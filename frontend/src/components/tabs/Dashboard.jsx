@@ -61,6 +61,12 @@ const _DAY_MS = 24 * 60 * 60 * 1000;
 // 가능하도록. NEEDS_APPROVAL은 BottomNav 배지/StatusSummaryCard와 중복되지만,
 // 24h 활동 요약에서는 "어제 N건이 결재 단계로 갔는지" 자체가 의미 있는 신호라
 // 별도로 카운트한다. attempts(079)는 created_at 대신 `at` 필드를 쓴다.
+//
+// 093: byMode — 24h 안의 주문을 mode별로 분포. 092에서 처리 내역 모드 필터가
+// 1급 시민이 됐으니 dashboard에서도 "오늘 SIMULATION 5 · PAPER 2 · MANUAL 3"
+// 같은 미니 분포가 같이 있어야 모드별 규모 비교가 한눈에 가능하다.
+// count가 0인 mode는 키를 생략 — 운영자가 쓰지 않는 mode는 안 보이는 편이
+// 시선 노이즈가 적다.
 export function computeActivity24h(orders, stops, attempts = [], now = Date.now()) {
   const since = now - _DAY_MS;
   const within         = (r) => new Date(r.created_at).getTime() >= since;
@@ -68,16 +74,49 @@ export function computeActivity24h(orders, stops, attempts = [], now = Date.now(
   const recentOrders   = orders.filter(within);
   const recentStops    = stops.filter(within);
   const recentAttempts = attempts.filter(withinAttempt);
+  const byMode = {};
+  for (const r of recentOrders) {
+    if (!r.mode) continue;  // defensive — fixtures could miss it
+    byMode[r.mode] = (byMode[r.mode] || 0) + 1;
+  }
   return {
     orders:   recentOrders.length,
     approved: recentOrders.filter((r) => r.decision === "APPROVED").length,
     rejected: recentOrders.filter((r) => r.decision === "REJECTED").length,
     pending:  recentOrders.filter((r) => r.decision === "NEEDS_APPROVAL").length,
+    byMode,
     stops:    recentStops.length,
     stopsOn:  recentStops.filter((r) => r.enabled).length,
     stopsOff: recentStops.filter((r) => !r.enabled).length,
     attempts: recentAttempts.length,
   };
+}
+
+
+// 093: 6 운용모드의 짧은 라벨 + 색상. 표시 순서는 위험도 오름차순 — 시뮬부터
+// LIVE까지 자연스럽게 읽히도록. 092가 처리 내역에서 LIVE_MANUAL_APPROVAL +
+// LIVE_AI_ASSIST 만 다뤘다면, 여기는 주문 audit 전체라 6개 모드 모두 등장 가능.
+export const MODE_DISPLAY = [
+  { id: "SIMULATION",           label: "SIM",     color: "#64748b" },
+  { id: "PAPER",                label: "PAPER",   color: "#7dd3fc" },
+  { id: "LIVE_SHADOW",          label: "SHADOW",  color: "#94a3b8" },
+  { id: "LIVE_MANUAL_APPROVAL", label: "MANUAL",  color: "#22c55e" },
+  { id: "LIVE_AI_ASSIST",       label: "AI 보조", color: "#a78bfa" },
+  { id: "LIVE_AI_EXECUTION",    label: "AI 자동", color: "#f59e0b" },
+];
+
+
+// "byMode 객체를 위 정렬 순서로 평탄화 + 0건 모드는 생략 + 알 수 없는 mode는
+// 끝에 회색으로 모음"의 순수 함수. UI 행과 별도 단위 테스트가 가능하도록 분리.
+export function formatModeBreakdown(byMode) {
+  const known = MODE_DISPLAY
+    .filter((m) => (byMode[m.id] || 0) > 0)
+    .map((m) => ({ id: m.id, label: m.label, color: m.color, count: byMode[m.id] }));
+  const knownIds = new Set(MODE_DISPLAY.map((m) => m.id));
+  const unknown = Object.entries(byMode)
+    .filter(([id, count]) => count > 0 && !knownIds.has(id))
+    .map(([id, count]) => ({ id, label: id, color: "#475569", count }));
+  return [...known, ...unknown];
 }
 
 
@@ -182,6 +221,35 @@ const _DRILLDOWN_BUTTON_STYLE = {
   color:        "inherit",
 };
 
+// 093: 주문 행 바로 아래 sub-line. 모드별 개수가 0보다 큰 칩만 표시 — 분포가
+// 단일 모드라면 한 칩만 나오는 게 자연스럽고, 다양한 모드가 섞이면 비교가 한눈에.
+// 표시할 모드가 하나도 없으면 (orders=0인 평소) 행 자체를 렌더하지 않는다.
+export function ModeBreakdownRow({ byMode }) {
+  const cells = formatModeBreakdown(byMode);
+  if (cells.length === 0) return null;
+  return (
+    <div data-testid="activity-mode-breakdown"
+         style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "0 0 4px 36px",
+                  fontSize: 9, marginBottom: 4 }}>
+      {cells.map((c) => (
+        <span key={c.id}
+              data-testid={`activity-mode-cell-${c.id}`}
+              style={{
+                color: c.color,
+                fontWeight: 700,
+                padding: "1px 6px",
+                borderRadius: 3,
+                border: `1px solid ${c.color}55`,
+                background: `${c.color}15`,
+              }}>
+          {c.label} {c.count}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+
 export function Activity24hCard({ onJumpTab, approvals = { pending: [], history: [] } }) {
   const orders = useOrderAudits();
   const stops  = useEmergencyStopAudits();
@@ -228,6 +296,7 @@ export function Activity24hCard({ onJumpTab, approvals = { pending: [], history:
               <span style={{ color: "#f59e0b", fontWeight: 700 }}>대기 {a.pending}</span>
             </span>
           </button>
+          <ModeBreakdownRow byMode={a.byMode} />
           <button
             type="button"
             onClick={() => _drillDown("stop")}
