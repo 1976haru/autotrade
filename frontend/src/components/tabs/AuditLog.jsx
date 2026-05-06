@@ -456,6 +456,47 @@ export function AiModelBadge({ model }) {
 }
 
 
+// 098: 필터 적용 후 AI 호출 비용 추정 보조. 094 model 칩으로 모델 분포는
+// 보지만 token 총량은 row 단위 ("tok in/out")만 보여 scan에 시간이 걸린다.
+// summarizeAiTokens는 filteredItems에 대해 N회 / in / out 합산 — 운영자가
+// "오늘 sonnet 호출만 3 만 in / 1.5만 out 넘었다" 같은 비용 신호를 즉시 파악.
+//
+// input_tokens/output_tokens 누락 row는 0으로 취급 (백엔드가 None으로 직렬화
+// 한 경우 등). NaN 누적을 방지.
+export function summarizeAiTokens(items) {
+  let inputTotal = 0;
+  let outputTotal = 0;
+  for (const r of items || []) {
+    inputTotal  += r.input_tokens  || 0;
+    outputTotal += r.output_tokens || 0;
+  }
+  return { count: (items || []).length, inputTotal, outputTotal };
+}
+
+
+export function AiTokenSummary({ items }) {
+  if (!items || items.length === 0) return null;
+  const s = summarizeAiTokens(items);
+  const _fmt = (n) => n.toLocaleString("ko-KR");
+  return (
+    <div data-testid="ai-token-summary"
+         style={{ fontSize: 10, color: "#64748b", marginBottom: 8,
+                  display: "flex", gap: 8, flexWrap: "wrap",
+                  padding: "4px 0", borderBottom: "1px dashed #0c2035" }}>
+      <span>총 {_fmt(s.count)}회</span>
+      <span>·</span>
+      <span style={{ color: "#67e8f9", fontWeight: 700 }}>
+        in {_fmt(s.inputTotal)}
+      </span>
+      <span>·</span>
+      <span style={{ color: "#c084fc", fontWeight: 700 }}>
+        out {_fmt(s.outputTotal)}
+      </span>
+    </div>
+  );
+}
+
+
 // 091: time bucket persistence — same pattern as 073 (audit timeline) and
 // 086 (approvals history). Reuses TIME_BUCKETS / TIME_BUCKET_MS / _isValidBucket
 // from 073 (same module, same shape) but a distinct storage key so the AI
@@ -526,6 +567,8 @@ export function AiAuditView() {
           ariaLabel="AI 호출 시간 범위 필터"
         />
       </div>
+
+      <AiTokenSummary items={filteredItems} />
 
       {error && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>}
 
