@@ -226,12 +226,14 @@ export function BulkCancelStaleModal({
 }
 
 
-// 075: per-row failure hint. Renders a small red strip when this row has had
-// a failed approve attempt in the current session. formatPendingAge does the
-// relative time math; the message comes from the hook (typically 070's
-// "승인 시점 재평가에서 거부됨: <reasons>").
-export function ApproveAttemptFailureBadge({ failure, now }) {
-  if (!failure) return null;
+// 076: per-row failure hint sourced from PendingApproval.attempts.
+// Each entry is {at: ISO, decided_by, reasons}. Survives session/operator
+// changes. The badge shows the count + the most recent timestamp + reasons,
+// since accumulating "이 결재는 5번 막혔다" is itself a useful signal.
+export function ApproveAttemptFailureBadge({ attempts, now }) {
+  if (!attempts || attempts.length === 0) return null;
+  const last = attempts[attempts.length - 1];
+  const reasons = Array.isArray(last.reasons) ? last.reasons.join(" / ") : "";
   return (
     <div
       data-testid="approve-attempt-failure-badge"
@@ -247,9 +249,9 @@ export function ApproveAttemptFailureBadge({ failure, now }) {
       }}
     >
       <span style={{ fontWeight: 700, marginRight: 4 }}>
-        ⚠ {formatPendingAge(new Date(failure.at).toISOString(), now)} 거부:
+        ⚠ {attempts.length}번째 시도, {formatPendingAge(last.at, now)} 거부:
       </span>
-      {failure.message}
+      {reasons}
     </div>
   );
 }
@@ -258,7 +260,7 @@ export function ApproveAttemptFailureBadge({ failure, now }) {
 export function Approvals({ approvals, operatorName = "" }) {
   // useApprovals는 App에서 lift되어 prop으로 전달된다 — BottomNav 배지가 같은
   // 폴링 결과를 공유하기 위해서. 테스트는 모킹 없이 prop만 직접 주입.
-  const { pending, history, loading, error, busy, lastFailures = {},
+  const { pending, history, loading, error, busy,
           approve, reject, cancel, cancelMany } = approvals;
   // 결재 모달 대상: { action, approval } | null. 같은 모달 컴포넌트를 세 액션에서
   // 공유하고, 액션은 ACTION_META에서 분기한다.
@@ -336,7 +338,7 @@ export function Approvals({ approvals, operatorName = "" }) {
             </div>
 
             <ReasonsLine reasons={a.reasons} />
-            <ApproveAttemptFailureBadge failure={lastFailures[a.id]} />
+            <ApproveAttemptFailureBadge attempts={a.attempts} />
 
             <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
               <Btn color="#22c55e" onClick={() => setDecisionTarget({ action: "approve", approval: a })} disabled={busy} small>

@@ -23,7 +23,6 @@ function _makeApprovals(overrides = {}) {
     loading: false,
     error: "",
     busy: false,
-    lastFailures: {},
     approve: vi.fn(),
     reject:  vi.fn(),
     cancel:  vi.fn(),
@@ -409,21 +408,38 @@ describe("<Approvals> stale bulk-cancel button", () => {
 
 describe("<ApproveAttemptFailureBadge>", () => {
   afterEach(cleanup);
+  const NOW = new Date("2026-05-06T12:00:00Z").getTime();
+  const minutesAgo = (m) => new Date(NOW - m * 60_000).toISOString();
 
-  it("renders nothing when failure is undefined", () => {
-    const { queryByTestId } = render(<ApproveAttemptFailureBadge />);
+  it("renders nothing when attempts is empty or undefined", () => {
+    const { queryByTestId, rerender } = render(<ApproveAttemptFailureBadge />);
+    expect(queryByTestId("approve-attempt-failure-badge")).toBeNull();
+    rerender(<ApproveAttemptFailureBadge attempts={[]} />);
     expect(queryByTestId("approve-attempt-failure-badge")).toBeNull();
   });
 
-  it("renders the relative time + message when failure is set", () => {
-    const NOW = new Date("2026-05-06T12:00:00Z").getTime();
-    const failure = { at: NOW - 5 * 60_000, message: "재평가 거부됨" };
+  it("renders count + last attempt's relative time and reasons", () => {
+    const attempts = [
+      { at: minutesAgo(20), decided_by: "ops1",
+        reasons: ["emergency stop is enabled"] },
+      { at: minutesAgo(5),  decided_by: "ops2",
+        reasons: ["max_order_notional 초과", "manual approval required by operation mode"] },
+    ];
     const { getByTestId } = render(
-      <ApproveAttemptFailureBadge failure={failure} now={NOW} />,
+      <ApproveAttemptFailureBadge attempts={attempts} now={NOW} />,
     );
     const badge = getByTestId("approve-attempt-failure-badge");
+    expect(badge.textContent).toContain("2번째 시도");
     expect(badge.textContent).toContain("5분 전");
-    expect(badge.textContent).toContain("재평가 거부됨");
+    expect(badge.textContent).toContain("max_order_notional 초과");
+  });
+
+  it("handles missing reasons array gracefully", () => {
+    const attempts = [{ at: minutesAgo(3), decided_by: null }];
+    const { getByTestId } = render(
+      <ApproveAttemptFailureBadge attempts={attempts} now={NOW} />,
+    );
+    expect(getByTestId("approve-attempt-failure-badge").textContent).toContain("1번째 시도");
   });
 });
 
@@ -431,22 +447,25 @@ describe("<ApproveAttemptFailureBadge>", () => {
 describe("<Approvals> approve-attempt failure badge on PENDING row", () => {
   afterEach(cleanup);
 
-  it("renders the badge when lastFailures has an entry for the row", () => {
+  it("renders the badge when the row has attempts", () => {
     const approvals = _makeApprovals({
-      pending: [_PENDING],
-      lastFailures: {
-        [_PENDING.id]: { at: Date.now(), message: "승인 시점 재평가에서 거부됨" },
-      },
+      pending: [{
+        ..._PENDING,
+        attempts: [{
+          at: new Date().toISOString(),
+          decided_by: "ops1",
+          reasons: ["승인 시점 재평가에서 거부됨"],
+        }],
+      }],
     });
     const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
     expect(getByTestId("approve-attempt-failure-badge").textContent)
       .toContain("승인 시점 재평가에서 거부됨");
   });
 
-  it("does not render the badge when no failure recorded for the row", () => {
+  it("does not render the badge when attempts is empty", () => {
     const approvals = _makeApprovals({
-      pending: [_PENDING],
-      lastFailures: {}, // empty — no row should get the badge
+      pending: [{ ..._PENDING, attempts: [] }],
     });
     const { queryByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
     expect(queryByTestId("approve-attempt-failure-badge")).toBeNull();

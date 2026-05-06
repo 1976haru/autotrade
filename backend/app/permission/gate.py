@@ -167,6 +167,19 @@ class PermissionGate:
             latest_price=quote.price,
         )
         if _approve_re_eval_blocks_execution(re_eval):
+            # 076: persist the failed attempt on the row before raising.
+            # JSON column needs reassignment for the change to be detected —
+            # mutating in place isn't always picked up by the SQLAlchemy
+            # change-tracker.
+            attempts = list(approval.attempts or [])
+            attempts.append({
+                "at":         datetime.now(timezone.utc).isoformat(),
+                "decided_by": decided_by,
+                "reasons":    list(re_eval.reasons),
+            })
+            approval.attempts = attempts
+            self.db.commit()
+            self.db.refresh(approval)
             # Approval stays PENDING — operator retries when conditions improve.
             raise ApprovalRiskCheckFailedError(list(re_eval.reasons))
 

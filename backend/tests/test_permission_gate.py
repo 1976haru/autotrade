@@ -403,3 +403,70 @@ def test_approve_proceeds_when_re_eval_only_returns_mode_marker():
         ))
         assert approved.status == "APPROVED"
         assert result.status.value == "FILLED"
+
+
+# ---------- 076: persist re-eval-failed approve attempts ----------
+
+def test_re_eval_failure_appends_an_attempts_entry():
+    """The first time approve fails on re-eval, attempts should grow to length
+    1 with {at, decided_by, reasons} populated."""
+    Session = _session()
+    with Session() as db:
+        audit = _audit(db)
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+
+        risk = _risk_for_live_manual()
+        risk.set_emergency_stop(True)
+
+        with pytest.raises(ApprovalRiskCheckFailedError):
+            asyncio.run(gate.approve(approval.id, MockBrokerAdapter(), risk,
+                                     decided_by="ops1"))
+
+        refreshed = db.get(PendingApproval, approval.id)
+        assert len(refreshed.attempts) == 1
+        entry = refreshed.attempts[0]
+        assert entry["decided_by"] == "ops1"
+        assert any("emergency stop" in r for r in entry["reasons"])
+        assert "at" in entry  # ISO timestamp
+
+
+def test_re_eval_failures_accumulate_across_repeated_attempts():
+    """Repeated failed attempts append; each carries its own {at, decided_by,
+    reasons}. Operator handover ("did anyone try this already?") relies on
+    the count + most-recent entry."""
+    Session = _session()
+    with Session() as db:
+        audit = _audit(db)
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+
+        risk = _risk_for_live_manual()
+        risk.set_emergency_stop(True)
+
+        for who in ("ops1", "ops2", "ops3"):
+            with pytest.raises(ApprovalRiskCheckFailedError):
+                asyncio.run(gate.approve(approval.id, MockBrokerAdapter(), risk,
+                                         decided_by=who))
+
+        refreshed = db.get(PendingApproval, approval.id)
+        assert len(refreshed.attempts) == 3
+        assert [e["decided_by"] for e in refreshed.attempts] == ["ops1", "ops2", "ops3"]
+
+
+def test_successful_approve_does_not_append_attempts():
+    """Only re-eval-blocked attempts persist; the successful path doesn't
+    record on attempts (the audit row already records fulfillment)."""
+    Session = _session()
+    with Session() as db:
+        audit = _audit(db)
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(qty=1),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+
+        asyncio.run(gate.approve(approval.id, MockBrokerAdapter(),
+                                 _risk_for_live_manual()))
+        refreshed = db.get(PendingApproval, approval.id)
+        assert refreshed.attempts == []

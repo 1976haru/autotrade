@@ -336,3 +336,35 @@ def test_approve_returns_409_when_live_trading_flag_toggled_off(client, monkeypa
     assert res.status_code == 409
     detail = res.json()["detail"]
     assert any("live trading" in r for r in detail["reasons"])
+
+
+# ---------- 076: approval attempts in response payload ----------
+
+def test_approval_attempts_persist_across_pending_listing(client, monkeypatch):
+    """A failed approve appends to attempts; a subsequent GET /api/approvals
+    returns the row with that history attached, surviving the modal-close /
+    page-refresh cycle that 075's session memory couldn't."""
+    _enable_manual_approval(monkeypatch, client)
+    submit = _submit_buy(client).json()
+    approval_id = submit["approval_id"]
+
+    # Trigger a re-eval failure (emergency stop)
+    client.test_risk_manager.set_emergency_stop(True)
+    res = client.post(f"/api/approvals/{approval_id}/approve",
+                      json={"decided_by": "ops-x"})
+    assert res.status_code == 409
+
+    # GET pending — the row should now carry one attempts entry
+    pending = client.get("/api/approvals").json()
+    row = next(p for p in pending if p["id"] == approval_id)
+    assert len(row["attempts"]) == 1
+    entry = row["attempts"][0]
+    assert entry["decided_by"] == "ops-x"
+    assert any("emergency stop" in r for r in entry["reasons"])
+
+
+def test_approval_attempts_default_empty_for_fresh_pending(client, monkeypatch):
+    _enable_manual_approval(monkeypatch, client)
+    _submit_buy(client)
+    pending = client.get("/api/approvals").json()
+    assert pending[0]["attempts"] == []
