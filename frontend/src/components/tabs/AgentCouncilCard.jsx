@@ -34,11 +34,16 @@ export function AgentCouncilCard() {
   const [busy,   setBusy]   = useState(false);
   const [error,  setError]  = useState("");
   const [openId, setOpenId] = useState(null);
+  // 206: chip filter — narrows the chain list to a specific agent's rows
+  // when set. "ALL" (null) is the default and shows the full chain.
+  const [agentFilter, setAgentFilter] = useState(null);
 
-  const refresh = async () => {
+  const refresh = async (filter = agentFilter) => {
     setBusy(true); setError("");
     try {
-      const data = await backendApi.aiAgentDecisions(50);
+      const data = await backendApi.aiAgentDecisions(
+        50, null, filter ? { agent_name: filter } : {},
+      );
       setRows(Array.isArray(data) ? data : []);
     } catch (e) {
       setError("Agent 결정 조회 실패: " + e.message);
@@ -61,18 +66,53 @@ export function AgentCouncilCard() {
     return () => { cancelled = true; };
   }, []);
 
+  const onAgentFilterChange = (next) => {
+    setAgentFilter(next);
+    refresh(next);
+  };
+
   const chains = groupByChain(rows);
+
+  const AGENT_FILTERS = [
+    null, "ChiefTradingAgent", "MarketRegimeAgent", "StrategySelectionAgent",
+    "StockSelectionAgent", "PositionSizingAgent", "RiskOfficerAgent",
+    "EntryTimingAgent", "ExitTimingAgent", "NewsTrendAgent", "PostTradeReviewAgent",
+  ];
 
   return (
     <Card>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
         <SectionLabel>🤝 Agent Council 결정</SectionLabel>
-        <Btn onClick={refresh} disabled={busy} color="#7dd3fc" small>
+        <Btn onClick={() => refresh(agentFilter)} disabled={busy} color="#7dd3fc" small>
           {busy ? "⟳" : "↻ 새로고침"}
         </Btn>
       </div>
-      <div style={{ fontSize: 11, color: "#475569", marginBottom: 10 }}>
+      <div style={{ fontSize: 11, color: "#475569", marginBottom: 8 }}>
         ChiefTradingAgent + 9 member agents (deterministic stub, no LLM cost)
+      </div>
+
+      {/* 206: agent_name 필터 chip — null이면 전체. 가로 스크롤 가능. */}
+      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 10 }}>
+        {AGENT_FILTERS.map((a) => {
+          const active = agentFilter === a;
+          const label = a === null ? "전체" : a.replace("Agent", "");
+          return (
+            <button
+              key={a ?? "ALL"}
+              onClick={() => onAgentFilterChange(a)}
+              data-testid={`agent-filter-${a ?? "ALL"}`}
+              style={{
+                fontSize: 9, padding: "2px 7px",
+                background: active ? "#0c2035" : "#010a14",
+                border: `1px solid ${active ? "#7dd3fc" : "#1e3a5c"}`,
+                color: active ? "#7dd3fc" : "#475569",
+                borderRadius: 3, cursor: "pointer",
+              }}
+            >
+              {label}
+            </button>
+          );
+        })}
       </div>
 
       {error && (

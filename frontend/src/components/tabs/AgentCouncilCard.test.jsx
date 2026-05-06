@@ -67,4 +67,22 @@ describe("AgentCouncilCard", () => {
     fireEvent.click(getByText(/새로고침/));
     await waitFor(() => expect(backendApi.aiAgentDecisions).toHaveBeenCalledTimes(2));
   });
+
+  // 206: agent_name 필터 chip
+  it("clicking an agent chip re-queries with that agent_name", async () => {
+    const { findByText, findByTestId } = render(<AgentCouncilCard />);
+    await findByText("BUY");
+    fireEvent.click(await findByTestId("agent-filter-EntryTimingAgent"));
+    await waitFor(() => expect(backendApi.aiAgentDecisions)
+      .toHaveBeenLastCalledWith(50, null, { agent_name: "EntryTimingAgent" }));
+  });
+
+  it("clicking 전체 chip clears the filter", async () => {
+    const { findByText, findByTestId } = render(<AgentCouncilCard />);
+    await findByText("BUY");
+    fireEvent.click(await findByTestId("agent-filter-EntryTimingAgent"));
+    fireEvent.click(await findByTestId("agent-filter-ALL"));
+    await waitFor(() => expect(backendApi.aiAgentDecisions)
+      .toHaveBeenLastCalledWith(50, null, {}));
+  });
 });

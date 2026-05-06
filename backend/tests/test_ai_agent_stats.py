@@ -464,6 +464,77 @@ def test_agent_decisions_summary_aggregates_by_agent_and_decision(client):
     assert all(r["chain_id"] for r in body["recent_chains"])
 
 
+def test_agent_decisions_filter_by_agent_name(client):
+    """206: agent_name 쿼리는 해당 agent만 반환."""
+    from app.ai.agents import ChiefTradingAgent, CouncilContext, persist_decision
+    chief = ChiefTradingAgent()
+    with client.test_db_factory() as db:
+        d, members = chief.coordinate(CouncilContext(
+            symbol="005930", last_close=110, prev_close=100,
+            equity=10_000_000, notional=110_000, regime="trending_up",
+        ))
+        persist_decision(db, d, mode="VIRTUAL_AI_EXECUTION")
+        for m in members:
+            persist_decision(db, m, mode="VIRTUAL_AI_EXECUTION")
+        db.commit()
+    rows = client.get(
+        "/api/ai/agent-decisions?agent_name=ChiefTradingAgent",
+    ).json()
+    assert len(rows) == 1
+    assert rows[0]["agent_name"] == "ChiefTradingAgent"
+
+    rows = client.get(
+        "/api/ai/agent-decisions?agent_name=EntryTimingAgent",
+    ).json()
+    assert len(rows) == 1
+    assert rows[0]["agent_name"] == "EntryTimingAgent"
+
+
+def test_agent_decisions_filter_by_decision(client):
+    """206: decision 쿼리는 그 결정값만."""
+    from app.ai.agents import ChiefTradingAgent, CouncilContext, persist_decision
+    chief = ChiefTradingAgent()
+    with client.test_db_factory() as db:
+        for sym, last, prev, regime in [
+            ("005930", 110, 100, "trending_up"),
+            ("000660", 200, 190, "trending_up"),
+        ]:
+            d, members = chief.coordinate(CouncilContext(
+                symbol=sym, last_close=last, prev_close=prev,
+                equity=10_000_000, notional=last * 1000, regime=regime,
+            ))
+            persist_decision(db, d, mode="VIRTUAL_AI_EXECUTION")
+            for m in members:
+                persist_decision(db, m, mode="VIRTUAL_AI_EXECUTION")
+        db.commit()
+    info_rows = client.get("/api/ai/agent-decisions?decision=INFO").json()
+    assert len(info_rows) > 0
+    assert all(r["decision"] == "INFO" for r in info_rows)
+
+
+def test_agent_decisions_filter_combined(client):
+    """206: agent_name + decision 동시 지정."""
+    from app.ai.agents import ChiefTradingAgent, CouncilContext, persist_decision
+    chief = ChiefTradingAgent()
+    with client.test_db_factory() as db:
+        d, members = chief.coordinate(CouncilContext(
+            symbol="005930", last_close=110, prev_close=100,
+            equity=10_000_000, notional=110_000, regime="trending_up",
+        ))
+        persist_decision(db, d, mode="VIRTUAL_AI_EXECUTION")
+        for m in members:
+            persist_decision(db, m, mode="VIRTUAL_AI_EXECUTION")
+        db.commit()
+    # ChiefTradingAgent + REJECT 조합 — 이 시나리오에선 chief가 BUY일 가능성이
+    # 높으므로 0건 또는 그 이하인 것을 검증.
+    rows = client.get(
+        "/api/ai/agent-decisions?agent_name=ChiefTradingAgent&decision=REJECT",
+    ).json()
+    for r in rows:
+        assert r["agent_name"] == "ChiefTradingAgent"
+        assert r["decision"]   == "REJECT"
+
+
 def test_agent_decisions_summary_recent_chains_capped_at_5(client):
     """6개 chain → recent_chains는 5개만 (id desc)."""
     from app.ai.agents import ChiefTradingAgent, CouncilContext, persist_decision
