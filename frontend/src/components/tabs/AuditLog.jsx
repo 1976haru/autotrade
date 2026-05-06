@@ -1367,8 +1367,95 @@ export function backtestEmptyMessage(items, strategyNeedle, outcome) {
 // 짧게 강조. timeout 길이는 대시보드 전체 톤(2초 정도)에 맞춰 1.5s.
 const BACKTEST_ROW_HIGHLIGHT_MS = 1500;
 
+// 202: drill-in trades fetcher. Cached per-run so re-toggling doesn't refetch.
+// Name must start with `use` for the React hooks linter to recognise it as a
+// custom hook even though it's module-private.
+function useBacktestDetail() {
+  const [detailById, setDetailById] = useState({});
+  const [busyId,     setBusyId]     = useState(null);
+  const [errorById,  setErrorById]  = useState({});
+
+  const fetchDetail = async (id) => {
+    if (detailById[id]) return;
+    setBusyId(id);
+    try {
+      const data = await backendApi.getBacktestRun(id);
+      setDetailById((m) => ({ ...m, [id]: data }));
+      setErrorById((m) => { const n = { ...m }; delete n[id]; return n; });
+    } catch (e) {
+      setErrorById((m) => ({ ...m, [id]: e.message }));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return { detailById, busyId, errorById, fetchDetail };
+}
+
+
+export function BacktestTradesPanel({ trades }) {
+  if (!Array.isArray(trades) || trades.length === 0) {
+    return (
+      <div data-testid="backtest-trades-empty"
+           style={{ fontSize: 10, color: "#475569", padding: "6px 8px" }}>
+        체결 trade 없음
+      </div>
+    );
+  }
+  return (
+    <div data-testid="backtest-trades-panel"
+         style={{ marginTop: 6, padding: 6, background: "#0c2035",
+                  borderRadius: 3, fontSize: 10 }}>
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "0.4fr 0.6fr 0.6fr 0.6fr 0.6fr",
+        color: "#475569", marginBottom: 2,
+      }}>
+        <span>side</span>
+        <span style={{ textAlign: "right" }}>qty</span>
+        <span style={{ textAlign: "right" }}>entry</span>
+        <span style={{ textAlign: "right" }}>exit</span>
+        <span style={{ textAlign: "right" }}>pnl</span>
+      </div>
+      {trades.slice(0, 30).map((t, i) => (
+        <div key={i} style={{
+          display: "grid",
+          gridTemplateColumns: "0.4fr 0.6fr 0.6fr 0.6fr 0.6fr",
+          color: "#94a3b8",
+        }}>
+          <span style={{ color: t.side === "BUY" ? "#22c55e" : "#ef4444" }}>
+            {t.side}
+          </span>
+          <span style={{ textAlign: "right" }}>{t.quantity}</span>
+          <span style={{ textAlign: "right" }}>{fmtKRW(t.entry_price)}</span>
+          <span style={{ textAlign: "right" }}>
+            {t.exit_price != null ? fmtKRW(t.exit_price) : "—"}
+          </span>
+          <span style={{
+            textAlign: "right",
+            color: t.pnl != null ? pnlColor(t.pnl) : "#94a3b8",
+          }}>
+            {t.pnl != null
+              ? `${t.pnl >= 0 ? "+" : ""}${fmtKRW(t.pnl)}`
+              : "—"}
+          </span>
+        </div>
+      ))}
+      {trades.length > 30 && (
+        <div style={{ fontSize: 9, color: "#475569", marginTop: 4 }}>
+          +{trades.length - 30}건 생략
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 export function BacktestRunsView() {
   const { items, loading, error, refresh } = useBacktestRuns();
+  // 202: row-level expand state + per-run detail cache.
+  const [expandedId, setExpandedId] = useState(null);
+  const detail = useBacktestDetail();
   // 090: transient strategy filter (not persisted) — operators investigating
   // a specific strategy (sma_crossover, etc.) want to see only its runs.
   // Same shape as 089 ticker filter on AI sub-tab.
@@ -1457,11 +1544,24 @@ export function BacktestRunsView() {
         const trades = r.win_count + r.loss_count;
         const winRate = trades > 0 ? Math.round(r.win_count / trades * 1000) / 10 : 0;
         const isHighlighted = _highlightId === r.id;
+        const isExpanded    = expandedId === r.id;
+        const onToggleExpand = () => {
+          if (isExpanded) {
+            setExpandedId(null);
+          } else {
+            setExpandedId(r.id);
+            detail.fetchDetail(r.id);
+          }
+        };
+        const detailData = detail.detailById[r.id];
+        const detailErr  = detail.errorById[r.id];
+        const detailBusy = detail.busyId === r.id;
         return (
           <div
             key={r.id}
             data-testid={`backtest-row-${r.id}`}
             data-highlighted={isHighlighted ? "true" : "false"}
+            data-expanded={isExpanded ? "true" : "false"}
             style={{
               padding: "8px 8px 8px 8px",
               borderBottom: "1px solid #05121f",
@@ -1472,25 +1572,50 @@ export function BacktestRunsView() {
               transition: "background 0.3s, border-left-color 0.3s",
             }}
           >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-              <div>
-                <span style={{ color: "#7dd3fc", fontSize: 11, fontWeight: 700 }}>
-                  #{r.id} {r.strategy}
-                </span>
-                {r.data_symbol && (
-                  <span style={{ color: "#94a3b8", fontSize: 11, marginLeft: 8 }}>
-                    {r.data_symbol}
+            <div
+              onClick={onToggleExpand}
+              data-testid={`backtest-row-toggle-${r.id}`}
+              style={{ cursor: "pointer" }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <div>
+                  <span style={{ color: "#7dd3fc", fontSize: 11, fontWeight: 700 }}>
+                    #{r.id} {r.strategy}
                   </span>
+                  {r.data_symbol && (
+                    <span style={{ color: "#94a3b8", fontSize: 11, marginLeft: 8 }}>
+                      {r.data_symbol}
+                    </span>
+                  )}
+                  <span style={{ color: "#475569", fontSize: 9, marginLeft: 6 }}>
+                    {isExpanded ? "▾" : "▸"}
+                  </span>
+                </div>
+                <span style={{ color: pnlColor(r.total_pnl), fontSize: 11, fontWeight: 700 }}>
+                  {r.total_pnl >= 0 ? "+" : ""}{fmtKRW(r.total_pnl)}
+                </span>
+              </div>
+              <div style={{ fontSize: 10, color: "#475569", marginTop: 3 }}>
+                {new Date(r.created_at).toLocaleString("ko-KR")} ·
+                {` ${r.bars_processed}봉 · ${trades}거래 · 승률 ${winRate}% · MDD ${fmtKRW(r.max_drawdown)}`}
+              </div>
+            </div>
+
+            {isExpanded && (
+              <div style={{ marginTop: 4 }}>
+                {detailBusy && (
+                  <div style={{ fontSize: 10, color: "#475569" }}>로딩 중…</div>
+                )}
+                {detailErr && (
+                  <div style={{ fontSize: 10, color: "#f87171" }}>
+                    상세 조회 실패: {detailErr}
+                  </div>
+                )}
+                {detailData && (
+                  <BacktestTradesPanel trades={detailData.trades} />
                 )}
               </div>
-              <span style={{ color: pnlColor(r.total_pnl), fontSize: 11, fontWeight: 700 }}>
-                {r.total_pnl >= 0 ? "+" : ""}{fmtKRW(r.total_pnl)}
-              </span>
-            </div>
-            <div style={{ fontSize: 10, color: "#475569", marginTop: 3 }}>
-              {new Date(r.created_at).toLocaleString("ko-KR")} ·
-              {` ${r.bars_processed}봉 · ${trades}거래 · 승률 ${winRate}% · MDD ${fmtKRW(r.max_drawdown)}`}
-            </div>
+            )}
           </div>
         );
       })}
