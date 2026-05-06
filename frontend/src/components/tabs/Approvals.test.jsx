@@ -12,6 +12,7 @@ import {
   HistoryDecisionTimeSummary,
   HistoryModeFilterBar,
   HistoryRow,
+  HistoryStaleRatio,
   HistoryStatusFilterBar,
   HistoryTimeBucketBar,
   PendingAgeBadge,
@@ -25,6 +26,7 @@ import {
   isValidHistoryTimeBucket,
   shouldHandleApprovalsHotkey,
   summarizeHistoryDecisionTime,
+  summarizeHistoryStaleRatio,
 } from "./Approvals";
 
 
@@ -1915,5 +1917,191 @@ describe("<Approvals> history keyboard navigation (107)", () => {
     rerender(<Approvals approvals={shrunk} operatorName="" />);
     expect(queryByTestId("approval-history-row-3")).toBeNull();
     expect(getByTestId("approval-history-row-1").dataset.focused).toBe("true");
+  });
+});
+
+
+describe("summarizeHistoryStaleRatio (111)", () => {
+  function _row(durationMin, decided = "2026-05-06T12:00:00+00:00") {
+    const decidedMs = new Date(decided).getTime();
+    return {
+      id: 1,
+      created_at: new Date(decidedMs - durationMin * 60_000).toISOString(),
+      decided_at: decided,
+    };
+  }
+
+  it("returns zero shape for empty / nullable input", () => {
+    expect(summarizeHistoryStaleRatio([])).toEqual({ count: 0, staleCount: 0, ratio: 0 });
+    expect(summarizeHistoryStaleRatio(null)).toEqual({ count: 0, staleCount: 0, ratio: 0 });
+  });
+
+  it("counts rows whose duration >= threshold (default 10 minutes)", () => {
+    // 5 min, 9 min, 10 min, 30 min — staleCount = 2 (10 + 30); count = 4
+    const items = [_row(5), _row(9), _row(10), _row(30)];
+    const s = summarizeHistoryStaleRatio(items);
+    expect(s.count).toBe(4);
+    expect(s.staleCount).toBe(2);
+    expect(s.ratio).toBe(0.5);
+  });
+
+  it("threshold is configurable", () => {
+    const items = [_row(2), _row(4), _row(6)];
+    expect(summarizeHistoryStaleRatio(items, 5 * 60_000)).toEqual({
+      count: 3, staleCount: 1, ratio: 1 / 3,
+    });
+    expect(summarizeHistoryStaleRatio(items, 60_000)).toEqual({
+      count: 3, staleCount: 3, ratio: 1,
+    });
+  });
+
+  it("skips rows missing timestamps and negative durations", () => {
+    const items = [
+      _row(15),
+      { id: 2 },                                            // missing both
+      { id: 3, created_at: "2026-05-06T11:50:00+00:00" },   // missing decided_at
+      { id: 4, decided_at: "2026-05-06T12:00:00+00:00" },   // missing created_at
+      { id: 5,                                              // negative
+        created_at: "2026-05-06T12:05:00+00:00",
+        decided_at: "2026-05-06T12:00:00+00:00" },
+    ];
+    const s = summarizeHistoryStaleRatio(items);
+    expect(s.count).toBe(1);
+    expect(s.staleCount).toBe(1);
+    expect(s.ratio).toBe(1);
+  });
+});
+
+
+describe("<HistoryStaleRatio> (111)", () => {
+  afterEach(cleanup);
+
+  function _row(durationMin) {
+    const decided = "2026-05-06T12:00:00+00:00";
+    const decidedMs = new Date(decided).getTime();
+    return {
+      id: Math.random(),
+      created_at: new Date(decidedMs - durationMin * 60_000).toISOString(),
+      decided_at: decided,
+    };
+  }
+
+  it("renders nothing when there are no stale rows (healthy)", () => {
+    const { container } = render(
+      <HistoryStaleRatio items={[_row(2), _row(5), _row(9)]} />,
+    );
+    expect(container.querySelector('[data-testid="history-stale-ratio"]')).toBeNull();
+  });
+
+  it("renders nothing for empty / nullable input", () => {
+    const { container } = render(<HistoryStaleRatio items={[]} />);
+    expect(container.querySelector('[data-testid="history-stale-ratio"]')).toBeNull();
+  });
+
+  it("renders count + ratio when stale rows exist", () => {
+    const { getByTestId } = render(
+      <HistoryStaleRatio items={[_row(5), _row(15), _row(30)]} />,
+    );
+    const badge = getByTestId("history-stale-ratio");
+    expect(badge.textContent).toContain("stale (10분+)");
+    expect(badge.textContent).toContain("2/3건");
+    expect(badge.textContent).toContain("67%");
+    expect(badge.dataset.ratio).toBe("67");
+  });
+
+  it("uses red color when ratio is 50%+ (worth attention)", () => {
+    const { getByTestId } = render(
+      <HistoryStaleRatio items={[_row(15), _row(30)]} />, // 100%
+    );
+    const badge = getByTestId("history-stale-ratio");
+    expect(badge.style.color).toBe("rgb(239, 68, 68)"); // #ef4444
+  });
+
+  it("uses amber color when ratio is below 50%", () => {
+    // 1 stale of 4 rows → 25%
+    const { getByTestId } = render(
+      <HistoryStaleRatio items={[_row(2), _row(5), _row(9), _row(30)]} />,
+    );
+    const badge = getByTestId("history-stale-ratio");
+    expect(badge.style.color).toBe("rgb(251, 191, 36)"); // #fbbf24
+  });
+
+  it("respects a custom thresholdMs prop", () => {
+    // 5 min and 10 min — at thresholdMs=2min both stale → 100% red
+    const { getByTestId } = render(
+      <HistoryStaleRatio items={[_row(5), _row(10)]} thresholdMs={2 * 60_000} />,
+    );
+    const badge = getByTestId("history-stale-ratio");
+    expect(badge.textContent).toContain("(2분+)");
+    expect(badge.textContent).toContain("2/2");
+    expect(badge.textContent).toContain("100%");
+  });
+});
+
+
+describe("<Approvals> stale ratio integration (111)", () => {
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _h(overrides = {}) {
+    return {
+      id: 1, symbol: "005930", side: "BUY", quantity: 1, order_type: "MARKET",
+      limit_price: null, status: "APPROVED", mode: "LIVE_MANUAL_APPROVAL",
+      created_at: "2026-05-06T11:55:00+00:00",
+      decided_at: "2026-05-06T12:00:00+00:00",
+      decided_by: "u", note: "", audit_id: 1,
+      ...overrides,
+    };
+  }
+
+  it("shows stale ratio when history has slow-decided rows", () => {
+    const approvals = _makeApprovals({
+      history: [
+        _h({ id: 1,
+              created_at: "2026-05-06T11:30:00+00:00",
+              decided_at: "2026-05-06T12:00:00+00:00" }), // 30 min — stale
+        _h({ id: 2,
+              created_at: "2026-05-06T11:55:00+00:00",
+              decided_at: "2026-05-06T12:00:00+00:00" }), //  5 min — fast
+      ],
+    });
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    const badge = getByTestId("history-stale-ratio");
+    expect(badge.textContent).toContain("1/2건");
+  });
+
+  it("hides the stale ratio when all rows are fast", () => {
+    const approvals = _makeApprovals({
+      history: [
+        _h({ id: 1,
+              created_at: "2026-05-06T11:58:00+00:00",
+              decided_at: "2026-05-06T12:00:00+00:00" }), // 2 min
+      ],
+    });
+    const { container } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(container.querySelector('[data-testid="history-stale-ratio"]')).toBeNull();
+  });
+
+  it("recomputes when filters narrow the visible rows", () => {
+    const approvals = _makeApprovals({
+      history: [
+        _h({ id: 1, status: "APPROVED",
+              created_at: "2026-05-06T11:55:00+00:00",
+              decided_at: "2026-05-06T12:00:00+00:00" }), // 5 min — fast
+        _h({ id: 2, status: "REJECTED",
+              created_at: "2026-05-06T11:30:00+00:00",
+              decided_at: "2026-05-06T12:00:00+00:00" }), // 30 min — stale
+      ],
+    });
+    const { getByTestId, queryByTestId, getByRole } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    // 전체 보면 1/2 stale
+    expect(getByTestId("history-stale-ratio").textContent).toContain("1/2건");
+    // 거부만 보면 1/1 stale → 100%
+    fireEvent.click(getByRole("radio", { name: "거부" }));
+    expect(getByTestId("history-stale-ratio").textContent).toContain("1/1");
+    // 승인만 보면 0/1 → hide
+    fireEvent.click(getByRole("radio", { name: "승인" }));
+    expect(queryByTestId("history-stale-ratio")).toBeNull();
   });
 });
