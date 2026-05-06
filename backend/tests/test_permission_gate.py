@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -666,3 +667,142 @@ def test_approve_does_not_apply_ai_invariant_to_non_ai_orders():
             gate.approve(approval.id, MockBrokerAdapter(), risk)
         )
         assert approval.status == "APPROVED"
+
+
+# ---------- 167: TTL expiry ----------
+
+
+def _make_approval_with_age(db, *, age_seconds: int):
+    """주어진 age로 PENDING approval 생성. created_at을 과거로 강제 설정."""
+    audit = _audit(db)
+    gate = PermissionGate(db)
+    approval = gate.submit(
+        audit=audit, order=_order(qty=1),
+        mode=OperationMode.LIVE_MANUAL_APPROVAL,
+    )
+    # created_at backdating.
+    approval.created_at = datetime.now(timezone.utc) - timedelta(seconds=age_seconds)
+    db.commit()
+    db.refresh(approval)
+    return approval
+
+
+def test_expire_stale_approvals_marks_old_as_expired():
+    Session = _session()
+    with Session() as db:
+        old      = _make_approval_with_age(db, age_seconds=3600)  # 1시간
+        recent   = _make_approval_with_age(db, age_seconds=60)    # 1분
+
+        gate = PermissionGate(db)
+        expired = gate.expire_stale_approvals(ttl_seconds=600)  # 10분 TTL
+
+    assert len(expired) == 1
+    assert expired[0].id == old.id
+    # DB 상태 확인.
+    with Session() as db2:
+        old_refresh = db2.get(PendingApproval, old.id)
+        recent_refresh = db2.get(PendingApproval, recent.id)
+        assert old_refresh.status     == "EXPIRED"
+        assert old_refresh.decided_at is not None
+        assert "TTL" in (old_refresh.note or "")
+        assert recent_refresh.status  == "PENDING"
+
+
+def test_expire_stale_approvals_zero_ttl_is_noop():
+    Session = _session()
+    with Session() as db:
+        _make_approval_with_age(db, age_seconds=99999)
+        gate = PermissionGate(db)
+        result = gate.expire_stale_approvals(ttl_seconds=0)
+        assert result == []
+        # PENDING 그대로.
+        rows = db.execute(select(PendingApproval)).scalars().all()
+        assert all(r.status == "PENDING" for r in rows)
+
+
+def test_list_pending_lazy_expires_when_ttl_passed():
+    """list_pending(ttl_seconds=N) 호출 시 자동 만료 — pending 응답에서 빠짐."""
+    Session = _session()
+    with Session() as db:
+        _make_approval_with_age(db, age_seconds=3600)  # 만료 대상
+        recent = _make_approval_with_age(db, age_seconds=60)
+
+        gate = PermissionGate(db)
+        pending = gate.list_pending(ttl_seconds=600)
+
+    assert len(pending) == 1
+    assert pending[0].id == recent.id
+
+
+def test_list_pending_default_no_expiration():
+    """ttl_seconds 미명시 (=0)는 lazy expire 안 함 — backwards compat."""
+    Session = _session()
+    with Session() as db:
+        old = _make_approval_with_age(db, age_seconds=99999)
+        gate = PermissionGate(db)
+        pending = gate.list_pending()  # ttl_seconds 미명시
+
+    assert len(pending) == 1
+    assert pending[0].id == old.id
+    assert pending[0].status == "PENDING"
+
+
+def test_expired_approval_cannot_be_approved():
+    """이미 EXPIRED된 approval은 approve 시도가 ApprovalAlreadyDecidedError."""
+    Session = _session()
+    with Session() as db:
+        approval = _make_approval_with_age(db, age_seconds=3600)
+        gate = PermissionGate(db)
+        gate.expire_stale_approvals(ttl_seconds=600)
+
+        with pytest.raises(ApprovalAlreadyDecidedError):
+            asyncio.run(gate.approve(
+                approval.id, MockBrokerAdapter(), _risk_for_live_manual()
+            ))
+
+
+def test_expired_approval_cannot_be_rejected_or_cancelled():
+    """terminal EXPIRED → reject/cancel도 모두 차단."""
+    Session = _session()
+    with Session() as db:
+        approval = _make_approval_with_age(db, age_seconds=3600)
+        gate = PermissionGate(db)
+        gate.expire_stale_approvals(ttl_seconds=600)
+
+        with pytest.raises(ApprovalAlreadyDecidedError):
+            gate.reject(approval.id)
+        with pytest.raises(ApprovalAlreadyDecidedError):
+            gate.cancel(approval.id)
+
+
+def test_expire_uses_explicit_now_for_determinism():
+    """now 인자로 결정적 만료 테스트 — wall clock 의존 회피."""
+    Session = _session()
+    with Session() as db:
+        # 3600초 전 created.
+        approval = _make_approval_with_age(db, age_seconds=3600)
+        gate = PermissionGate(db)
+
+        # now를 명시적으로 created_at + 1200초로 설정 → 1200초 age.
+        # ttl=1800이면 안 만료 (age < ttl).
+        result = gate.expire_stale_approvals(ttl_seconds=1800,
+                                              now=approval.created_at + timedelta(seconds=1200))
+        assert result == []  # 1200 < 1800
+
+        # ttl=600이면 만료 (age=1200 > ttl=600).
+        result2 = gate.expire_stale_approvals(ttl_seconds=600,
+                                                now=approval.created_at + timedelta(seconds=1200))
+        assert len(result2) == 1
+
+
+def test_expired_excluded_from_list_pending_after_explicit_sweep():
+    """expire_stale_approvals 명시 호출 후 list_pending에서 제외."""
+    Session = _session()
+    with Session() as db:
+        old = _make_approval_with_age(db, age_seconds=3600)
+        gate = PermissionGate(db)
+        gate.expire_stale_approvals(ttl_seconds=600)
+
+        # ttl 안 넘기고 list_pending — old는 이미 EXPIRED라 제외.
+        pending = gate.list_pending()
+        assert old.id not in [p.id for p in pending]

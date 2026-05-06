@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -33,6 +33,9 @@ STATUS_PENDING   = "PENDING"
 STATUS_APPROVED  = "APPROVED"
 STATUS_REJECTED  = "REJECTED"
 STATUS_CANCELLED = "CANCELLED"
+# 167: TTL 만료. PENDING이 너무 오래 머물면 시세 stale + 시장 변동으로 의도가
+# 어긋나므로 자동 만료 — 운영자 명시적 결정과 구분.
+STATUS_EXPIRED   = "EXPIRED"
 
 # evaluate_order returns NEEDS_APPROVAL with this reason for the queueing modes
 # (LIVE_MANUAL_APPROVAL / LIVE_AI_ASSIST). At approve time it's the *expected*
@@ -86,12 +89,49 @@ class PermissionGate:
         self.db.refresh(approval)
         return approval
 
-    def list_pending(self) -> list[PendingApproval]:
+    def list_pending(self, *, ttl_seconds: int = 0) -> list[PendingApproval]:
+        """현재 PENDING approvals. 167: ttl_seconds > 0이면 호출 시점에 lazy
+        expire — created_at이 ttl_seconds 초과로 오래된 PENDING은 EXPIRED로
+        전환된 후 제외된다."""
+        if ttl_seconds > 0:
+            self.expire_stale_approvals(ttl_seconds)
         return list(self.db.execute(
             select(PendingApproval)
             .where(PendingApproval.status == STATUS_PENDING)
             .order_by(PendingApproval.created_at)
         ).scalars().all())
+
+    def expire_stale_approvals(
+        self,
+        ttl_seconds: int,
+        *,
+        now:        datetime | None = None,
+    ) -> list[PendingApproval]:
+        """167: PENDING이 ttl_seconds 초과 오래된 approvals를 EXPIRED로 일괄 전환.
+
+        한 번에 여러 row를 EXPIRED로 표시 + decided_at = 현재시각 + reason
+        annotation. 호출자(list_pending lazy / 운영자 명시 cleanup / cron)가
+        결정. ttl_seconds <= 0이면 no-op (안전 측 — 0 의미는 '검사 비활성').
+
+        반환: 이번 호출에서 EXPIRED된 row 리스트 (audit / 알림 용도).
+        """
+        if ttl_seconds <= 0:
+            return []
+        now = now or datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=ttl_seconds)
+        stale = self.db.execute(
+            select(PendingApproval).where(
+                PendingApproval.status == STATUS_PENDING,
+                PendingApproval.created_at < cutoff,
+            )
+        ).scalars().all()
+        for approval in stale:
+            approval.status     = STATUS_EXPIRED
+            approval.decided_at = now
+            approval.note       = f"auto-expired after {ttl_seconds}s TTL"
+        if stale:
+            self.db.commit()
+        return list(stale)
 
     def list_decided(
         self,

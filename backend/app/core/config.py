@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     ai_rate_limit_window_seconds: int = 60
     ai_rate_limit_max_count:      int = 0
 
+    # 167: PendingApproval TTL. 0이면 만료 안 함 (기본). 운영자가 명시적으로
+    # 켜야만 자동 EXPIRED 전환. 권장 600~1800 (10~30분) — 시세 stale 임계와 맞춤.
+    approval_ttl_seconds: int = 0
+
     kis_app_key: str = ""
     kis_app_secret: str = ""
     kis_account_no: str = ""
