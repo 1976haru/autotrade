@@ -195,25 +195,33 @@ LIVE 활성화 전 사용자 명시 옵트인이 필요한 영역:
 | 195 | `routes_virtual` `/positions` + `VirtualPositionsCard` | LiveEngine 탭 — FIFO 포지션 + realized/unrealized 합계 |
 | 196 | Approval history `EXPIRED` status filter + UI chip | Approvals 탭 — 167 자동 만료 행 분리 조회 |
 
-### 검증 (196 머지 직후)
+### 3차 보강 (198-199) — Audit 아카이브 + 정책 가시성
 
-- backend pytest **884 passed**, 15 deselected
+| PR | 역할 | 위치 |
+|---|---|---|
+| 198 | `OrderAuditOut.archived` surface + `ArchivedAuditView` 서브탭 + `listOrderAudits.include_archived` | AuditLog 탭 "아카이브" 서브탭 — 168 cold rows |
+| 199 | `RISK_POLICY_FIELDS` 6 → 22 항목 + `_formatPolicyValue` (pct/seconds/list) + `isPolicyValueOverridden` (배열 비교) | StrategyRisk 탭 BackendPolicyCard — 모든 가드 노출 |
+
+### 검증 (199 머지 직후)
+
+- backend pytest **886 passed**, 15 deselected
 - ruff **All checks passed**
-- frontend npm test **878 passed**, 29 files
-- npm run lint **0 errors** / 58 warnings
-- npm run build **365kB → 104kB gzipped**
+- frontend npm test **887 passed**, 29 files
+- npm run lint **0 errors** / 59 warnings
+- npm run build **369kB → 105kB gzipped**
 
 ### 안전 invariant
 
-187-196은 **모두 read-only 또는 schema-only 보강**이다:
+187-199는 **모두 read-only 또는 schema-only 보강**이다:
 - 새 broker 호출, 새 가드 분기, 새 AI 실행 경로 0건.
 - 새 endpoint는 모두 SELECT만 — DB write 0건.
+- 199는 backend `/api/risk/policy` 응답을 변경하지 않고 frontend 표시만 확장.
 - CLAUDE.md 절대 원칙 / RiskManager → PermissionGate → OrderAuditLog
   단일 진입점은 그대로다.
-- 192/197은 본 문서 자체 갱신.
+- 192/197/200은 본 문서 자체 갱신.
 
 ## 종료 상태
 
 **완료**. 사용자 directive 최종 완성 모드의 모든 항목 이행 + 사후 UI
-surface 보강 (187-196) 완료. 추가 자동 진행 여지는 LIVE 옵트인 또는
+surface 보강 (187-199) 완료. 추가 자동 진행 여지는 LIVE 옵트인 또는
 NICE 영역으로만 남음.
