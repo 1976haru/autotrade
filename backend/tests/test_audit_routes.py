@@ -123,6 +123,35 @@ def test_order_audit_signal_quality_null_for_manual_orders(client):
     assert row["signal_confidence"] is None
 
 
+# 189: ai_decision_meta surface — RiskManager fills it for AI-routed orders.
+def test_order_audit_surfaces_ai_decision_meta(client):
+    """AI route → audit row의 ai_decision_meta가 endpoint 응답에 surface."""
+    from datetime import datetime, timezone
+    from app.db.models import OrderAuditLog
+    with client.test_db_factory() as db:
+        db.add(OrderAuditLog(
+            mode="VIRTUAL_AI_EXECUTION",
+            requested_by_ai=True,
+            symbol="005930", side="BUY", quantity=1, order_type="MARKET",
+            latest_price=100, decision="REJECTED", reasons=["confidence_too_low"],
+            executed=False, filled_quantity=0, message="",
+            ai_decision_meta={"confidence": 35, "reasoning": "weak signal"},
+            created_at=datetime.now(timezone.utc),
+        ))
+        db.commit()
+    row = client.get("/api/audit/orders").json()[0]
+    assert row["ai_decision_meta"] == {"confidence": 35, "reasoning": "weak signal"}
+
+
+def test_order_audit_ai_decision_meta_null_for_non_ai_orders(client):
+    res = client.post("/api/broker/orders", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1,
+    })
+    assert res.status_code == 200
+    row = client.get("/api/audit/orders").json()[0]
+    assert row["ai_decision_meta"] is None
+
+
 def test_order_audit_signal_quality_clamped_at_pydantic_layer(client):
     """OrderRequest의 ge=0 le=100 제약 — out-of-range는 422."""
     res = client.post("/api/broker/orders", json={

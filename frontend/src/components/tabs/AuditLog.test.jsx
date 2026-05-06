@@ -197,6 +197,40 @@ describe("<OrderAuditRow>", () => {
     const { container } = render(<OrderAuditRow r={_ORDER({ executed: false })} />);
     expect(container.textContent).toContain("미체결");
   });
+
+  // 189: ai_decision_meta surface — operator can see AI's confidence + reasons
+  // directly from the audit row without hitting a second endpoint.
+  it("renders ai_decision_meta when present", () => {
+    const { getByTestId } = render(
+      <OrderAuditRow r={_ORDER({
+        ai_decision_meta: { confidence: 70, reasons: ["entry+news"], rejected_by_guard: false },
+      })} />,
+    );
+    const node = getByTestId("ai-decision-meta");
+    expect(node.textContent).toContain("conf 70");
+    expect(node.textContent).toContain("entry+news");
+  });
+
+  it("omits ai_decision_meta block when null", () => {
+    const { queryByTestId } = render(<OrderAuditRow r={_ORDER({ ai_decision_meta: null })} />);
+    expect(queryByTestId("ai-decision-meta")).toBeNull();
+  });
+
+  it("falls back to JSON when meta has no recognised fields", () => {
+    const { getByTestId } = render(
+      <OrderAuditRow r={_ORDER({ ai_decision_meta: { foo: "bar" } })} />,
+    );
+    expect(getByTestId("ai-decision-meta").textContent).toContain('{"foo":"bar"}');
+  });
+
+  it("includes guard rejection marker when rejected_by_guard is true", () => {
+    const { getByTestId } = render(
+      <OrderAuditRow r={_ORDER({
+        ai_decision_meta: { confidence: 30, rejected_by_guard: true },
+      })} />,
+    );
+    expect(getByTestId("ai-decision-meta").textContent).toContain("guard rejected");
+  });
 });
 
 
