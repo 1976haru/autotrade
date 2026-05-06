@@ -21,6 +21,32 @@ def test_status_exposes_safety_flags(client):
     assert "mode_capabilities" in body
 
 
+# 201: full safety_flags matrix — every env flag from CLAUDE.md table.
+def test_status_safety_flags_block_present(client):
+    body = client.get("/api/status").json()
+    flags = body.get("safety_flags")
+    assert isinstance(flags, dict)
+    for key in (
+        "default_mode",
+        "enable_live_trading",
+        "enable_ai_execution",
+        "enable_futures_live_trading",
+        "kis_is_paper",
+        "market_data_provider",
+        "enable_fill_polling",
+        "stale_price_max_age_seconds",
+    ):
+        assert key in flags, f"missing {key}"
+    # 기본값 검증 — CLAUDE.md "안전 플래그" 표와 lockstep.
+    assert flags["enable_live_trading"]         is False
+    assert flags["enable_ai_execution"]         is False
+    assert flags["enable_futures_live_trading"] is False
+    assert flags["kis_is_paper"]                is True
+    assert flags["market_data_provider"]        == "mock"
+    assert flags["enable_fill_polling"]         is False
+    assert flags["stale_price_max_age_seconds"] == 60
+
+
 def test_risk_policy_returns_defaults(client):
     res = client.get("/api/risk/policy")
     assert res.status_code == 200
