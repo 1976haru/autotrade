@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  AI_MODEL_PRICING,
   AiAuditView,
   AiModelBadge,
   AiTokenSummary,
@@ -18,10 +19,13 @@ import {
   backtestEmptyMessage,
   classifyBacktestOutcome,
   emptyEventTimelineMessage,
+  estimateAiCost,
   flattenApprovalAttempts,
+  formatUsdCost,
   isValidBacktestOutcome,
   mergeEvents,
   modelAccent,
+  modelFamily,
   setEventKindFilter,
   summarizeAiTokens,
 } from "./AuditLog";
@@ -1104,6 +1108,159 @@ describe("<AiAuditView> token summary integration (098)", () => {
     const { container, getByPlaceholderText } = render(<AiAuditView />);
     fireEvent.change(getByPlaceholderText(/모델/), { target: { value: "gpt-99" } });
     expect(container.querySelector('[data-testid="ai-token-summary"]')).toBeNull();
+  });
+});
+
+
+describe("modelFamily (101)", () => {
+  it("returns the family id for known prefixes", () => {
+    expect(modelFamily("claude-opus-4-7")).toBe("opus");
+    expect(modelFamily("claude-sonnet-4-6")).toBe("sonnet");
+    expect(modelFamily("claude-haiku-4-5-20251001")).toBe("haiku");
+  });
+
+  it("matches case-insensitively", () => {
+    expect(modelFamily("Claude-OPUS-4-7")).toBe("opus");
+  });
+
+  it("returns null for unknown / empty / null", () => {
+    expect(modelFamily("gpt-4")).toBeNull();
+    expect(modelFamily("")).toBeNull();
+    expect(modelFamily(null)).toBeNull();
+    expect(modelFamily(undefined)).toBeNull();
+  });
+});
+
+
+describe("AI_MODEL_PRICING (101)", () => {
+  it("covers the three Anthropic families with per-1M-token rates", () => {
+    expect(AI_MODEL_PRICING.opus.input).toBeGreaterThan(0);
+    expect(AI_MODEL_PRICING.opus.output).toBeGreaterThan(AI_MODEL_PRICING.opus.input);
+    expect(AI_MODEL_PRICING.sonnet.input).toBeLessThan(AI_MODEL_PRICING.opus.input);
+    expect(AI_MODEL_PRICING.haiku.input).toBeLessThan(AI_MODEL_PRICING.sonnet.input);
+  });
+});
+
+
+describe("estimateAiCost (101)", () => {
+  it("returns zero shape for empty / nullable items", () => {
+    expect(estimateAiCost([]))
+      .toEqual({ totalUsd: 0, knownCount: 0, unknownCount: 0 });
+    expect(estimateAiCost(null))
+      .toEqual({ totalUsd: 0, knownCount: 0, unknownCount: 0 });
+  });
+
+  it("computes cost for a single sonnet call (1M in, 1M out)", () => {
+    // sonnet: $3 in + $15 out = $18 per 1M+1M
+    const c = estimateAiCost([
+      { model: "claude-sonnet-4-6", input_tokens: 1_000_000, output_tokens: 1_000_000 },
+    ]);
+    expect(c.totalUsd).toBeCloseTo(18, 6);
+    expect(c.knownCount).toBe(1);
+    expect(c.unknownCount).toBe(0);
+  });
+
+  it("sums across families using each family's rate", () => {
+    const c = estimateAiCost([
+      // opus 100k in + 50k out = 0.1*15 + 0.05*75 = 1.5 + 3.75 = 5.25
+      { model: "claude-opus-4-7", input_tokens: 100_000, output_tokens: 50_000 },
+      // haiku 1M in + 1M out = 0.8 + 4 = 4.80
+      { model: "claude-haiku-4-5", input_tokens: 1_000_000, output_tokens: 1_000_000 },
+    ]);
+    expect(c.totalUsd).toBeCloseTo(10.05, 2);
+    expect(c.knownCount).toBe(2);
+  });
+
+  it("counts unknown-family rows separately, excluded from totalUsd", () => {
+    const c = estimateAiCost([
+      { model: "claude-sonnet-4-6", input_tokens: 1_000_000, output_tokens: 0 }, // $3
+      { model: "gpt-4",             input_tokens: 1_000_000, output_tokens: 0 }, // unknown
+      { model: null,                input_tokens: 1_000_000, output_tokens: 0 }, // unknown
+    ]);
+    expect(c.totalUsd).toBeCloseTo(3, 6);
+    expect(c.knownCount).toBe(1);
+    expect(c.unknownCount).toBe(2);
+  });
+
+  it("treats missing token fields as 0 (no NaN propagation)", () => {
+    const c = estimateAiCost([
+      { model: "claude-sonnet-4-6" },
+      { model: "claude-sonnet-4-6", input_tokens: null, output_tokens: undefined },
+    ]);
+    expect(c.totalUsd).toBe(0);
+    expect(c.knownCount).toBe(2);
+  });
+});
+
+
+describe("formatUsdCost (101)", () => {
+  it("returns $0.00 for zero or negative", () => {
+    expect(formatUsdCost(0)).toBe("$0.00");
+    expect(formatUsdCost(-1)).toBe("$0.00");
+  });
+
+  it("returns <$0.01 for tiny positive values", () => {
+    expect(formatUsdCost(0.001)).toBe("<$0.01");
+    expect(formatUsdCost(0.009999)).toBe("<$0.01");
+  });
+
+  it("returns 2-decimal $X.XX otherwise", () => {
+    expect(formatUsdCost(0.01)).toBe("$0.01");
+    expect(formatUsdCost(2.5)).toBe("$2.50");
+    expect(formatUsdCost(123.456)).toBe("$123.46");
+  });
+});
+
+
+describe("<AiAuditView> cost estimate integration (101)", () => {
+  beforeEach(() => { _resetAiHook(); });
+  afterEach(cleanup);
+
+  function _ai(overrides = {}) {
+    return {
+      id: 1, ticker: "005930", model: "claude-sonnet-4-6",
+      input_tokens: 1000, output_tokens: 500,
+      score: { total: 75 }, error: null,
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("renders the cost estimate alongside the token totals", () => {
+    _resetAiHook({
+      items: [_ai({ id: 1, model: "claude-sonnet-4-6",
+                     input_tokens: 1_000_000, output_tokens: 1_000_000 })],
+    });
+    const { getByTestId } = render(<AiAuditView />);
+    expect(getByTestId("ai-cost-estimate").textContent).toContain("$18.00");
+  });
+
+  it("shows the unknown badge when a row has an unrecognized model", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, model: "claude-sonnet-4-6" }),
+        _ai({ id: 2, model: "gpt-4" }),
+      ],
+    });
+    const { getByTestId } = render(<AiAuditView />);
+    expect(getByTestId("ai-cost-unknown").textContent).toContain("미상 1건");
+  });
+
+  it("hides the unknown badge when all rows have known families", () => {
+    _resetAiHook({
+      items: [_ai({ id: 1, model: "claude-haiku-4-5" })],
+    });
+    const { container } = render(<AiAuditView />);
+    expect(container.querySelector('[data-testid="ai-cost-unknown"]')).toBeNull();
+  });
+
+  it("displays <$0.01 when the running total is sub-cent", () => {
+    _resetAiHook({
+      items: [_ai({ id: 1, model: "claude-haiku-4-5",
+                     input_tokens: 100, output_tokens: 100 })],
+    });
+    const { getByTestId } = render(<AiAuditView />);
+    expect(getByTestId("ai-cost-estimate").textContent).toContain("<$0.01");
   });
 });
 

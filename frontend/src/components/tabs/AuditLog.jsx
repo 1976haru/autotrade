@@ -440,6 +440,61 @@ export function modelAccent(model) {
 }
 
 
+// 101: model family lookup — 단가 lookup 등 family 기반 분기에 공통으로 쓰인다.
+// modelAccent 와 같은 prefix 매칭 규칙을 공유한다.
+export function modelFamily(model) {
+  if (!model) return null;
+  const m = model.toLowerCase();
+  if (m.includes("opus"))   return "opus";
+  if (m.includes("sonnet")) return "sonnet";
+  if (m.includes("haiku"))  return "haiku";
+  return null;
+}
+
+
+// 101: Anthropic 단가 (USD per 1M tokens). 정확한 단가는 시점에 따라 변할 수
+// 있고 enterprise/scale 가격은 다를 수 있다 — 여기 값은 2026년 5월 시점 공개
+// 표준 가격을 기준으로 한 *추정값*이다. UI는 항상 "약 $X.XX"로 surfacing해
+// 정확한 청구액이 아님을 시그널링한다.
+export const AI_MODEL_PRICING = {
+  opus:   { input: 15.0, output: 75.0 },
+  sonnet: { input:  3.0, output: 15.0 },
+  haiku:  { input:  0.8, output:  4.0 },
+};
+
+
+// 단가가 알려진 row만 합산하고, 그 외는 unknownCount로 따로 보고. UI는 합계
+// 옆에 "단가 미상 K건"을 부가해 신뢰도를 명시할 수 있다.
+export function estimateAiCost(items) {
+  let totalUsd = 0;
+  let knownCount = 0;
+  let unknownCount = 0;
+  for (const r of items || []) {
+    const family = modelFamily(r.model);
+    const price = family && AI_MODEL_PRICING[family];
+    if (!price) {
+      unknownCount += 1;
+      continue;
+    }
+    const inTok  = r.input_tokens  || 0;
+    const outTok = r.output_tokens || 0;
+    totalUsd += (inTok / 1_000_000) * price.input
+              + (outTok / 1_000_000) * price.output;
+    knownCount += 1;
+  }
+  return { totalUsd, knownCount, unknownCount };
+}
+
+
+// 작은 비용은 "<$0.01"로 표시 — 0.00달러로 보이면 "공짜" 같은 인상을 줘서
+// 운영자가 빈도/볼륨 신호를 놓칠 수 있다. 0인 경우는 그대로 "$0.00".
+export function formatUsdCost(usd) {
+  if (usd <= 0) return "$0.00";
+  if (usd < 0.01) return "<$0.01";
+  return "$" + usd.toFixed(2);
+}
+
+
 export function AiModelBadge({ model }) {
   if (!model) return null;
   const color = modelAccent(model);
@@ -477,6 +532,7 @@ export function summarizeAiTokens(items) {
 export function AiTokenSummary({ items }) {
   if (!items || items.length === 0) return null;
   const s = summarizeAiTokens(items);
+  const c = estimateAiCost(items);  // 101: family-based USD estimate
   const _fmt = (n) => n.toLocaleString("ko-KR");
   return (
     <div data-testid="ai-token-summary"
@@ -492,6 +548,17 @@ export function AiTokenSummary({ items }) {
       <span style={{ color: "#c084fc", fontWeight: 700 }}>
         out {_fmt(s.outputTotal)}
       </span>
+      <span>·</span>
+      <span data-testid="ai-cost-estimate"
+            style={{ color: "#fbbf24", fontWeight: 700 }}>
+        약 {formatUsdCost(c.totalUsd)}
+      </span>
+      {c.unknownCount > 0 && (
+        <span data-testid="ai-cost-unknown"
+              style={{ color: "#64748b" }}>
+          (+ 미상 {_fmt(c.unknownCount)}건)
+        </span>
+      )}
     </div>
   );
 }
