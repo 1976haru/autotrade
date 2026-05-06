@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     # 178: AI 주문 kill-switch. emergency_stop과 별개로 AI만 차단. 기본 False.
     disable_ai_orders: bool = False
 
+    # 179: 총 노출 한도 (모든 보유 포지션 합). max_symbol_exposure가 종목별 한도라면
+    # 본 항목은 전체 합. 절대값(원) + 자본 대비 비율(%) 별도 옵션. 0이면 비활성.
+    max_total_exposure:     int   = 0
+    max_total_exposure_pct: float = 0.0
+
     def symbol_whitelist_set(self) -> set[str]:
         """env 콤마 문자열을 set으로 파싱. 공백 strip."""
         if not self.symbol_whitelist:

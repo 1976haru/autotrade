@@ -78,6 +78,11 @@ class RiskPolicy:
     # 유지"하고 싶을 때. 기본 False (비활성). RiskManager 인스턴스의 in-memory
     # 토글로도 사용 가능 (set_ai_disabled).
     disable_ai_orders: bool = False
+    # 179: 모든 보유 포지션 합 노출 한도. max_symbol_exposure가 단일 종목 한도라면
+    # 본 항목은 *총 노출* 한도. 0이면 비활성 (기본). 자본 대비 비율 한도는
+    # max_total_exposure_pct로 별도.
+    max_total_exposure:     int   = 0
+    max_total_exposure_pct: float = 0.0
 
     @classmethod
     def from_settings(cls, settings) -> "RiskPolicy":
@@ -106,6 +111,8 @@ class RiskPolicy:
             global_rate_limit_window_seconds = settings.global_rate_limit_window_seconds,
             global_rate_limit_max_count      = settings.global_rate_limit_max_count,
             disable_ai_orders                = settings.disable_ai_orders,
+            max_total_exposure               = settings.max_total_exposure,
+            max_total_exposure_pct           = settings.max_total_exposure_pct,
         )
 
 
@@ -268,6 +275,30 @@ class RiskManager:
             result.reasons.append("symbol exposure limit exceeded")
         else:
             result.passed.append("symbol exposure within limit")
+
+        # 179: 총 노출 한도 (모든 보유 포지션 합 + 신규 BUY 명목). max_symbol_exposure
+        # 가 종목별, 본 가드는 전체 합. 절대값 + 자본 대비 % 둘 다 검사.
+        if order.side == OrderSide.BUY:
+            current_total = sum(p.quantity * p.market_price for p in positions)
+            new_total = current_total + order_notional
+            if self.policy.max_total_exposure > 0 and new_total > self.policy.max_total_exposure:
+                result.reasons.append(
+                    f"total exposure {new_total} exceeds max_total_exposure "
+                    f"{self.policy.max_total_exposure}"
+                )
+            elif self.policy.max_total_exposure > 0:
+                result.passed.append("total exposure within absolute limit")
+
+            tot_pct = self.policy.max_total_exposure_pct
+            if tot_pct > 0:
+                cap = balance.equity * tot_pct / 100.0
+                if new_total > cap:
+                    result.reasons.append(
+                        f"total exposure {new_total} exceeds {tot_pct}% of "
+                        f"equity ({cap:.0f})"
+                    )
+                else:
+                    result.passed.append("total exposure within equity-relative limit")
 
         if mode == OperationMode.LIVE_SHADOW:
             result.reasons.append("LIVE_SHADOW records signals only; live orders disabled")
