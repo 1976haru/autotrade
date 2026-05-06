@@ -13,10 +13,8 @@
 - **변경 안**: 주기적 `broker.get_positions()` vs `compute_open_positions(db)` 비교 → 불일치 시 경고 로그 + Dashboard 배너.
 - **차단 조건**: KIS LIVE place_order 활성화 직전에 필요 (LIVE 옵트인 PR과 함께).
 
-### 3. Approval queue TTL / expiry
-- **현재**: `PendingApproval.created_at`에서 시간이 오래 지나도 자동 만료 X. UI는 stale 배지(111)만 표시.
-- **변경 안**: Settings에 `APPROVAL_TTL_MINUTES` (default 30분). 백그라운드 sweeper 또는 lazy expiration on read. 만료된 approval은 STATUS=EXPIRED + audit row.
-- **무리도**: 작음 — 기존 PermissionGate에 `expire_stale()` 메서드 추가만으로 충분.
+### ~~3. Approval queue TTL / expiry~~ ✅ 167에서 해결
+- 167 진행: `RiskPolicy.approval_ttl_seconds` (기본 0=비활성, env `APPROVAL_TTL_SECONDS`). `PermissionGate.list_pending(ttl_seconds=N)` lazy expire + `expire_stale_approvals()` 명시 sweep. `STATUS_EXPIRED` 추가 — terminal 상태로 approve/reject/cancel 차단. backend +8 테스트.
 
 ### 4. OrderAudit 보존 정책
 - **현재**: 무한 누적. 1년 운영 시 수십만 row 가능.
