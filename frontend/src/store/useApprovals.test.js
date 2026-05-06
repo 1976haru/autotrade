@@ -2,7 +2,13 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { backendApi } from "../services/backend/client";
-import { useApprovals } from "./useApprovals";
+import {
+  ACTIVE_POLL_MS,
+  IDLE_POLL_MS,
+  IDLE_THRESHOLD_MS,
+  computePollIntervalMs,
+  useApprovals,
+} from "./useApprovals";
 
 
 vi.mock("../services/backend/client", () => ({
@@ -415,5 +421,170 @@ describe("useApprovals", () => {
     await act(async () => { await result.current.refreshHistory(); });
     expect(result.current.history).toHaveLength(1);
     expect(result.current.historyHasMore).toBe(false);
+  });
+});
+
+
+describe("computePollIntervalMs (100)", () => {
+  const NOW = 10_000_000;
+
+  it("returns active interval when pending count > 0", () => {
+    expect(computePollIntervalMs({
+      pendingCount: 1, lastActivityAt: NOW - IDLE_THRESHOLD_MS - 1000, now: NOW,
+    })).toBe(ACTIVE_POLL_MS);
+    expect(computePollIntervalMs({
+      pendingCount: 100, lastActivityAt: NOW, now: NOW,
+    })).toBe(ACTIVE_POLL_MS);
+  });
+
+  it("returns active interval when last activity is within IDLE_THRESHOLD", () => {
+    expect(computePollIntervalMs({
+      pendingCount: 0, lastActivityAt: NOW - 60_000, now: NOW, // 1 min ago
+    })).toBe(ACTIVE_POLL_MS);
+    expect(computePollIntervalMs({
+      pendingCount: 0, lastActivityAt: NOW - (IDLE_THRESHOLD_MS - 1), now: NOW,
+    })).toBe(ACTIVE_POLL_MS);
+  });
+
+  it("returns idle interval when pending=0 and last activity is older than threshold", () => {
+    expect(computePollIntervalMs({
+      pendingCount: 0, lastActivityAt: NOW - IDLE_THRESHOLD_MS, now: NOW,
+    })).toBe(IDLE_POLL_MS);
+    expect(computePollIntervalMs({
+      pendingCount: 0, lastActivityAt: NOW - 2 * IDLE_THRESHOLD_MS, now: NOW,
+    })).toBe(IDLE_POLL_MS);
+  });
+
+  it("constants reflect documented 5s/30s/5min trio", () => {
+    expect(ACTIVE_POLL_MS).toBe(5_000);
+    expect(IDLE_POLL_MS).toBe(30_000);
+    expect(IDLE_THRESHOLD_MS).toBe(5 * 60 * 1000);
+  });
+});
+
+
+describe("useApprovals adaptive polling (100)", () => {
+  beforeEach(() => {
+    backendApi.listApprovals.mockReset();
+    backendApi.listApprovalHistory.mockReset();
+    backendApi.approveApproval.mockReset();
+    backendApi.rejectApproval.mockReset();
+    backendApi.cancelApproval.mockReset();
+    backendApi.listApprovalHistory.mockResolvedValue([]);
+  });
+
+  // mount + 첫 fetch까지 microtasks를 풀어 loading=false 상태로 도달.
+  // vi.useFakeTimers 환경에선 testing-library의 waitFor가 못 도므로 직접 act.
+  const _flush = async () => {
+    // 여러 단계의 await chain을 모두 풀어야 scheduleNext()까지 도달한다.
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+  };
+
+  const _mount = async () => {
+    let r;
+    await act(async () => {
+      r = renderHook(() => useApprovals());
+      await _flush();
+    });
+    return r;
+  };
+
+  it("polls every 5s while pending is non-empty", async () => {
+    backendApi.listApprovals.mockResolvedValue([{ id: 1, status: "PENDING" }]);
+    vi.useFakeTimers();
+    const r = await _mount();
+    expect(r.result.current.loading).toBe(false);
+    expect(backendApi.listApprovals).toHaveBeenCalledTimes(1);
+
+    await act(async () => { vi.advanceTimersByTime(5_000); await _flush(); });
+    expect(backendApi.listApprovals).toHaveBeenCalledTimes(2);
+
+    await act(async () => { vi.advanceTimersByTime(5_000); await _flush(); });
+    expect(backendApi.listApprovals).toHaveBeenCalledTimes(3);
+
+    r.unmount();
+    vi.useRealTimers();
+  });
+
+  it("transitions to 30s interval after IDLE_THRESHOLD with empty queue", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    vi.useFakeTimers();
+    const r = await _mount();
+
+    // 첫 active-paced tick들 — _lastActivityRef는 mount 시점이라 IDLE_THRESHOLD
+    // 안. 5s씩 4번 진행 → 활성.
+    let tickCount = 1;  // mount fetch
+    for (let i = 0; i < 4; i++) {
+      await act(async () => { vi.advanceTimersByTime(5_000); await _flush(); });
+      tickCount += 1;
+    }
+    expect(backendApi.listApprovals).toHaveBeenCalledTimes(tickCount);
+
+    // IDLE_THRESHOLD 너머로 5분 + 마진 점프. 다음 scheduleNext가 idle 30s를 골라야.
+    await act(async () => { vi.advanceTimersByTime(5 * 60 * 1000); await _flush(); });
+    const callsAfterIdleEntry = backendApi.listApprovals.mock.calls.length;
+
+    // 25s — idle tick 아직 안 fire.
+    await act(async () => { vi.advanceTimersByTime(25_000); await _flush(); });
+    expect(backendApi.listApprovals.mock.calls.length).toBe(callsAfterIdleEntry);
+
+    // 30s 넘기면 — idle tick fire.
+    await act(async () => { vi.advanceTimersByTime(6_000); await _flush(); });
+    expect(backendApi.listApprovals.mock.calls.length).toBeGreaterThan(callsAfterIdleEntry);
+
+    r.unmount();
+    vi.useRealTimers();
+  });
+
+  it("snaps back to active 5s interval when a new pending arrives", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    vi.useFakeTimers();
+    const r = await _mount();
+
+    // Drift past idle threshold
+    await act(async () => { vi.advanceTimersByTime(10 * 60 * 1000); await _flush(); });
+
+    // 다음 idle tick에서 pending 1건 발견.
+    backendApi.listApprovals.mockResolvedValue([{ id: 9, status: "PENDING" }]);
+    await act(async () => { vi.advanceTimersByTime(IDLE_POLL_MS); await _flush(); });
+    expect(r.result.current.pending).toHaveLength(1);
+
+    // 그 다음 tick은 active-paced(5s).
+    const callsBefore = backendApi.listApprovals.mock.calls.length;
+    await act(async () => { vi.advanceTimersByTime(5_000); await _flush(); });
+    expect(backendApi.listApprovals.mock.calls.length).toBe(callsBefore + 1);
+
+    r.unmount();
+    vi.useRealTimers();
+  });
+
+  it("approve action shifts schedule back to active for the *next* cycle", async () => {
+    // Note: an in-flight idle 30s timer that started before approve() runs
+    // to completion — approve doesn't preempt timers, only marks activity
+    // for the *next* scheduleNext() call. So we let the in-flight idle tick
+    // finish first, then verify the cycle after that one is active-paced.
+    backendApi.listApprovals.mockResolvedValue([]);
+    backendApi.approveApproval.mockResolvedValue({});
+    vi.useFakeTimers();
+    const r = await _mount();
+
+    // Drift past idle threshold so the next scheduled tick is on an idle
+    // 30s timer.
+    await act(async () => { vi.advanceTimersByTime(10 * 60 * 1000); await _flush(); });
+
+    // operator action — _lastActivityRef 갱신.
+    await act(async () => { await r.result.current.approve(1, { note: "n" }); });
+
+    // 진행 중인 idle 30s timer가 발사되도록 30s 진행.
+    await act(async () => { vi.advanceTimersByTime(30_000); await _flush(); });
+    const callsAfterIdleFires = backendApi.listApprovals.mock.calls.length;
+
+    // 그 시점 scheduleNext()가 lastActivityRef를 보고 active 5s를 선택.
+    // 5s 후 — active tick fire.
+    await act(async () => { vi.advanceTimersByTime(5_000); await _flush(); });
+    expect(backendApi.listApprovals.mock.calls.length).toBe(callsAfterIdleFires + 1);
+
+    r.unmount();
+    vi.useRealTimers();
   });
 });
