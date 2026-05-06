@@ -169,4 +169,43 @@ describe("<DecisionDialog>", () => {
       expect(getByTestId("decision-dialog-error").textContent).toBe("via Enter");
     });
   });
+
+  // 095: 한국어 IME composition 중 Enter는 한글 조합 확정 의도이지 dialog
+  // 제출 의도가 아니다. isComposing 또는 keyCode 229를 만나면 handler가
+  // skip하는지 검증.
+  it("ignores Enter while IME is composing (isComposing=true)", () => {
+    const onConfirm = vi.fn();
+    _render({ onConfirm });
+    fireEvent.keyDown(window, { key: "Enter", isComposing: true });
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("ignores Enter when keyCode 229 (legacy IME composition signal)", () => {
+    const onConfirm = vi.fn();
+    _render({ onConfirm });
+    fireEvent.keyDown(window, { key: "Enter", keyCode: 229 });
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("still accepts Enter once composition ends (isComposing=false)", () => {
+    const onConfirm = vi.fn();
+    _render({ onConfirm });
+    // First Enter is the IME confirmation — ignored.
+    fireEvent.keyDown(window, { key: "Enter", isComposing: true });
+    expect(onConfirm).not.toHaveBeenCalled();
+    // Second Enter, composition ended — should submit.
+    fireEvent.keyDown(window, { key: "Enter", isComposing: false });
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("Esc still cancels even during IME composition (closing dialog beats Hangul confirm)", () => {
+    // Operators expect Esc to bail out unconditionally. Some browsers do
+    // intercept Esc to dismiss the IME candidate window first, but our
+    // listener gets the second-press through, and we don't filter on
+    // composition for Esc — the conservative escape hatch.
+    const onCancel = vi.fn();
+    _render({ onCancel });
+    fireEvent.keyDown(window, { key: "Escape", isComposing: true });
+    expect(onCancel).toHaveBeenCalled();
+  });
 });
