@@ -170,6 +170,33 @@ LIVE 활성화 전 사용자 명시 옵트인이 필요한 영역:
 - [`agent_stress_test_report.md`](agent_stress_test_report.md) — Agent 검증
 - [`backlog.md`](backlog.md) — NICE / LIVE 옵트인 항목
 
+## 사후 UI surface 보강 (187-191)
+
+186 시점에 백엔드는 모두 영구화되어 있었지만 일부 데이터가 endpoint /
+프론트 화면으로 노출되지 않은 상태였다. 추가 5건의 PR로 운영자 동선에
+직접 보이도록 surface:
+
+| PR | 역할 | 위치 |
+|---|---|---|
+| 187 | `GET /api/ai/agent-decisions` + `AgentCouncilCard` | AI 탭 상단 — chain별 chief 결정 + 펼치기 |
+| 188 | `AgentStatsCard` (162/165 데이터를 시각화) | AI 탭 — 승인율 / confidence histogram / per-strategy P/L |
+| 189 | `OrderAuditOut.ai_decision_meta` surface + `formatAiDecisionMeta` | Audit 탭 OrderAuditRow — AI 거부 사유 한 줄 |
+| 190 | `ApprovalOut`에 requested_by_ai / strategy / signal_* / ai_decision_meta 추가 + Approvals 카드 AI 배지 | Approvals 탭 결재 카드 |
+| 191 | `AgentLatestTile` | Dashboard 탭 — 최근 chief 결정 한 줄 |
+
+검증 (191 머지 직후):
+- backend pytest **861 passed**, 15 deselected
+- ruff **All checks passed**
+- frontend npm test **860 passed**, 26 files
+- npm run lint **0 errors** / 58 warnings
+- npm run build **354kB → 101kB gzipped**
+
+187-191은 **모두 read-only 보강**이다 — 새 broker 호출, 새 가드, 새 AI
+실행 경로 0건. CLAUDE.md 절대 원칙 / RiskManager → PermissionGate →
+OrderAuditLog 단일 진입점은 그대로다.
+
 ## 종료 상태
 
-**완료**. 사용자 directive 최종 완성 모드의 모든 항목 이행. 추가 자동 진행 여지 0 — 남은 항목은 모두 LIVE 옵트인 또는 NICE 미관 영역.
+**완료**. 사용자 directive 최종 완성 모드의 모든 항목 이행 + 사후 UI
+surface 보강 (187-191) 완료. 추가 자동 진행 여지는 LIVE 옵트인 또는
+NICE 영역으로만 남음.
