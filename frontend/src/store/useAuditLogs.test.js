@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { backendApi } from "../services/backend/client";
 import { ACTIVE_POLL_MS, IDLE_POLL_MS, IDLE_THRESHOLD_MS } from "./useApprovals";
-import { useEmergencyStopAudits, useOrderAudits } from "./useAuditLogs";
+import {
+  useAiAudits,
+  useBacktestRuns,
+  useEmergencyStopAudits,
+  useOrderAudits,
+} from "./useAuditLogs";
 
 
 vi.mock("../services/backend/client", () => ({
@@ -293,6 +298,114 @@ describe("useEmergencyStopAudits adaptive polling (109)", () => {
     const callsBefore = backendApi.emergencyStopHistory.mock.calls.length;
     await act(async () => { await vi.advanceTimersByTimeAsync(ACTIVE_POLL_MS); });
     expect(backendApi.emergencyStopHistory.mock.calls.length).toBe(callsBefore + 1);
+
+    r.unmount();
+  });
+});
+
+
+describe("useAiAudits adaptive polling (114)", () => {
+  beforeEach(() => { backendApi.listAiAudits.mockReset(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  const _mount = async () => {
+    let r;
+    await act(async () => {
+      r = renderHook(() => useAiAudits());
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+    });
+    return r;
+  };
+
+  it("polls at the active 5s interval after mount", async () => {
+    backendApi.listAiAudits.mockResolvedValue([
+      { id: 1, ticker: "005930", model: "claude-sonnet-4-6",
+        input_tokens: 100, output_tokens: 50,
+        created_at: "2026-05-06T12:00:00+00:00" },
+    ]);
+    vi.useFakeTimers();
+    const r = await _mount();
+    expect(backendApi.listAiAudits).toHaveBeenCalledTimes(1);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(ACTIVE_POLL_MS); });
+    expect(backendApi.listAiAudits).toHaveBeenCalledTimes(2);
+
+    r.unmount();
+  });
+
+  it("a new top id snaps polling back to active 5s after idle drift", async () => {
+    backendApi.listAiAudits.mockResolvedValue([]);
+    vi.useFakeTimers();
+    const r = await _mount();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(IDLE_THRESHOLD_MS + 60_000);
+    });
+
+    backendApi.listAiAudits.mockResolvedValue([
+      { id: 99, ticker: "AAA", model: "claude-haiku-4-5",
+        input_tokens: 10, output_tokens: 5,
+        created_at: "2026-05-06T13:00:00+00:00" },
+    ]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(IDLE_POLL_MS); });
+
+    const callsBefore = backendApi.listAiAudits.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(ACTIVE_POLL_MS); });
+    expect(backendApi.listAiAudits.mock.calls.length).toBe(callsBefore + 1);
+
+    r.unmount();
+  });
+});
+
+
+describe("useBacktestRuns adaptive polling (114)", () => {
+  beforeEach(() => { backendApi.listBacktestRuns.mockReset(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  const _mount = async () => {
+    let r;
+    await act(async () => {
+      r = renderHook(() => useBacktestRuns());
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+    });
+    return r;
+  };
+
+  it("polls at the active 5s interval after mount", async () => {
+    backendApi.listBacktestRuns.mockResolvedValue([
+      { id: 1, strategy: "sma_crossover", total_pnl: 100,
+        win_count: 5, loss_count: 3,
+        created_at: "2026-05-06T12:00:00+00:00" },
+    ]);
+    vi.useFakeTimers();
+    const r = await _mount();
+    expect(backendApi.listBacktestRuns).toHaveBeenCalledTimes(1);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(ACTIVE_POLL_MS); });
+    expect(backendApi.listBacktestRuns).toHaveBeenCalledTimes(2);
+
+    r.unmount();
+  });
+
+  it("transitions to idle 30s after IDLE_THRESHOLD without new top-id", async () => {
+    backendApi.listBacktestRuns.mockResolvedValue([
+      { id: 1, strategy: "sma_crossover", total_pnl: 100,
+        win_count: 5, loss_count: 3,
+        created_at: "2026-05-06T12:00:00+00:00" },
+    ]);
+    vi.useFakeTimers();
+    const r = await _mount();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(IDLE_THRESHOLD_MS + 1_000);
+    });
+    const callsAfterIdleEntry = backendApi.listBacktestRuns.mock.calls.length;
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(25_000); });
+    expect(backendApi.listBacktestRuns.mock.calls.length).toBe(callsAfterIdleEntry);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
+    expect(backendApi.listBacktestRuns.mock.calls.length).toBeGreaterThan(callsAfterIdleEntry);
 
     r.unmount();
   });

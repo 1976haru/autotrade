@@ -18,8 +18,13 @@ function useAuditList(fetcher) {
       const list = await fetcher();
       setItems(list);
       setError("");
+      // 114: list를 return — useAdaptivePollingByTopId의 polling callback이
+      // setState commit 시점을 기다리지 않고 즉시 top id를 검사할 수 있게.
+      // 105와 동일한 race-free 패턴.
+      return list;
     } catch (e) {
       setError(e.message);
+      return null;
     } finally {
       setLoading(false);
     }
@@ -94,8 +99,22 @@ function usePaginatedAuditList(fetchPage) {
 }
 
 
-export const useAiAudits     = () => useAuditList(() => backendApi.listAiAudits(50));
-export const useBacktestRuns = () => useAuditList(() => backendApi.listBacktestRuns(50));
+// 114: AI 호출/백테스트 실행도 109 useAdaptivePollingByTopId 적용. AI는
+// LIVE_AI_ASSIST 흐름에서 백엔드가 비동기로 row를 추가하므로 운영자가 별도
+// reload 없이 새 호출을 본다. backtest는 보통 사용자 수동 실행이라 idle 30s에
+// 머무르지만, 향후 background 실행이 도입되면 즉시 표면화. 통합 비용은 두
+// 추가 hook 호출만으로 끝나 충분히 가벼움.
+export const useAiAudits = () => {
+  const result = useAuditList(useCallback(() => backendApi.listAiAudits(50), []));
+  useAdaptivePollingByTopId(result.refresh, result.items);
+  return result;
+};
+
+export const useBacktestRuns = () => {
+  const result = useAuditList(useCallback(() => backendApi.listBacktestRuns(50), []));
+  useAdaptivePollingByTopId(result.refresh, result.items);
+  return result;
+};
 
 // 페이지 fetcher는 반드시 useCallback으로 stable 식별자를 유지해야 한다 —
 // usePaginatedAuditList가 fetchPage를 deps로 잡고 있어 매 렌더 새 함수가 들어
