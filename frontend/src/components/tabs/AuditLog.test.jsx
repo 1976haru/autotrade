@@ -2,11 +2,13 @@ import { cleanup, fireEvent, render, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  ApprovalAttemptAuditRow,
   EmergencyStopAuditRow,
   EventTimelineView,
   KindFilterBar,
   OrderAuditRow,
   TimeBucketBar,
+  flattenApprovalAttempts,
   mergeEvents,
   setEventKindFilter,
 } from "./AuditLog";
@@ -84,7 +86,7 @@ describe("mergeEvents", () => {
     const orders = Array.from({ length: 60 }, (_, i) =>
       _ORDER({ id: i, created_at: new Date(2026, 4, 5, 12, 0, i).toISOString() }),
     );
-    const events = mergeEvents(orders, [], 50);
+    const events = mergeEvents(orders, [], [], 50);
     expect(events).toHaveLength(50);
     // Most recent = highest second value (id 59)
     expect(events[0].row.id).toBe(59);
@@ -137,6 +139,103 @@ describe("<OrderAuditRow>", () => {
   it("renders 미체결 when not executed", () => {
     const { container } = render(<OrderAuditRow r={_ORDER({ executed: false })} />);
     expect(container.textContent).toContain("미체결");
+  });
+});
+
+
+describe("flattenApprovalAttempts", () => {
+  it("returns [] for empty inputs", () => {
+    expect(flattenApprovalAttempts([], [])).toEqual([]);
+    expect(flattenApprovalAttempts(undefined, undefined)).toEqual([]);
+  });
+
+  it("hoists symbol/side/quantity/approval_id from each parent into entries", () => {
+    const pending = [{
+      id: 17, symbol: "005930", side: "BUY", quantity: 5,
+      attempts: [
+        { at: "2026-05-06T11:00:00+00:00", decided_by: "ops1", reasons: ["x"] },
+        { at: "2026-05-06T11:30:00+00:00", decided_by: "ops2", reasons: ["y"] },
+      ],
+    }];
+    const flat = flattenApprovalAttempts(pending, []);
+    expect(flat).toHaveLength(2);
+    expect(flat[0]).toMatchObject({
+      approval_id: 17, symbol: "005930", side: "BUY", quantity: 5,
+      decided_by: "ops1",
+    });
+  });
+
+  it("merges entries from both pending and history sources", () => {
+    const pending = [{ id: 1, symbol: "A", side: "BUY", quantity: 1,
+                       attempts: [{ at: "t1", reasons: [] }] }];
+    const history = [{ id: 2, symbol: "B", side: "SELL", quantity: 2,
+                       attempts: [{ at: "t2", reasons: [] }] }];
+    expect(flattenApprovalAttempts(pending, history)).toHaveLength(2);
+  });
+
+  it("skips approvals with empty/missing attempts", () => {
+    const rows = [
+      { id: 1, symbol: "A", side: "BUY", quantity: 1, attempts: [] },
+      { id: 2, symbol: "B", side: "SELL", quantity: 1 },  // no attempts field
+      { id: 3, symbol: "C", side: "BUY", quantity: 1,
+        attempts: [{ at: "t", reasons: [] }] },
+    ];
+    expect(flattenApprovalAttempts(rows, [])).toHaveLength(1);
+  });
+});
+
+
+describe("<ApprovalAttemptAuditRow>", () => {
+  afterEach(cleanup);
+
+  function _attempt(overrides = {}) {
+    return {
+      approval_id: 17, symbol: "005930", side: "BUY", quantity: 5,
+      at: "2026-05-06T11:00:00+00:00", decided_by: "ops1",
+      reasons: ["emergency stop is enabled"],
+      ...overrides,
+    };
+  }
+
+  it("shows the 결재 시도 kind badge so it's identifiable in a mixed list", () => {
+    const { getByText } = render(<ApprovalAttemptAuditRow r={_attempt()} />);
+    expect(getByText("결재 시도")).toBeTruthy();
+  });
+
+  it("renders symbol, side, quantity, approval id, and reasons", () => {
+    const { container } = render(<ApprovalAttemptAuditRow r={_attempt()} />);
+    expect(container.textContent).toContain("005930");
+    expect(container.textContent).toContain("BUY");
+    expect(container.textContent).toContain("5주");
+    expect(container.textContent).toContain("승인 #17");
+    expect(container.textContent).toContain("by ops1");
+    expect(container.textContent).toContain("emergency stop is enabled");
+  });
+
+  it("renders 거부됨 status badge in red", () => {
+    const { getByText } = render(<ApprovalAttemptAuditRow r={_attempt()} />);
+    expect(getByText("거부됨").style.color).toBe("rgb(239, 68, 68)");
+  });
+});
+
+
+describe("mergeEvents with attempts", () => {
+  it("interleaves all three kinds by their respective timestamp fields", () => {
+    const orders = [{ id: 1, created_at: "2026-05-05T12:00:00+00:00" }];
+    const stops  = [{ id: 1, enabled: true, created_at: "2026-05-05T12:05:00+00:00" }];
+    const attempts = [{
+      approval_id: 7, symbol: "X", side: "BUY", quantity: 1,
+      at: "2026-05-05T12:10:00+00:00",
+    }];
+    const events = mergeEvents(orders, stops, attempts);
+    expect(events.map((e) => e.kind)).toEqual(["attempt", "stop", "order"]);
+  });
+
+  it("defaults attempts to empty list (back-compat with pre-079 callers)", () => {
+    const orders = [{ id: 1, created_at: "2026-05-05T12:00:00+00:00" }];
+    const events = mergeEvents(orders, []);
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe("order");
   });
 });
 
@@ -215,6 +314,78 @@ describe("<EventTimelineView> integration", () => {
     _resetHooks({}, { loading: true });
     const { getByText } = render(<EventTimelineView />);
     expect(getByText(/로딩 중/)).toBeTruthy();
+  });
+});
+
+
+describe("<EventTimelineView> integrates approvals.attempts", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    _resetHooks();
+  });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  const _approvals = (pending = [], history = []) => ({ pending, history });
+
+  it("renders attempt rows from pending approvals merged into the timeline", () => {
+    const approvals = _approvals(
+      [{ id: 17, symbol: "005930", side: "BUY", quantity: 5,
+         attempts: [{ at: "2026-05-05T12:00:00+00:00", decided_by: "ops",
+                      reasons: ["emergency stop is enabled"] }] }],
+      [],
+    );
+    const { container } = render(<EventTimelineView approvals={approvals} />);
+    expect(container.textContent).toContain("이벤트 타임라인 (1)");
+    // Attempt-row badge present
+    const attemptBadges = within(container).getAllByText("결재 시도");
+    // 1 from chip bar + 1 from row badge
+    expect(attemptBadges.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("kind=결재 시도 hides orders and stops, shows only attempts", () => {
+    _resetHooks(
+      { items: [{
+          id: 1, mode: "SIMULATION", requested_by_ai: false,
+          symbol: "X", side: "BUY", quantity: 1, order_type: "MARKET",
+          limit_price: null, latest_price: 1, decision: "APPROVED",
+          reasons: [], executed: true, broker_order_id: "M",
+          broker_status: "FILLED", filled_quantity: 1, avg_fill_price: 1,
+          message: "", created_at: "2026-05-05T12:00:00+00:00",
+      }]},
+      { items: [{ id: 1, enabled: true, decided_by: null, note: null,
+                  created_at: "2026-05-05T12:05:00+00:00" }]},
+    );
+    const approvals = _approvals(
+      [{ id: 17, symbol: "Y", side: "BUY", quantity: 1,
+         attempts: [{ at: "2026-05-05T12:10:00+00:00", reasons: [] }] }],
+      [],
+    );
+    const { container, getByRole } = render(<EventTimelineView approvals={approvals} />);
+    fireEvent.click(getByRole("radio", { name: "결재 시도" }));
+    expect(container.textContent).toContain("이벤트 타임라인 (1)");
+  });
+
+  it("symbol filter narrows attempts by ticker too", () => {
+    const approvals = _approvals(
+      [
+        { id: 1, symbol: "AAA", side: "BUY", quantity: 1,
+          attempts: [{ at: "2026-05-05T12:00:00+00:00", reasons: [] }] },
+        { id: 2, symbol: "BBB", side: "BUY", quantity: 1,
+          attempts: [{ at: "2026-05-05T12:05:00+00:00", reasons: [] }] },
+      ],
+      [],
+    );
+    const { container, getByPlaceholderText, getByRole } = render(
+      <EventTimelineView approvals={approvals} />,
+    );
+    fireEvent.click(getByRole("radio", { name: "결재 시도" }));
+    fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "BBB" } });
+    expect(container.textContent).toContain("이벤트 타임라인 (1)");
+  });
+
+  it("works without approvals prop (back-compat default)", () => {
+    const { container } = render(<EventTimelineView />);
+    expect(container.textContent).toContain("이벤트 타임라인 (0)");
   });
 });
 
