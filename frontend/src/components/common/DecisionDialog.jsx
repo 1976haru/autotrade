@@ -78,11 +78,22 @@ export function DecisionDialog({
 
   // Keyboard shortcuts: Esc cancels, Enter confirms with current trimmed values.
   // Suppressed while busy so a long-running confirm can't double-submit.
+  //
+  // 095: IME composition guard. Korean operators commit Hangul jamo with
+  // Enter, and without this guard the dialog would submit on every Hangul
+  // confirmation while typing into the note field — surprise approvals
+  // mid-sentence. `isComposing` is the modern check; `keyCode === 229` is
+  // the legacy fallback some browsers still emit during IME composition
+  // even though `isComposing` would be the spec-correct property.
   useEffect(() => {
     if (busy) return undefined;
     const handler = (e) => {
       if (e.key === "Escape") { e.preventDefault(); onCancel(); }
-      else if (e.key === "Enter") { e.preventDefault(); _submit(); }
+      else if (e.key === "Enter") {
+        if (e.isComposing || e.keyCode === 229) return;
+        e.preventDefault();
+        _submit();
+      }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
