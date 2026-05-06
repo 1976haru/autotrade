@@ -1725,3 +1725,147 @@ describe("<Approvals> avg decision time integration (106)", () => {
     expect(footer.textContent).toContain("2분 0초");
   });
 });
+
+
+describe("<Approvals> history keyboard navigation (107)", () => {
+  function _h(id, symbol = "AAA", overrides = {}) {
+    return {
+      id, symbol, side: "BUY", quantity: 1, order_type: "MARKET", limit_price: null,
+      status: "APPROVED", mode: "LIVE_MANUAL_APPROVAL",
+      created_at: "2026-05-06T11:50:00+00:00",
+      decided_at: "2026-05-06T12:00:00+00:00",
+      decided_by: "u", note: "", audit_id: id,
+      ...overrides,
+    };
+  }
+
+  let approvals;
+  beforeEach(() => {
+    approvals = _makeApprovals({
+      pending: [],
+      history: [_h(1, "AAA"), _h(2, "BBB"), _h(3, "CCC")],
+    });
+  });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  it("renders the j/k hint row when history has visible rows", () => {
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    const hint = getByTestId("approvals-history-keyboard-hint");
+    expect(hint.textContent).toContain("j");
+    expect(hint.textContent).toContain("k");
+    expect(hint.textContent).toContain("처리 내역 행 이동");
+  });
+
+  it("hides the j/k hint when filteredHistory is empty", () => {
+    const empty = _makeApprovals({ pending: [], history: [] });
+    const { container } = render(<Approvals approvals={empty} operatorName="" />);
+    expect(container.querySelector('[data-testid="approvals-history-keyboard-hint"]')).toBeNull();
+  });
+
+  it("'j' moves history focus from -1 → 0 → 1 → ...", () => {
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(getByTestId("approval-history-row-1").dataset.focused).toBe("false");
+    fireEvent.keyDown(window, { key: "j" });
+    expect(getByTestId("approval-history-row-1").dataset.focused).toBe("true");
+    fireEvent.keyDown(window, { key: "j" });
+    expect(getByTestId("approval-history-row-2").dataset.focused).toBe("true");
+  });
+
+  it("'j' clamps at the last history row", () => {
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    for (let i = 0; i < 10; i++) fireEvent.keyDown(window, { key: "j" });
+    expect(getByTestId("approval-history-row-3").dataset.focused).toBe("true");
+  });
+
+  it("'k' moves history focus back; clamps at the first row", () => {
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "k" });
+    expect(getByTestId("approval-history-row-1").dataset.focused).toBe("true");
+    fireEvent.keyDown(window, { key: "k" });
+    fireEvent.keyDown(window, { key: "k" });
+    expect(getByTestId("approval-history-row-1").dataset.focused).toBe("true");
+  });
+
+  it("clicking a history row sets focus to that row", () => {
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.click(getByTestId("approval-history-row-2"));
+    expect(getByTestId("approval-history-row-2").dataset.focused).toBe("true");
+    expect(getByTestId("approval-history-row-1").dataset.focused).toBe("false");
+  });
+
+  it("PENDING ↑↓ and history j/k tracks two independent focuses", () => {
+    const both = _makeApprovals({
+      pending: [{
+        id: 99, symbol: "PEND", side: "BUY", quantity: 1,
+        order_type: "MARKET", limit_price: null, mode: "LIVE_MANUAL_APPROVAL",
+        created_at: "2026-05-06T11:55:00+00:00",
+      }],
+      history: [_h(1, "AAA"), _h(2, "BBB")],
+    });
+    const { getByTestId } = render(<Approvals approvals={both} operatorName="" />);
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "j" });
+    expect(getByTestId("approval-pending-row-99").dataset.focused).toBe("true");
+    expect(getByTestId("approval-history-row-2").dataset.focused).toBe("true");
+  });
+
+  it("a/r/c with history focused but no pending focus is a no-op", () => {
+    // Pending 비어 있고 history만 focused — a/r/c는 PENDING 전용이므로 모달 안 열림.
+    const { queryByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "a" });
+    expect(queryByRole("dialog")).toBeNull();
+  });
+
+  it("j/k are skipped during IME composition", () => {
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.keyDown(window, { key: "j", isComposing: true });
+    expect(getByTestId("approval-history-row-1").dataset.focused).toBe("false");
+  });
+
+  it("j/k are skipped while focus is in an input (filter typing)", () => {
+    const { getByPlaceholderText, getByTestId } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    const input = getByPlaceholderText(/종목/);
+    input.focus();
+    fireEvent.keyDown(input, { key: "j" });
+    expect(getByTestId("approval-history-row-1").dataset.focused).toBe("false");
+  });
+
+  it("j/k are no-ops while a decision modal is open", () => {
+    const both = _makeApprovals({
+      pending: [{
+        id: 99, symbol: "PEND", side: "BUY", quantity: 1,
+        order_type: "MARKET", limit_price: null, mode: "LIVE_MANUAL_APPROVAL",
+        created_at: "2026-05-06T11:55:00+00:00",
+      }],
+      history: [_h(1, "AAA"), _h(2, "BBB")],
+    });
+    const { getByRole, getByTestId } = render(<Approvals approvals={both} operatorName="" />);
+    // open approve modal
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "a" });
+    expect(getByRole("dialog")).toBeTruthy();
+    // history nav blocked
+    fireEvent.keyDown(window, { key: "j" });
+    expect(getByTestId("approval-history-row-1").dataset.focused).toBe("false");
+  });
+
+  it("history focus index clamps when filtered rows shrink under it", () => {
+    const { rerender, getByTestId, queryByTestId } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "j" });
+    fireEvent.keyDown(window, { key: "j" });
+    expect(getByTestId("approval-history-row-3").dataset.focused).toBe("true");
+    const shrunk = _makeApprovals({ pending: [], history: [_h(1, "AAA")] });
+    rerender(<Approvals approvals={shrunk} operatorName="" />);
+    expect(queryByTestId("approval-history-row-3")).toBeNull();
+    expect(getByTestId("approval-history-row-1").dataset.focused).toBe("true");
+  });
+});
