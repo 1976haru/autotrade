@@ -608,12 +608,48 @@ export function AiAuditView() {
 }
 
 
-// 090: distinguish "no backtest runs at all" from "filter narrowed to zero",
-// matching 081/082/089 empty-state convention.
-export function backtestEmptyMessage(items, strategyNeedle) {
+// 099: BacktestRun 스키마에는 status/error 필드가 없다 — 백엔드가 실행 실패
+// 시 row를 만들지 않는 단순 구조라 "성공/실패" 분류는 client에서 만들 수 없다.
+// 대신 운영자에게 더 의미 있는 outcome(수익/손실/break-even) 분류 chip을 둔다.
+// total_pnl 부호로 분류하므로 schema 변경 0건.
+export function classifyBacktestOutcome(run) {
+  if (!run || run.total_pnl === undefined || run.total_pnl === null) return "breakeven";
+  if (run.total_pnl > 0) return "profit";
+  if (run.total_pnl < 0) return "loss";
+  return "breakeven";
+}
+
+
+const BACKTEST_OUTCOME_FILTERS = [
+  { id: "all",       label: "전체",     color: "#7dd3fc" },
+  { id: "profit",    label: "수익",     color: "#22c55e" },
+  { id: "loss",      label: "손실",     color: "#ef4444" },
+  { id: "breakeven", label: "브레이크", color: "#94a3b8" },
+];
+
+export const BACKTEST_OUTCOME_STORAGE_KEY = "autotrade.backtestOutcomeFilter";
+const _VALID_BACKTEST_OUTCOMES = new Set(BACKTEST_OUTCOME_FILTERS.map((f) => f.id));
+export const isValidBacktestOutcome = (v) => _VALID_BACKTEST_OUTCOMES.has(v);
+
+
+export function BacktestOutcomeFilterBar({ active, onChange }) {
+  return (
+    <ChipFilterBar items={BACKTEST_OUTCOME_FILTERS} active={active}
+      onChange={onChange} ariaLabel="백테스트 결과 필터" />
+  );
+}
+
+
+// 090/099: distinguish "no backtest runs at all" from "filter narrowed to zero",
+// matching 081/082/089 empty-state convention. 099 adds outcome axis — same
+// shape as 092's modeFilter extension, so backwards-compatible if outcome arg
+// is omitted.
+export function backtestEmptyMessage(items, strategyNeedle, outcome) {
   if (!items || items.length === 0) return "백테스트 실행 기록 없음";
-  if (strategyNeedle) return "해당 전략의 백테스트 없음";
-  return "백테스트 실행 기록 없음";
+  const hasFilter =
+    (strategyNeedle && strategyNeedle.length > 0)
+    || (outcome && outcome !== "all");
+  return hasFilter ? "해당 조건의 백테스트 없음" : "백테스트 실행 기록 없음";
 }
 
 
@@ -624,9 +660,16 @@ export function BacktestRunsView() {
   // Same shape as 089 ticker filter on AI sub-tab.
   const [strategyFilter, setStrategyFilter] = useState("");
   const _strategyNeedle = strategyFilter.trim().toLowerCase();
-  const filteredItems = _strategyNeedle
-    ? items.filter((r) => r.strategy && r.strategy.toLowerCase().includes(_strategyNeedle))
-    : items;
+  // 099: persisted outcome filter — investigation sessions tend to lock onto
+  // 손실 케이스 한 번에 검토하기 같은 흐름이 길게 이어진다. 083/086/092
+  // status/time/mode와 같은 영구 저장 패턴.
+  const [outcomeFilter, setOutcomeFilter] = usePersistedState(
+    BACKTEST_OUTCOME_STORAGE_KEY, "all", isValidBacktestOutcome,
+  );
+  const filteredItems = items
+    .filter((r) =>
+      !_strategyNeedle || (r.strategy && r.strategy.toLowerCase().includes(_strategyNeedle)))
+    .filter((r) => outcomeFilter === "all" || classifyBacktestOutcome(r) === outcomeFilter);
 
   return (
     <Card>
@@ -642,6 +685,12 @@ export function BacktestRunsView() {
           placeholder="🔍 전략 (예: sma_crossover)"
         />
       </div>
+      <div style={{ marginBottom: 8 }}>
+        <BacktestOutcomeFilterBar
+          active={outcomeFilter}
+          onChange={setOutcomeFilter}
+        />
+      </div>
 
       {error && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>}
 
@@ -649,7 +698,7 @@ export function BacktestRunsView() {
         <div style={{ color: "#475569", fontSize: 11, padding: 12, textAlign: "center" }}>로딩 중…</div>
       ) : filteredItems.length === 0 ? (
         <div style={{ color: "#1e3a5c", fontSize: 12, padding: 16, textAlign: "center" }}>
-          {backtestEmptyMessage(items, _strategyNeedle)}
+          {backtestEmptyMessage(items, _strategyNeedle, outcomeFilter)}
         </div>
       ) : filteredItems.map((r) => {
         const trades = r.win_count + r.loss_count;

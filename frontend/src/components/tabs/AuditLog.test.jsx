@@ -6,6 +6,8 @@ import {
   AiModelBadge,
   AiTokenSummary,
   ApprovalAttemptAuditRow,
+  BACKTEST_OUTCOME_STORAGE_KEY,
+  BacktestOutcomeFilterBar,
   BacktestRunsView,
   EmergencyStopAuditRow,
   EventTimelineView,
@@ -14,8 +16,10 @@ import {
   TimeBucketBar,
   aiAuditEmptyMessage,
   backtestEmptyMessage,
+  classifyBacktestOutcome,
   emptyEventTimelineMessage,
   flattenApprovalAttempts,
+  isValidBacktestOutcome,
   mergeEvents,
   modelAccent,
   setEventKindFilter,
@@ -1283,20 +1287,34 @@ describe("backtestEmptyMessage", () => {
     expect(backtestEmptyMessage(undefined, "")).toBe("백테스트 실행 기록 없음");
   });
 
-  it("returns the filter-narrowed variant when items exist but strategy matches none", () => {
+  it("returns the filter-narrowed variant when strategy filter narrows to zero", () => {
     expect(backtestEmptyMessage([{ id: 1 }], "sma_crossover"))
-      .toBe("해당 전략의 백테스트 없음");
+      .toBe("해당 조건의 백테스트 없음");
   });
 
-  it("falls back to plain message when no strategy filter active", () => {
+  it("falls back to plain message when no filter active", () => {
     expect(backtestEmptyMessage([{ id: 1 }], "")).toBe("백테스트 실행 기록 없음");
+  });
+
+  it("treats outcome axis like other filters (099)", () => {
+    expect(backtestEmptyMessage([{ id: 1 }], "", "profit"))
+      .toBe("해당 조건의 백테스트 없음");
+    expect(backtestEmptyMessage([{ id: 1 }], "", "all"))
+      .toBe("백테스트 실행 기록 없음");
+  });
+
+  it("undefined outcome arg falls back to 'no outcome filter' (back-compat, 099)", () => {
+    expect(backtestEmptyMessage([{ id: 1 }], "", undefined))
+      .toBe("백테스트 실행 기록 없음");
   });
 });
 
 
 describe("<BacktestRunsView> strategy filter", () => {
-  beforeEach(() => { _resetBacktestHook(); });
-  afterEach(cleanup);
+  // 099 added a persisted outcome filter; clear localStorage so prior tests
+  // can't leak a non-"all" choice into this suite's strategy assertions.
+  beforeEach(() => { _resetBacktestHook(); localStorage.clear(); });
+  afterEach(() => { cleanup(); localStorage.clear(); });
 
   function _bt(overrides = {}) {
     return {
@@ -1362,7 +1380,7 @@ describe("<BacktestRunsView> strategy filter", () => {
     _resetBacktestHook({ items: [_bt({ id: 1, strategy: "sma_crossover" })] });
     const { getByText, getByPlaceholderText } = render(<BacktestRunsView />);
     fireEvent.change(getByPlaceholderText(/전략/), { target: { value: "nonexistent" } });
-    expect(getByText("해당 전략의 백테스트 없음")).toBeTruthy();
+    expect(getByText("해당 조건의 백테스트 없음")).toBeTruthy();
   });
 
   it("plain '없음' message when items list itself is empty", () => {
@@ -1379,6 +1397,186 @@ describe("<BacktestRunsView> strategy filter", () => {
     fireEvent.change(getByPlaceholderText(/전략/), { target: { value: "sma" } });
     expect(container.textContent).toContain("sma_crossover");
     expect(container.textContent).toContain("(1)");
+  });
+});
+
+
+describe("classifyBacktestOutcome (099)", () => {
+  it("returns 'profit' when total_pnl is positive", () => {
+    expect(classifyBacktestOutcome({ total_pnl: 100 })).toBe("profit");
+    expect(classifyBacktestOutcome({ total_pnl: 1 })).toBe("profit");
+  });
+
+  it("returns 'loss' when total_pnl is negative", () => {
+    expect(classifyBacktestOutcome({ total_pnl: -100 })).toBe("loss");
+    expect(classifyBacktestOutcome({ total_pnl: -1 })).toBe("loss");
+  });
+
+  it("returns 'breakeven' when total_pnl is zero", () => {
+    expect(classifyBacktestOutcome({ total_pnl: 0 })).toBe("breakeven");
+  });
+
+  it("returns 'breakeven' for null/undefined run or missing total_pnl", () => {
+    expect(classifyBacktestOutcome(null)).toBe("breakeven");
+    expect(classifyBacktestOutcome(undefined)).toBe("breakeven");
+    expect(classifyBacktestOutcome({})).toBe("breakeven");
+    expect(classifyBacktestOutcome({ total_pnl: null })).toBe("breakeven");
+  });
+});
+
+
+describe("isValidBacktestOutcome (099)", () => {
+  it("accepts the four canonical ids", () => {
+    expect(isValidBacktestOutcome("all")).toBe(true);
+    expect(isValidBacktestOutcome("profit")).toBe(true);
+    expect(isValidBacktestOutcome("loss")).toBe(true);
+    expect(isValidBacktestOutcome("breakeven")).toBe(true);
+  });
+
+  it("rejects unknown values", () => {
+    expect(isValidBacktestOutcome("garbage")).toBe(false);
+    expect(isValidBacktestOutcome("")).toBe(false);
+    expect(isValidBacktestOutcome(null)).toBe(false);
+  });
+});
+
+
+describe("<BacktestOutcomeFilterBar> (099)", () => {
+  afterEach(cleanup);
+
+  it("renders four chips with the expected labels", () => {
+    const { getByRole } = render(<BacktestOutcomeFilterBar active="all" onChange={() => {}} />);
+    expect(getByRole("radiogroup", { name: "백테스트 결과 필터" })).toBeTruthy();
+    expect(getByRole("radio", { name: "전체" })).toBeTruthy();
+    expect(getByRole("radio", { name: "수익" })).toBeTruthy();
+    expect(getByRole("radio", { name: "손실" })).toBeTruthy();
+    expect(getByRole("radio", { name: "브레이크" })).toBeTruthy();
+  });
+
+  it("calls onChange with the chip id", () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(<BacktestOutcomeFilterBar active="all" onChange={onChange} />);
+    fireEvent.click(getByRole("radio", { name: "수익" }));
+    expect(onChange).toHaveBeenCalledWith("profit");
+    fireEvent.click(getByRole("radio", { name: "손실" }));
+    expect(onChange).toHaveBeenLastCalledWith("loss");
+    fireEvent.click(getByRole("radio", { name: "브레이크" }));
+    expect(onChange).toHaveBeenLastCalledWith("breakeven");
+  });
+});
+
+
+describe("<BacktestRunsView> outcome filter (099)", () => {
+  beforeEach(() => { _resetBacktestHook(); localStorage.clear(); });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _bt(overrides = {}) {
+    return {
+      id: 1, strategy: "sma_crossover",
+      params: {}, initial_cash: 10_000_000, quantity: 10, bars_processed: 100,
+      final_cash: 10_500_000, total_pnl: 500_000,
+      win_count: 5, loss_count: 3, max_drawdown: 100_000,
+      data_source: "bars", data_symbol: "005930",
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("default '전체' shows profit, loss, breakeven rows together", () => {
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "win",   total_pnl:  200_000 }),
+        _bt({ id: 2, strategy: "lose",  total_pnl: -300_000 }),
+        _bt({ id: 3, strategy: "flat",  total_pnl: 0 }),
+      ],
+    });
+    const { container } = render(<BacktestRunsView />);
+    expect(container.textContent).toContain("win");
+    expect(container.textContent).toContain("lose");
+    expect(container.textContent).toContain("flat");
+  });
+
+  it("clicking 수익 narrows to profit-only rows", () => {
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "win",  total_pnl:  200_000 }),
+        _bt({ id: 2, strategy: "lose", total_pnl: -300_000 }),
+      ],
+    });
+    const { container, getByRole } = render(<BacktestRunsView />);
+    fireEvent.click(getByRole("radio", { name: "수익" }));
+    expect(container.textContent).toContain("win");
+    expect(container.textContent).not.toContain("lose");
+  });
+
+  it("clicking 손실 narrows to negative-pnl rows", () => {
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "win",  total_pnl:  200_000 }),
+        _bt({ id: 2, strategy: "lose", total_pnl: -300_000 }),
+        _bt({ id: 3, strategy: "flat", total_pnl: 0 }),
+      ],
+    });
+    const { container, getByRole } = render(<BacktestRunsView />);
+    fireEvent.click(getByRole("radio", { name: "손실" }));
+    expect(container.textContent).not.toContain("win");
+    expect(container.textContent).toContain("lose");
+    expect(container.textContent).not.toContain("flat");
+  });
+
+  it("clicking 브레이크 narrows to zero-pnl rows", () => {
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "win",  total_pnl:  200_000 }),
+        _bt({ id: 2, strategy: "flat", total_pnl: 0 }),
+      ],
+    });
+    const { container, getByRole } = render(<BacktestRunsView />);
+    fireEvent.click(getByRole("radio", { name: "브레이크" }));
+    expect(container.textContent).not.toContain("win");
+    expect(container.textContent).toContain("flat");
+  });
+
+  it("composes with strategy filter (수익 × strategy substring)", () => {
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "sma_crossover", total_pnl:  200_000 }),
+        _bt({ id: 2, strategy: "rsi_revert",    total_pnl:  100_000 }),
+        _bt({ id: 3, strategy: "sma_breakout",  total_pnl: -50_000 }),
+      ],
+    });
+    const { container, getByRole, getByPlaceholderText } = render(<BacktestRunsView />);
+    fireEvent.click(getByRole("radio", { name: "수익" }));
+    fireEvent.change(getByPlaceholderText(/전략/), { target: { value: "sma" } });
+    expect(container.textContent).toContain("sma_crossover");    // sma + 수익
+    expect(container.textContent).not.toContain("rsi_revert");   // 수익이지만 sma 아님
+    expect(container.textContent).not.toContain("sma_breakout"); // sma지만 손실
+  });
+
+  it("shows the filter-narrowed empty message when outcome eliminates everything", () => {
+    _resetBacktestHook({
+      items: [_bt({ id: 1, strategy: "win", total_pnl: 200_000 })],
+    });
+    const { getByText, getByRole } = render(<BacktestRunsView />);
+    fireEvent.click(getByRole("radio", { name: "손실" }));
+    expect(getByText("해당 조건의 백테스트 없음")).toBeTruthy();
+  });
+
+  it("persists selection to localStorage", () => {
+    _resetBacktestHook({ items: [_bt()] });
+    const { getByRole, unmount } = render(<BacktestRunsView />);
+    fireEvent.click(getByRole("radio", { name: "손실" }));
+    expect(localStorage.getItem(BACKTEST_OUTCOME_STORAGE_KEY)).toBe("loss");
+    unmount();
+    const { getByRole: g2 } = render(<BacktestRunsView />);
+    expect(g2("radio", { name: "손실" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("falls back to 전체 when stored value is unknown", () => {
+    localStorage.setItem(BACKTEST_OUTCOME_STORAGE_KEY, "garbage");
+    _resetBacktestHook({ items: [_bt()] });
+    const { getByRole } = render(<BacktestRunsView />);
+    expect(getByRole("radio", { name: "전체" }).getAttribute("aria-checked")).toBe("true");
   });
 });
 
