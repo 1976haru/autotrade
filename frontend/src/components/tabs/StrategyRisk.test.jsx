@@ -7,6 +7,7 @@ import {
   EmergencyStopConfirmModal,
   EmergencyStopHistoryCard,
   EmergencyStopHistoryRow,
+  EmergencyStopSummaryCard,
 } from "./StrategyRisk";
 
 
@@ -456,5 +457,71 @@ describe("<EmergencyStopHistoryCard>", () => {
   it("includes the explanatory note about the runtime flag resetting on restart", () => {
     const { container } = render(<EmergencyStopHistoryCard history={[]} />);
     expect(container.textContent).toContain("재시작");
+  });
+});
+
+
+describe("<EmergencyStopSummaryCard> (208)", () => {
+  afterEach(cleanup);
+
+  const _SUMMARY = {
+    currently_active: false,
+    active_since:     null,
+    total_toggles:    8,
+    total_activations: 3,
+    by_reason: { data_stale: 2, broker_error: 1 },
+  };
+
+  it("renders loading state", () => {
+    const { container } = render(<EmergencyStopSummaryCard loading />);
+    expect(container.textContent).toContain("로딩");
+  });
+
+  it("renders error state", () => {
+    const { container } = render(<EmergencyStopSummaryCard error="boom" />);
+    expect(container.textContent).toContain("조회 실패: boom");
+  });
+
+  it("renders OFF state with totals + reason rows", () => {
+    const { getByTestId } = render(<EmergencyStopSummaryCard summary={_SUMMARY} />);
+    expect(getByTestId("es-tile-state").textContent).toContain("OFF");
+    expect(getByTestId("es-reason-data_stale").textContent).toContain("2");
+    expect(getByTestId("es-reason-broker_error").textContent).toContain("1");
+  });
+
+  it("renders ACTIVE banner with active_since when currently_active", () => {
+    const { getByTestId } = render(<EmergencyStopSummaryCard summary={{
+      ..._SUMMARY,
+      currently_active: true,
+      active_since:     "2026-05-07T01:23:45",
+    }} />);
+    expect(getByTestId("es-tile-state").textContent).toContain("ACTIVE");
+    expect(getByTestId("es-active-since").textContent).toContain("2026-05-07 01:23:45");
+  });
+
+  it("renders empty body when no reasons recorded", () => {
+    const { container } = render(<EmergencyStopSummaryCard summary={{
+      ..._SUMMARY, by_reason: {}, total_activations: 0,
+    }} />);
+    expect(container.textContent).toContain("활성 사유 없음");
+  });
+
+  it("refresh button fires onRefresh", () => {
+    const onRefresh = vi.fn();
+    const { getByText } = render(
+      <EmergencyStopSummaryCard summary={_SUMMARY} onRefresh={onRefresh} />,
+    );
+    fireEvent.click(getByText(/새로고침/));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("orders reasons by count desc", () => {
+    const { container } = render(<EmergencyStopSummaryCard summary={{
+      ..._SUMMARY,
+      by_reason: { data_stale: 2, broker_error: 5, manual_operator: 1 },
+    }} />);
+    const text = container.textContent;
+    expect(text.indexOf("broker_error")).toBeLessThan(text.indexOf("data_stale"));
+    expect(text.indexOf("data_stale")).toBeLessThan(text.indexOf("manual_operator"));
   });
 });

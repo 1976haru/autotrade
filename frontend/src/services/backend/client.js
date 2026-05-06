@@ -49,6 +49,7 @@ export const backendApi = {
     const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     return backendFetch(`/api/risk/emergency-stop/history?${qs.toString()}`);
   },
+  emergencyStopSummary: () => backendFetch("/api/risk/emergency-stop/summary"),
   brokerPrice:     (symbol) => backendFetch(`/api/broker/price/${symbol}`),
   brokerBalance:   () => backendFetch("/api/broker/balance"),
   brokerPositions: () => backendFetch("/api/broker/positions"),

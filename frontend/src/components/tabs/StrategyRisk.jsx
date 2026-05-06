@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { STRATEGIES } from "../../config/strategies";
 import { RISK_POLICY_FIELDS } from "../../config/riskPolicy";
 import { Btn, Card, SectionLabel, Toggle, Slider } from "../common";
 import { DecisionDialog } from "../common/DecisionDialog";
 import { fmtKRW } from "../../utils/format";
+import { backendApi } from "../../services/backend/client";
 
 
 // 199: extended for the broader RiskPolicy surface — pct / seconds / list types
@@ -112,6 +113,107 @@ const _EMERGENCY_STOP_REASONS = [
   { value: "margin_risk",              label: "선물 증거금 위험" },
   { value: "futures_liquidation_risk", label: "선물 강제청산 임박" },
 ];
+
+
+// 208: aggregate view of emergency-stop activity. Counts how often each
+// reason_code triggered an ON state, surfaces the runtime active flag
+// alongside active_since (so operators can tell "stop is on AND it's been
+// on for 3 hours" without scrolling history).
+export function EmergencyStopSummaryCard({ summary, loading, error, onRefresh }) {
+  if (loading && !summary) {
+    return (
+      <Card>
+        <SectionLabel>긴급정지 요약</SectionLabel>
+        <div style={{ fontSize: 11, color: "#475569" }}>로딩 중…</div>
+      </Card>
+    );
+  }
+  if (error) {
+    return (
+      <Card>
+        <SectionLabel>긴급정지 요약</SectionLabel>
+        <div style={{ fontSize: 11, color: "#f87171" }}>조회 실패: {error}</div>
+      </Card>
+    );
+  }
+  if (!summary) return null;
+
+  const reasons = Object.entries(summary.by_reason || {})
+    .sort((a, b) => b[1] - a[1]);
+
+  return (
+    <Card data-testid="emergency-stop-summary"
+          accentColor={summary.currently_active ? "#ef444455" : undefined}>
+      <div style={{ display: "flex", justifyContent: "space-between",
+                    alignItems: "center", marginBottom: 6 }}>
+        <SectionLabel>긴급정지 요약</SectionLabel>
+        {onRefresh && (
+          <button onClick={onRefresh} style={{
+            fontSize: 10, padding: "3px 8px", background: "#0c2035",
+            border: "1px solid #1e3a5c", borderRadius: 3, cursor: "pointer",
+            color: "#7dd3fc",
+          }}>↻ 새로고침</button>
+        )}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr",
+                    gap: 6, marginBottom: 8 }}>
+        <div data-testid="es-tile-state"
+             style={{ textAlign: "center", padding: 6,
+                      background: "#0c2035", borderRadius: 4 }}>
+          <div style={{ fontSize: 9, color: "#475569" }}>상태</div>
+          <div style={{ fontSize: 13, fontWeight: 700,
+                        color: summary.currently_active ? "#ef4444" : "#22c55e" }}>
+            {summary.currently_active ? "ACTIVE" : "OFF"}
+          </div>
+        </div>
+        <div style={{ textAlign: "center", padding: 6,
+                      background: "#0c2035", borderRadius: 4 }}>
+          <div style={{ fontSize: 9, color: "#475569" }}>토글 누적</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#7dd3fc" }}>
+            {summary.total_toggles}
+          </div>
+        </div>
+        <div style={{ textAlign: "center", padding: 6,
+                      background: "#0c2035", borderRadius: 4 }}>
+          <div style={{ fontSize: 9, color: "#475569" }}>활성화 누적</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#fbbf24" }}>
+            {summary.total_activations}
+          </div>
+        </div>
+      </div>
+
+      {summary.currently_active && summary.active_since && (
+        <div data-testid="es-active-since"
+             style={{ fontSize: 10, color: "#fca5a5", marginBottom: 8 }}>
+          활성 시작: {summary.active_since.replace("T", " ").slice(0, 19)}
+        </div>
+      )}
+
+      {reasons.length === 0 ? (
+        <div style={{ fontSize: 11, color: "#64748b" }}>활성 사유 없음</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 2 }}>
+            사유별 활성화 횟수
+          </div>
+          {reasons.map(([reason, count]) => (
+            <div key={reason}
+                 data-testid={`es-reason-${reason}`}
+                 style={{
+                   display: "flex", justifyContent: "space-between",
+                   padding: "4px 8px", background: "#0c2035",
+                   borderRadius: 3, fontSize: 11,
+                 }}>
+              <span style={{ color: "#94a3b8" }}>{reason}</span>
+              <span style={{ color: "#fbbf24", fontWeight: 700 }}>{count}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
 
 
 export function EmergencyStopHistoryCard({ history }) {
@@ -267,10 +369,55 @@ export function BackendPolicyCard({ riskPolicy, operatorName = "" }) {
 }
 
 
+// 208: lightweight hook for /api/risk/emergency-stop/summary. Single
+// fetch on mount + manual refresh. Reuses the same pattern as 191 / 193 /
+// 194 cards — no shared store needed.
+function useEmergencyStopSummary() {
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState("");
+
+  const refresh = async () => {
+    setLoading(true); setError("");
+    try {
+      const data = await backendApi.emergencyStopSummary();
+      setSummary(data);
+    } catch (e) {
+      setError(e.message);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true); setError("");
+      try {
+        const data = await backendApi.emergencyStopSummary();
+        if (!cancelled) setSummary(data);
+      } catch (e) {
+        if (!cancelled) setError(e.message);
+      }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  return { summary, loading, error, refresh };
+}
+
+
 export function StrategyRisk({ strategyOn, toggle, strategyParams, updateParam, risk, updateRisk, riskPolicy, operatorName }) {
+  const esSummary = useEmergencyStopSummary();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <BackendPolicyCard riskPolicy={riskPolicy} operatorName={operatorName} />
+      <EmergencyStopSummaryCard
+        summary={esSummary.summary}
+        loading={esSummary.loading}
+        error={esSummary.error}
+        onRefresh={esSummary.refresh}
+      />
       <EmergencyStopHistoryCard history={riskPolicy.history || []} />
 
       <div style={{ fontSize: 11, color: "#475569", marginBottom: 2, marginTop: 8 }}>
