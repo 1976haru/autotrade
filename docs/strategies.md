@@ -15,6 +15,8 @@
 
 미작성 시 base.py의 default(`""` / `"any"` / `{}`)가 그대로 응답에 surface되어 운영자가 "미완성 신호"로 인지한다.
 
+**170 강제**: `build_strategy()` 호출 시 default contract가 그대로면 `StrategyContractError` raise. `enforce_contract=False`로 의도적 우회 가능 (백테스트 / 검증 흐름). 검사 항목: `entry`/`exit`/`invalidation` 비어있음, `required_regime="any"` (구체값 강제), `risk_profile={}` 빈 dict.
+
 `describe_strategy()` / `describe_all_strategies()` (concrete/__init__.py)와 `GET /api/strategies/registry` (routes_live_engine.py) 응답에 그대로 담긴다.
 
 ---

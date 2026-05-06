@@ -17,10 +17,55 @@ STRATEGY_REGISTRY: dict[str, type[Strategy]] = {
 }
 
 
-def build_strategy(name: str, params: dict | None) -> Strategy:
+class StrategyContractError(ValueError):
+    """170: Strategy class가 base.py default contract metadata를 그대로
+    노출 — entry/exit/invalidation 빈 문자열 또는 required_regime='any'.
+    운영자가 미완성 strategy를 LIVE에 배포하는 것을 사전 차단한다."""
+
+
+def validate_strategy_contract(cls: type[Strategy]) -> list[str]:
+    """class-level contract metadata가 모두 채워졌는지 검사. 빈 list면 통과,
+    아니면 violation reason 리스트.
+
+    검사 항목 (모두 base.py default를 거부):
+    - entry: 비어 있으면 거부 (string truthiness)
+    - exit:  동일
+    - invalidation: 동일
+    - required_regime: "any" 또는 빈 값 거부 (구체값 강제)
+    - risk_profile: 빈 dict 거부 (최소 position_size_pct 권장이지만 필드 존재만 확인)
+    """
+    violations: list[str] = []
+    if not (cls.entry and str(cls.entry).strip()):
+        violations.append("entry is empty (base.py default)")
+    if not (cls.exit and str(cls.exit).strip()):
+        violations.append("exit is empty (base.py default)")
+    if not (cls.invalidation and str(cls.invalidation).strip()):
+        violations.append("invalidation is empty (base.py default)")
+    regime = (cls.required_regime or "").strip()
+    if not regime or regime == "any":
+        violations.append(f"required_regime is '{regime or '<empty>'}' (base.py default — must be specific)")
+    if not cls.risk_profile:
+        violations.append("risk_profile is empty (base.py default)")
+    return violations
+
+
+def build_strategy(
+    name: str,
+    params: dict | None,
+    *,
+    enforce_contract: bool = True,
+) -> Strategy:
+    """170: enforce_contract=True (기본)이면 contract metadata 미완성 strategy
+    등록 거부. 백테스트 / 검증 흐름에서 의도적으로 우회가 필요하면 False 명시."""
     cls = STRATEGY_REGISTRY.get(name)
     if cls is None:
         raise ValueError(f"unknown strategy: {name}")
+    if enforce_contract:
+        violations = validate_strategy_contract(cls)
+        if violations:
+            raise StrategyContractError(
+                f"strategy '{name}' contract incomplete: {'; '.join(violations)}"
+            )
     try:
         return cls(**(params or {}))
     except (TypeError, ValueError) as e:
@@ -80,9 +125,11 @@ def describe_all_strategies() -> list[dict]:
 
 __all__ = [
     "STRATEGY_REGISTRY",
+    "StrategyContractError",
     "build_strategy",
     "describe_strategy",
     "describe_all_strategies",
+    "validate_strategy_contract",
     "OrbVwapStrategy",
     "RsiReversionStrategy",
     "SmaCrossoverStrategy",
