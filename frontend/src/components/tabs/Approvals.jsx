@@ -291,6 +291,59 @@ export function HistoryTimeBucketBar({ active, onChange }) {
 }
 
 
+// 106: 처리 내역 footer — 098/101 패턴 재사용. created_at에서 decided_at까지의
+// 평균 결정 시간을 한 줄에 표시. 운영자가 "이번 주 평균 결정 12분"같은 흐름
+// 신호를 한눈에 — 평균이 길어지면 결재 적체 의심. 필터(symbol/status/time/mode)
+// 적용된 visible items 기준으로 재계산.
+export function summarizeHistoryDecisionTime(items) {
+  let count = 0;
+  let sumMs = 0;
+  for (const a of items || []) {
+    if (!a || !a.created_at || !a.decided_at) continue;
+    const ms = new Date(a.decided_at).getTime() - new Date(a.created_at).getTime();
+    // 음수는 시계 어긋남이나 fixture 오류 — defensive하게 제외해 평균 왜곡 방지.
+    if (!Number.isFinite(ms) || ms < 0) continue;
+    sumMs += ms;
+    count += 1;
+  }
+  return { count, avgMs: count > 0 ? Math.round(sumMs / count) : 0 };
+}
+
+
+// "1일 3시간" / "12분 5초" / "30초" — 한국어 단위로 가장 큰 두 단위까지만.
+// 결정 시간은 보통 초~분 단위지만 stale 채로 cancel된 경우 시간/일 단위까지
+// 갈 수 있다. 0 또는 음수는 "0초"로 통일.
+export function formatDecisionDuration(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return "0초";
+  const totalSec = Math.floor(ms / 1000);
+  if (totalSec < 60)         return `${totalSec}초`;
+  const totalMin = Math.floor(totalSec / 60);
+  if (totalMin < 60)         return `${totalMin}분 ${totalSec % 60}초`;
+  const totalHr  = Math.floor(totalMin / 60);
+  if (totalHr  < 24)         return `${totalHr}시간 ${totalMin % 60}분`;
+  const totalDay = Math.floor(totalHr / 24);
+  return `${totalDay}일 ${totalHr % 24}시간`;
+}
+
+
+export function HistoryDecisionTimeSummary({ items }) {
+  const s = summarizeHistoryDecisionTime(items);
+  if (s.count === 0) return null;
+  return (
+    <div data-testid="history-decision-time-summary"
+         style={{ fontSize: 10, color: "#64748b", marginBottom: 8,
+                  display: "flex", gap: 8, flexWrap: "wrap",
+                  padding: "4px 0", borderBottom: "1px dashed #0c2035" }}>
+      <span>처리 {s.count}건</span>
+      <span>·</span>
+      <span style={{ color: "#a78bfa", fontWeight: 700 }}>
+        평균 결정 {formatDecisionDuration(s.avgMs)}
+      </span>
+    </div>
+  );
+}
+
+
 // 092: mode filter on the 처리 내역 list. RiskManager only emits NEEDS_APPROVAL
 // for LIVE_MANUAL_APPROVAL + LIVE_AI_ASSIST (risk_manager.py:118), so those
 // are the two real-world modes that produce queue rows. The 3rd chip lets
@@ -594,6 +647,7 @@ export function Approvals({ approvals, operatorName = "" }) {
             onChange={setHistoryModeFilter}
           />
         </div>
+        <HistoryDecisionTimeSummary items={filteredHistory} />
         {filteredHistory.length === 0 ? (
           <div style={{ color: "#1e3a5c", fontSize: 12, textAlign: "center", padding: 16 }}>
             {historyEmptyMessage(history, _historyNeedle, historyStatusFilter,

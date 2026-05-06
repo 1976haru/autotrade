@@ -9,12 +9,14 @@ import {
   HISTORY_MODE_STORAGE_KEY,
   HISTORY_STATUS_STORAGE_KEY,
   HISTORY_TIME_BUCKET_STORAGE_KEY,
+  HistoryDecisionTimeSummary,
   HistoryModeFilterBar,
   HistoryRow,
   HistoryStatusFilterBar,
   HistoryTimeBucketBar,
   PendingAgeBadge,
   ReasonsLine,
+  formatDecisionDuration,
   formatPendingAge,
   historyEmptyMessage,
   isPendingStale,
@@ -22,6 +24,7 @@ import {
   isValidHistoryStatus,
   isValidHistoryTimeBucket,
   shouldHandleApprovalsHotkey,
+  summarizeHistoryDecisionTime,
 } from "./Approvals";
 
 
@@ -1553,5 +1556,172 @@ describe("<Approvals> keyboard navigation (103)", () => {
     rerender(<Approvals approvals={shrunk} operatorName="" />);
     expect(queryByTestId("approval-pending-row-3")).toBeNull();
     expect(getByTestId("approval-pending-row-1").dataset.focused).toBe("true");
+  });
+});
+
+
+describe("summarizeHistoryDecisionTime (106)", () => {
+  function _row(createdMinutesBeforeDecision, decided = "2026-05-06T12:00:00+00:00") {
+    const decidedMs = new Date(decided).getTime();
+    return {
+      id: 1,
+      created_at: new Date(decidedMs - createdMinutesBeforeDecision * 60_000).toISOString(),
+      decided_at: decided,
+    };
+  }
+
+  it("returns zero shape for empty / nullable input", () => {
+    expect(summarizeHistoryDecisionTime([])).toEqual({ count: 0, avgMs: 0 });
+    expect(summarizeHistoryDecisionTime(null)).toEqual({ count: 0, avgMs: 0 });
+    expect(summarizeHistoryDecisionTime(undefined)).toEqual({ count: 0, avgMs: 0 });
+  });
+
+  it("averages decided_at - created_at across rows", () => {
+    // 2 min, 4 min, 6 min → avg 4 min = 240,000 ms
+    const items = [_row(2), _row(4), _row(6)];
+    const s = summarizeHistoryDecisionTime(items);
+    expect(s.count).toBe(3);
+    expect(s.avgMs).toBe(4 * 60_000);
+  });
+
+  it("skips rows missing created_at or decided_at", () => {
+    const items = [
+      _row(5),
+      { id: 2, created_at: "2026-05-06T11:50:00+00:00" }, // no decided_at
+      { id: 3, decided_at: "2026-05-06T12:00:00+00:00" }, // no created_at
+      null,
+      undefined,
+    ];
+    const s = summarizeHistoryDecisionTime(items);
+    expect(s.count).toBe(1);
+    expect(s.avgMs).toBe(5 * 60_000);
+  });
+
+  it("excludes negative durations (clock skew or bad data)", () => {
+    const items = [
+      _row(5),
+      { id: 2,
+        created_at: "2026-05-06T12:05:00+00:00",
+        decided_at: "2026-05-06T12:00:00+00:00" },  // decided before created
+    ];
+    const s = summarizeHistoryDecisionTime(items);
+    expect(s.count).toBe(1);
+    expect(s.avgMs).toBe(5 * 60_000);
+  });
+});
+
+
+describe("formatDecisionDuration (106)", () => {
+  it("returns '0초' for zero / negative / non-finite", () => {
+    expect(formatDecisionDuration(0)).toBe("0초");
+    expect(formatDecisionDuration(-100)).toBe("0초");
+    expect(formatDecisionDuration(NaN)).toBe("0초");
+    expect(formatDecisionDuration(Infinity)).toBe("0초");
+  });
+
+  it("returns '초' under one minute", () => {
+    expect(formatDecisionDuration(1_000)).toBe("1초");
+    expect(formatDecisionDuration(45_000)).toBe("45초");
+    expect(formatDecisionDuration(59_999)).toBe("59초");
+  });
+
+  it("returns '분 초' between 1 minute and 1 hour", () => {
+    expect(formatDecisionDuration(60_000)).toBe("1분 0초");
+    expect(formatDecisionDuration(125_000)).toBe("2분 5초");
+    expect(formatDecisionDuration(59 * 60_000)).toBe("59분 0초");
+  });
+
+  it("returns '시간 분' between 1 hour and 1 day", () => {
+    expect(formatDecisionDuration(60 * 60_000)).toBe("1시간 0분");
+    expect(formatDecisionDuration(2 * 60 * 60_000 + 30 * 60_000)).toBe("2시간 30분");
+    expect(formatDecisionDuration(23 * 60 * 60_000)).toBe("23시간 0분");
+  });
+
+  it("returns '일 시간' for >= 1 day", () => {
+    expect(formatDecisionDuration(24 * 60 * 60_000)).toBe("1일 0시간");
+    expect(formatDecisionDuration(50 * 60 * 60_000)).toBe("2일 2시간");
+  });
+});
+
+
+describe("<HistoryDecisionTimeSummary> (106)", () => {
+  afterEach(cleanup);
+
+  it("renders nothing when there are no decided rows to summarize", () => {
+    const { container } = render(<HistoryDecisionTimeSummary items={[]} />);
+    expect(container.querySelector('[data-testid="history-decision-time-summary"]')).toBeNull();
+    cleanup();
+    const { container: c2 } = render(<HistoryDecisionTimeSummary items={undefined} />);
+    expect(c2.querySelector('[data-testid="history-decision-time-summary"]')).toBeNull();
+  });
+
+  it("renders count and avg duration when rows exist", () => {
+    const items = [
+      { id: 1, created_at: "2026-05-06T11:55:00+00:00", decided_at: "2026-05-06T12:00:00+00:00" }, // 5 min
+      { id: 2, created_at: "2026-05-06T11:55:00+00:00", decided_at: "2026-05-06T11:58:00+00:00" }, // 3 min
+    ];
+    const { getByTestId } = render(<HistoryDecisionTimeSummary items={items} />);
+    const footer = getByTestId("history-decision-time-summary");
+    expect(footer.textContent).toContain("처리 2건");
+    expect(footer.textContent).toContain("평균 결정");
+    expect(footer.textContent).toContain("4분 0초"); // (5+3)/2 = 4 min
+  });
+});
+
+
+describe("<Approvals> avg decision time integration (106)", () => {
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _h(overrides = {}) {
+    return {
+      id: 1, symbol: "005930", side: "BUY", quantity: 1, order_type: "MARKET",
+      limit_price: null, status: "APPROVED", mode: "LIVE_MANUAL_APPROVAL",
+      created_at: "2026-05-06T11:55:00+00:00",
+      decided_at: "2026-05-06T12:00:00+00:00",  // 5 min
+      decided_by: "u", note: "",
+      audit_id: 1,
+      ...overrides,
+    };
+  }
+
+  it("hides the footer when history is genuinely empty", () => {
+    const approvals = _makeApprovals({ history: [] });
+    const { container } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(container.querySelector('[data-testid="history-decision-time-summary"]')).toBeNull();
+  });
+
+  it("shows count + avg over the visible rows", () => {
+    const approvals = _makeApprovals({
+      history: [
+        _h({ id: 1,
+              created_at: "2026-05-06T11:50:00+00:00",
+              decided_at: "2026-05-06T12:00:00+00:00" }), // 10 min
+        _h({ id: 2,
+              created_at: "2026-05-06T11:55:00+00:00",
+              decided_at: "2026-05-06T12:00:00+00:00" }), //  5 min
+      ],
+    });
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    const footer = getByTestId("history-decision-time-summary");
+    expect(footer.textContent).toContain("처리 2건");
+    expect(footer.textContent).toContain("7분 30초"); // (10+5)/2 = 7.5 min
+  });
+
+  it("recomputes when the status filter narrows the visible rows", () => {
+    const approvals = _makeApprovals({
+      history: [
+        _h({ id: 1, status: "APPROVED",
+              created_at: "2026-05-06T11:50:00+00:00",
+              decided_at: "2026-05-06T12:00:00+00:00" }), // 10 min
+        _h({ id: 2, status: "REJECTED",
+              created_at: "2026-05-06T11:58:00+00:00",
+              decided_at: "2026-05-06T12:00:00+00:00" }), //  2 min
+      ],
+    });
+    const { getByTestId, getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.click(getByRole("radio", { name: "거부" }));
+    const footer = getByTestId("history-decision-time-summary");
+    expect(footer.textContent).toContain("처리 1건");
+    expect(footer.textContent).toContain("2분 0초");
   });
 });
