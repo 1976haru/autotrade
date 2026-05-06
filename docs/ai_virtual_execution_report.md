@@ -90,6 +90,16 @@ NULL은 AI 외 경로 주문 (수동 / strategy 신호). 사후 분석:
 - AI 신호 강도 → 실제 PnL 상관관계 추적.
 - 거부된 AI 제안의 reason 분포 (RiskManager가 거부한 사유 + AI가 만든 사유).
 
+## 164: AI proposal auto-idempotency
+
+`VirtualAiAgent.propose_and_route()`이 `client_order_id`를 안 받으면 자동으로 UUID v4 prefix `ai-`을 붙여 생성한다 (`f"ai-{uuid4()}"`). 호출자가 잊거나 외부 LLM 통합 흐름에서 빠져도 140 idempotency 가드가 항상 작동.
+
+- 명시적 `client_order_id`는 그대로 유지 (회귀 가드).
+- 같은 proposal로 두 번 호출해도 auto-gen UUID가 매번 다르므로 dup 차단 X (호출자가 *의도적으로* 같은 cid를 명시한 경우만 차단).
+- audit row의 `client_order_id` 컬럼이 `ai-` prefix로 채워져 사후 분석 시 'AI 자동 생성 vs 운영자 명시' 구분 가능.
+
+**효과**: AI 에이전트가 재시작 / network retry / 호출자 버그로 같은 proposal을 두 번 라우팅해도, 첫 호출은 auto cid A로 통과하고 두 번째 호출은 auto cid B로 통과 — 진짜 중복은 명시적 cid를 사용한 경우만. 운영자가 의도적 idempotency를 원하면 cid를 직접 보낸다 (예: 실 LLM 응답에 unique signal_id가 있을 때 그것을 cid로 사용).
+
 ## 163: AI agent feedback loop
 
 지능형 에이전트의 self-correction. 과거 AI 발신 거래의 PnL을 144 FIFO

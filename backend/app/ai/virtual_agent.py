@@ -13,6 +13,7 @@ deterministic stub이 시그널을 만든다 (테스트 안정성).
 
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
@@ -153,7 +154,13 @@ class VirtualAiAgent:
           체인을 우회하지 않는다 — 결국 evaluate_order가 모든 검사 적용.
         - emergency_stop / stale_price / max_daily_loss / max_order_notional 등
           stock RiskManager의 모든 invariant가 그대로 적용된다.
+
+        164: client_order_id 미전달 시 자동 UUID 생성 — 호출자가 잊어도 140
+        idempotency 가드가 항상 작동. 의도적으로 빈 문자열 ""를 명시하면
+        그대로 통과 (운영자 의도 X — 외부 LLM agent와 client id 협의 흐름 등).
         """
+        if client_order_id is None:
+            client_order_id = f"ai-{uuid4()}"
         order = proposal.to_order_request(
             client_order_id=client_order_id, strategy=strategy,
         )

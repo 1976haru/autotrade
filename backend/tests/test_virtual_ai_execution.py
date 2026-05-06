@@ -215,3 +215,69 @@ def test_virtual_ai_idempotent_with_client_order_id():
                 broker=MockBrokerAdapter(), risk=RiskManager(RiskPolicy()),
                 db=db, client_order_id=cid,
             ))
+
+
+# ---------- 164: auto-generated client_order_id when not provided ----------
+
+def test_propose_and_route_auto_generates_client_order_id_when_none():
+    """client_order_id 미전달 시 자동 UUID 생성 — audit row에 채워진다."""
+    Session = _session()
+    with Session() as db:
+        agent = VirtualAiAgent()
+        proposal = agent.propose_stub("005930", last_close=110, prev_close=100)
+        result = asyncio.run(agent.propose_and_route(
+            proposal, mode=OperationMode.VIRTUAL_AI_EXECUTION,
+            broker=MockBrokerAdapter(), risk=RiskManager(RiskPolicy()),
+            db=db,
+            # client_order_id 미명시
+        ))
+        db.commit()
+    assert result.decision == RiskDecision.APPROVED
+    cid = result.audit.client_order_id
+    assert cid is not None and cid.startswith("ai-")
+    # UUID v4 형식 — "ai-" 접두 후 36자 (8-4-4-4-12).
+    assert len(cid) == 3 + 36
+
+
+def test_auto_generated_ids_are_unique_per_call():
+    """매 호출마다 UUID 다름 — 같은 proposal로 두 번 호출해도 dup 안 됨."""
+    Session = _session()
+    with Session() as db:
+        agent = VirtualAiAgent()
+        proposal = agent.propose_stub("005930", last_close=110, prev_close=100)
+
+        risk = RiskManager(RiskPolicy())
+        risk.policy.max_positions       = 999_999
+        risk.policy.max_symbol_exposure = 999_999_999_999
+
+        broker = MockBrokerAdapter()
+        # 첫 호출 — auto cid 1.
+        r1 = asyncio.run(agent.propose_and_route(
+            proposal, mode=OperationMode.VIRTUAL_AI_EXECUTION,
+            broker=broker, risk=risk, db=db,
+        ))
+        db.commit()
+        # 같은 proposal — 두 번째 호출. auto cid 다른 UUID이라 dup X.
+        r2 = asyncio.run(agent.propose_and_route(
+            proposal, mode=OperationMode.VIRTUAL_AI_EXECUTION,
+            broker=broker, risk=risk, db=db,
+        ))
+        db.commit()
+    assert r1.audit.client_order_id != r2.audit.client_order_id
+    assert r1.decision == RiskDecision.APPROVED
+    assert r2.decision == RiskDecision.APPROVED
+
+
+def test_explicit_client_order_id_preserved_over_auto_gen():
+    """호출자가 명시한 cid는 auto-gen으로 덮이지 않는다 — 회귀 가드."""
+    Session = _session()
+    with Session() as db:
+        agent = VirtualAiAgent()
+        proposal = agent.propose_stub("005930", last_close=110, prev_close=100)
+        result = asyncio.run(agent.propose_and_route(
+            proposal, mode=OperationMode.VIRTUAL_AI_EXECUTION,
+            broker=MockBrokerAdapter(), risk=RiskManager(RiskPolicy()),
+            db=db, client_order_id="explicit-cid-001",
+        ))
+        db.commit()
+    assert result.audit.client_order_id == "explicit-cid-001"
