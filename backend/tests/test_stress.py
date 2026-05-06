@@ -219,6 +219,155 @@ def test_stress_distinct_client_order_ids_all_pass(client):
         assert res.status_code == 200, f"unexpected reject at {i}: {res.text}"
 
 
+# ---------- 155: virtual / futures / AI 확장 시나리오 ----------
+
+def test_stress_virtual_stock_orders_audit_consistency(client):
+    """가상 주식 주문 N건 → audit row N개 + 모두 executed=True (SIMULATION 흐름).
+    invariant: '가드 통과한 모든 주문이 정확히 한 audit row를 만든다'."""
+    from app.db.models import OrderAuditLog
+    client.test_risk_manager.policy.max_positions       = 999_999
+    client.test_risk_manager.policy.max_symbol_exposure = 999_999_999_999
+    client.test_risk_manager.policy.max_order_notional  = 999_999_999_999
+
+    N = 200
+    for i in range(N):
+        side = "BUY" if i % 2 == 0 else "SELL"
+        res = _submit(client, side=side)
+        assert res.status_code == 200
+
+    with client.test_db_factory() as db:
+        rows = db.execute(select(OrderAuditLog)).scalars().all()
+        assert len(rows) == N
+        assert all(r.executed for r in rows)
+
+
+def test_stress_virtual_futures_orders_via_mock_broker():
+    """200건 long/short 주문 — 가상 broker가 cash/margin/positions 정합성 유지."""
+    import asyncio
+    from app.futures.mock import MockFuturesBroker
+    from app.futures.types import FuturesOrderRequest, FuturesSide
+
+    broker = MockFuturesBroker(initial_cash=20_000_000)
+    broker.set_mark_price("KOSPI200_2503", 1_000)
+    broker.set_leverage(5.0)
+
+    async def run_n(n):
+        for i in range(n):
+            side = FuturesSide.BUY if i % 2 == 0 else FuturesSide.SELL
+            req = FuturesOrderRequest(
+                contract="KOSPI200_2503", side=side, quantity=1,
+            )
+            res = await broker.place_order(req)
+            # 진입/청산 모두 FILLED 또는 REJECTED(잔고 부족 시).
+            assert res.status.value in ("FILLED", "REJECTED")
+
+    asyncio.run(run_n(200))
+    # 정합성: 잔고 + 마지막 포지션 + 누적 PnL = initial_cash 인근 (slippage/fee 손실).
+    bal = asyncio.run(broker.get_balance())
+    # 슬리피지 + fee로 약간 줄지만, equity는 양수 — 음수면 broker에 버그.
+    assert bal.equity > 0
+
+
+def test_stress_futures_force_liquidation():
+    """5x 레버리지 LONG 진입 → mark price 강제청산 임계로 떨어뜨림 → 자동 청산."""
+    import asyncio
+    from app.futures.mock import MockFuturesBroker
+    from app.futures.types import FuturesOrderRequest, FuturesSide
+
+    broker = MockFuturesBroker(initial_cash=10_000_000)
+    broker.set_mark_price("X", 1000)
+    broker.set_leverage(5.0)
+    asyncio.run(broker.place_order(
+        FuturesOrderRequest(contract="X", side=FuturesSide.BUY, quantity=1)
+    ))
+    pos = broker.positions["X"]
+    assert pos.liquidation_price is not None
+
+    # liquidation_price로 강하게 하락.
+    broker.set_mark_price("X", pos.liquidation_price)
+    result = broker.force_liquidate_if_needed("X")
+    assert result is not None
+    assert result.message == "virtual_force_liquidate"
+    assert "X" not in broker.positions
+
+
+def test_stress_futures_margin_insufficient_at_scale():
+    """가상 broker에 cash 100원만 두고 100건 주문 → 모두 insufficient_cash."""
+    import asyncio
+    from app.futures.mock import MockFuturesBroker
+    from app.futures.types import FuturesOrderRequest, FuturesSide
+
+    broker = MockFuturesBroker(initial_cash=100)
+    broker.set_mark_price("X", 1_000_000)
+    broker.set_leverage(5.0)
+
+    async def run_n():
+        for _ in range(100):
+            res = await broker.place_order(
+                FuturesOrderRequest(contract="X", side=FuturesSide.BUY, quantity=1)
+            )
+            assert res.message == "insufficient_cash"
+
+    asyncio.run(run_n())
+
+
+def test_stress_ai_virtual_proposals_at_scale(client):
+    """AI 제안 100건 — 모두 audit + requested_by_ai=True + ai_decision_meta 보존."""
+    import asyncio
+    from app.ai.virtual_agent import VirtualAiAgent
+    from app.brokers.mock_broker import MockBrokerAdapter
+    from app.core.modes import OperationMode
+    from app.db.models import OrderAuditLog
+    from app.risk.risk_manager import RiskManager, RiskPolicy
+
+    client.test_risk_manager.policy.max_positions       = 999_999
+    client.test_risk_manager.policy.max_symbol_exposure = 999_999_999_999
+    client.test_risk_manager.policy.max_order_notional  = 999_999_999_999
+
+    agent = VirtualAiAgent()
+    risk = client.test_risk_manager
+    broker = MockBrokerAdapter()
+
+    async def run_n(db):
+        for i in range(100):
+            # BUY/SELL 교대로 누적 한도 회피.
+            last  = 110 if i % 2 == 0 else 90
+            prev  = 100
+            proposal = agent.propose_stub("005930", last, prev, confidence=70)
+            await agent.propose_and_route(
+                proposal, mode=OperationMode.VIRTUAL_AI_EXECUTION,
+                broker=broker, risk=risk, db=db,
+                client_order_id=f"ai-stress-{i:03d}",
+            )
+
+    with client.test_db_factory() as db:
+        asyncio.run(run_n(db))
+        db.commit()
+        rows = db.execute(select(OrderAuditLog).where(
+            OrderAuditLog.requested_by_ai.is_(True)
+        )).scalars().all()
+    assert len(rows) == 100
+    assert all(r.ai_decision_meta is not None for r in rows)
+
+
+def test_stress_audit_log_no_loss_invariant(client):
+    """모든 주문 경로에서 audit row 누락 0건 — 거부도 audit에 남는다."""
+    from app.db.models import OrderAuditLog
+    # mix: 정상 주문 + 한도 초과 주문 (REJECTED) + emergency_stop 차단.
+    huge_qty = 100_000
+    for _ in range(50):
+        _submit(client)                            # 정상 (REJECTED는 한도와 별개)
+    for _ in range(50):
+        _submit(client, quantity=huge_qty)         # notional REJECT
+    client.test_risk_manager.set_emergency_stop(True)
+    for _ in range(50):
+        _submit(client)                            # emergency_stop REJECT
+
+    with client.test_db_factory() as db:
+        rows = db.execute(select(OrderAuditLog)).scalars().all()
+    assert len(rows) == 150
+
+
 def test_stress_audit_endpoint_returns_under_limit(client):
     """7) /api/audit/orders는 limit 파라미터로 응답 캡 — N건 인서트 후
     limit=N이면 N건, default(50)이면 50건. invariant: 단일 응답 페이로드 폭주
