@@ -4,10 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   Activity24hCard,
   EmergencyStopStuckBanner,
+  MODE_DISPLAY,
+  ModeBreakdownRow,
   StatusPin,
   StatusSummaryCard,
   computeActivity24h,
   emergencyStopOnSince,
+  formatModeBreakdown,
 } from "./Dashboard";
 
 
@@ -215,6 +218,7 @@ describe("computeActivity24h", () => {
   it("returns all-zero counts when all sources are empty", () => {
     expect(computeActivity24h([], [], [], NOW)).toEqual({
       orders: 0, approved: 0, rejected: 0, pending: 0,
+      byMode: {},
       stops:  0, stopsOn: 0, stopsOff: 0,
       attempts: 0,
     });
@@ -263,9 +267,44 @@ describe("computeActivity24h", () => {
     const a = computeActivity24h([], [], []);
     expect(a).toEqual({
       orders: 0, approved: 0, rejected: 0, pending: 0,
+      byMode: {},
       stops:  0, stopsOn: 0, stopsOff: 0,
       attempts: 0,
     });
+  });
+
+  it("buckets recent orders by mode (093)", () => {
+    const orders = [
+      { id: 1, mode: "SIMULATION",           decision: "APPROVED",
+        created_at: new Date(NOW - 1 * 3600_000).toISOString() },
+      { id: 2, mode: "SIMULATION",           decision: "APPROVED",
+        created_at: new Date(NOW - 2 * 3600_000).toISOString() },
+      { id: 3, mode: "PAPER",                decision: "APPROVED",
+        created_at: new Date(NOW - 3 * 3600_000).toISOString() },
+      { id: 4, mode: "LIVE_MANUAL_APPROVAL", decision: "NEEDS_APPROVAL",
+        created_at: new Date(NOW - 4 * 3600_000).toISOString() },
+      // 25h ago — outside 24h window, should not count
+      { id: 5, mode: "SIMULATION",           decision: "APPROVED",
+        created_at: new Date(NOW - 25 * 3600_000).toISOString() },
+    ];
+    const a = computeActivity24h(orders, [], [], NOW);
+    expect(a.byMode).toEqual({
+      SIMULATION: 2,
+      PAPER: 1,
+      LIVE_MANUAL_APPROVAL: 1,
+    });
+  });
+
+  it("skips orders without a mode field defensively (093)", () => {
+    const orders = [
+      { id: 1, decision: "APPROVED",
+        created_at: new Date(NOW - 1 * 3600_000).toISOString() },
+      { id: 2, mode: "PAPER", decision: "APPROVED",
+        created_at: new Date(NOW - 1 * 3600_000).toISOString() },
+    ];
+    const a = computeActivity24h(orders, [], [], NOW);
+    expect(a.byMode).toEqual({ PAPER: 1 });
+    expect(a.orders).toBe(2); // total still counts both
   });
 });
 
@@ -318,6 +357,129 @@ describe("<Activity24hCard>", () => {
     expect(container.textContent).toContain("긴급정지 토글");
     expect(container.textContent).toContain("ON 1");
     expect(container.textContent).toContain("OFF 1");
+    vi.useRealTimers();
+  });
+});
+
+
+describe("formatModeBreakdown (093)", () => {
+  it("returns empty array when nothing has count", () => {
+    expect(formatModeBreakdown({})).toEqual([]);
+  });
+
+  it("orders cells by MODE_DISPLAY (least to most risky)", () => {
+    const cells = formatModeBreakdown({
+      LIVE_AI_EXECUTION: 1,
+      SIMULATION: 5,
+      LIVE_MANUAL_APPROVAL: 2,
+    });
+    expect(cells.map((c) => c.id)).toEqual([
+      "SIMULATION",
+      "LIVE_MANUAL_APPROVAL",
+      "LIVE_AI_EXECUTION",
+    ]);
+    expect(cells.map((c) => c.count)).toEqual([5, 2, 1]);
+  });
+
+  it("omits modes with count <= 0", () => {
+    const cells = formatModeBreakdown({ SIMULATION: 0, PAPER: 3 });
+    expect(cells.map((c) => c.id)).toEqual(["PAPER"]);
+  });
+
+  it("appends unknown mode ids at the end with neutral color", () => {
+    const cells = formatModeBreakdown({ SIMULATION: 1, FUTURES_SIMULATION: 2 });
+    expect(cells[0].id).toBe("SIMULATION");
+    expect(cells[1].id).toBe("FUTURES_SIMULATION");
+    expect(cells[1].label).toBe("FUTURES_SIMULATION"); // raw fallback
+    expect(cells[1].color).toBe("#475569");
+  });
+
+  it("attaches each known mode's display label + color", () => {
+    const cells = formatModeBreakdown({ LIVE_MANUAL_APPROVAL: 1 });
+    expect(cells[0].label).toBe("MANUAL");
+    expect(cells[0].color).toBe("#22c55e");
+  });
+});
+
+
+describe("MODE_DISPLAY (093)", () => {
+  it("covers all six operating modes from backend modes.py", () => {
+    const ids = MODE_DISPLAY.map((m) => m.id);
+    expect(ids).toEqual([
+      "SIMULATION", "PAPER", "LIVE_SHADOW",
+      "LIVE_MANUAL_APPROVAL", "LIVE_AI_ASSIST", "LIVE_AI_EXECUTION",
+    ]);
+  });
+});
+
+
+describe("<ModeBreakdownRow> (093)", () => {
+  afterEach(cleanup);
+
+  it("renders nothing when byMode is empty", () => {
+    const { container } = render(<ModeBreakdownRow byMode={{}} />);
+    expect(container.querySelector('[data-testid="activity-mode-breakdown"]')).toBeNull();
+  });
+
+  it("renders one chip per mode with count", () => {
+    const { getByTestId, container } = render(
+      <ModeBreakdownRow byMode={{ SIMULATION: 5, PAPER: 2 }} />,
+    );
+    expect(getByTestId("activity-mode-breakdown")).toBeTruthy();
+    expect(getByTestId("activity-mode-cell-SIMULATION").textContent).toContain("SIM 5");
+    expect(getByTestId("activity-mode-cell-PAPER").textContent).toContain("PAPER 2");
+    // Order: SIMULATION before PAPER (per MODE_DISPLAY)
+    const cells = container.querySelectorAll('[data-testid^="activity-mode-cell-"]');
+    expect(cells[0].dataset.testid).toBe("activity-mode-cell-SIMULATION");
+    expect(cells[1].dataset.testid).toBe("activity-mode-cell-PAPER");
+  });
+});
+
+
+describe("<Activity24hCard> mode breakdown (093)", () => {
+  beforeEach(() => { _resetAuditHooks(); });
+  afterEach(cleanup);
+
+  it("renders the breakdown row when orders span multiple modes", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-05T12:00:00Z"));
+    const m = (n) => new Date(Date.now() - n * 60_000).toISOString();
+    _resetAuditHooks(
+      { items: [
+        { id: 1, mode: "SIMULATION",           decision: "APPROVED", created_at: m(10) },
+        { id: 2, mode: "SIMULATION",           decision: "APPROVED", created_at: m(20) },
+        { id: 3, mode: "PAPER",                decision: "APPROVED", created_at: m(30) },
+        { id: 4, mode: "LIVE_MANUAL_APPROVAL", decision: "APPROVED", created_at: m(40) },
+      ]},
+    );
+    const { getByTestId } = render(<Activity24hCard />);
+    const row = getByTestId("activity-mode-breakdown");
+    expect(row.textContent).toContain("SIM 2");
+    expect(row.textContent).toContain("PAPER 1");
+    expect(row.textContent).toContain("MANUAL 1");
+    vi.useRealTimers();
+  });
+
+  it("hides the breakdown row when there are no recent orders", () => {
+    const { container } = render(<Activity24hCard />);
+    expect(container.querySelector('[data-testid="activity-mode-breakdown"]')).toBeNull();
+  });
+
+  it("excludes orders older than 24h from the breakdown", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-05T12:00:00Z"));
+    const hAgo = (h) => new Date(Date.now() - h * 3600_000).toISOString();
+    _resetAuditHooks(
+      { items: [
+        { id: 1, mode: "PAPER",      decision: "APPROVED", created_at: hAgo(2) },
+        { id: 2, mode: "SIMULATION", decision: "APPROVED", created_at: hAgo(48) }, // outside
+      ]},
+    );
+    const { getByTestId, container } = render(<Activity24hCard />);
+    const row = getByTestId("activity-mode-breakdown");
+    expect(row.textContent).toContain("PAPER 1");
+    // 48h-old SIMULATION row should not contribute a chip
+    expect(container.querySelector('[data-testid="activity-mode-cell-SIMULATION"]')).toBeNull();
     vi.useRealTimers();
   });
 });
