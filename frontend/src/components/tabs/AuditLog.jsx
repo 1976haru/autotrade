@@ -534,6 +534,74 @@ export function formatUsdCost(usd) {
 }
 
 
+// 112: 094 model badge / 098 token sum / 101 cost 흐름의 마지막 시각화 단계.
+// model family별로 호출 수 + token 분포를 한 줄 chip + mini stacked bar로 노출.
+// 운영자가 "오늘 sonnet에 70% 트래픽이 몰려 있는데 haiku로 옮길 여지 있나?"
+// 같은 cost 분배 의사결정을 한눈에. 가족 순서는 위험/비용 오름차순 — opus가
+// 가장 비싸고 unknown이 끝.
+const _AI_FAMILY_ORDER = ["opus", "sonnet", "haiku", "unknown"];
+
+export function formatAiTokenByModel(items) {
+  const byFamily = new Map();
+  for (const r of items || []) {
+    const f = modelFamily(r.model) || "unknown";
+    const cur = byFamily.get(f) || { count: 0, inputTotal: 0, outputTotal: 0 };
+    cur.count       += 1;
+    cur.inputTotal  += r.input_tokens  || 0;
+    cur.outputTotal += r.output_tokens || 0;
+    byFamily.set(f, cur);
+  }
+  return _AI_FAMILY_ORDER
+    .filter((f) => byFamily.has(f))
+    .map((f) => ({
+      family: f,
+      label:  f === "unknown" ? "기타" : f,
+      // modelAccent("opus") / ("sonnet") / ("haiku")가 동일 prefix 매칭으로 색을
+      // 돌려준다. unknown은 명시적으로 회색.
+      color:  f === "unknown" ? "#475569" : modelAccent(f),
+      ...byFamily.get(f),
+    }));
+}
+
+
+export function AiTokenByModel({ items }) {
+  const cells = formatAiTokenByModel(items);
+  if (cells.length === 0) return null;
+  const _fmt = (n) => n.toLocaleString("ko-KR");
+  return (
+    <div data-testid="ai-token-by-model"
+         style={{ marginBottom: 8, padding: "4px 0",
+                  borderBottom: "1px dashed #0c2035" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, fontSize: 9, marginBottom: 4 }}>
+        {cells.map((c) => (
+          <span key={c.family}
+                data-testid={`ai-token-by-model-cell-${c.family}`}
+                style={{
+                  color: c.color, fontWeight: 700,
+                  padding: "1px 6px", borderRadius: 3,
+                  border: `1px solid ${c.color}55`, background: `${c.color}15`,
+                }}>
+            {c.label} {c.count}건 · in {_fmt(c.inputTotal)} · out {_fmt(c.outputTotal)}
+          </span>
+        ))}
+      </div>
+      <div style={{ display: "flex", height: 4, borderRadius: 2, overflow: "hidden",
+                    background: "#020e1c" }}>
+        {cells.map((c) => {
+          const total = c.inputTotal + c.outputTotal;
+          if (total <= 0) return null;
+          return (
+            <div key={c.family}
+                 data-testid={`ai-token-by-model-bar-${c.family}`}
+                 style={{ flex: total, background: c.color }} />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
 export function AiModelBadge({ model }) {
   if (!model) return null;
   const color = modelAccent(model);
@@ -675,6 +743,7 @@ export function AiAuditView() {
       </div>
 
       <AiTokenSummary items={filteredItems} />
+      <AiTokenByModel items={filteredItems} />
 
       {error && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>}
 
