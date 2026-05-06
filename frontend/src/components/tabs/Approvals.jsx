@@ -260,14 +260,47 @@ export function HistoryStatusFilterBar({ active, onChange }) {
 }
 
 
-// 082+083: 처리 내역에서 두 축(종목/상태) 필터를 조합. 081 audit empty-state
-// 패턴과 같은 구조 — 칩/입력이 활성 필터의 진실 소스이고 메시지는 단순히
-// "필터 때문임"만 신호한다.
-export function historyEmptyMessage(history, symbolNeedle, statusFilter) {
+// 086: time-bucket chips on 처리 내역, mirroring 073 audit timeline. Filters
+// on decided_at (when the action settled the row) — that's what operators
+// reason about when they say "결정된 항목 중 최근 1시간". Persisted like 083
+// status filter for the same reason: investigation sessions stick to a
+// window for a stretch.
+const HISTORY_TIME_BUCKETS = [
+  { id: "all", label: "전 기간", color: "#7dd3fc" },
+  { id: "1h",  label: "1시간",   color: "#7dd3fc" },
+  { id: "24h", label: "24시간",  color: "#7dd3fc" },
+  { id: "7d",  label: "7일",     color: "#7dd3fc" },
+];
+
+const HISTORY_TIME_BUCKET_MS = {
+  "1h":  60 * 60 * 1000,
+  "24h": 24 * 60 * 60 * 1000,
+  "7d":  7 * 24 * 60 * 60 * 1000,
+};
+
+export const HISTORY_TIME_BUCKET_STORAGE_KEY = "autotrade.approvalsHistoryTimeBucket";
+const _VALID_HISTORY_BUCKETS = new Set(HISTORY_TIME_BUCKETS.map((b) => b.id));
+export const isValidHistoryTimeBucket = (v) => _VALID_HISTORY_BUCKETS.has(v);
+
+
+export function HistoryTimeBucketBar({ active, onChange }) {
+  return (
+    <ChipFilterBar items={HISTORY_TIME_BUCKETS} active={active}
+      onChange={onChange} ariaLabel="처리 내역 시간 범위 필터" />
+  );
+}
+
+
+// 082+083+086: 처리 내역에서 세 축(종목/상태/시간) 필터를 조합. 081 audit
+// empty-state 패턴과 같은 구조 — 칩/입력이 활성 필터의 진실 소스이고 메시지는
+// 단순히 "필터 때문임"만 신호한다. timeBucket이 undefined면 정적 default ("all")로
+// 취급해 기존 호출자가 4번째 인자 없이 작동.
+export function historyEmptyMessage(history, symbolNeedle, statusFilter, timeBucket) {
   if (!history || history.length === 0) return "결정된 항목이 없습니다";
   const hasFilter =
     (symbolNeedle && symbolNeedle.length > 0)
-    || (statusFilter && statusFilter !== "all");
+    || (statusFilter && statusFilter !== "all")
+    || (timeBucket && timeBucket !== "all");
   return hasFilter ? "해당 조건의 항목이 없습니다" : "결정된 항목이 없습니다";
 }
 
@@ -324,9 +357,24 @@ export function Approvals({ approvals, operatorName = "" }) {
   const [historyStatusFilter, setHistoryStatusFilter] = usePersistedState(
     HISTORY_STATUS_STORAGE_KEY, "all", isValidHistoryStatus,
   );
+  // 086: persisted time-bucket — same reasoning as status. Filters on
+  // decided_at (the moment the row settled) since that's how operators
+  // reason about "이번 주 결정된 것".
+  const [historyTimeBucket, setHistoryTimeBucket] = usePersistedState(
+    HISTORY_TIME_BUCKET_STORAGE_KEY, "all", isValidHistoryTimeBucket,
+  );
+  const _historyBucketWindowMs = HISTORY_TIME_BUCKET_MS[historyTimeBucket];
+  const _now = Date.now();
+  const _withinHistoryBucket = (a) => {
+    if (_historyBucketWindowMs === undefined) return true;
+    if (!a.decided_at) return false;  // defensive — decided rows always have it
+    return _now - new Date(a.decided_at).getTime() < _historyBucketWindowMs;
+  };
+
   const filteredHistory = history
     .filter((a) => historyStatusFilter === "all" || a.status === historyStatusFilter)
-    .filter((a) => !_historyNeedle || a.symbol.toLowerCase().includes(_historyNeedle));
+    .filter((a) => !_historyNeedle || a.symbol.toLowerCase().includes(_historyNeedle))
+    .filter(_withinHistoryBucket);
 
   const dispatchByAction = { approve, reject, cancel };
 
@@ -431,9 +479,15 @@ export function Approvals({ approvals, operatorName = "" }) {
             />
           </div>
         </div>
+        <div style={{ marginBottom: 8 }}>
+          <HistoryTimeBucketBar
+            active={historyTimeBucket}
+            onChange={setHistoryTimeBucket}
+          />
+        </div>
         {filteredHistory.length === 0 ? (
           <div style={{ color: "#1e3a5c", fontSize: 12, textAlign: "center", padding: 16 }}>
-            {historyEmptyMessage(history, _historyNeedle, historyStatusFilter)}
+            {historyEmptyMessage(history, _historyNeedle, historyStatusFilter, historyTimeBucket)}
           </div>
         ) : filteredHistory.map((a) => <HistoryRow key={a.id} a={a} />)}
         <div style={{ marginTop: 8, textAlign: "center" }}>

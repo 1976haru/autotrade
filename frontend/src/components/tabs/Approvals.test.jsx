@@ -7,14 +7,17 @@ import {
   Approvals,
   BulkCancelStaleModal,
   HISTORY_STATUS_STORAGE_KEY,
+  HISTORY_TIME_BUCKET_STORAGE_KEY,
   HistoryRow,
   HistoryStatusFilterBar,
+  HistoryTimeBucketBar,
   PendingAgeBadge,
   ReasonsLine,
   formatPendingAge,
   historyEmptyMessage,
   isPendingStale,
   isValidHistoryStatus,
+  isValidHistoryTimeBucket,
 } from "./Approvals";
 
 
@@ -526,6 +529,55 @@ describe("historyEmptyMessage", () => {
   it("returns plain message when no filter active", () => {
     expect(historyEmptyMessage([{ id: 1 }], "", "all")).toBe("결정된 항목이 없습니다");
   });
+
+  it("treats time bucket axis like the others (086)", () => {
+    expect(historyEmptyMessage([{ id: 1 }], "", "all", "1h"))
+      .toBe("해당 조건의 항목이 없습니다");
+    expect(historyEmptyMessage([{ id: 1 }], "", "all", "all"))
+      .toBe("결정된 항목이 없습니다");
+  });
+
+  it("undefined time bucket arg falls back to 'no time filter' (back-compat)", () => {
+    expect(historyEmptyMessage([{ id: 1 }], "", "all", undefined))
+      .toBe("결정된 항목이 없습니다");
+  });
+});
+
+
+describe("isValidHistoryTimeBucket", () => {
+  it("accepts the four canonical bucket ids", () => {
+    expect(isValidHistoryTimeBucket("all")).toBe(true);
+    expect(isValidHistoryTimeBucket("1h")).toBe(true);
+    expect(isValidHistoryTimeBucket("24h")).toBe(true);
+    expect(isValidHistoryTimeBucket("7d")).toBe(true);
+  });
+
+  it("rejects unknown values", () => {
+    expect(isValidHistoryTimeBucket("garbage")).toBe(false);
+    expect(isValidHistoryTimeBucket("")).toBe(false);
+    expect(isValidHistoryTimeBucket(null)).toBe(false);
+  });
+});
+
+
+describe("<HistoryTimeBucketBar>", () => {
+  afterEach(cleanup);
+
+  it("renders four chips with the expected labels", () => {
+    const { getByRole } = render(<HistoryTimeBucketBar active="all" onChange={() => {}} />);
+    expect(getByRole("radiogroup", { name: "처리 내역 시간 범위 필터" })).toBeTruthy();
+    expect(getByRole("radio", { name: "전 기간" })).toBeTruthy();
+    expect(getByRole("radio", { name: "1시간" })).toBeTruthy();
+    expect(getByRole("radio", { name: "24시간" })).toBeTruthy();
+    expect(getByRole("radio", { name: "7일" })).toBeTruthy();
+  });
+
+  it("calls onChange with the chip id", () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(<HistoryTimeBucketBar active="all" onChange={onChange} />);
+    fireEvent.click(getByRole("radio", { name: "1시간" }));
+    expect(onChange).toHaveBeenCalledWith("1h");
+  });
 });
 
 
@@ -647,6 +699,94 @@ describe("<Approvals> 처리 내역 status filter", () => {
     const approvals = _makeApprovals({ history: [_h()] });
     const { getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
     expect(getByRole("radio", { name: "전체" }).getAttribute("aria-checked")).toBe("true");
+  });
+});
+
+
+describe("<Approvals> 처리 내역 time-bucket filter", () => {
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  const NOW = new Date("2026-05-06T12:00:00Z").getTime();
+  const minutesAgo = (m) => new Date(NOW - m * 60_000).toISOString();
+  const hoursAgo = (h) => new Date(NOW - h * 3600_000).toISOString();
+
+  function _h(overrides = {}) {
+    return {
+      id: 1, symbol: "X", side: "BUY", quantity: 1, order_type: "MARKET",
+      limit_price: null, status: "APPROVED", mode: "LIVE_MANUAL_APPROVAL",
+      decided_at: minutesAgo(30), decided_by: "u", note: "",
+      created_at: minutesAgo(31), audit_id: 1,
+      ...overrides,
+    };
+  }
+
+  it("default '전 기간' shows all rows regardless of decided_at", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+    const approvals = _makeApprovals({
+      history: [
+        _h({ id: 1, symbol: "AAA", decided_at: minutesAgo(30) }),
+        _h({ id: 2, symbol: "BBB", decided_at: hoursAgo(48) }),
+        _h({ id: 3, symbol: "CCC", decided_at: hoursAgo(24 * 9) }),
+      ],
+    });
+    const { container } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(container.textContent).toContain("AAA");
+    expect(container.textContent).toContain("BBB");
+    expect(container.textContent).toContain("CCC");
+    vi.useRealTimers();
+  });
+
+  it("1시간 chip narrows to rows decided within the last hour", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+    const approvals = _makeApprovals({
+      history: [
+        _h({ id: 1, symbol: "AAA", decided_at: minutesAgo(30) }),  // included
+        _h({ id: 2, symbol: "BBB", decided_at: hoursAgo(2) }),     // excluded
+      ],
+    });
+    const { container, getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.click(getByRole("radio", { name: "1시간" }));
+    expect(container.textContent).toContain("AAA");
+    expect(container.textContent).not.toContain("BBB");
+    vi.useRealTimers();
+  });
+
+  it("composes with status filter (24시간 × 거부)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+    const approvals = _makeApprovals({
+      history: [
+        _h({ id: 1, symbol: "AAA", status: "REJECTED", decided_at: minutesAgo(30) }),
+        _h({ id: 2, symbol: "BBB", status: "APPROVED", decided_at: minutesAgo(30) }),
+        _h({ id: 3, symbol: "CCC", status: "REJECTED", decided_at: hoursAgo(48) }),
+      ],
+    });
+    const { container, getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.click(getByRole("radio", { name: "24시간" }));
+    fireEvent.click(getByRole("radio", { name: "거부" }));
+    expect(container.textContent).toContain("AAA");        // recent + rejected
+    expect(container.textContent).not.toContain("BBB");    // recent but approved
+    expect(container.textContent).not.toContain("CCC");    // rejected but old
+    vi.useRealTimers();
+  });
+
+  it("persists selection to localStorage", () => {
+    const approvals = _makeApprovals({ history: [_h()] });
+    const { getByRole, unmount } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.click(getByRole("radio", { name: "7일" }));
+    expect(localStorage.getItem(HISTORY_TIME_BUCKET_STORAGE_KEY)).toBe("7d");
+    unmount();
+    const { getByRole: g2 } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(g2("radio", { name: "7일" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("falls back to 전 기간 when stored value is unknown", () => {
+    localStorage.setItem(HISTORY_TIME_BUCKET_STORAGE_KEY, "garbage");
+    const approvals = _makeApprovals({ history: [_h()] });
+    const { getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(getByRole("radio", { name: "전 기간" }).getAttribute("aria-checked")).toBe("true");
   });
 });
 
