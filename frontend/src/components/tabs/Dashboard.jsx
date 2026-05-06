@@ -1,9 +1,15 @@
 import { Card, SectionLabel, StatBox } from "../common";
 import { ChipFilterBar } from "../common/ChipFilterBar";
 import { fmtKRW, fmtPct, formatPendingAge, pnlColor } from "../../utils/format";
+import { MODE_DISPLAY } from "../../utils/modes";
 import { useEmergencyStopAudits, useOrderAudits } from "../../store/useAuditLogs";
 import { usePersistedState } from "../../store/usePersistedState";
 import { flattenApprovalAttempts, setEventKindFilter } from "./AuditLog";
+
+// 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
+// AuditLog timeline에서도 mode badge로 쓰기 위해 공유. Dashboard는 re-export
+// 만 유지해 058~093 callers와 테스트가 그대로 작동.
+export { MODE_DISPLAY };
 
 
 // 060 hardening made emergency_stop a hard kill-switch. The downside: if an
@@ -127,17 +133,6 @@ export function computeActivity24h(orders, stops, attempts = [], now = Date.now(
 }
 
 
-// 093: 6 운용모드의 짧은 라벨 + 색상. 표시 순서는 위험도 오름차순 — 시뮬부터
-// LIVE까지 자연스럽게 읽히도록. 092가 처리 내역에서 LIVE_MANUAL_APPROVAL +
-// LIVE_AI_ASSIST 만 다뤘다면, 여기는 주문 audit 전체라 6개 모드 모두 등장 가능.
-export const MODE_DISPLAY = [
-  { id: "SIMULATION",           label: "SIM",     color: "#64748b" },
-  { id: "PAPER",                label: "PAPER",   color: "#7dd3fc" },
-  { id: "LIVE_SHADOW",          label: "SHADOW",  color: "#94a3b8" },
-  { id: "LIVE_MANUAL_APPROVAL", label: "MANUAL",  color: "#22c55e" },
-  { id: "LIVE_AI_ASSIST",       label: "AI 보조", color: "#a78bfa" },
-  { id: "LIVE_AI_EXECUTION",    label: "AI 자동", color: "#f59e0b" },
-];
 
 
 // "byMode 객체를 위 정렬 순서로 평탄화 + 0건 모드는 생략 + 알 수 없는 mode는

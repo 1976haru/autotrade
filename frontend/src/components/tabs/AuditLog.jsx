@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Btn, Card, Inp, SectionLabel } from "../common";
 import { ChipFilterBar } from "../common/ChipFilterBar";
 import { fmtKRW, pnlColor } from "../../utils/format";
+import { findModeDisplay } from "../../utils/modes";
 import {
   useAiAudits,
   useBacktestRuns,
@@ -9,6 +10,29 @@ import {
   useOrderAudits,
 } from "../../store/useAuditLogs";
 import { usePersistedState } from "../../store/usePersistedState";
+
+
+// 108: timeline의 주문/결재 시도 행에 운용모드를 한눈에. 092/093가 동일
+// 팔레트(SIM/PAPER/SHADOW/MANUAL/AI 보조/AI 자동)를 처리 내역 chip filter와
+// 24h breakdown에서 쓰는데, timeline에서도 같은 시각 단서를 제공해 운영자가
+// 어떤 mode 흐름을 보고 있는지 즉시 파악. 알 수 없는 mode는 회색 + raw id로
+// fallback (백엔드가 새 mode를 도입한 직후 frontend가 깨지지 않도록).
+export function ModeBadge({ mode }) {
+  if (!mode) return null;
+  const display = findModeDisplay(mode);
+  return (
+    <span data-testid="mode-badge"
+          data-mode={display.id}
+          style={{
+            color: display.color, fontSize: 9, fontWeight: 700,
+            padding: "1px 6px", borderRadius: 3,
+            border: `1px solid ${display.color}55`,
+            background: `${display.color}15`,
+          }}>
+      {display.label}
+    </span>
+  );
+}
 
 
 const SUBTABS = [
@@ -72,11 +96,16 @@ export function OrderAuditRow({ r }) {
           {r.decision}
         </span>
       </div>
-      <div style={{ fontSize: 10, color: "#475569", marginTop: 3 }}>
-        {r.mode} · {new Date(r.created_at).toLocaleString("ko-KR")} ·
-        {r.executed
-          ? ` ${r.broker_status} ${r.filled_quantity}@${fmtKRW(r.avg_fill_price ?? 0)}`
-          : " 미체결"}
+      <div style={{ fontSize: 10, color: "#475569", marginTop: 3,
+                     display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <ModeBadge mode={r.mode} />
+        <span>{new Date(r.created_at).toLocaleString("ko-KR")}</span>
+        <span>·</span>
+        <span>
+          {r.executed
+            ? `${r.broker_status} ${r.filled_quantity}@${fmtKRW(r.avg_fill_price ?? 0)}`
+            : "미체결"}
+        </span>
       </div>
       {r.reasons.length > 0 && (
         <div style={{ fontSize: 9, color: "#64748b", marginTop: 2 }}>
@@ -123,10 +152,10 @@ export function EmergencyStopAuditRow({ r }) {
 }
 
 
-// 079: approvals.pending + approvals.history each carry an attempts array
+// 079/108: approvals.pending + approvals.history each carry an attempts array
 // per 076. Flatten them into one event-shaped list — symbol/side/quantity
 // hoisted from the parent approval so each attempt is self-describing in
-// the timeline.
+// the timeline. 108: mode도 hoist해서 timeline에서 mode badge로 표시 가능.
 export function flattenApprovalAttempts(pending, history) {
   const _flatten = (rows) =>
     (rows || []).flatMap((a) =>
@@ -136,6 +165,7 @@ export function flattenApprovalAttempts(pending, history) {
         symbol:      a.symbol,
         side:        a.side,
         quantity:    a.quantity,
+        mode:        a.mode,
       })),
     );
   return [..._flatten(pending), ..._flatten(history)];
@@ -171,9 +201,18 @@ export function ApprovalAttemptAuditRow({ r }) {
           거부됨
         </span>
       </div>
-      <div style={{ fontSize: 10, color: "#475569", marginTop: 3 }}>
-        승인 #{r.approval_id} · {new Date(r.at).toLocaleString("ko-KR")}
-        {r.decided_by ? ` · by ${r.decided_by}` : ""}
+      <div style={{ fontSize: 10, color: "#475569", marginTop: 3,
+                     display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <ModeBadge mode={r.mode} />
+        <span>승인 #{r.approval_id}</span>
+        <span>·</span>
+        <span>{new Date(r.at).toLocaleString("ko-KR")}</span>
+        {r.decided_by && (
+          <>
+            <span>·</span>
+            <span>by {r.decided_by}</span>
+          </>
+        )}
       </div>
       {reasons && (
         <div style={{ fontSize: 9, color: "#64748b", marginTop: 2 }}>{reasons}</div>

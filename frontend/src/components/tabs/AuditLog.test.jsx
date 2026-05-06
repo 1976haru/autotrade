@@ -15,6 +15,7 @@ import {
   EmergencyStopAuditRow,
   EventTimelineView,
   KindFilterBar,
+  ModeBadge,
   OrderAuditRow,
   TimeBucketBar,
   aiAuditEmptyMessage,
@@ -2010,5 +2011,124 @@ describe("setEventKindFilter helper (cross-tab navigation entry point)", () => {
     setEventKindFilter("order");
     setEventKindFilter("garbage");
     expect(localStorage.getItem(STORAGE_KEY)).toBe("order");
+  });
+});
+
+
+describe("<ModeBadge> (108)", () => {
+  afterEach(cleanup);
+
+  it("renders nothing when mode is missing", () => {
+    const { container } = render(<ModeBadge mode={null} />);
+    expect(container.querySelector('[data-testid="mode-badge"]')).toBeNull();
+    cleanup();
+    const { container: c2 } = render(<ModeBadge mode="" />);
+    expect(c2.querySelector('[data-testid="mode-badge"]')).toBeNull();
+  });
+
+  it("renders the canonical short label for known modes", () => {
+    const { getByTestId, rerender } = render(<ModeBadge mode="SIMULATION" />);
+    expect(getByTestId("mode-badge").textContent).toBe("SIM");
+    expect(getByTestId("mode-badge").dataset.mode).toBe("SIMULATION");
+    rerender(<ModeBadge mode="LIVE_AI_ASSIST" />);
+    expect(getByTestId("mode-badge").textContent).toBe("AI 보조");
+  });
+
+  it("falls back to raw id + neutral color for unknown modes", () => {
+    const { getByTestId } = render(<ModeBadge mode="FUTURES_SIMULATION" />);
+    const badge = getByTestId("mode-badge");
+    expect(badge.textContent).toBe("FUTURES_SIMULATION");
+    expect(badge.dataset.mode).toBe("FUTURES_SIMULATION");
+  });
+});
+
+
+describe("<OrderAuditRow> mode badge integration (108)", () => {
+  afterEach(cleanup);
+
+  function _row(overrides = {}) {
+    return {
+      id: 1, mode: "SIMULATION", requested_by_ai: false,
+      symbol: "005930", side: "BUY", quantity: 1, order_type: "MARKET",
+      limit_price: null, latest_price: 75_000,
+      decision: "APPROVED", reasons: [],
+      executed: true, broker_order_id: "MOCK-1", broker_status: "FILLED",
+      filled_quantity: 1, avg_fill_price: 75_000, message: "",
+      created_at: "2026-05-05T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("renders a ModeBadge in the metadata line", () => {
+    const { getByTestId } = render(<OrderAuditRow r={_row({ mode: "PAPER" })} />);
+    const badge = getByTestId("mode-badge");
+    expect(badge.textContent).toBe("PAPER");
+  });
+
+  it("the badge replaces the bare 'mode' text from the previous version", () => {
+    // 108 이전의 plain "{r.mode} ·" 출력은 사라지고 badge로만 나타나야 한다.
+    const { container } = render(
+      <OrderAuditRow r={_row({ mode: "LIVE_MANUAL_APPROVAL" })} />,
+    );
+    // Badge는 short label "MANUAL"로 — full enum string은 metadata 라인 어디에도
+    // 직접 노출되지 않는다.
+    expect(container.textContent).toContain("MANUAL");
+    expect(container.textContent).not.toContain("LIVE_MANUAL_APPROVAL");
+  });
+});
+
+
+describe("<ApprovalAttemptAuditRow> mode badge (108)", () => {
+  afterEach(cleanup);
+
+  it("renders a ModeBadge when the attempt carries a mode (after 108 hoist)", () => {
+    const r = {
+      approval_id: 7, symbol: "005930", side: "BUY", quantity: 1,
+      mode: "LIVE_AI_ASSIST",
+      at: "2026-05-06T11:50:00+00:00",
+      decided_by: "ops1",
+      reasons: ["max_order_notional_exceeded"],
+    };
+    const { getByTestId } = render(<ApprovalAttemptAuditRow r={r} />);
+    expect(getByTestId("mode-badge").textContent).toBe("AI 보조");
+  });
+
+  it("does not render a badge when mode is missing", () => {
+    const r = {
+      approval_id: 7, symbol: "005930", side: "BUY", quantity: 1,
+      at: "2026-05-06T11:50:00+00:00",
+      reasons: [],
+    };
+    const { container } = render(<ApprovalAttemptAuditRow r={r} />);
+    expect(container.querySelector('[data-testid="mode-badge"]')).toBeNull();
+  });
+});
+
+
+describe("flattenApprovalAttempts mode hoist (108)", () => {
+  it("hoists mode from the parent approval into each attempt entry", () => {
+    const pending = [{
+      id: 1, symbol: "005930", side: "BUY", quantity: 1,
+      mode: "LIVE_MANUAL_APPROVAL",
+      attempts: [
+        { at: "2026-05-06T11:50:00Z", decided_by: "ops1", reasons: [] },
+        { at: "2026-05-06T11:55:00Z", decided_by: "ops1", reasons: ["foo"] },
+      ],
+    }];
+    const flat = flattenApprovalAttempts(pending, []);
+    expect(flat).toHaveLength(2);
+    expect(flat[0].mode).toBe("LIVE_MANUAL_APPROVAL");
+    expect(flat[1].mode).toBe("LIVE_MANUAL_APPROVAL");
+  });
+
+  it("history attempts also get their parent's mode", () => {
+    const history = [{
+      id: 9, symbol: "AAA", side: "BUY", quantity: 1,
+      mode: "LIVE_AI_ASSIST",
+      attempts: [{ at: "2026-05-06T11:00:00Z", decided_by: "ops1", reasons: [] }],
+    }];
+    const flat = flattenApprovalAttempts([], history);
+    expect(flat).toHaveLength(1);
+    expect(flat[0].mode).toBe("LIVE_AI_ASSIST");
   });
 });
