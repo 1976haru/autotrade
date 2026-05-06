@@ -413,15 +413,46 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
 }
 
 
-// 089/091: distinguish "the AI call log is genuinely empty" from "filter
+// 089/091/094: distinguish "the AI call log is genuinely empty" from "filter
 // narrowed it to zero". 089 introduced this for ticker; 091 extended to
-// time bucket. Mirrors 081/082 multi-axis empty-state convention.
-export function aiAuditEmptyMessage(items, tickerNeedle, timeBucket) {
+// time bucket; 094 adds model. Mirrors 081/082 multi-axis empty-state convention.
+export function aiAuditEmptyMessage(items, tickerNeedle, timeBucket, modelNeedle) {
   if (!items || items.length === 0) return "AI 호출 기록 없음";
   const hasFilter =
     (tickerNeedle && tickerNeedle.length > 0)
-    || (timeBucket && timeBucket !== "all");
+    || (timeBucket && timeBucket !== "all")
+    || (modelNeedle && modelNeedle.length > 0);
   return hasFilter ? "해당 조건의 AI 호출 없음" : "AI 호출 기록 없음";
+}
+
+
+// 094: model 색상 — Anthropic 모델 family로 prefix 매칭. Opus는 보라
+// (most-capable, 비싸다는 신호), Sonnet은 청록 (balanced default), Haiku는
+// 노랑 (가벼운 호출). 알 수 없는 모델은 회색 — 운영자가 model 필드를 한눈에
+// scan하면서 비용 클래스/응답 품질을 추정하도록.
+export function modelAccent(model) {
+  if (!model) return "#475569";
+  const m = model.toLowerCase();
+  if (m.includes("opus"))   return "#c084fc";
+  if (m.includes("sonnet")) return "#67e8f9";
+  if (m.includes("haiku"))  return "#fbbf24";
+  return "#475569";
+}
+
+
+export function AiModelBadge({ model }) {
+  if (!model) return null;
+  const color = modelAccent(model);
+  return (
+    <span data-testid="ai-model-badge"
+          style={{
+            color: color, fontSize: 9, fontWeight: 700,
+            padding: "1px 6px", borderRadius: 3,
+            border: `1px solid ${color}55`, background: `${color}15`,
+          }}>
+      {model}
+    </span>
+  );
 }
 
 
@@ -440,6 +471,12 @@ export function AiAuditView() {
   // matches that workflow.
   const [tickerFilter, setTickerFilter] = useState("");
   const _tickerNeedle = tickerFilter.trim().toLowerCase();
+  // 094: transient model filter — substring match, mirrors 089 ticker pattern.
+  // Operators investigating cost/quality (e.g. "오늘 sonnet 호출만 보고 싶다")
+  // type a fragment and the list narrows. Not persisted because each session
+  // tends to compare different model classes.
+  const [modelFilter, setModelFilter] = useState("");
+  const _modelNeedle = modelFilter.trim().toLowerCase();
   // 091: persisted time bucket — investigation sessions tend to fix a window
   // ("recent 24h") for a stretch.
   const [timeBucket, setTimeBucket] = usePersistedState(
@@ -454,6 +491,8 @@ export function AiAuditView() {
   const filteredItems = items
     .filter((r) =>
       !_tickerNeedle || (r.ticker && r.ticker.toLowerCase().includes(_tickerNeedle)))
+    .filter((r) =>
+      !_modelNeedle || (r.model && r.model.toLowerCase().includes(_modelNeedle)))
     .filter(_withinBucket);
 
   return (
@@ -463,12 +502,21 @@ export function AiAuditView() {
         <Btn color="#334155" onClick={refresh} disabled={loading} small>새로고침</Btn>
       </div>
 
-      <div style={{ marginBottom: 8 }}>
-        <Inp
-          value={tickerFilter}
-          onChange={setTickerFilter}
-          placeholder="🔍 종목 (예: 005930)"
-        />
+      <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+        <div style={{ flex: 1 }}>
+          <Inp
+            value={tickerFilter}
+            onChange={setTickerFilter}
+            placeholder="🔍 종목 (예: 005930)"
+          />
+        </div>
+        <div style={{ flex: 1 }}>
+          <Inp
+            value={modelFilter}
+            onChange={setModelFilter}
+            placeholder="🔍 모델 (예: sonnet)"
+          />
+        </div>
       </div>
       <div style={{ marginBottom: 8 }}>
         <ChipFilterBar
@@ -485,7 +533,7 @@ export function AiAuditView() {
         <div style={{ color: "#475569", fontSize: 11, padding: 12, textAlign: "center" }}>로딩 중…</div>
       ) : filteredItems.length === 0 ? (
         <div style={{ color: "#1e3a5c", fontSize: 12, padding: 16, textAlign: "center" }}>
-          {aiAuditEmptyMessage(items, _tickerNeedle, timeBucket)}
+          {aiAuditEmptyMessage(items, _tickerNeedle, timeBucket, _modelNeedle)}
         </div>
       ) : filteredItems.map((r) => (
         <div key={r.id} style={{ padding: "8px 0", borderBottom: "1px solid #05121f" }}>
@@ -502,9 +550,10 @@ export function AiAuditView() {
               tok {r.input_tokens}/{r.output_tokens}
             </span>
           </div>
-          <div style={{ fontSize: 10, color: "#475569", marginTop: 3 }}>
-            {new Date(r.created_at).toLocaleString("ko-KR")}
-            {r.model && ` · ${r.model}`}
+          <div style={{ fontSize: 10, color: "#475569", marginTop: 3,
+                         display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <span>{new Date(r.created_at).toLocaleString("ko-KR")}</span>
+            <AiModelBadge model={r.model} />
           </div>
           {r.error && (
             <div style={{ fontSize: 9, color: "#f87171", marginTop: 2 }}>오류: {r.error}</div>
