@@ -120,14 +120,20 @@ def agent_stats(
 
 @router.get("/agent-decisions")
 def agent_decisions(
-    limit:    int = Query(50, ge=1, le=200),
-    chain_id: str | None = Query(None, description="특정 chain_id의 모든 결정 조회"),
-    db:       Session = Depends(get_db),
+    limit:      int = Query(50, ge=1, le=200),
+    chain_id:   str | None = Query(None, description="특정 chain_id의 모든 결정 조회"),
+    agent_name: str | None = Query(None, description="206: agent별 narrow"),
+    decision:   str | None = Query(None, description="206: 결정값별 narrow"),
+    db:         Session = Depends(get_db),
 ) -> list[dict]:
     """187: AgentDecisionLog 조회. read-only.
 
     chain_id 지정 시 해당 chain의 모든 결정 (1 chief + 9 members) 일괄 조회.
     미지정 시 최근 N건 (created_at desc).
+
+    206: agent_name + decision 필터 — 운영자가 "ChiefTradingAgent의 REJECT만"
+    같은 narrow를 할 수 있도록. chain_id와 동시에 지정해도 작동 (해당 chain의
+    해당 agent만).
     """
     from sqlalchemy import select
     from app.db.models import AgentDecisionLog
@@ -138,6 +144,10 @@ def agent_decisions(
         )
     else:
         stmt = stmt.order_by(AgentDecisionLog.id.desc()).limit(limit)
+    if agent_name is not None:
+        stmt = stmt.where(AgentDecisionLog.agent_name == agent_name)
+    if decision is not None:
+        stmt = stmt.where(AgentDecisionLog.decision == decision)
     rows = db.execute(stmt).scalars().all()
     return [
         {

@@ -115,9 +115,13 @@ export const backendApi = {
   // 187: Agent Council surface.
   aiAgentStats:    (lookbackDays = 7) =>
     backendFetch(`/api/ai/agent-stats?lookback_days=${lookbackDays}`),
-  aiAgentDecisions: (limit = 50, chainId = null) => {
-    const q = chainId ? `chain_id=${encodeURIComponent(chainId)}` : `limit=${limit}`;
-    return backendFetch(`/api/ai/agent-decisions?${q}`);
+  aiAgentDecisions: (limit = 50, chainId = null, opts = {}) => {
+    const qs = new URLSearchParams();
+    if (chainId) qs.set("chain_id", chainId);
+    else qs.set("limit", String(limit));
+    if (opts.agent_name) qs.set("agent_name", opts.agent_name);
+    if (opts.decision)   qs.set("decision",   opts.decision);
+    return backendFetch(`/api/ai/agent-decisions?${qs.toString()}`);
   },
   aiAgentDecisionsSummary: () => backendFetch("/api/ai/agent-decisions/summary"),
   // 193: Virtual order ledger surface.
