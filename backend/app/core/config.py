@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     global_rate_limit_window_seconds: int = 60
     global_rate_limit_max_count:      int = 0
 
+    # 178: AI 주문 kill-switch. emergency_stop과 별개로 AI만 차단. 기본 False.
+    disable_ai_orders: bool = False
+
     def symbol_whitelist_set(self) -> set[str]:
         """env 콤마 문자열을 set으로 파싱. 공백 strip."""
         if not self.symbol_whitelist:

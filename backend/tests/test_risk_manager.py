@@ -355,6 +355,7 @@ def _settings(**overrides):
         enforce_market_hours      = False,
         global_rate_limit_window_seconds = 60,
         global_rate_limit_max_count      = 0,
+        disable_ai_orders                = False,
     )
     base.update(overrides)
     ns = SimpleNamespace(**base)
@@ -974,3 +975,103 @@ def test_policy_from_settings_propagates_market_hours():
     assert p.enforce_market_hours is True
     p2 = RiskPolicy.from_settings(_settings(enforce_market_hours=False))
     assert p2.enforce_market_hours is False
+
+
+# ---------- 178: AI kill-switch ----------
+
+def test_ai_kill_switch_default_disabled():
+    """default False — 회귀 가드. AI 주문 정상 통과."""
+    risk = RiskManager(RiskPolicy())
+    result = risk.evaluate_order(
+        order=_ai_buy(confidence=80),
+        mode=OperationMode.VIRTUAL_AI_EXECUTION,
+        balance=_balance(), positions=[],
+        latest_price=75_000, requested_by_ai=True,
+    )
+    assert result.decision == RiskDecision.APPROVED
+
+
+def test_ai_kill_switch_blocks_ai_orders():
+    risk = RiskManager(RiskPolicy(disable_ai_orders=True))
+    result = risk.evaluate_order(
+        order=_ai_buy(confidence=80),
+        mode=OperationMode.VIRTUAL_AI_EXECUTION,
+        balance=_balance(), positions=[],
+        latest_price=75_000, requested_by_ai=True,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert any("AI orders are disabled" in r for r in result.reasons)
+
+
+def test_ai_kill_switch_does_not_block_strategy_orders():
+    """non-AI 주문은 disable_ai_orders 영향 X — 회귀 가드."""
+    risk = RiskManager(RiskPolicy(disable_ai_orders=True))
+    result = risk.evaluate_order(
+        order=_buy(1), mode=OperationMode.SIMULATION,
+        balance=_balance(), positions=[],
+        latest_price=75_000, requested_by_ai=False,
+    )
+    assert result.decision == RiskDecision.APPROVED
+
+
+def test_ai_kill_switch_short_circuits_other_checks():
+    """emergency_stop과 같은 hard reject — 다른 위반 사유 누적 안 함."""
+    risk = RiskManager(RiskPolicy(
+        disable_ai_orders=True,
+        max_order_notional=100,  # 위반할 만한 한도
+    ))
+    result = risk.evaluate_order(
+        order=_ai_buy(qty=10, confidence=80),
+        mode=OperationMode.VIRTUAL_AI_EXECUTION,
+        balance=_balance(), positions=[],
+        latest_price=75_000, requested_by_ai=True,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert len(result.reasons) == 1
+    assert "AI orders are disabled" in result.reasons[0]
+
+
+def test_set_ai_disabled_runtime_toggle():
+    """set_ai_disabled로 in-memory 토글 — emergency_stop 패턴."""
+    risk = RiskManager(RiskPolicy())
+    assert risk.policy.disable_ai_orders is False
+
+    risk.set_ai_disabled(True)
+    assert risk.policy.disable_ai_orders is True
+    result = risk.evaluate_order(
+        order=_ai_buy(confidence=80),
+        mode=OperationMode.VIRTUAL_AI_EXECUTION,
+        balance=_balance(), positions=[],
+        latest_price=75_000, requested_by_ai=True,
+    )
+    assert result.decision == RiskDecision.REJECTED
+
+    risk.set_ai_disabled(False)
+    result2 = risk.evaluate_order(
+        order=_ai_buy(confidence=80),
+        mode=OperationMode.VIRTUAL_AI_EXECUTION,
+        balance=_balance(), positions=[],
+        latest_price=75_000, requested_by_ai=True,
+    )
+    assert result2.decision == RiskDecision.APPROVED
+
+
+def test_emergency_stop_takes_priority_over_ai_kill_switch():
+    """emergency_stop이 더 상위 — AI든 non-AI든 모두 차단."""
+    risk = RiskManager(RiskPolicy(disable_ai_orders=True))
+    risk.set_emergency_stop(True)
+    # AI 주문.
+    result = risk.evaluate_order(
+        order=_ai_buy(confidence=80),
+        mode=OperationMode.VIRTUAL_AI_EXECUTION,
+        balance=_balance(), positions=[],
+        latest_price=75_000, requested_by_ai=True,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    # emergency_stop reason이 surface (AI kill-switch가 아님 — 더 상위 가드).
+    assert any("emergency stop" in r for r in result.reasons)
+
+
+def test_policy_from_settings_propagates_disable_ai_orders():
+    p = RiskPolicy.from_settings(_settings(disable_ai_orders=True))
+    assert p.disable_ai_orders is True

@@ -73,6 +73,11 @@ class RiskPolicy:
     # AI-specific 한도와 별개. 0이면 비활성 (기본).
     global_rate_limit_window_seconds: int = 60
     global_rate_limit_max_count:      int = 0
+    # 178: AI 주문 kill-switch. emergency_stop은 모든 주문 차단, 본 toggle은
+    # requested_by_ai=True만 차단 — 운영자가 "AI만 멈추고 strategy / manual은
+    # 유지"하고 싶을 때. 기본 False (비활성). RiskManager 인스턴스의 in-memory
+    # 토글로도 사용 가능 (set_ai_disabled).
+    disable_ai_orders: bool = False
 
     @classmethod
     def from_settings(cls, settings) -> "RiskPolicy":
@@ -100,6 +105,7 @@ class RiskPolicy:
             enforce_market_hours         = settings.enforce_market_hours,
             global_rate_limit_window_seconds = settings.global_rate_limit_window_seconds,
             global_rate_limit_max_count      = settings.global_rate_limit_max_count,
+            disable_ai_orders                = settings.disable_ai_orders,
         )
 
 
@@ -123,6 +129,11 @@ class RiskManager:
     def set_emergency_stop(self, enabled: bool) -> None:
         self.emergency_stop = enabled
 
+    def set_ai_disabled(self, enabled: bool) -> None:
+        """178: 운영자 in-memory 토글. RiskPolicy의 default 외에도 런타임 변경
+        가능 — emergency_stop과 동일 패턴."""
+        self.policy.disable_ai_orders = enabled
+
     def evaluate_order(
         self,
         *,
@@ -144,6 +155,15 @@ class RiskManager:
             return RiskCheckResult(
                 decision=RiskDecision.REJECTED,
                 reasons=["emergency stop is enabled"],
+            )
+
+        # 178: AI kill-switch — emergency_stop과 같은 hard short-circuit이지만
+        # requested_by_ai=True인 주문에만 적용. 운영자가 strategy/manual은 두고
+        # AI만 정지하고 싶을 때.
+        if requested_by_ai and self.policy.disable_ai_orders:
+            return RiskCheckResult(
+                decision=RiskDecision.REJECTED,
+                reasons=["AI orders are disabled by operator (kill-switch)"],
             )
 
         # 143: stale price도 emergency_stop과 같은 hard-reject — broker 응답이
