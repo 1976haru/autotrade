@@ -236,3 +236,121 @@ def test_endpoint_empty_returns_zero_counts(client):
     body = res.json()
     assert body["total_proposals"] == 0
     assert body["per_strategy"]    == []
+
+
+# ---------- 165: confidence histogram + realized PnL by strategy ----------
+
+def test_confidence_histogram_buckets_correctly():
+    Session = _session()
+    now = datetime.now(timezone.utc)
+    with Session() as db:
+        # 각 bucket에 의도적으로 다른 confidence 시드.
+        _ai_audit(db, confidence=10,  created_at=now)   # 0-25
+        _ai_audit(db, confidence=24,  created_at=now)   # 0-25
+        _ai_audit(db, confidence=40,  created_at=now)   # 25-50
+        _ai_audit(db, confidence=70,  created_at=now)   # 50-75
+        _ai_audit(db, confidence=80,  created_at=now)   # 75-100
+        _ai_audit(db, confidence=100, created_at=now)   # 75-100
+        db.commit()
+        s = compute_ai_agent_stats(db, now=now)
+    h = s["confidence_histogram"]
+    assert h["0-25"]   == 2
+    assert h["25-50"]  == 1
+    assert h["50-75"]  == 1
+    assert h["75-100"] == 2
+
+
+def test_confidence_histogram_missing_counter():
+    """confidence=None인 row는 별도 missing 카운터로."""
+    Session = _session()
+    now = datetime.now(timezone.utc)
+    with Session() as db:
+        _ai_audit(db, confidence=None, created_at=now)
+        _ai_audit(db, confidence=50,   created_at=now)
+        db.commit()
+        s = compute_ai_agent_stats(db, now=now)
+    assert s["confidence_histogram_missing"] == 1
+    assert s["confidence_histogram"]["50-75"] == 1
+
+
+def test_confidence_histogram_boundary_values():
+    """경계값 — 25는 25-50, 50은 50-75, 75는 75-100 (lower-bound inclusive)."""
+    Session = _session()
+    now = datetime.now(timezone.utc)
+    with Session() as db:
+        _ai_audit(db, confidence=25, created_at=now)
+        _ai_audit(db, confidence=50, created_at=now)
+        _ai_audit(db, confidence=75, created_at=now)
+        db.commit()
+        s = compute_ai_agent_stats(db, now=now)
+    h = s["confidence_histogram"]
+    assert h["0-25"]   == 0
+    assert h["25-50"]  == 1
+    assert h["50-75"]  == 1
+    assert h["75-100"] == 1
+
+
+def test_per_strategy_includes_realized_pnl_from_fifo():
+    """163의 compute_historical_accuracy 결과가 per_strategy에 반영."""
+    Session = _session()
+    now = datetime.now(timezone.utc)
+    with Session() as db:
+        # ai_winner: BUY 100, SELL 110 — +10 realized.
+        _ai_audit(db, strategy="ai_winner", decision="APPROVED",
+                  confidence=80, created_at=now)
+        # 위 audit row는 helper가 BUY로 만들지만, 체결 정보가 필요. helper가
+        # filled_quantity/avg_fill_price 채우는지 확인.
+        # helper에서 default executed=True, filled_quantity=1, avg_fill_price=100.
+        # SELL 매칭하려면 두 번째 row 추가 (helper의 side는 default BUY라 직접 추가).
+        sell_row = OrderAuditLog(
+            mode="VIRTUAL_AI_EXECUTION", symbol="005930", side="SELL",
+            quantity=1, order_type="MARKET", latest_price=110,
+            decision="APPROVED", reasons=[], requested_by_ai=True,
+            strategy="ai_winner", signal_strength=80, signal_confidence=80,
+            executed=True, broker_status="FILLED",
+            filled_quantity=1, avg_fill_price=110,
+            created_at=now,
+        )
+        db.add(sell_row)
+        db.commit()
+
+        s = compute_ai_agent_stats(db, now=now)
+    by = {row["strategy"]: row for row in s["per_strategy"]}
+    winner = by["ai_winner"]
+    assert winner["wins"]         == 1
+    assert winner["losses"]       == 0
+    assert winner["realized_pnl"] == 10
+
+
+def test_per_strategy_unknown_has_zero_pnl():
+    """(unknown) strategy는 NULL row 매핑이라 PnL 카운트 0."""
+    Session = _session()
+    now = datetime.now(timezone.utc)
+    with Session() as db:
+        _ai_audit(db, strategy=None, decision="APPROVED", created_at=now)
+        db.commit()
+        s = compute_ai_agent_stats(db, now=now)
+    unknown = s["per_strategy"][0]
+    assert unknown["strategy"]     == "(unknown)"
+    assert unknown["wins"]         == 0
+    assert unknown["losses"]       == 0
+    assert unknown["realized_pnl"] == 0
+
+
+def test_endpoint_surfaces_extended_fields(client):
+    """HTTP 응답에 165 신규 필드가 surface."""
+    now = datetime.now(timezone.utc)
+    with client.test_db_factory() as db:
+        _ai_audit(db, confidence=80, created_at=now)
+        _ai_audit(db, confidence=20, created_at=now)
+        db.commit()
+    body = client.get("/api/ai/agent-stats?lookback_days=7").json()
+    assert "confidence_histogram" in body
+    assert body["confidence_histogram"]["0-25"]   == 1
+    assert body["confidence_histogram"]["75-100"] == 1
+    assert "confidence_histogram_missing" in body
+    # per_strategy entries should have wins/losses/realized_pnl.
+    if body["per_strategy"]:
+        assert "wins"         in body["per_strategy"][0]
+        assert "losses"       in body["per_strategy"][0]
+        assert "realized_pnl" in body["per_strategy"][0]
