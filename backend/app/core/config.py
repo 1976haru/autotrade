@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     # 182: N건 연속 REJECTED 발생 시 자동 emergency_stop. 0이면 비활성. 권장 5~10.
     auto_stop_consecutive_rejections: int = 0
 
+    # 183: 일일(KST date) 최대 주문 횟수 한도. 0이면 비활성.
+    max_orders_per_day: int = 0
+
     def symbol_whitelist_set(self) -> set[str]:
         """env 콤마 문자열을 set으로 파싱. 공백 strip."""
         if not self.symbol_whitelist:

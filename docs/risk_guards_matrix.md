@@ -64,6 +64,7 @@
 | 항목 | 필드 | 기본값 | env |
 |---|---|---:|---|
 | 연속 REJECTED 시 자동 stop | `auto_stop_consecutive_rejections` | 0 (비활성) | `AUTO_STOP_CONSECUTIVE_REJECTIONS` |
+| 일일 최대 주문 횟수 (KST) | `max_orders_per_day` | 0 (비활성) | `MAX_ORDERS_PER_DAY` |
 
 ### 시간/window 한도
 

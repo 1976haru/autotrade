@@ -49,6 +49,31 @@ def today_kst() -> date:
     return datetime.now(KST).date()
 
 
+def count_orders_today_kst(
+    db:    Session,
+    *,
+    today: date | None = None,
+) -> int:
+    """오늘(KST) 만들어진 OrderAuditLog 행 개수. 183 max_orders_per_day 가드용.
+
+    decision 무관 — REJECTED / NEEDS_APPROVAL / APPROVED 모두 카운트. 운영자가
+    시스템 폭주를 인지하는 게 핵심이라 거부 카운트도 포함.
+    """
+    if today is None:
+        today = today_kst()
+
+    rows = db.query(OrderAuditLog.created_at).all()
+    count = 0
+    for (ts,) in rows:
+        if ts is None:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        if ts.astimezone(KST).date() == today:
+            count += 1
+    return count
+
+
 def compute_today_realized_pnl(
     db:    Session,
     *,
