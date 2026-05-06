@@ -687,6 +687,52 @@ export function classifyBacktestOutcome(run) {
 }
 
 
+// 104: 정렬 — 백엔드는 created_at desc 고정으로 내려주는데, 운영자는 종종
+// "이번 주 가장 잘 된 sma 변형"을 위해 total_pnl desc 또는 win_rate desc로
+// 보고 싶다. client-side sort로 충분 (pagination 없는 단일 페이지 50건).
+export function backtestWinRate(run) {
+  const w = run?.win_count || 0;
+  const l = run?.loss_count || 0;
+  const trades = w + l;
+  return trades > 0 ? w / trades : 0;
+}
+
+
+export function sortBacktestRuns(items, sortKey) {
+  const arr = [...(items || [])];
+  if (sortKey === "pnl") {
+    arr.sort((a, b) => (b.total_pnl || 0) - (a.total_pnl || 0));
+  } else if (sortKey === "win_rate") {
+    arr.sort((a, b) => backtestWinRate(b) - backtestWinRate(a));
+  } else {
+    // 'recent' (default) — created_at desc. 백엔드가 이미 그 순서지만 정렬을
+    // 한 번 더 적용해 client-side에서 일관성 보장 (mock 데이터 등 비정렬 입력
+    // 대비).
+    arr.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  }
+  return arr;
+}
+
+
+const BACKTEST_SORT_OPTIONS = [
+  { id: "recent",   label: "최근순", color: "#7dd3fc" },
+  { id: "pnl",      label: "수익순", color: "#22c55e" },
+  { id: "win_rate", label: "승률순", color: "#a78bfa" },
+];
+
+export const BACKTEST_SORT_STORAGE_KEY = "autotrade.backtestSort";
+const _VALID_BACKTEST_SORTS = new Set(BACKTEST_SORT_OPTIONS.map((o) => o.id));
+export const isValidBacktestSort = (v) => _VALID_BACKTEST_SORTS.has(v);
+
+
+export function BacktestSortBar({ active, onChange }) {
+  return (
+    <ChipFilterBar items={BACKTEST_SORT_OPTIONS} active={active}
+      onChange={onChange} ariaLabel="백테스트 정렬" />
+  );
+}
+
+
 const BACKTEST_OUTCOME_FILTERS = [
   { id: "all",       label: "전체",     color: "#7dd3fc" },
   { id: "profit",    label: "수익",     color: "#22c55e" },
@@ -733,10 +779,17 @@ export function BacktestRunsView() {
   const [outcomeFilter, setOutcomeFilter] = usePersistedState(
     BACKTEST_OUTCOME_STORAGE_KEY, "all", isValidBacktestOutcome,
   );
-  const filteredItems = items
-    .filter((r) =>
-      !_strategyNeedle || (r.strategy && r.strategy.toLowerCase().includes(_strategyNeedle)))
-    .filter((r) => outcomeFilter === "all" || classifyBacktestOutcome(r) === outcomeFilter);
+  // 104: 정렬 — 최근/수익/승률. 영구 저장.
+  const [sortKey, setSortKey] = usePersistedState(
+    BACKTEST_SORT_STORAGE_KEY, "recent", isValidBacktestSort,
+  );
+  const filteredItems = sortBacktestRuns(
+    items
+      .filter((r) =>
+        !_strategyNeedle || (r.strategy && r.strategy.toLowerCase().includes(_strategyNeedle)))
+      .filter((r) => outcomeFilter === "all" || classifyBacktestOutcome(r) === outcomeFilter),
+    sortKey,
+  );
 
   return (
     <Card>
@@ -756,6 +809,12 @@ export function BacktestRunsView() {
         <BacktestOutcomeFilterBar
           active={outcomeFilter}
           onChange={setOutcomeFilter}
+        />
+      </div>
+      <div style={{ marginBottom: 8 }}>
+        <BacktestSortBar
+          active={sortKey}
+          onChange={setSortKey}
         />
       </div>
 

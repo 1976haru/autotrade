@@ -8,8 +8,10 @@ import {
   AiTokenSummary,
   ApprovalAttemptAuditRow,
   BACKTEST_OUTCOME_STORAGE_KEY,
+  BACKTEST_SORT_STORAGE_KEY,
   BacktestOutcomeFilterBar,
   BacktestRunsView,
+  BacktestSortBar,
   EmergencyStopAuditRow,
   EventTimelineView,
   KindFilterBar,
@@ -17,16 +19,19 @@ import {
   TimeBucketBar,
   aiAuditEmptyMessage,
   backtestEmptyMessage,
+  backtestWinRate,
   classifyBacktestOutcome,
   emptyEventTimelineMessage,
   estimateAiCost,
   flattenApprovalAttempts,
   formatUsdCost,
   isValidBacktestOutcome,
+  isValidBacktestSort,
   mergeEvents,
   modelAccent,
   modelFamily,
   setEventKindFilter,
+  sortBacktestRuns,
   summarizeAiTokens,
 } from "./AuditLog";
 
@@ -1734,6 +1739,218 @@ describe("<BacktestRunsView> outcome filter (099)", () => {
     _resetBacktestHook({ items: [_bt()] });
     const { getByRole } = render(<BacktestRunsView />);
     expect(getByRole("radio", { name: "전체" }).getAttribute("aria-checked")).toBe("true");
+  });
+});
+
+
+describe("backtestWinRate (104)", () => {
+  it("returns wins / (wins + losses)", () => {
+    expect(backtestWinRate({ win_count: 6, loss_count: 4 })).toBeCloseTo(0.6, 6);
+    expect(backtestWinRate({ win_count: 0, loss_count: 4 })).toBe(0);
+    expect(backtestWinRate({ win_count: 5, loss_count: 0 })).toBe(1);
+  });
+
+  it("returns 0 when there were no trades (avoid divide-by-zero)", () => {
+    expect(backtestWinRate({ win_count: 0, loss_count: 0 })).toBe(0);
+    expect(backtestWinRate({})).toBe(0);
+  });
+
+  it("treats null/undefined input safely", () => {
+    expect(backtestWinRate(null)).toBe(0);
+    expect(backtestWinRate(undefined)).toBe(0);
+  });
+});
+
+
+describe("sortBacktestRuns (104)", () => {
+  function _r(overrides) {
+    return {
+      id: 1, total_pnl: 0, win_count: 0, loss_count: 0,
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("returns a new array (does not mutate input)", () => {
+    const items = [_r({ id: 1 }), _r({ id: 2 })];
+    const sorted = sortBacktestRuns(items, "pnl");
+    expect(sorted).not.toBe(items);
+  });
+
+  it("'recent' sorts by created_at desc", () => {
+    const items = [
+      _r({ id: 1, created_at: "2026-05-04T00:00:00Z" }),
+      _r({ id: 2, created_at: "2026-05-06T00:00:00Z" }),
+      _r({ id: 3, created_at: "2026-05-05T00:00:00Z" }),
+    ];
+    expect(sortBacktestRuns(items, "recent").map((r) => r.id)).toEqual([2, 3, 1]);
+  });
+
+  it("'pnl' sorts by total_pnl desc (winners first)", () => {
+    const items = [
+      _r({ id: 1, total_pnl: -200 }),
+      _r({ id: 2, total_pnl: 1000 }),
+      _r({ id: 3, total_pnl: 0 }),
+      _r({ id: 4, total_pnl: 500 }),
+    ];
+    expect(sortBacktestRuns(items, "pnl").map((r) => r.id)).toEqual([2, 4, 3, 1]);
+  });
+
+  it("'win_rate' sorts by win/(win+loss) desc, ties stable enough", () => {
+    const items = [
+      _r({ id: 1, win_count: 1, loss_count: 9 }),  // 0.10
+      _r({ id: 2, win_count: 7, loss_count: 3 }),  // 0.70
+      _r({ id: 3, win_count: 5, loss_count: 5 }),  // 0.50
+      _r({ id: 4, win_count: 0, loss_count: 0 }),  // 0    (no trades)
+    ];
+    expect(sortBacktestRuns(items, "win_rate").map((r) => r.id)).toEqual([2, 3, 1, 4]);
+  });
+
+  it("unknown sortKey falls back to recent", () => {
+    const items = [
+      _r({ id: 1, created_at: "2026-05-04T00:00:00Z" }),
+      _r({ id: 2, created_at: "2026-05-06T00:00:00Z" }),
+    ];
+    expect(sortBacktestRuns(items, "garbage").map((r) => r.id)).toEqual([2, 1]);
+  });
+
+  it("returns empty array for nullable input", () => {
+    expect(sortBacktestRuns(null, "pnl")).toEqual([]);
+    expect(sortBacktestRuns(undefined, "recent")).toEqual([]);
+  });
+});
+
+
+describe("isValidBacktestSort (104)", () => {
+  it("accepts the three canonical ids", () => {
+    expect(isValidBacktestSort("recent")).toBe(true);
+    expect(isValidBacktestSort("pnl")).toBe(true);
+    expect(isValidBacktestSort("win_rate")).toBe(true);
+  });
+
+  it("rejects unknown values", () => {
+    expect(isValidBacktestSort("garbage")).toBe(false);
+    expect(isValidBacktestSort("")).toBe(false);
+    expect(isValidBacktestSort(null)).toBe(false);
+  });
+});
+
+
+describe("<BacktestSortBar> (104)", () => {
+  afterEach(cleanup);
+
+  it("renders three chips with the expected labels", () => {
+    const { getByRole } = render(<BacktestSortBar active="recent" onChange={() => {}} />);
+    expect(getByRole("radiogroup", { name: "백테스트 정렬" })).toBeTruthy();
+    expect(getByRole("radio", { name: "최근순" })).toBeTruthy();
+    expect(getByRole("radio", { name: "수익순" })).toBeTruthy();
+    expect(getByRole("radio", { name: "승률순" })).toBeTruthy();
+  });
+
+  it("calls onChange with the chip id", () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(<BacktestSortBar active="recent" onChange={onChange} />);
+    fireEvent.click(getByRole("radio", { name: "수익순" }));
+    expect(onChange).toHaveBeenCalledWith("pnl");
+    fireEvent.click(getByRole("radio", { name: "승률순" }));
+    expect(onChange).toHaveBeenLastCalledWith("win_rate");
+  });
+});
+
+
+describe("<BacktestRunsView> sort toggle (104)", () => {
+  beforeEach(() => { _resetBacktestHook(); localStorage.clear(); });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _bt(overrides = {}) {
+    return {
+      id: 1, strategy: "sma_crossover",
+      params: {}, initial_cash: 10_000_000, quantity: 10, bars_processed: 100,
+      final_cash: 10_500_000, total_pnl: 0,
+      win_count: 0, loss_count: 0, max_drawdown: 0,
+      data_source: "bars", data_symbol: "005930",
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("default '최근순' renders newest first", () => {
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "first",  created_at: "2026-05-04T00:00:00Z" }),
+        _bt({ id: 2, strategy: "newest", created_at: "2026-05-06T00:00:00Z" }),
+      ],
+    });
+    const { container } = render(<BacktestRunsView />);
+    const text = container.textContent;
+    expect(text.indexOf("newest")).toBeLessThan(text.indexOf("first"));
+  });
+
+  it("clicking 수익순 reorders by total_pnl desc", () => {
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "loser",  total_pnl: -200,
+               created_at: "2026-05-06T11:00:00Z" }),
+        _bt({ id: 2, strategy: "winner", total_pnl:  500,
+               created_at: "2026-05-06T10:00:00Z" }),
+      ],
+    });
+    const { container, getByRole } = render(<BacktestRunsView />);
+    fireEvent.click(getByRole("radio", { name: "수익순" }));
+    const text = container.textContent;
+    expect(text.indexOf("winner")).toBeLessThan(text.indexOf("loser"));
+  });
+
+  it("clicking 승률순 reorders by wins/(wins+losses) desc", () => {
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "low_wr",  win_count: 1, loss_count: 9,
+               created_at: "2026-05-06T11:00:00Z" }),
+        _bt({ id: 2, strategy: "high_wr", win_count: 7, loss_count: 3,
+               created_at: "2026-05-06T10:00:00Z" }),
+      ],
+    });
+    const { container, getByRole } = render(<BacktestRunsView />);
+    fireEvent.click(getByRole("radio", { name: "승률순" }));
+    const text = container.textContent;
+    expect(text.indexOf("high_wr")).toBeLessThan(text.indexOf("low_wr"));
+  });
+
+  it("composes with strategy + outcome filters", () => {
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "sma_a", total_pnl: 100,
+               win_count: 1, loss_count: 9 }),  // wr 0.10, profit
+        _bt({ id: 2, strategy: "sma_b", total_pnl: 200,
+               win_count: 8, loss_count: 2 }),  // wr 0.80, profit
+        _bt({ id: 3, strategy: "rsi",   total_pnl: 300,
+               win_count: 9, loss_count: 1 }),  // wr 0.90, profit but filtered out
+      ],
+    });
+    const { container, getByRole, getByPlaceholderText } = render(<BacktestRunsView />);
+    fireEvent.click(getByRole("radio", { name: "수익" }));
+    fireEvent.change(getByPlaceholderText(/전략/), { target: { value: "sma" } });
+    fireEvent.click(getByRole("radio", { name: "승률순" }));
+    const text = container.textContent;
+    expect(text).not.toContain("rsi");
+    expect(text.indexOf("sma_b")).toBeLessThan(text.indexOf("sma_a"));
+  });
+
+  it("persists selection to localStorage", () => {
+    _resetBacktestHook({ items: [_bt()] });
+    const { getByRole, unmount } = render(<BacktestRunsView />);
+    fireEvent.click(getByRole("radio", { name: "수익순" }));
+    expect(localStorage.getItem(BACKTEST_SORT_STORAGE_KEY)).toBe("pnl");
+    unmount();
+    const { getByRole: g2 } = render(<BacktestRunsView />);
+    expect(g2("radio", { name: "수익순" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("falls back to 최근순 when stored value is unknown", () => {
+    localStorage.setItem(BACKTEST_SORT_STORAGE_KEY, "garbage");
+    _resetBacktestHook({ items: [_bt()] });
+    const { getByRole } = render(<BacktestRunsView />);
+    expect(getByRole("radio", { name: "최근순" }).getAttribute("aria-checked")).toBe("true");
   });
 });
 
