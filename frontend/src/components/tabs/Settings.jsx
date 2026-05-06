@@ -43,6 +43,115 @@ export function ModeWarningBanner({ warning }) {
 }
 
 
+// 201: Full env-flag matrix mirrored from backend /api/status `safety_flags`.
+// Each entry maps to CLAUDE.md "안전 플래그" table; the rendered badge
+// highlights "안전" (default-position keeps risk gate engaged) vs "위험"
+// (a non-default value that loosens a guard) so the operator can scan for
+// any flag that's been flipped without checking env files.
+const _SAFETY_FLAG_ROWS = [
+  { key: "default_mode",                envVar: "DEFAULT_MODE",
+    label: "기본 운용모드",   safeValue: "SIMULATION", kind: "string" },
+  { key: "enable_live_trading",         envVar: "ENABLE_LIVE_TRADING",
+    label: "실거래 활성",     safeValue: false,        kind: "bool" },
+  { key: "enable_ai_execution",         envVar: "ENABLE_AI_EXECUTION",
+    label: "AI 자동실행",     safeValue: false,        kind: "bool" },
+  { key: "enable_futures_live_trading", envVar: "ENABLE_FUTURES_LIVE_TRADING",
+    label: "선물 실거래",     safeValue: false,        kind: "bool" },
+  { key: "kis_is_paper",                envVar: "KIS_IS_PAPER",
+    label: "KIS 모의투자",    safeValue: true,         kind: "bool", inverted: true },
+  { key: "market_data_provider",        envVar: "MARKET_DATA_PROVIDER",
+    label: "시장 데이터",     safeValue: "mock",       kind: "string" },
+  { key: "enable_fill_polling",         envVar: "ENABLE_FILL_POLLING",
+    label: "체결 폴링",       safeValue: false,        kind: "bool" },
+  { key: "stale_price_max_age_seconds", envVar: "STALE_PRICE_MAX_AGE_SECONDS",
+    label: "시세 stale 한도", safeValue: 60,           kind: "seconds",
+    safetyHint: "값이 작을수록 안전 — 기본 60초" },
+];
+
+function _formatFlagValue(value, kind) {
+  if (value == null) return "—";
+  if (kind === "bool")    return value ? "ON" : "OFF";
+  if (kind === "seconds") return `${value}s`;
+  return String(value);
+}
+
+export function SafetyFlagsCard({ status, loading, error }) {
+  if (loading) {
+    return (
+      <Card>
+        <SectionLabel>🛡 안전 플래그</SectionLabel>
+        <div style={{ fontSize: 11, color: "#475569" }}>로딩 중…</div>
+      </Card>
+    );
+  }
+  if (error) {
+    return (
+      <Card>
+        <SectionLabel>🛡 안전 플래그</SectionLabel>
+        <div style={{ fontSize: 11, color: "#f87171" }}>조회 실패: {error}</div>
+      </Card>
+    );
+  }
+  const flags = status?.safety_flags;
+  if (!flags) {
+    return (
+      <Card>
+        <SectionLabel>🛡 안전 플래그</SectionLabel>
+        <div style={{ fontSize: 11, color: "#475569" }}>
+          백엔드가 safety_flags 블록을 반환하지 않았습니다 (구버전 API).
+        </div>
+      </Card>
+    );
+  }
+  return (
+    <Card data-testid="safety-flags-card">
+      <SectionLabel>🛡 안전 플래그</SectionLabel>
+      <div style={{ fontSize: 9, color: "#334155", marginBottom: 8, lineHeight: 1.5 }}>
+        CLAUDE.md "안전 플래그" 표의 라이브 스냅샷. 위험 배지는 기본값에서 벗어나
+        가드가 풀린 상태를 의미하며, 운영자가 의도한 변경인지 점검해야 합니다.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {_SAFETY_FLAG_ROWS.map((row) => {
+          const v = flags[row.key];
+          const isUnsafe = v !== row.safeValue;
+          return (
+            <div key={row.key}
+                 data-testid={`safety-flag-${row.key}`}
+                 style={{
+                   display: "grid",
+                   gridTemplateColumns: "1.4fr 0.9fr auto",
+                   alignItems: "baseline", gap: 6,
+                   padding: "6px 8px", background: "#0c2035", borderRadius: 3,
+                 }}>
+              <div>
+                <div style={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>
+                  {row.label}
+                </div>
+                <div style={{ fontSize: 8, color: "#334155", fontFamily: "monospace" }}>
+                  {row.envVar}
+                </div>
+              </div>
+              <div style={{ fontSize: 11, color: "#7dd3fc", fontFamily: "monospace" }}>
+                {_formatFlagValue(v, row.kind)}
+              </div>
+              <span style={{
+                fontSize: 9, fontWeight: 700, letterSpacing: "0.06em",
+                padding: "2px 6px", borderRadius: 3,
+                color:      isUnsafe ? "#ef4444"   : "#22c55e",
+                background: isUnsafe ? "#7f1d1d33" : "#14532d33",
+                border: `1px solid ${isUnsafe ? "#ef444466" : "#22c55e66"}`,
+              }}>
+                {isUnsafe ? "위험" : "안전"}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+
 export function Settings({ settings }) {
   const {
     brokerId, broker, tradeMode, apiKeys,
@@ -50,7 +159,8 @@ export function Settings({ settings }) {
     switchBroker, switchMode, updateKey, connect,
     operatorName, setOperatorName,
   } = settings;
-  const { status: backendStatus } = useBackendStatus();
+  const { status: backendStatus, loading: statusLoading, error: statusError } =
+    useBackendStatus();
   const modeWarning = computeModeWarning(backendStatus);
 
   return (
@@ -58,6 +168,13 @@ export function Settings({ settings }) {
 
       {/* 위험한 mode + flag 조합 경고 — 가장 먼저 노출 */}
       <ModeWarningBanner warning={modeWarning} />
+
+      {/* 201: 전체 환경변수 안전 플래그 — 위험 배지로 한눈에 점검 */}
+      <SafetyFlagsCard
+        status={backendStatus}
+        loading={statusLoading}
+        error={statusError}
+      />
 
       {/* 거래 모드 */}
       <Card>
