@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Btn, Card, Inp, SectionLabel } from "../common";
 import { ChipFilterBar } from "../common/ChipFilterBar";
 import { fmtKRW, pnlColor } from "../../utils/format";
-import { findModeDisplay } from "../../utils/modes";
+import { MODE_DISPLAY, findModeDisplay } from "../../utils/modes";
 import {
   useAiAudits,
   useBacktestRuns,
@@ -619,6 +619,100 @@ export function formatAiTokenByModel(items) {
 }
 
 
+// 124: 092 'AI 흐름은 어느 모드에서 가장 비싸게 발생하나' 질문에 답하는
+// 시각화. 123이 AI row에 mode를 기록한 덕에 가능. 112 AiTokenByModel과 같은
+// chip + stacked-bar 패턴이지만 axis가 다르다(model family → operating mode)
+// + 표시 단위가 다르다(token → USD). row의 mode가 NULL(0004 마이그레이션 이전)
+// 이거나 알 수 없는 mode면 "기록 전" / raw id로 끝쪽에 모인다.
+const _AI_COST_BY_MODE_NULL_KEY = "(없음)";
+const _AI_COST_BY_MODE_NULL_LABEL = "기록 전";
+
+export function formatAiCostByMode(items) {
+  const byMode = new Map();
+  for (const r of items || []) {
+    const mode = r && r.mode ? r.mode : _AI_COST_BY_MODE_NULL_KEY;
+    const cur = byMode.get(mode) || {
+      mode, count: 0, totalUsd: 0, knownCount: 0, unknownCount: 0,
+    };
+    cur.count += 1;
+    const family = modelFamily(r && r.model);
+    const price = family && AI_MODEL_PRICING[family];
+    if (price) {
+      cur.totalUsd += ((r.input_tokens  || 0) / 1_000_000) * price.input
+                    + ((r.output_tokens || 0) / 1_000_000) * price.output;
+      cur.knownCount += 1;
+    } else {
+      cur.unknownCount += 1;
+    }
+    byMode.set(mode, cur);
+  }
+  // MODE_DISPLAY 순서대로 우선 정렬, 그 다음 알 수 없는 mode, 마지막에 NULL.
+  const knownIds = new Set(MODE_DISPLAY.map((m) => m.id));
+  const result = [];
+  for (const m of MODE_DISPLAY) {
+    if (byMode.has(m.id)) {
+      const c = byMode.get(m.id);
+      result.push({ ...c, label: m.label, color: m.color });
+      byMode.delete(m.id);
+    }
+  }
+  // 알 수 없는 modes (FUTURES_SIMULATION 등)
+  for (const [key, c] of byMode.entries()) {
+    if (key === _AI_COST_BY_MODE_NULL_KEY) continue;
+    const display = findModeDisplay(key);
+    result.push({ ...c, label: display.label, color: display.color });
+  }
+  // 마지막으로 NULL
+  if (byMode.has(_AI_COST_BY_MODE_NULL_KEY)) {
+    const c = byMode.get(_AI_COST_BY_MODE_NULL_KEY);
+    result.push({ ...c, label: _AI_COST_BY_MODE_NULL_LABEL, color: "#475569" });
+  }
+  return result;
+}
+
+
+export function AiCostByMode({ items }) {
+  const cells = formatAiCostByMode(items);
+  if (cells.length === 0) return null;
+  return (
+    <div data-testid="ai-cost-by-mode"
+         style={{ marginBottom: 8, padding: "4px 0",
+                  borderBottom: "1px dashed #0c2035" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6,
+                     fontSize: 9, marginBottom: 4 }}>
+        {cells.map((c) => (
+          <span key={c.mode}
+                data-testid={`ai-cost-by-mode-cell-${c.mode}`}
+                style={{
+                  color: c.color, fontWeight: 700,
+                  padding: "1px 6px", borderRadius: 3,
+                  border: `1px solid ${c.color}55`, background: `${c.color}15`,
+                }}>
+            {c.label} {c.count}건 · 약 {formatUsdCost(c.totalUsd)}
+            {c.unknownCount > 0 && (
+              <span style={{ color: "#64748b", fontWeight: 400 }}>
+                {" "}(미상 {c.unknownCount})
+              </span>
+            )}
+          </span>
+        ))}
+      </div>
+      <div style={{ display: "flex", height: 4, borderRadius: 2,
+                     overflow: "hidden", background: "#020e1c" }}>
+        {cells.map((c) => {
+          if (c.totalUsd <= 0) return null;
+          return (
+            <div key={c.mode}
+                 data-testid={`ai-cost-by-mode-bar-${c.mode}`}
+                 style={{ flex: c.totalUsd, background: c.color }} />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+
 export function AiTokenByModel({ items }) {
   const cells = formatAiTokenByModel(items);
   if (cells.length === 0) return null;
@@ -859,6 +953,7 @@ export function AiAuditView() {
 
       <AiTokenSummary items={filteredItems} />
       <AiTokenByModel items={filteredItems} />
+      <AiCostByMode    items={filteredItems} />
 
       {error && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>}
 
