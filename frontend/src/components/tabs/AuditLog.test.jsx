@@ -5,6 +5,7 @@ import {
   AI_MODEL_PRICING,
   AI_SORT_STORAGE_KEY,
   AiAuditView,
+  AiCostByMode,
   AiModelBadge,
   AiSortBar,
   AiTimelineRow,
@@ -31,6 +32,7 @@ import {
   emptyEventTimelineMessage,
   estimateAiCost,
   flattenApprovalAttempts,
+  formatAiCostByMode,
   formatAiTokenByModel,
   formatUsdCost,
   isValidAiSort,
@@ -1479,6 +1481,212 @@ describe("<AiAuditView> per-model token distribution integration (112)", () => {
     fireEvent.change(getByPlaceholderText(/모델/), { target: { value: "sonnet" } });
     expect(container.querySelector('[data-testid="ai-token-by-model-cell-sonnet"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="ai-token-by-model-cell-haiku"]')).toBeNull();
+  });
+});
+
+
+describe("formatAiCostByMode (124)", () => {
+  it("returns empty array for empty / nullable input", () => {
+    expect(formatAiCostByMode([])).toEqual([]);
+    expect(formatAiCostByMode(null)).toEqual([]);
+    expect(formatAiCostByMode(undefined)).toEqual([]);
+  });
+
+  it("groups items by operating mode and sums USD via family pricing", () => {
+    const cells = formatAiCostByMode([
+      // SIM, sonnet, 1M in → $3
+      { mode: "SIMULATION", model: "claude-sonnet-4-6",
+        input_tokens: 1_000_000, output_tokens: 0 },
+      // SIM, haiku, 1M in → $0.80
+      { mode: "SIMULATION", model: "claude-haiku-4-5",
+        input_tokens: 1_000_000, output_tokens: 0 },
+      // LIVE_AI_ASSIST, opus, 1M in → $15
+      { mode: "LIVE_AI_ASSIST", model: "claude-opus-4-7",
+        input_tokens: 1_000_000, output_tokens: 0 },
+    ]);
+    const sim = cells.find((c) => c.mode === "SIMULATION");
+    expect(sim.count).toBe(2);
+    expect(sim.totalUsd).toBeCloseTo(3.8, 6);
+    expect(sim.knownCount).toBe(2);
+    const ai = cells.find((c) => c.mode === "LIVE_AI_ASSIST");
+    expect(ai.count).toBe(1);
+    expect(ai.totalUsd).toBeCloseTo(15, 6);
+  });
+
+  it("orders cells by MODE_DISPLAY (least → most risky), unknowns at the end", () => {
+    const cells = formatAiCostByMode([
+      { mode: "LIVE_AI_EXECUTION", model: "claude-sonnet-4-6",
+        input_tokens: 1, output_tokens: 1 },
+      { mode: "SIMULATION", model: "claude-sonnet-4-6",
+        input_tokens: 1, output_tokens: 1 },
+      { mode: "LIVE_MANUAL_APPROVAL", model: "claude-sonnet-4-6",
+        input_tokens: 1, output_tokens: 1 },
+    ]);
+    expect(cells.map((c) => c.mode)).toEqual([
+      "SIMULATION", "LIVE_MANUAL_APPROVAL", "LIVE_AI_EXECUTION",
+    ]);
+  });
+
+  it("groups null/missing mode into '기록 전' at the end", () => {
+    const cells = formatAiCostByMode([
+      { mode: "SIMULATION", model: "claude-sonnet-4-6",
+        input_tokens: 1_000_000, output_tokens: 0 },
+      { mode: null,         model: "claude-sonnet-4-6",
+        input_tokens: 1_000_000, output_tokens: 0 },
+      { /* mode missing */  model: "claude-sonnet-4-6",
+        input_tokens: 1_000_000, output_tokens: 0 },
+    ]);
+    expect(cells[0].mode).toBe("SIMULATION");
+    expect(cells[cells.length - 1].label).toBe("기록 전");
+    expect(cells[cells.length - 1].count).toBe(2);
+    expect(cells[cells.length - 1].color).toBe("#475569");
+  });
+
+  it("counts unknown-family rows separately within their mode bucket", () => {
+    const cells = formatAiCostByMode([
+      { mode: "SIMULATION", model: "claude-sonnet-4-6",
+        input_tokens: 1_000_000, output_tokens: 0 },
+      { mode: "SIMULATION", model: "gpt-4",
+        input_tokens: 1_000_000, output_tokens: 0 },
+    ]);
+    const sim = cells.find((c) => c.mode === "SIMULATION");
+    expect(sim.count).toBe(2);
+    expect(sim.knownCount).toBe(1);
+    expect(sim.unknownCount).toBe(1);
+    // Only the sonnet row contributes to totalUsd ($3)
+    expect(sim.totalUsd).toBeCloseTo(3, 6);
+  });
+
+  it("attaches the canonical mode color via findModeDisplay", () => {
+    const cells = formatAiCostByMode([
+      { mode: "LIVE_AI_ASSIST", model: "claude-sonnet-4-6",
+        input_tokens: 0, output_tokens: 0 },
+    ]);
+    expect(cells[0].color).toBe("#a78bfa");
+  });
+});
+
+
+describe("<AiCostByMode> (124)", () => {
+  afterEach(cleanup);
+
+  it("renders nothing for empty / nullable input", () => {
+    const { container } = render(<AiCostByMode items={[]} />);
+    expect(container.querySelector('[data-testid="ai-cost-by-mode"]')).toBeNull();
+    cleanup();
+    const { container: c2 } = render(<AiCostByMode items={null} />);
+    expect(c2.querySelector('[data-testid="ai-cost-by-mode"]')).toBeNull();
+  });
+
+  it("renders one chip per mode with count + USD cost", () => {
+    const items = [
+      { mode: "SIMULATION", model: "claude-sonnet-4-6",
+        input_tokens: 1_000_000, output_tokens: 0 },
+      { mode: "LIVE_AI_ASSIST", model: "claude-haiku-4-5",
+        input_tokens: 1_000_000, output_tokens: 0 },
+    ];
+    const { getByTestId } = render(<AiCostByMode items={items} />);
+    const sim = getByTestId("ai-cost-by-mode-cell-SIMULATION");
+    expect(sim.textContent).toContain("SIM");
+    expect(sim.textContent).toContain("1건");
+    expect(sim.textContent).toContain("$3.00");
+    const ai = getByTestId("ai-cost-by-mode-cell-LIVE_AI_ASSIST");
+    expect(ai.textContent).toContain("AI 보조");
+    expect(ai.textContent).toContain("$0.80");
+  });
+
+  it("renders the '기록 전' chip for null-mode rows", () => {
+    const items = [
+      { mode: null, model: "claude-sonnet-4-6",
+        input_tokens: 1_000_000, output_tokens: 0 },
+    ];
+    const { getByTestId } = render(<AiCostByMode items={items} />);
+    expect(getByTestId('ai-cost-by-mode-cell-(없음)').textContent).toContain("기록 전");
+  });
+
+  it("shows '미상' note inline when a mode bucket has unknown families", () => {
+    const items = [
+      { mode: "SIMULATION", model: "claude-sonnet-4-6",
+        input_tokens: 1_000_000, output_tokens: 0 },
+      { mode: "SIMULATION", model: "gpt-4",
+        input_tokens: 1_000_000, output_tokens: 0 },
+    ];
+    const { getByTestId } = render(<AiCostByMode items={items} />);
+    expect(getByTestId("ai-cost-by-mode-cell-SIMULATION").textContent).toContain("미상 1");
+  });
+
+  it("renders one stacked-bar segment per mode with non-zero USD", () => {
+    const items = [
+      { mode: "SIMULATION", model: "claude-sonnet-4-6",
+        input_tokens: 1_000_000, output_tokens: 0 }, // $3
+      { mode: "LIVE_AI_ASSIST", model: "claude-opus-4-7",
+        input_tokens: 1_000_000, output_tokens: 0 }, // $15
+    ];
+    const { getByTestId } = render(<AiCostByMode items={items} />);
+    const sim = getByTestId("ai-cost-by-mode-bar-SIMULATION");
+    const ai  = getByTestId("ai-cost-by-mode-bar-LIVE_AI_ASSIST");
+    // flexGrow proportional to USD cost
+    expect(Number(sim.style.flexGrow)).toBeCloseTo(3, 6);
+    expect(Number(ai.style.flexGrow)).toBeCloseTo(15, 6);
+  });
+
+  it("omits the bar segment when a mode's USD total is 0", () => {
+    const items = [
+      { mode: "SIMULATION", model: "gpt-4",
+        input_tokens: 1_000_000, output_tokens: 0 }, // unknown family → $0
+    ];
+    const { container, getByTestId } = render(<AiCostByMode items={items} />);
+    expect(getByTestId("ai-cost-by-mode-cell-SIMULATION")).toBeTruthy();
+    expect(container.querySelector('[data-testid="ai-cost-by-mode-bar-SIMULATION"]')).toBeNull();
+  });
+});
+
+
+describe("<AiAuditView> cost-by-mode integration (124)", () => {
+  beforeEach(() => { _resetAiHook(); });
+  afterEach(cleanup);
+
+  function _ai(overrides = {}) {
+    return {
+      id: 1, ticker: "005930", model: "claude-sonnet-4-6",
+      mode: "SIMULATION",
+      input_tokens: 1_000_000, output_tokens: 0,
+      score: { total: 75 }, error: null,
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("renders the cost-by-mode block when items have mode + cost", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, mode: "SIMULATION" }),
+        _ai({ id: 2, mode: "LIVE_AI_ASSIST" }),
+      ],
+    });
+    const { getByTestId } = render(<AiAuditView />);
+    expect(getByTestId("ai-cost-by-mode")).toBeTruthy();
+    expect(getByTestId("ai-cost-by-mode-cell-SIMULATION")).toBeTruthy();
+    expect(getByTestId("ai-cost-by-mode-cell-LIVE_AI_ASSIST")).toBeTruthy();
+  });
+
+  it("hides the block when items list is empty", () => {
+    _resetAiHook({ items: [] });
+    const { container } = render(<AiAuditView />);
+    expect(container.querySelector('[data-testid="ai-cost-by-mode"]')).toBeNull();
+  });
+
+  it("recomputes when ticker filter narrows the visible set to one mode", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, ticker: "AAA", mode: "SIMULATION" }),
+        _ai({ id: 2, ticker: "BBB", mode: "LIVE_AI_ASSIST" }),
+      ],
+    });
+    const { container, getByPlaceholderText } = render(<AiAuditView />);
+    fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "AAA" } });
+    expect(container.querySelector('[data-testid="ai-cost-by-mode-cell-SIMULATION"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="ai-cost-by-mode-cell-LIVE_AI_ASSIST"]')).toBeNull();
   });
 });
 
