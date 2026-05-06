@@ -380,6 +380,42 @@ describe("<BulkCancelStaleModal>", () => {
     expect(getByText(/처리 중/).disabled).toBe(true);
   });
 
+  // 118: stale 행 미리보기에 ModeBadge가 그려져, 운영자가 어떤 mode들의 결재가
+  // 묶여 일괄 취소되는지 확인할 수 있어야 한다.
+  it("renders ModeBadge for each stale row (118)", () => {
+    const stale = [
+      _staleApproval({ id: 1, mode: "LIVE_MANUAL_APPROVAL" }),
+      _staleApproval({ id: 2, mode: "LIVE_AI_ASSIST" }),
+    ];
+    const { getByTestId } = render(
+      <BulkCancelStaleModal
+        approvals={stale} busy={false}
+        onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    const row1 = getByTestId("stale-approval-row-1");
+    const row2 = getByTestId("stale-approval-row-2");
+    expect(row1.textContent).toContain("MANUAL");
+    expect(row2.textContent).toContain("AI 보조");
+    // 정확하게 그 row 안의 badge만
+    expect(row1.querySelector('[data-testid="mode-badge"]').dataset.mode)
+      .toBe("LIVE_MANUAL_APPROVAL");
+    expect(row2.querySelector('[data-testid="mode-badge"]').dataset.mode)
+      .toBe("LIVE_AI_ASSIST");
+  });
+
+  it("the raw enum text is no longer in the stale preview rows (118)", () => {
+    const stale = [
+      _staleApproval({ id: 1, mode: "LIVE_AI_ASSIST" }),
+    ];
+    const { container } = render(
+      <BulkCancelStaleModal
+        approvals={stale} busy={false}
+        onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    expect(container.textContent).not.toContain("LIVE_AI_ASSIST");
+    expect(container.textContent).toContain("AI 보조");
+  });
+
   // 096: 095에서 DecisionDialog primitive에 추가한 IME 가드는 BulkCancelStaleModal
   // 같은 thin wrapper를 통해서도 작동해야 한다. wrapper가 미래에 자체 keydown
   // handler를 덮어쓰는 방식으로 바뀌면 한국어 운영자가 일괄 취소 사유 입력 중
