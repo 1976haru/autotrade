@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # 너무 길면 stale 의미가 흐려진다 — 60초 기본은 KIS 분봉 운영을 가정.
     stale_price_max_age_seconds: int = 60
 
+    # 158: AI 제안의 최소 confidence 임계 (0-100). requested_by_ai=True 주문이
+    # signal_confidence < 임계이면 거부. 0이면 검사 비활성 (기본). 운영자가
+    # 의도적으로 켜야만 가드가 작동.
+    min_ai_confidence: int = 0
+
     kis_app_key: str = ""
     kis_app_secret: str = ""
     kis_account_no: str = ""

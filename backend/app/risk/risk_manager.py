@@ -23,6 +23,10 @@ class RiskPolicy:
     # 143: 시세 데이터의 최대 허용 age (초). RiskManager가 정책 위반으로 즉시 REJECT.
     # 0 또는 음수는 검사 비활성 — 기존 호출 경로가 timestamp를 안 보내는 경우와 동일.
     stale_price_max_age_seconds: int = 60
+    # 158: AI 제안의 최소 confidence 임계 (0-100). requested_by_ai=True인 주문이
+    # signal_confidence < 임계이면 REJECTED. 0이면 검사 비활성 — 기존 호출 호환.
+    # CLAUDE.md '손실 방어 우선' — 신뢰도 낮은 AI 제안이 자동 체결로 가지 않도록.
+    min_ai_confidence: int = 0
 
     @classmethod
     def from_settings(cls, settings) -> "RiskPolicy":
@@ -41,6 +45,7 @@ class RiskPolicy:
             enable_live_trading = settings.enable_live_trading,
             enable_ai_execution = settings.enable_ai_execution,
             stale_price_max_age_seconds = settings.stale_price_max_age_seconds,
+            min_ai_confidence   = settings.min_ai_confidence,
         )
 
 
@@ -107,6 +112,20 @@ class RiskManager:
                 )
 
         result = RiskCheckResult(decision=RiskDecision.APPROVED)
+
+        # 158: AI confidence threshold. requested_by_ai=True인 주문에 한해
+        # signal_confidence가 임계 미달이면 거부. 임계 ≤ 0이면 검사 비활성.
+        # confidence가 None이면 (AI 외 경로) 검사 적용 안 함.
+        min_conf = self.policy.min_ai_confidence
+        if requested_by_ai and min_conf > 0:
+            conf = order.signal_confidence
+            if conf is None or conf < min_conf:
+                result.reasons.append(
+                    f"AI signal confidence {conf if conf is not None else 'missing'} "
+                    f"< min_ai_confidence {min_conf}"
+                )
+            else:
+                result.passed.append("AI signal confidence above threshold")
 
         order_notional = latest_price * order.quantity
         if order_notional > self.policy.max_order_notional:

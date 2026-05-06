@@ -345,6 +345,7 @@ def _settings(**overrides):
         enable_live_trading       = False,
         enable_ai_execution       = False,
         stale_price_max_age_seconds = 60,
+        min_ai_confidence         = 0,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -405,6 +406,114 @@ def test_lowered_notional_threshold_rejects_orders_that_default_would_approve():
     assert result.decision == RiskDecision.REJECTED
     assert "order notional exceeds max_order_notional" in result.reasons
 
+
+# ---------- 158: AI confidence threshold ----------
+
+def _ai_buy(qty: int = 1, confidence: int | None = 80) -> OrderRequest:
+    """AI가 만든 주문 시뮬용 — signal_confidence를 명시할 수 있다."""
+    return OrderRequest(
+        symbol="005930", side=OrderSide.BUY, quantity=qty,
+        signal_confidence=confidence,
+        signal_strength=confidence,
+    )
+
+
+def test_ai_confidence_below_threshold_rejected():
+    risk = RiskManager(RiskPolicy(min_ai_confidence=70))
+    result = risk.evaluate_order(
+        order=_ai_buy(confidence=50),
+        mode=OperationMode.SIMULATION,
+        balance=_balance(), positions=[],
+        latest_price=75_000,
+        requested_by_ai=True,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert any("AI signal confidence 50" in r and "min_ai_confidence 70" in r
+                for r in result.reasons), result.reasons
+
+
+def test_ai_confidence_at_threshold_passes():
+    """경계값 — 정확히 임계와 같으면 통과 (>= 의미)."""
+    risk = RiskManager(RiskPolicy(min_ai_confidence=70))
+    result = risk.evaluate_order(
+        order=_ai_buy(confidence=70),
+        mode=OperationMode.VIRTUAL_AI_EXECUTION,
+        balance=_balance(), positions=[],
+        latest_price=75_000,
+        requested_by_ai=True,
+    )
+    assert result.decision == RiskDecision.APPROVED
+
+
+def test_ai_confidence_missing_rejected_when_threshold_set():
+    """signal_confidence=None인 AI 주문 — 임계 설정 시 거부 (안전 측)."""
+    risk = RiskManager(RiskPolicy(min_ai_confidence=70))
+    result = risk.evaluate_order(
+        order=_ai_buy(confidence=None),
+        mode=OperationMode.SIMULATION,
+        balance=_balance(), positions=[],
+        latest_price=75_000,
+        requested_by_ai=True,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert any("missing" in r for r in result.reasons), result.reasons
+
+
+def test_ai_confidence_check_skipped_when_threshold_zero():
+    """기본값 0이면 검사 비활성 — 기존 호출 호환."""
+    risk = RiskManager(RiskPolicy(min_ai_confidence=0))
+    result = risk.evaluate_order(
+        order=_ai_buy(confidence=10),  # 매우 낮아도
+        mode=OperationMode.VIRTUAL_AI_EXECUTION,
+        balance=_balance(), positions=[],
+        latest_price=75_000,
+        requested_by_ai=True,
+    )
+    assert result.decision == RiskDecision.APPROVED
+
+
+def test_non_ai_orders_unaffected_by_threshold():
+    """requested_by_ai=False인 주문은 confidence 임계 검사 자체가 적용 안 됨."""
+    risk = RiskManager(RiskPolicy(min_ai_confidence=70))
+    result = risk.evaluate_order(
+        order=_buy(1),  # confidence 미명시
+        mode=OperationMode.SIMULATION,
+        balance=_balance(), positions=[],
+        latest_price=75_000,
+        requested_by_ai=False,
+    )
+    assert result.decision == RiskDecision.APPROVED
+
+
+def test_ai_confidence_threshold_combines_with_other_violations():
+    """confidence + notional 같이 위반 — 두 reason 모두 누적."""
+    risk = RiskManager(RiskPolicy(
+        min_ai_confidence=70,
+        max_order_notional=100_000,
+    ))
+    result = risk.evaluate_order(
+        order=_ai_buy(qty=10, confidence=50),
+        mode=OperationMode.SIMULATION,
+        balance=_balance(), positions=[],
+        latest_price=75_000,
+        requested_by_ai=True,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert any("AI signal confidence" in r for r in result.reasons)
+    assert any("order notional exceeds" in r for r in result.reasons)
+
+
+def test_policy_from_settings_propagates_min_ai_confidence():
+    p = RiskPolicy.from_settings(_settings(min_ai_confidence=80))
+    assert p.min_ai_confidence == 80
+
+
+def test_policy_from_settings_at_defaults_includes_min_ai_confidence():
+    """from_settings default가 dataclass default (0)과 일치 — 회귀 가드."""
+    fs   = RiskPolicy.from_settings(_settings())
+    bare = RiskPolicy()
+    assert fs.min_ai_confidence == bare.min_ai_confidence
+    assert fs.min_ai_confidence == 0
 
 # ---------- 143: stale price detection ----------
 
