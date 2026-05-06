@@ -110,6 +110,11 @@ class AiAnalysisLog(Base):
     active_strats: Mapped[list]           = mapped_column(JSON, default=list)
     risk_params:   Mapped[dict]           = mapped_column(JSON, default=dict)
 
+    # 123: 호출 시점의 운용모드 — 0004 마이그레이션에서 nullable로 추가. 이전
+    # row는 NULL("기록 전")이고, FE의 ModeBadge가 mode=null이면 미렌더하므로
+    # 자연스럽게 surface된다. 미래 mode별 cost 분포 분석을 가능하게 함.
+    mode:          Mapped[str | None]     = mapped_column(String(32), nullable=True)
+
     text:          Mapped[str | None]     = mapped_column(Text, nullable=True)
     model:         Mapped[str | None]     = mapped_column(String(64), nullable=True)
     input_tokens:  Mapped[int]            = mapped_column(Integer, default=0)

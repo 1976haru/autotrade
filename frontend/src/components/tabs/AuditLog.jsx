@@ -252,6 +252,7 @@ export function AiTimelineRow({ r }) {
       <div style={{ fontSize: 10, color: "#475569", marginTop: 3,
                      display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
         <span>{new Date(r.created_at).toLocaleString("ko-KR")}</span>
+        <ModeBadge mode={r.mode} />
         <AiModelBadge model={r.model} />
       </div>
       {r.error && (
@@ -885,6 +886,7 @@ export function AiAuditView() {
           <div style={{ fontSize: 10, color: "#475569", marginTop: 3,
                          display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
             <span>{new Date(r.created_at).toLocaleString("ko-KR")}</span>
+            <ModeBadge mode={r.mode} />
             <AiModelBadge model={r.model} />
           </div>
           {r.error && (
