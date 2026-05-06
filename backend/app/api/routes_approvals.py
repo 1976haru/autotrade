@@ -13,6 +13,7 @@ from app.db.session import get_db
 from app.permission.gate import (
     STATUS_APPROVED,
     STATUS_CANCELLED,
+    STATUS_EXPIRED,
     STATUS_REJECTED,
     ApprovalAlreadyDecidedError,
     ApprovalNotFoundError,
@@ -137,14 +138,15 @@ def list_pending(db: Session = Depends(get_db)) -> list[ApprovalOut]:
     return [_to_out(a, meta_by_audit.get(a.audit_id)) for a in approvals]
 
 
-_DECIDED_STATUSES = {STATUS_APPROVED, STATUS_REJECTED, STATUS_CANCELLED}
+_DECIDED_STATUSES = {STATUS_APPROVED, STATUS_REJECTED,
+                     STATUS_CANCELLED, STATUS_EXPIRED}
 
 
 @router.get("/history", response_model=list[ApprovalOut])
 def list_history(
     limit:  int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    status: Literal["APPROVED", "REJECTED", "CANCELLED"] | None = Query(None),
+    status: Literal["APPROVED", "REJECTED", "CANCELLED", "EXPIRED"] | None = Query(None),
     db:     Session = Depends(get_db),
 ) -> list[ApprovalOut]:
     """Decided approvals (APPROVED / REJECTED / CANCELLED), most recent first.

@@ -40,6 +40,7 @@ const STATUS_COLOR = {
   APPROVED:  "#22c55e",
   REJECTED:  "#ef4444",
   CANCELLED: "#94a3b8",
+  EXPIRED:   "#facc15",
 };
 
 
@@ -337,6 +338,9 @@ const HISTORY_STATUS_FILTERS = [
   { id: "APPROVED",  label: "승인", color: "#22c55e" },
   { id: "REJECTED",  label: "거부", color: "#ef4444" },
   { id: "CANCELLED", label: "취소", color: "#94a3b8" },
+  // 196: 167 TTL trigger가 만든 EXPIRED row를 운영자가 분리해서 볼 수 있어야
+  // 한다 — 자동 만료는 사용자 거부와 다른 분석 의미를 가진다.
+  { id: "EXPIRED",   label: "만료", color: "#facc15" },
 ];
 
 export const HISTORY_STATUS_STORAGE_KEY = "autotrade.approvalsHistoryStatusFilter";
