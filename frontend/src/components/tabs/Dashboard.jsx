@@ -5,6 +5,7 @@ import { MODE_DISPLAY } from "../../utils/modes";
 import { useEmergencyStopAudits, useOrderAudits } from "../../store/useAuditLogs";
 import { usePersistedState } from "../../store/usePersistedState";
 import { flattenApprovalAttempts, setEventKindFilter } from "./AuditLog";
+import { HistoryStaleBanner } from "./Approvals";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
 // AuditLog timeline에서도 mode badge로 쓰기 위해 공유. Dashboard는 re-export
@@ -436,6 +437,12 @@ export function Dashboard({
       <EmergencyStopStuckBanner
         since={emergencyStopSince}
         onClick={() => onJumpTab && onJumpTab("strat")}
+      />
+
+      {/* 116: 결재 처리 내역에 stale 비율이 25% 이상이면 적체 의심 banner */}
+      <HistoryStaleBanner
+        history={approvals && approvals.history}
+        onClick={() => onJumpTab && onJumpTab("approve")}
       />
 
       {/* 위험/상태 요약 */}

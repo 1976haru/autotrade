@@ -441,6 +441,51 @@ export function HistoryDecisionTimeSummary({ items }) {
 }
 
 
+// 116: 결재 흐름 health banner — Dashboard 첫 화면 신호. EmergencyStopStuckBanner
+// (060/069) 같은 조건부 표시: stale 비율이 임계(기본 25%) 이상일 때만 노출.
+// 운영자가 결재 적체 의심을 결재 탭에 들어가지 않고도 첫 화면에서 인지하도록.
+// 임계 미만이거나 history가 비면 null — 평소엔 안 보여 노이즈 제로.
+export const HISTORY_STALE_BANNER_THRESHOLD = 0.25;
+
+export function HistoryStaleBanner({
+  history, threshold = HISTORY_STALE_BANNER_THRESHOLD, onClick,
+}) {
+  const ratio = summarizeHistoryStaleRatio(history);
+  if (ratio.count === 0 || ratio.ratio < threshold) return null;
+  const decision = summarizeHistoryDecisionTime(history);
+  const pct = Math.round(ratio.ratio * 100);
+  // 50%+ red(주의), 그 외 amber(경고).
+  const color = ratio.ratio >= 0.5 ? "#ef4444" : "#fbbf24";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid="history-stale-banner"
+      data-ratio={pct}
+      style={{
+        background:    `${color}22`,
+        border:        `1px solid ${color}66`,
+        borderRadius:  6,
+        padding:       "8px 12px",
+        color,
+        textAlign:     "left",
+        fontFamily:    "inherit",
+        fontSize:      11,
+        cursor:        onClick ? "pointer" : "default",
+        width:         "100%",
+      }}
+    >
+      <div style={{ fontWeight: 700 }}>
+        ⚠ 결재 {ratio.count}건 중 {ratio.staleCount}건이 10분+ 적체 ({pct}%)
+      </div>
+      <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
+        평균 결정 {formatDecisionDuration(decision.avgMs)} · 자세한 분포는 결재 탭에서
+      </div>
+    </button>
+  );
+}
+
+
 // 092: mode filter on the 처리 내역 list. RiskManager only emits NEEDS_APPROVAL
 // for LIVE_MANUAL_APPROVAL + LIVE_AI_ASSIST (risk_manager.py:118), so those
 // are the two real-world modes that produce queue rows. The 3rd chip lets

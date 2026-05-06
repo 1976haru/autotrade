@@ -7,11 +7,13 @@ import {
   Approvals,
   BulkCancelStaleModal,
   HISTORY_MODE_STORAGE_KEY,
+  HISTORY_STALE_BANNER_THRESHOLD,
   HISTORY_STATUS_STORAGE_KEY,
   HISTORY_TIME_BUCKET_STORAGE_KEY,
   HistoryDecisionTimeSummary,
   HistoryModeFilterBar,
   HistoryRow,
+  HistoryStaleBanner,
   HistoryStaleRatio,
   HistoryStatusFilterBar,
   HistoryTimeBucketBar,
@@ -2176,5 +2178,76 @@ describe("<Approvals> stale ratio integration (111)", () => {
     // 승인만 보면 0/1 → hide
     fireEvent.click(getByRole("radio", { name: "승인" }));
     expect(queryByTestId("history-stale-ratio")).toBeNull();
+  });
+});
+
+
+describe("<HistoryStaleBanner> (116)", () => {
+  afterEach(cleanup);
+
+  function _row(durationMin) {
+    const decided = "2026-05-06T12:00:00+00:00";
+    const decidedMs = new Date(decided).getTime();
+    return {
+      id: Math.random(),
+      created_at: new Date(decidedMs - durationMin * 60_000).toISOString(),
+      decided_at: decided,
+    };
+  }
+
+  it("renders nothing when history is empty", () => {
+    const { container } = render(<HistoryStaleBanner history={[]} />);
+    expect(container.querySelector('[data-testid="history-stale-banner"]')).toBeNull();
+    cleanup();
+    const { container: c2 } = render(<HistoryStaleBanner history={undefined} />);
+    expect(c2.querySelector('[data-testid="history-stale-banner"]')).toBeNull();
+  });
+
+  it("renders nothing when stale ratio is below the threshold", () => {
+    // 4 fast + 1 stale → 20% < default 25%
+    const items = [_row(2), _row(3), _row(5), _row(7), _row(15)];
+    const { container } = render(<HistoryStaleBanner history={items} />);
+    expect(container.querySelector('[data-testid="history-stale-banner"]')).toBeNull();
+  });
+
+  it("renders banner when ratio >= threshold (default 25%)", () => {
+    // 2 fast + 2 stale → 50%
+    const items = [_row(2), _row(5), _row(15), _row(30)];
+    const { getByTestId } = render(<HistoryStaleBanner history={items} />);
+    const banner = getByTestId("history-stale-banner");
+    expect(banner.textContent).toContain("4건 중 2건이 10분+ 적체");
+    expect(banner.textContent).toContain("50%");
+    expect(banner.dataset.ratio).toBe("50");
+  });
+
+  it("uses red color when ratio >= 50%, amber otherwise", () => {
+    const reds = [_row(15), _row(30)]; // 100%
+    const { getByTestId, unmount } = render(<HistoryStaleBanner history={reds} />);
+    expect(getByTestId("history-stale-banner").style.color).toBe("rgb(239, 68, 68)");
+    unmount();
+
+    // 1 stale of 3 → 33% (above 25%, below 50%)
+    const ambers = [_row(2), _row(5), _row(15)];
+    const { getByTestId: g2 } = render(<HistoryStaleBanner history={ambers} />);
+    expect(g2("history-stale-banner").style.color).toBe("rgb(251, 191, 36)");
+  });
+
+  it("respects a custom threshold prop", () => {
+    // 1 of 5 → 20%, normally hidden, but threshold=0.1 should show it
+    const items = [_row(2), _row(3), _row(5), _row(7), _row(15)];
+    const { getByTestId } = render(<HistoryStaleBanner history={items} threshold={0.1} />);
+    expect(getByTestId("history-stale-banner")).toBeTruthy();
+  });
+
+  it("calls onClick when clicked (jump-to-tab path)", () => {
+    const items = [_row(15), _row(30), _row(45)];
+    const onClick = vi.fn();
+    const { getByTestId } = render(<HistoryStaleBanner history={items} onClick={onClick} />);
+    fireEvent.click(getByTestId("history-stale-banner"));
+    expect(onClick).toHaveBeenCalled();
+  });
+
+  it("HISTORY_STALE_BANNER_THRESHOLD is the documented 25% default", () => {
+    expect(HISTORY_STALE_BANNER_THRESHOLD).toBe(0.25);
   });
 });
