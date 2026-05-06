@@ -486,23 +486,50 @@ export function AiAuditView() {
 }
 
 
-function BacktestRunsView() {
+// 090: distinguish "no backtest runs at all" from "filter narrowed to zero",
+// matching 081/082/089 empty-state convention.
+export function backtestEmptyMessage(items, strategyNeedle) {
+  if (!items || items.length === 0) return "백테스트 실행 기록 없음";
+  if (strategyNeedle) return "해당 전략의 백테스트 없음";
+  return "백테스트 실행 기록 없음";
+}
+
+
+export function BacktestRunsView() {
   const { items, loading, error, refresh } = useBacktestRuns();
+  // 090: transient strategy filter (not persisted) — operators investigating
+  // a specific strategy (sma_crossover, etc.) want to see only its runs.
+  // Same shape as 089 ticker filter on AI sub-tab.
+  const [strategyFilter, setStrategyFilter] = useState("");
+  const _strategyNeedle = strategyFilter.trim().toLowerCase();
+  const filteredItems = _strategyNeedle
+    ? items.filter((r) => r.strategy && r.strategy.toLowerCase().includes(_strategyNeedle))
+    : items;
 
   return (
     <Card>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <SectionLabel>백테스트 실행 로그 ({items.length})</SectionLabel>
+        <SectionLabel>백테스트 실행 로그 ({filteredItems.length})</SectionLabel>
         <Btn color="#334155" onClick={refresh} disabled={loading} small>새로고침</Btn>
+      </div>
+
+      <div style={{ marginBottom: 8 }}>
+        <Inp
+          value={strategyFilter}
+          onChange={setStrategyFilter}
+          placeholder="🔍 전략 (예: sma_crossover)"
+        />
       </div>
 
       {error && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>}
 
       {loading ? (
         <div style={{ color: "#475569", fontSize: 11, padding: 12, textAlign: "center" }}>로딩 중…</div>
-      ) : items.length === 0 ? (
-        <div style={{ color: "#1e3a5c", fontSize: 12, padding: 16, textAlign: "center" }}>백테스트 실행 기록 없음</div>
-      ) : items.map((r) => {
+      ) : filteredItems.length === 0 ? (
+        <div style={{ color: "#1e3a5c", fontSize: 12, padding: 16, textAlign: "center" }}>
+          {backtestEmptyMessage(items, _strategyNeedle)}
+        </div>
+      ) : filteredItems.map((r) => {
         const trades = r.win_count + r.loss_count;
         const winRate = trades > 0 ? Math.round(r.win_count / trades * 1000) / 10 : 0;
         return (

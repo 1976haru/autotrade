@@ -4,12 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AiAuditView,
   ApprovalAttemptAuditRow,
+  BacktestRunsView,
   EmergencyStopAuditRow,
   EventTimelineView,
   KindFilterBar,
   OrderAuditRow,
   TimeBucketBar,
   aiAuditEmptyMessage,
+  backtestEmptyMessage,
   emptyEventTimelineMessage,
   flattenApprovalAttempts,
   mergeEvents,
@@ -27,12 +29,13 @@ const _stopHook  = {
   items: [], loading: false, loadingMore: false, hasMore: false,
   error: "", refresh: vi.fn(), loadMore: vi.fn(),
 };
-const _aiHook = { items: [], loading: false, error: "", refresh: vi.fn() };
+const _aiHook       = { items: [], loading: false, error: "", refresh: vi.fn() };
+const _backtestHook = { items: [], loading: false, error: "", refresh: vi.fn() };
 
 vi.mock("../../store/useAuditLogs", () => ({
   useOrderAudits:          () => _orderHook,
   useAiAudits:             () => _aiHook,
-  useBacktestRuns:         () => ({ items: [], loading: false, error: "", refresh: vi.fn() }),
+  useBacktestRuns:         () => _backtestHook,
   useEmergencyStopAudits:  () => _stopHook,
 }));
 
@@ -41,6 +44,13 @@ function _resetAiHook(overrides = {}) {
     items: [], loading: false, error: "", ...overrides,
   });
   _aiHook.refresh = vi.fn();
+}
+
+function _resetBacktestHook(overrides = {}) {
+  Object.assign(_backtestHook, {
+    items: [], loading: false, error: "", ...overrides,
+  });
+  _backtestHook.refresh = vi.fn();
 }
 
 
@@ -870,6 +880,112 @@ describe("<AiAuditView> ticker filter", () => {
     const { container, getByPlaceholderText } = render(<AiAuditView />);
     fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "AAA" } });
     expect(container.textContent).toContain("AAA");
+    expect(container.textContent).toContain("(1)");
+  });
+});
+
+
+describe("backtestEmptyMessage", () => {
+  it("returns plain '없음' message when items is empty", () => {
+    expect(backtestEmptyMessage([], "")).toBe("백테스트 실행 기록 없음");
+    expect(backtestEmptyMessage(undefined, "")).toBe("백테스트 실행 기록 없음");
+  });
+
+  it("returns the filter-narrowed variant when items exist but strategy matches none", () => {
+    expect(backtestEmptyMessage([{ id: 1 }], "sma_crossover"))
+      .toBe("해당 전략의 백테스트 없음");
+  });
+
+  it("falls back to plain message when no strategy filter active", () => {
+    expect(backtestEmptyMessage([{ id: 1 }], "")).toBe("백테스트 실행 기록 없음");
+  });
+});
+
+
+describe("<BacktestRunsView> strategy filter", () => {
+  beforeEach(() => { _resetBacktestHook(); });
+  afterEach(cleanup);
+
+  function _bt(overrides = {}) {
+    return {
+      id: 1, strategy: "sma_crossover",
+      params: {}, initial_cash: 10_000_000, quantity: 10, bars_processed: 100,
+      final_cash: 10_500_000, total_pnl: 500_000,
+      win_count: 5, loss_count: 3, max_drawdown: 100_000,
+      data_source: "bars", data_symbol: "005930",
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("renders the strategy search input with placeholder hint", () => {
+    const { getByPlaceholderText } = render(<BacktestRunsView />);
+    expect(getByPlaceholderText(/전략/)).toBeTruthy();
+  });
+
+  it("default empty filter shows all rows", () => {
+    _resetBacktestHook({
+      items: [_bt({ id: 1, strategy: "sma_crossover" }),
+              _bt({ id: 2, strategy: "rsi_revert" })],
+    });
+    const { container } = render(<BacktestRunsView />);
+    expect(container.textContent).toContain("sma_crossover");
+    expect(container.textContent).toContain("rsi_revert");
+    expect(container.textContent).toContain("(2)");
+  });
+
+  it("typing a matching strategy narrows the list", () => {
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "sma_crossover" }),
+        _bt({ id: 2, strategy: "rsi_revert" }),
+        _bt({ id: 3, strategy: "sma_breakout" }),
+      ],
+    });
+    const { container, getByPlaceholderText } = render(<BacktestRunsView />);
+    fireEvent.change(getByPlaceholderText(/전략/), { target: { value: "sma" } });
+    expect(container.textContent).toContain("sma_crossover");
+    expect(container.textContent).toContain("sma_breakout");
+    expect(container.textContent).not.toContain("rsi_revert");
+    expect(container.textContent).toContain("(2)");
+  });
+
+  it("substring match works case-insensitively", () => {
+    _resetBacktestHook({
+      items: [_bt({ id: 1, strategy: "sma_crossover" })],
+    });
+    const { container, getByPlaceholderText } = render(<BacktestRunsView />);
+    fireEvent.change(getByPlaceholderText(/전략/), { target: { value: "SMA" } });
+    expect(container.textContent).toContain("sma_crossover");
+  });
+
+  it("trims whitespace before matching", () => {
+    _resetBacktestHook({ items: [_bt({ id: 1, strategy: "sma_crossover" })] });
+    const { container, getByPlaceholderText } = render(<BacktestRunsView />);
+    fireEvent.change(getByPlaceholderText(/전략/), { target: { value: "  sma  " } });
+    expect(container.textContent).toContain("(1)");
+  });
+
+  it("non-matching filter shows the filter-narrowed empty message", () => {
+    _resetBacktestHook({ items: [_bt({ id: 1, strategy: "sma_crossover" })] });
+    const { getByText, getByPlaceholderText } = render(<BacktestRunsView />);
+    fireEvent.change(getByPlaceholderText(/전략/), { target: { value: "nonexistent" } });
+    expect(getByText("해당 전략의 백테스트 없음")).toBeTruthy();
+  });
+
+  it("plain '없음' message when items list itself is empty", () => {
+    _resetBacktestHook({ items: [] });
+    const { getByText } = render(<BacktestRunsView />);
+    expect(getByText("백테스트 실행 기록 없음")).toBeTruthy();
+  });
+
+  it("rows missing a strategy field are filtered out gracefully", () => {
+    _resetBacktestHook({
+      items: [_bt({ id: 1, strategy: null }), _bt({ id: 2, strategy: "sma_crossover" })],
+    });
+    const { container, getByPlaceholderText } = render(<BacktestRunsView />);
+    fireEvent.change(getByPlaceholderText(/전략/), { target: { value: "sma" } });
+    expect(container.textContent).toContain("sma_crossover");
     expect(container.textContent).toContain("(1)");
   });
 });
