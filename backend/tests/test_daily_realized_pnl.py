@@ -5,7 +5,7 @@ max_daily_loss 검사가 무효 상태였다. 본 모듈은 (a) audit log 기반
 재구성 함수와 (b) route_order 통합 후 강제력 회복을 검증.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -13,7 +13,12 @@ from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
 from app.db.models import OrderAuditLog
-from app.risk.daily_pnl import compute_today_realized_pnl, today_utc
+from app.risk.daily_pnl import (
+    KST,
+    compute_today_realized_pnl,
+    today_kst,
+    today_utc,
+)
 
 
 def _make_session():
@@ -243,3 +248,90 @@ def test_route_order_recomputes_pnl_per_call(client):
     # route_order가 0으로 재계산 후 평가했다는 간접 증거 — 오염 값이 그대로면
     # 한도 초과로 거부됐을 것.
     assert risk.daily_realized_pnl == 0
+
+
+# ---------- 166: KST date boundary ----------
+
+def test_today_kst_returns_kst_date():
+    """today_kst()는 UTC와 9시간 차이로 다른 date 가능."""
+    # KST 기준 현재 date.
+    expected = datetime.now(KST).date()
+    assert today_kst() == expected
+
+
+def test_pnl_uses_kst_by_default():
+    """compute_today_realized_pnl 기본값 = KST. 한국 장 종료 후(15:00 UTC)
+    동안 청산된 거래는 그 날 KST date로 카운트.
+
+    Note: SQLAlchemy DateTime 컬럼은 timezone strip이라 UTC clock으로 저장
+    필요 — 테스트는 의도된 KST 시각을 UTC로 변환 후 입력."""
+    Session = _make_session()
+    # KST 14:00 = UTC 05:00. SQLite는 naive UTC clock 저장.
+    utc_05 = datetime(2026, 5, 6, 5, 0, tzinfo=timezone.utc)
+    with Session() as db:
+        db.add_all([
+            _audit(side="BUY",  qty=1, fill_price=100, created_at=utc_05),
+            _audit(side="SELL", qty=1, fill_price=110, created_at=utc_05),
+        ])
+        db.commit()
+        # KST 기준 SELL은 5/6 14:00 KST → date 5/6. PnL +10 카운트.
+        pnl = compute_today_realized_pnl(db, today=date(2026, 5, 6))  # tz default KST
+    assert pnl == 10
+
+
+def test_pnl_kst_boundary_around_midnight_kst():
+    """KST 자정(00:00 KST = 15:00 UTC) 직전/직후 청산이 KST date에 정확히 귀속."""
+    Session = _make_session()
+    # KST 5/5 23:30 = UTC 5/5 14:30 (전날). KST 5/6 00:30 = UTC 5/5 15:30 (오늘 KST).
+    utc_5_14_30 = datetime(2026, 5, 5, 14, 30, tzinfo=timezone.utc)
+    utc_5_15_30 = datetime(2026, 5, 5, 15, 30, tzinfo=timezone.utc)
+    with Session() as db:
+        # 5/5 KST BUY → 5/6 KST SELL (overnight 청산).
+        db.add_all([
+            _audit(side="BUY",  qty=1, fill_price=100, created_at=utc_5_14_30),  # KST 5/5 23:30
+            _audit(side="SELL", qty=1, fill_price=120, created_at=utc_5_15_30),  # KST 5/6 00:30
+        ])
+        db.commit()
+        pnl_5_5 = compute_today_realized_pnl(db, today=date(2026, 5, 5), tz=KST)
+        pnl_5_6 = compute_today_realized_pnl(db, today=date(2026, 5, 6), tz=KST)
+    # SELL이 KST 5/6에 일어남 → 그 날 PnL +20.
+    assert pnl_5_5 == 0
+    assert pnl_5_6 == 20
+
+
+def test_pnl_kst_vs_utc_diverge_at_kst_midnight():
+    """동일 SELL이 KST 기준과 UTC 기준에서 다른 date로 잡힌다 — 회귀 가드."""
+    Session = _make_session()
+    # KST 5/6 00:30 = UTC 5/5 15:30. KST date=5/6, UTC date=5/5.
+    utc_5_15_30 = datetime(2026, 5, 5, 15, 30, tzinfo=timezone.utc)
+    utc_buy_earlier = datetime(2026, 5, 5, 5, 0, tzinfo=timezone.utc)  # KST 5/5 14:00
+    with Session() as db:
+        db.add_all([
+            _audit(side="BUY",  qty=1, fill_price=100, created_at=utc_buy_earlier),
+            _audit(side="SELL", qty=1, fill_price=110, created_at=utc_5_15_30),
+        ])
+        db.commit()
+        # KST 기준: SELL은 5/6에.
+        pnl_kst_5_6 = compute_today_realized_pnl(db, today=date(2026, 5, 6), tz=KST)
+        # UTC 기준: SELL은 5/5에 (UTC 15:30).
+        pnl_utc_5_5 = compute_today_realized_pnl(db, today=date(2026, 5, 5), tz=timezone.utc)
+    assert pnl_kst_5_6 == 10  # KST 기준 오늘 PnL
+    assert pnl_utc_5_5 == 10  # UTC 기준 어제(=KST 5/6) PnL
+
+
+def test_pnl_explicit_utc_tz_backwards_compat():
+    """tz=timezone.utc 명시하면 145 이전 UTC 기반 동작 — 같은 입력에서 동일."""
+    Session = _make_session()
+    # 정상 흐름: 같은 UTC date 안의 BUY+SELL.
+    utc_now = datetime(2026, 5, 6, 5, 0, tzinfo=timezone.utc)
+    with Session() as db:
+        db.add_all([
+            _audit(side="BUY",  qty=1, fill_price=100, created_at=utc_now),
+            _audit(side="SELL", qty=1, fill_price=110, created_at=utc_now),
+        ])
+        db.commit()
+        # 양 tz 모두 5/6 date — 같은 결과.
+        pnl_utc = compute_today_realized_pnl(db, today=date(2026, 5, 6), tz=timezone.utc)
+        pnl_kst = compute_today_realized_pnl(db, today=date(2026, 5, 6), tz=KST)
+    assert pnl_utc == 10
+    assert pnl_kst == 10
