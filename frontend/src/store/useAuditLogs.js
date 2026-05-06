@@ -131,6 +131,10 @@ export const useBacktestRuns = () => {
 function useAdaptivePollingByTopId(refresh, items) {
   const _lastTopIdRef    = useRef(null);
   const _lastActivityRef = useRef(Date.now());
+  // 125: visibility 추적 — 100/useApprovals와 동일 패턴.
+  const _hiddenRef = useRef(
+    typeof document !== "undefined" && document.visibilityState === "hidden"
+  );
 
   useEffect(() => {
     const topId = items[0]?.id ?? null;
@@ -141,6 +145,20 @@ function useAdaptivePollingByTopId(refresh, items) {
   }, [items]);
 
   useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const handler = () => {
+      const wasHidden = _hiddenRef.current;
+      _hiddenRef.current = document.visibilityState === "hidden";
+      if (wasHidden && !_hiddenRef.current) {
+        // visible 복귀 — 다음 cycle 즉시 active로.
+        _lastActivityRef.current = Date.now();
+      }
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     let timerId = null;
     const scheduleNext = () => {
@@ -149,6 +167,7 @@ function useAdaptivePollingByTopId(refresh, items) {
         pendingCount: 0,  // 큐 개념 없음 — lastActivityAt만으로 판단
         lastActivityAt: _lastActivityRef.current,
         now: Date.now(),
+        hidden: _hiddenRef.current,
       });
       timerId = setTimeout(async () => {
         if (cancelled) return;
