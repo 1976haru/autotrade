@@ -1,9 +1,29 @@
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, time, timedelta, timezone
 from enum import StrEnum
 
 from app.brokers.base import Balance, OrderRequest, OrderSide, Position
 from app.core.modes import OperationMode, can_ai_execute, can_place_live_order
+
+
+_KST = timezone(timedelta(hours=9))
+# 한국 거래소 정규 거래 시간 (KST). 동시호가 / 시간외 거래는 별도 — MVP는 정규만.
+_MARKET_OPEN_KST  = time(9, 0)
+_MARKET_CLOSE_KST = time(15, 30)
+
+
+def _is_market_open(now: datetime | None = None) -> bool:
+    """KST 평일 09:00–15:30 사이면 True. 토/일은 항상 False."""
+    if now is None:
+        now = datetime.now(_KST)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc).astimezone(_KST)
+    else:
+        now = now.astimezone(_KST)
+    if now.weekday() >= 5:  # Saturday=5, Sunday=6
+        return False
+    t = now.time()
+    return _MARKET_OPEN_KST <= t < _MARKET_CLOSE_KST
 
 
 class RiskDecision(StrEnum):
@@ -45,6 +65,10 @@ class RiskPolicy:
     # 허용). 비어 있지 않으면 미등록 symbol 주문 거부 — 운영자가 검증한 종목만
     # 자동 흐름에 노출.
     symbol_whitelist: frozenset[str] = field(default_factory=frozenset)
+    # 176: 한국 시장 시간(09:00-15:30 KST 평일) 외 주문 거부. False면 비활성 (기본).
+    # 단타 자동매매가 SIMULATION/PAPER에서 24/7 돌아도 LIVE 단계에서는 명시적
+    # 옵트인 권장.
+    enforce_market_hours: bool = False
 
     @classmethod
     def from_settings(cls, settings) -> "RiskPolicy":
@@ -69,6 +93,7 @@ class RiskPolicy:
             ai_rate_limit_max_count      = settings.ai_rate_limit_max_count,
             max_position_size_pct        = settings.max_position_size_pct,
             symbol_whitelist             = frozenset(settings.symbol_whitelist_set()),
+            enforce_market_hours         = settings.enforce_market_hours,
         )
 
 
@@ -143,6 +168,14 @@ class RiskManager:
             )
         elif self.policy.symbol_whitelist:
             result.passed.append("symbol in whitelist")
+
+        # 176: 한국 시장 시간 외 거부 — 옵트인.
+        if self.policy.enforce_market_hours and not _is_market_open():
+            result.reasons.append(
+                "market is closed (KST weekday 09:00–15:30 only)"
+            )
+        elif self.policy.enforce_market_hours:
+            result.passed.append("market is open")
 
         # 158: AI confidence threshold. requested_by_ai=True인 주문에 한해
         # signal_confidence가 임계 미달이면 거부. 임계 ≤ 0이면 검사 비활성.
