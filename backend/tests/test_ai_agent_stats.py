@@ -354,3 +354,74 @@ def test_endpoint_surfaces_extended_fields(client):
         assert "wins"         in body["per_strategy"][0]
         assert "losses"       in body["per_strategy"][0]
         assert "realized_pnl" in body["per_strategy"][0]
+
+
+# ---------- 187: agent-decisions endpoint ----------
+
+def test_agent_decisions_endpoint_empty(client):
+    res = client.get("/api/ai/agent-decisions")
+    assert res.status_code == 200
+    assert res.json() == []
+
+
+def test_agent_decisions_endpoint_returns_recent_first(client):
+    """chain_id 미지정 시 최근 limit건, created_at desc."""
+    from app.ai.agents import ChiefTradingAgent, CouncilContext, persist_decision
+    chief = ChiefTradingAgent()
+    with client.test_db_factory() as db:
+        decision, members = chief.coordinate(CouncilContext(
+            symbol="005930", last_close=110, prev_close=100,
+            equity=10_000_000, notional=110_000, regime="trending_up",
+        ))
+        persist_decision(db, decision, mode="VIRTUAL_AI_EXECUTION")
+        for m in members:
+            persist_decision(db, m, mode="VIRTUAL_AI_EXECUTION")
+        db.commit()
+
+    rows = client.get("/api/ai/agent-decisions").json()
+    assert len(rows) == 10  # 1 chief + 9 members
+    # 최신 first → 마지막 추가된 (member의 마지막) 또는 chief가 첫.
+    assert all("agent_name" in r for r in rows)
+    assert all("chain_id" in r for r in rows)
+
+
+def test_agent_decisions_chain_id_filter(client):
+    """chain_id 지정 시 해당 chain의 결정만."""
+    from app.ai.agents import (
+        ChiefTradingAgent, CouncilContext, new_chain_id, persist_decision,
+    )
+    chief = ChiefTradingAgent()
+    chain_a = new_chain_id()
+    chain_b = new_chain_id()
+    with client.test_db_factory() as db:
+        # chain A
+        d_a, m_a = chief.coordinate(CouncilContext(
+            symbol="005930", last_close=110, prev_close=100,
+            equity=10_000_000, notional=110_000, regime="trending_up",
+        ), chain_id=chain_a)
+        persist_decision(db, d_a, mode="VIRTUAL_AI_EXECUTION")
+        for m in m_a:
+            persist_decision(db, m, mode="VIRTUAL_AI_EXECUTION")
+        # chain B
+        d_b, m_b = chief.coordinate(CouncilContext(
+            symbol="000660", last_close=200, prev_close=190,
+            equity=10_000_000, notional=200_000, regime="ranging",
+        ), chain_id=chain_b)
+        persist_decision(db, d_b, mode="VIRTUAL_AI_EXECUTION")
+        for m in m_b:
+            persist_decision(db, m, mode="VIRTUAL_AI_EXECUTION")
+        db.commit()
+
+    rows_a = client.get(f"/api/ai/agent-decisions?chain_id={chain_a}").json()
+    rows_b = client.get(f"/api/ai/agent-decisions?chain_id={chain_b}").json()
+    assert len(rows_a) == 10
+    assert len(rows_b) == 10
+    assert all(r["chain_id"] == chain_a for r in rows_a)
+    assert all(r["chain_id"] == chain_b for r in rows_b)
+
+
+def test_agent_decisions_endpoint_validates_limit(client):
+    res = client.get("/api/ai/agent-decisions?limit=0")
+    assert res.status_code == 422
+    res = client.get("/api/ai/agent-decisions?limit=999")
+    assert res.status_code == 422

@@ -111,4 +111,11 @@ export const backendApi = {
     method: "POST",
     body:   JSON.stringify(req),
   }),
+  // 187: Agent Council surface.
+  aiAgentStats:    (lookbackDays = 7) =>
+    backendFetch(`/api/ai/agent-stats?lookback_days=${lookbackDays}`),
+  aiAgentDecisions: (limit = 50, chainId = null) => {
+    const q = chainId ? `chain_id=${encodeURIComponent(chainId)}` : `limit=${limit}`;
+    return backendFetch(`/api/ai/agent-decisions?${q}`);
+  },
 };

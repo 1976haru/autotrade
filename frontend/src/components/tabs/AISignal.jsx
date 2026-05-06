@@ -4,6 +4,7 @@ import { runAgentAnalysis } from "../../services/ai/claudeAgent";
 import { STRATEGIES } from "../../config/strategies";
 import { SIGNAL_COLOR, confluenceColor } from "../../utils/format";
 import { fmtKRW } from "../../utils/format";
+import { AgentCouncilCard } from "./AgentCouncilCard";
 
 export function AISignal({ activeStratIds }) {
   const [ticker,  setTicker]  = useState("");
@@ -36,6 +37,8 @@ export function AISignal({ activeStratIds }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <AgentCouncilCard />
+
       {/* 입력 */}
       <Card>
         <SectionLabel>🧠 AI 합류 신호 분석</SectionLabel>
