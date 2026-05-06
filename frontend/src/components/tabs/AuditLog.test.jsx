@@ -2838,6 +2838,31 @@ describe("<OrderAuditRow> mode badge integration (108)", () => {
     );
     expect(container.querySelector('[data-testid="strategy-badge"]')).toBeNull();
   });
+
+  // 139: signal_strength + signal_confidence on audit row.
+  it("renders 'quality s/c' when both signal quality fields are set", () => {
+    const { getByTestId } = render(
+      <OrderAuditRow r={_row({ signal_strength: 80, signal_confidence: 60 })} />,
+    );
+    const q = getByTestId("audit-signal-quality");
+    expect(q.textContent).toContain("quality 80/60");
+    expect(q.dataset.strength).toBe("80");
+    expect(q.dataset.confidence).toBe("60");
+  });
+
+  it("renders quality cell with '?' for the missing axis (partial fill)", () => {
+    const { getByTestId } = render(
+      <OrderAuditRow r={_row({ signal_strength: 50, signal_confidence: null })} />,
+    );
+    expect(getByTestId("audit-signal-quality").textContent).toContain("quality 50/?");
+  });
+
+  it("does not render quality cell when both axes are null", () => {
+    const { container } = render(
+      <OrderAuditRow r={_row({ signal_strength: null, signal_confidence: null })} />,
+    );
+    expect(container.querySelector('[data-testid="audit-signal-quality"]')).toBeNull();
+  });
 });
 
 

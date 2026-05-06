@@ -29,6 +29,9 @@ class OrderAuditOut(BaseModel):
     trade_reason:    str | None = None
     # 138: 주문을 만든 전략 이름. 0006 이전 + 수동 주문은 NULL.
     strategy:        str | None = None
+    # 139: 신호 quality 0-100. 산출 안 된 경로 + 0007 이전 row는 NULL.
+    signal_strength:   int | None = None
+    signal_confidence: int | None = None
     executed:        bool
     broker_order_id: str | None = None
     broker_status:   str | None = None
@@ -94,6 +97,8 @@ def _to_order_out(row: OrderAuditLog) -> OrderAuditOut:
         reasons=list(row.reasons or []),
         trade_reason=row.trade_reason,
         strategy=row.strategy,
+        signal_strength=row.signal_strength,
+        signal_confidence=row.signal_confidence,
         executed=row.executed,
         broker_order_id=row.broker_order_id,
         broker_status=row.broker_status,

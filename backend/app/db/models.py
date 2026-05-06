@@ -38,6 +38,12 @@ class OrderAuditLog(Base):
     # 0006 이전 row도 NULL. 향후 Strategy Scoreboard에 LIVE 결과 통합 가능.
     strategy:        Mapped[str | None]     = mapped_column(String(64), nullable=True, index=True)
 
+    # 139: 신호 quality(136) 영구화 — 0-100 정수 두 축. 호출자가 quality를
+    # 산출하지 않는 경로(수동 주문 등) + 0007 이전 row는 NULL. 사후 분석에서
+    # '어떤 신뢰도/강도로 들어간 주문이 결국 어떤 결과를 냈나'를 추적 가능.
+    signal_strength:   Mapped[int | None]   = mapped_column(Integer, nullable=True)
+    signal_confidence: Mapped[int | None]   = mapped_column(Integer, nullable=True)
+
     executed:        Mapped[bool]           = mapped_column(Boolean, default=False)
     broker_order_id: Mapped[str | None]     = mapped_column(String(64), nullable=True)
     broker_status:   Mapped[str | None]     = mapped_column(String(32), nullable=True)
