@@ -81,7 +81,7 @@ CLAUDE.md 절대 원칙을 코드 단에서 강제하는 다중 방어:
 backend/app/
 ├─ api/routes_*.py        # FastAPI endpoints (status, risk, broker, approvals,
 │                         #   backtest, market, strategies, ai, audit, virtual,
-│                         #   futures)
+│                         #   futures, reconciliation)
 ├─ brokers/               # BrokerAdapter ABC + Mock + KIS
 ├─ market/                # MarketDataAdapter ABC + Mock + yfinance + BarCache
 ├─ risk/risk_manager.py   # 평가 + mode-aware 분기
@@ -91,6 +91,7 @@ backend/app/
 ├─ backtest/              # BacktestEngine + types + CSV loader
 ├─ ai/                    # AiClient (Anthropic) + service
 ├─ futures/               # 모든 모듈 stub (활성화 비활성)
+├─ reconciliation/        # broker view vs audit view drift 감지 (212)
 ├─ db/                    # SQLAlchemy 2.0 + Alembic
 └─ core/                  # config, modes, rate_limiter (정의만)
 

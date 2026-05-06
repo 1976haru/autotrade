@@ -10,6 +10,7 @@ from app.api.routes_backtest import router as backtest_router
 from app.api.routes_broker import router as broker_router
 from app.api.routes_live_engine import router as live_engine_router
 from app.api.routes_market import router as market_router
+from app.api.routes_reconciliation import router as reconciliation_router
 from app.api.routes_risk import router as risk_router
 from app.api.routes_futures import router as futures_router
 from app.api.routes_status import router as status_router
@@ -65,6 +66,7 @@ app.include_router(audit_router, prefix="/api")
 app.include_router(live_engine_router, prefix="/api")
 app.include_router(virtual_router, prefix="/api")
 app.include_router(futures_router, prefix="/api")
+app.include_router(reconciliation_router, prefix="/api")
 
 
 @app.get("/")

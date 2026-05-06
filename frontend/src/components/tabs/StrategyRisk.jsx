@@ -6,6 +6,10 @@ import { Btn, Card, SectionLabel, Toggle, Slider } from "../common";
 import { DecisionDialog } from "../common/DecisionDialog";
 import { fmtKRW } from "../../utils/format";
 import { backendApi } from "../../services/backend/client";
+import {
+  ReconciliationStatusCard,
+  useReconciliationStatus,
+} from "./ReconciliationStatusCard";
 
 
 // 199: extended for the broader RiskPolicy surface — pct / seconds / list types
@@ -409,6 +413,7 @@ function useEmergencyStopSummary() {
 
 export function StrategyRisk({ strategyOn, toggle, strategyParams, updateParam, risk, updateRisk, riskPolicy, operatorName }) {
   const esSummary = useEmergencyStopSummary();
+  const reconciliation = useReconciliationStatus();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <BackendPolicyCard riskPolicy={riskPolicy} operatorName={operatorName} />
@@ -417,6 +422,12 @@ export function StrategyRisk({ strategyOn, toggle, strategyParams, updateParam, 
         loading={esSummary.loading}
         error={esSummary.error}
         onRefresh={esSummary.refresh}
+      />
+      <ReconciliationStatusCard
+        status={reconciliation.status}
+        loading={reconciliation.loading}
+        error={reconciliation.error}
+        onRefresh={reconciliation.refresh}
       />
       <EmergencyStopHistoryCard history={riskPolicy.history || []} />
 
