@@ -160,6 +160,62 @@ class EmergencyStopEvent(Base):
     note:       Mapped[str | None]     = mapped_column(String(500), nullable=True)
 
 
+class VirtualOrder(Base):
+    """Virtual Order Ledger (148, MUST).
+
+    가상 주문의 라이프사이클 추적 — `OrderAuditLog`가 *결정*(REJECTED/APPROVED/
+    NEEDS_APPROVAL)을 기록한다면, 본 테이블은 *주문 자체*의 상태 전이(NEW →
+    ACCEPTED → PARTIALLY_FILLED → FILLED/CANCELLED/REJECTED/EXPIRED)를 기록한다.
+
+    실거래 broker가 활성화되기 전까지는 모든 주문이 가상이고, 본 테이블이
+    "이 시스템에서 만들어진 주문의 단일 진실"이다. 149/150에서 fill engine과
+    position engine이 이 테이블을 읽고 갱신한다.
+
+    상태 매트릭스:
+    - NEW              : 시스템에 등록 직후 (RiskManager 평가 전)
+    - ACCEPTED         : RiskManager APPROVED + (모드에 따라) 큐 통과
+    - PARTIALLY_FILLED : 일부 체결, 잔량 있음
+    - FILLED           : 전량 체결 종료
+    - CANCELLED        : 운영자 또는 timeout으로 취소
+    - REJECTED         : RiskManager 또는 broker 거부
+    - EXPIRED          : 시간 한도 초과로 자동 만료 (e.g. day order)
+
+    structured_reason: 상태 전이 사유의 코드 (자유 문자열). 운영 분석용.
+    """
+
+    __tablename__ = "virtual_order"
+
+    id:                Mapped[int]            = mapped_column(primary_key=True)
+    created_at:        Mapped[datetime]       = mapped_column(DateTime, default=_utcnow, index=True)
+    updated_at:        Mapped[datetime]       = mapped_column(DateTime, default=_utcnow)
+
+    # OrderAuditLog와의 cross-reference (옵션) — 같은 흐름에서 audit row를 만든
+    # 주문이 virtual_order로 추적되는 경우 audit_id를 채워둔다.
+    audit_id:          Mapped[int | None]     = mapped_column(
+        Integer, ForeignKey("order_audit_log.id"), nullable=True, index=True
+    )
+
+    symbol:            Mapped[str]            = mapped_column(String(16), index=True)
+    side:              Mapped[str]            = mapped_column(String(8))
+    quantity:          Mapped[int]            = mapped_column(Integer)
+    order_type:        Mapped[str]            = mapped_column(String(16))
+    limit_price:       Mapped[int | None]     = mapped_column(Integer, nullable=True)
+    requested_price:   Mapped[int | None]     = mapped_column(Integer, nullable=True)
+
+    status:            Mapped[str]            = mapped_column(String(24), default="NEW", index=True)
+    structured_reason: Mapped[str | None]     = mapped_column(String(64), nullable=True)
+
+    strategy:          Mapped[str | None]     = mapped_column(String(64), nullable=True, index=True)
+    mode:              Mapped[str]            = mapped_column(String(32), index=True)
+
+    filled_quantity:   Mapped[int]            = mapped_column(Integer, default=0)
+    avg_fill_price:    Mapped[int | None]     = mapped_column(Integer, nullable=True)
+    filled_at:         Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # 운영자/엔진이 만든 cancel/reject 사유 자유 텍스트.
+    note:              Mapped[str | None]     = mapped_column(String(500), nullable=True)
+
+
 class MarketBar(Base):
     """업스트림에서 가져온 OHLCV 봉의 캐시. (symbol, interval, timestamp)가 유일."""
 
