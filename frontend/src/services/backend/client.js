@@ -124,7 +124,8 @@ export const backendApi = {
     if (opts.decision)   qs.set("decision",   opts.decision);
     return backendFetch(`/api/ai/agent-decisions?${qs.toString()}`);
   },
-  aiAgentDecisionsSummary: () => backendFetch("/api/ai/agent-decisions/summary"),
+  aiAgentDecisionsSummary: (lookbackDays = 0) =>
+    backendFetch(`/api/ai/agent-decisions/summary?lookback_days=${lookbackDays}`),
   // 193: Virtual order ledger surface.
   virtualOrders: ({ limit = 50, offset = 0, status = null, symbol = null } = {}) => {
     const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });

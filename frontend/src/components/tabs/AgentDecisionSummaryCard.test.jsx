@@ -99,4 +99,30 @@ describe("<AgentDecisionSummaryCard>", () => {
     fireEvent.click(await findByText(/새로고침/));
     await waitFor(() => expect(backendApi.aiAgentDecisionsSummary).toHaveBeenCalledTimes(2));
   });
+
+  // 210: lookback chips
+  it("renders 4 lookback chips with default 전체 active", async () => {
+    const { findByTestId } = render(<AgentDecisionSummaryCard />);
+    const chip0  = await findByTestId("agent-summary-lookback-0");
+    const chip7  = await findByTestId("agent-summary-lookback-7");
+    expect(chip0.textContent).toContain("전체");
+    expect(chip7.textContent).toContain("7일");
+  });
+
+  it("clicking a lookback chip re-queries with that lookback_days", async () => {
+    const { findByTestId } = render(<AgentDecisionSummaryCard />);
+    await waitFor(() => expect(backendApi.aiAgentDecisionsSummary).toHaveBeenCalledWith(0));
+    fireEvent.click(await findByTestId("agent-summary-lookback-7"));
+    await waitFor(() => expect(backendApi.aiAgentDecisionsSummary).toHaveBeenLastCalledWith(7));
+    fireEvent.click(await findByTestId("agent-summary-lookback-30"));
+    await waitFor(() => expect(backendApi.aiAgentDecisionsSummary).toHaveBeenLastCalledWith(30));
+  });
+
+  it("refresh button uses the currently selected lookback", async () => {
+    const { findByText, findByTestId } = render(<AgentDecisionSummaryCard />);
+    fireEvent.click(await findByTestId("agent-summary-lookback-1"));
+    await waitFor(() => expect(backendApi.aiAgentDecisionsSummary).toHaveBeenLastCalledWith(1));
+    fireEvent.click(await findByText(/새로고침/));
+    await waitFor(() => expect(backendApi.aiAgentDecisionsSummary).toHaveBeenLastCalledWith(1));
+  });
 });
