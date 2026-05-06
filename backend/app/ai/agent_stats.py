@@ -25,7 +25,24 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.ai.feedback import compute_historical_accuracy
 from app.db.models import OrderAuditLog
+
+
+# 165: confidence histogram bucket 경계. 4구간으로 모든 0..100 커버.
+_HISTOGRAM_BUCKETS: list[tuple[str, int, int]] = [
+    ("0-25",   0,  25),
+    ("25-50",  25, 50),
+    ("50-75",  50, 75),
+    ("75-100", 75, 101),  # 상한 포함을 위해 101.
+]
+
+
+def _bucket_for_confidence(c: int) -> str | None:
+    for label, lo, hi in _HISTOGRAM_BUCKETS:
+        if lo <= c < hi:
+            return label
+    return None
 
 
 _REASON_CATEGORIES: list[tuple[tuple[str, ...], str]] = [
@@ -129,10 +146,35 @@ def compute_ai_agent_stats(
             cur["_conf_sum"] += r.signal_confidence
             cur["_conf_n"]   += 1
 
+    # 165: confidence histogram — 모든 윈도우 내 row의 signal_confidence 분포.
+    # confidence가 None인 row는 별도 카운터.
+    histogram = {label: 0 for label, _, _ in _HISTOGRAM_BUCKETS}
+    histogram_missing = 0
+    for r in rows:
+        c = r.signal_confidence
+        if c is None:
+            histogram_missing += 1
+            continue
+        bucket = _bucket_for_confidence(c)
+        if bucket is not None:
+            histogram[bucket] += 1
+
     per_strategy = []
     for s, cur in by_strategy.items():
         cur_avg = cur["_conf_sum"] / cur["_conf_n"] if cur["_conf_n"] > 0 else 0.0
         decided_s = cur["approved"] + cur["rejected"]
+
+        # 165: strategy별 realized PnL — 163 compute_historical_accuracy를 재사용해
+        # 같은 lookback 윈도우에서 win/loss/total_pnl 산출. (unknown) strategy는
+        # NULL row라 매칭할 strategy가 없으므로 0.
+        if s == "(unknown)":
+            wins, losses, realized_pnl = 0, 0, 0
+        else:
+            acc = compute_historical_accuracy(
+                db, strategy=s, lookback_days=lookback_days, now=now,
+            )
+            wins, losses, realized_pnl = acc.wins, acc.losses, acc.realized_pnl
+
         per_strategy.append({
             "strategy":       s,
             "total":          cur["total"],
@@ -141,6 +183,9 @@ def compute_ai_agent_stats(
             "pending":        cur["pending"],
             "approval_rate":  cur["approved"] / decided_s if decided_s > 0 else 0.0,
             "avg_confidence": cur_avg,
+            "wins":           wins,
+            "losses":         losses,
+            "realized_pnl":   realized_pnl,
         })
     per_strategy.sort(key=lambda x: x["total"], reverse=True)
 
@@ -154,4 +199,7 @@ def compute_ai_agent_stats(
         "avg_confidence":    avg_confidence,
         "top_rejection_reasons": dict(reason_categories.most_common()),
         "per_strategy":      per_strategy,
+        # 165 신규
+        "confidence_histogram":         histogram,
+        "confidence_histogram_missing": histogram_missing,
     }

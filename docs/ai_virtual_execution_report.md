@@ -142,14 +142,14 @@ agent.propose_stub(...) → AiProposal {confidence: raw}
 
 **read-only**: `compute_historical_accuracy`는 audit row를 수정 안 함. `adjust_confidence`는 새 proposal 객체 반환 (immutable patten).
 
-## 162: AI agent self-evaluation stats
+## 162 + 165: AI agent self-evaluation stats
 
 운영자가 AI 에이전트의 의사결정 품질을 audit log 기반으로 평가할 수 있는 read-only 분석. 결정/체결에 영향 X.
 
 - HTTP: `GET /api/ai/agent-stats?lookback_days=7` — `lookback_days=0`이면 전체 기간.
 - Backend: `app/ai/agent_stats.py::compute_ai_agent_stats(db, lookback_days, now)`.
 
-응답 shape:
+응답 shape (165 확장 포함):
 ```json
 {
   "lookback_days": 7,
@@ -164,10 +164,24 @@ agent.propose_stub(...) → AiProposal {confidence: raw}
   },
   "per_strategy": [
     {"strategy": "ai_virtual", "total": 100, "approved": 80, ...,
-     "approval_rate": 0.842, "avg_confidence": 76.3}
-  ]
+     "approval_rate": 0.842, "avg_confidence": 76.3,
+     "wins": 12, "losses": 5, "realized_pnl": 8400}  // 165: FIFO 매칭
+  ],
+  // 165 신규: confidence 분포 히스토그램.
+  "confidence_histogram": {
+    "0-25":   2,
+    "25-50":  10,
+    "50-75":  45,
+    "75-100": 43
+  },
+  "confidence_histogram_missing": 0
 }
 ```
+
+**165 추가**:
+- `confidence_histogram`: 4개 bucket(0-25/25-50/50-75/75-100). lower-bound inclusive. confidence 분포가 한쪽으로 치우쳐 있으면 calibration 문제 신호.
+- `confidence_histogram_missing`: confidence=None인 row 수 (159 reasoning enforcement 활성 후엔 0이어야 정상).
+- `per_strategy[i].wins / losses / realized_pnl`: 163 `compute_historical_accuracy`를 같은 윈도우에서 재사용. AI 전략의 실제 PnL을 FIFO 페어매칭으로 산출.
 
 운영자 활용:
 - approval_rate가 갑자기 떨어졌다 → strategy / market regime 변화 신호.
