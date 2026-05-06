@@ -27,6 +27,12 @@ class RiskPolicy:
     # signal_confidence < 임계이면 REJECTED. 0이면 검사 비활성 — 기존 호출 호환.
     # CLAUDE.md '손실 방어 우선' — 신뢰도 낮은 AI 제안이 자동 체결로 가지 않도록.
     min_ai_confidence: int = 0
+    # 159: AI 제안의 explainability invariant. True이면 requested_by_ai=True 주문이
+    # ai_decision_meta.reasons (non-empty list)를 가져야 한다. CLAUDE.md '감사 로그
+    # 우선' — 사후 분석 시 'AI가 왜 그 주문을 만들었나' 답할 수 있게 강제.
+    # 기본 True — 새 에이전트가 reasoning 없이 주문 만들면 거부. 운영자가 backwards
+    # compat 위해 끌 수도 있지만 LIVE 단계에서는 절대 끄지 말 것 (운영 가이드).
+    enforce_ai_reasoning: bool = True
 
     @classmethod
     def from_settings(cls, settings) -> "RiskPolicy":
@@ -46,6 +52,7 @@ class RiskPolicy:
             enable_ai_execution = settings.enable_ai_execution,
             stale_price_max_age_seconds = settings.stale_price_max_age_seconds,
             min_ai_confidence   = settings.min_ai_confidence,
+            enforce_ai_reasoning = settings.enforce_ai_reasoning,
         )
 
 
@@ -126,6 +133,17 @@ class RiskManager:
                 )
             else:
                 result.passed.append("AI signal confidence above threshold")
+
+        # 159: AI proposal explainability — requested_by_ai=True 주문은 audit
+        # 가능한 reasoning을 동반해야 한다. ai_decision_meta가 None이거나
+        # reasons가 비어있으면 거부. 운영자가 enforce_ai_reasoning=False로
+        # 끄지 않는 한 invariant.
+        if requested_by_ai and self.policy.enforce_ai_reasoning:
+            meta = order.ai_decision_meta
+            if not meta or not meta.get("reasons"):
+                result.reasons.append("AI proposal missing reasoning (ai_decision_meta.reasons required)")
+            else:
+                result.passed.append("AI proposal includes reasoning")
 
         order_notional = latest_price * order.quantity
         if order_notional > self.policy.max_order_notional:

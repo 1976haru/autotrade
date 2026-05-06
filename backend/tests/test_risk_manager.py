@@ -177,8 +177,9 @@ def test_live_ai_execution_blocked_when_ai_flag_off():
 
 def test_live_ai_execution_approved_when_both_flags_on():
     risk = RiskManager(RiskPolicy(enable_live_trading=True, enable_ai_execution=True))
+    # 159: AI 주문은 reasoning을 동반해야 한다 — _ai_buy로 교체.
     result = risk.evaluate_order(
-        order=_buy(1),
+        order=_ai_buy(reasons=["live_ai_test"]),
         mode=OperationMode.LIVE_AI_EXECUTION,
         balance=_balance(),
         positions=[],
@@ -346,6 +347,7 @@ def _settings(**overrides):
         enable_ai_execution       = False,
         stale_price_max_age_seconds = 60,
         min_ai_confidence         = 0,
+        enforce_ai_reasoning      = True,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -409,12 +411,17 @@ def test_lowered_notional_threshold_rejects_orders_that_default_would_approve():
 
 # ---------- 158: AI confidence threshold ----------
 
-def _ai_buy(qty: int = 1, confidence: int | None = 80) -> OrderRequest:
-    """AI가 만든 주문 시뮬용 — signal_confidence를 명시할 수 있다."""
+def _ai_buy(qty: int = 1, confidence: int | None = 80,
+             reasons: list[str] | None = None) -> OrderRequest:
+    """AI가 만든 주문 시뮬용 — signal_confidence + ai_decision_meta.reasons.
+    159 enforcement 통과 위해 reasons 기본값 채움."""
+    if reasons is None:
+        reasons = ["test_reason"]
     return OrderRequest(
         symbol="005930", side=OrderSide.BUY, quantity=qty,
         signal_confidence=confidence,
         signal_strength=confidence,
+        ai_decision_meta={"confidence": confidence, "reasons": list(reasons)},
     )
 
 
@@ -514,6 +521,112 @@ def test_policy_from_settings_at_defaults_includes_min_ai_confidence():
     bare = RiskPolicy()
     assert fs.min_ai_confidence == bare.min_ai_confidence
     assert fs.min_ai_confidence == 0
+
+
+# ---------- 159: AI proposal reasoning required ----------
+
+def test_ai_order_with_reasons_passes_reasoning_check():
+    """ai_decision_meta.reasons가 채워진 AI 주문은 통과 (다른 가드 통과 가정)."""
+    risk = RiskManager(RiskPolicy(enforce_ai_reasoning=True))
+    result = risk.evaluate_order(
+        order=_ai_buy(reasons=["earnings_beat", "regime_match"]),
+        mode=OperationMode.VIRTUAL_AI_EXECUTION,
+        balance=_balance(), positions=[],
+        latest_price=75_000,
+        requested_by_ai=True,
+    )
+    assert result.decision == RiskDecision.APPROVED
+
+
+def test_ai_order_without_meta_rejected():
+    """ai_decision_meta가 None인 AI 주문 — 거부."""
+    risk = RiskManager(RiskPolicy(enforce_ai_reasoning=True))
+    order = OrderRequest(
+        symbol="005930", side=OrderSide.BUY, quantity=1,
+        signal_confidence=80,
+        # ai_decision_meta 미명시
+    )
+    result = risk.evaluate_order(
+        order=order, mode=OperationMode.VIRTUAL_AI_EXECUTION,
+        balance=_balance(), positions=[], latest_price=75_000,
+        requested_by_ai=True,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert any("missing reasoning" in r for r in result.reasons)
+
+
+def test_ai_order_with_empty_reasons_rejected():
+    """ai_decision_meta가 있어도 reasons가 빈 list면 거부."""
+    risk = RiskManager(RiskPolicy(enforce_ai_reasoning=True))
+    order = OrderRequest(
+        symbol="005930", side=OrderSide.BUY, quantity=1,
+        signal_confidence=80,
+        ai_decision_meta={"confidence": 80, "reasons": []},
+    )
+    result = risk.evaluate_order(
+        order=order, mode=OperationMode.VIRTUAL_AI_EXECUTION,
+        balance=_balance(), positions=[], latest_price=75_000,
+        requested_by_ai=True,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert any("missing reasoning" in r for r in result.reasons)
+
+
+def test_ai_order_with_meta_but_no_reasons_key_rejected():
+    """meta가 있지만 reasons key 자체가 없으면 거부 — defensive."""
+    risk = RiskManager(RiskPolicy(enforce_ai_reasoning=True))
+    order = OrderRequest(
+        symbol="005930", side=OrderSide.BUY, quantity=1,
+        signal_confidence=80,
+        ai_decision_meta={"confidence": 80},  # reasons key 없음
+    )
+    result = risk.evaluate_order(
+        order=order, mode=OperationMode.VIRTUAL_AI_EXECUTION,
+        balance=_balance(), positions=[], latest_price=75_000,
+        requested_by_ai=True,
+    )
+    assert result.decision == RiskDecision.REJECTED
+
+
+def test_non_ai_order_unaffected_by_reasoning_check():
+    """requested_by_ai=False면 reasoning 검사 미적용 — 회귀 가드."""
+    risk = RiskManager(RiskPolicy(enforce_ai_reasoning=True))
+    result = risk.evaluate_order(
+        order=_buy(1),  # 일반 운영자 주문
+        mode=OperationMode.SIMULATION,
+        balance=_balance(), positions=[], latest_price=75_000,
+        requested_by_ai=False,
+    )
+    assert result.decision == RiskDecision.APPROVED
+
+
+def test_reasoning_check_disabled_by_flag():
+    """enforce_ai_reasoning=False면 검사 우회 — backwards-compat 옵션."""
+    risk = RiskManager(RiskPolicy(enforce_ai_reasoning=False))
+    order = OrderRequest(
+        symbol="005930", side=OrderSide.BUY, quantity=1,
+        signal_confidence=80,
+        # 의도적으로 ai_decision_meta 미명시
+    )
+    result = risk.evaluate_order(
+        order=order, mode=OperationMode.VIRTUAL_AI_EXECUTION,
+        balance=_balance(), positions=[], latest_price=75_000,
+        requested_by_ai=True,
+    )
+    assert result.decision == RiskDecision.APPROVED
+
+
+def test_policy_from_settings_propagates_enforce_ai_reasoning():
+    p = RiskPolicy.from_settings(_settings(enforce_ai_reasoning=False))
+    assert p.enforce_ai_reasoning is False
+    p2 = RiskPolicy.from_settings(_settings(enforce_ai_reasoning=True))
+    assert p2.enforce_ai_reasoning is True
+
+
+def test_policy_default_enforces_ai_reasoning():
+    """기본값이 True인지 — 회귀 가드. 운영자가 명시적으로 끄지 않는 한 활성."""
+    bare = RiskPolicy()
+    assert bare.enforce_ai_reasoning is True
 
 # ---------- 143: stale price detection ----------
 

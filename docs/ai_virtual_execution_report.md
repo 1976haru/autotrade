@@ -90,6 +90,18 @@ NULL은 AI 외 경로 주문 (수동 / strategy 신호). 사후 분석:
 - AI 신호 강도 → 실제 PnL 상관관계 추적.
 - 거부된 AI 제안의 reason 분포 (RiskManager가 거부한 사유 + AI가 만든 사유).
 
+## 159: AI proposal reasoning required
+
+CLAUDE.md '감사 로그 우선' invariant의 AI 영역 강제. `RiskPolicy.enforce_ai_reasoning` (기본 True)일 때 `requested_by_ai=True`인 주문이 `ai_decision_meta`가 None이거나 `reasons`가 비어있으면 RiskManager가 REJECTED. AI 외 경로 주문(운영자 수동 / strategy 신호)은 영향 받지 않음.
+
+목적:
+- 미래 에이전트(LiveAiAgent / 3rd-party)가 reasoning 없이 주문 만드는 것 사전 차단.
+- 모든 AI 주문 audit row가 사후 분석 가능한 sufficient context를 가진다는 invariant.
+
+운영 가이드: LIVE 단계에서는 절대 `enforce_ai_reasoning=False`로 끄지 말 것. 개발 단계에서 backwards-compat 위해 일시적 끔만 허용 (`docs/promotion_policy.md` LIVE 단계 가드).
+
+`VirtualAiAgent.AiProposal.to_order_request()`는 자동으로 `reasons` 채우므로 정상 흐름엔 영향 없음.
+
 ## 158: AI confidence threshold gate
 
 운영자가 `RiskPolicy.min_ai_confidence`(또는 `MIN_AI_CONFIDENCE` env)를 1-100 사이로 설정하면, `requested_by_ai=True`인 주문은 `signal_confidence` 가 임계 미달일 때 RiskManager가 REJECTED. AI 외 경로 주문은 영향 받지 않음.

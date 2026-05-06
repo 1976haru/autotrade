@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # 의도적으로 켜야만 가드가 작동.
     min_ai_confidence: int = 0
 
+    # 159: AI 제안의 explainability invariant. True (기본)이면 requested_by_ai=
+    # True 주문이 ai_decision_meta.reasons를 갖지 않으면 RiskManager가 REJECTED.
+    # 운영자가 backwards-compat 위해 끌 수 있지만 LIVE 단계에서는 절대 false 금지.
+    enforce_ai_reasoning: bool = True
+
     kis_app_key: str = ""
     kis_app_secret: str = ""
     kis_account_no: str = ""
