@@ -52,6 +52,16 @@ class Settings(BaseSettings):
     # 이 절대값 한도라면 본 항목은 자본 대비 자동 스케일.
     max_position_size_pct: float = 0.0
 
+    # 175: symbol whitelist. 콤마 구분 문자열로 env 입력 (예: "005930,000660").
+    # 빈 문자열이면 비활성 (기본). 비어있지 않으면 미등록 symbol 주문 거부.
+    symbol_whitelist: str = ""
+
+    def symbol_whitelist_set(self) -> set[str]:
+        """env 콤마 문자열을 set으로 파싱. 공백 strip."""
+        if not self.symbol_whitelist:
+            return set()
+        return {s.strip() for s in self.symbol_whitelist.split(",") if s.strip()}
+
     # 167: PendingApproval TTL. 0이면 만료 안 함 (기본). 운영자가 명시적으로
     # 켜야만 자동 EXPIRED 전환. 권장 600~1800 (10~30분) — 시세 stale 임계와 맞춤.
     approval_ttl_seconds: int = 0

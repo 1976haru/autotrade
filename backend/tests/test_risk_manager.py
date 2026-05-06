@@ -351,9 +351,15 @@ def _settings(**overrides):
         ai_rate_limit_window_seconds = 60,
         ai_rate_limit_max_count   = 0,
         max_position_size_pct     = 0.0,
+        symbol_whitelist          = "",
     )
     base.update(overrides)
-    return SimpleNamespace(**base)
+    ns = SimpleNamespace(**base)
+    # 175: symbol_whitelist_set() 메서드를 SimpleNamespace에 부착.
+    ns.symbol_whitelist_set = lambda: (
+        {s.strip() for s in (ns.symbol_whitelist or "").split(",") if s.strip()}
+    )
+    return ns
 
 
 def test_policy_from_settings_at_defaults_matches_dataclass_defaults():
@@ -828,3 +834,66 @@ def test_policy_from_settings_default_max_position_size_pct_zero():
     """default 0 — 회귀 가드."""
     p = RiskPolicy.from_settings(_settings())
     assert p.max_position_size_pct == 0.0
+
+
+# ---------- 175: symbol whitelist ----------
+
+def test_symbol_whitelist_disabled_when_empty():
+    """기본 빈 set이면 검사 비활성 — 회귀 가드."""
+    risk = RiskManager(RiskPolicy())
+    result = risk.evaluate_order(
+        order=_buy(1, symbol="random"), mode=OperationMode.SIMULATION,
+        balance=_balance(), positions=[], latest_price=100,
+    )
+    assert not any("whitelist" in r for r in result.reasons)
+
+
+def test_symbol_in_whitelist_passes():
+    risk = RiskManager(RiskPolicy(
+        symbol_whitelist=frozenset({"005930", "000660"}),
+    ))
+    result = risk.evaluate_order(
+        order=_buy(1, symbol="005930"), mode=OperationMode.SIMULATION,
+        balance=_balance(), positions=[], latest_price=100,
+    )
+    assert result.decision == RiskDecision.APPROVED
+
+
+def test_symbol_not_in_whitelist_rejected():
+    risk = RiskManager(RiskPolicy(
+        symbol_whitelist=frozenset({"005930"}),
+    ))
+    result = risk.evaluate_order(
+        order=_buy(1, symbol="UNKNOWN"), mode=OperationMode.SIMULATION,
+        balance=_balance(), positions=[], latest_price=100,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert any("'UNKNOWN'" in r and "whitelist" in r for r in result.reasons)
+
+
+def test_whitelist_combines_with_other_violations():
+    """whitelist + notional 같이 위반 — 두 reason 누적."""
+    risk = RiskManager(RiskPolicy(
+        symbol_whitelist=frozenset({"005930"}),
+        max_order_notional=100_000,
+    ))
+    result = risk.evaluate_order(
+        order=_buy(10, symbol="UNKNOWN"), mode=OperationMode.SIMULATION,
+        balance=_balance(), positions=[], latest_price=75_000,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert any("whitelist" in r for r in result.reasons)
+    assert any("max_order_notional" in r for r in result.reasons)
+
+
+def test_settings_parses_whitelist_from_csv():
+    """env 콤마 문자열 → set 파싱."""
+    p = RiskPolicy.from_settings(_settings(
+        symbol_whitelist="005930, 000660 ,035420",
+    ))
+    assert p.symbol_whitelist == frozenset({"005930", "000660", "035420"})
+
+
+def test_settings_default_whitelist_empty():
+    p = RiskPolicy.from_settings(_settings())
+    assert p.symbol_whitelist == frozenset()
