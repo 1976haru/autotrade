@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     # 빈 문자열이면 비활성 (기본). 비어있지 않으면 미등록 symbol 주문 거부.
     symbol_whitelist: str = ""
 
+    # 176: 한국 시장 시간(09:00–15:30 KST 평일) 외 주문 거부. False면 비활성 (기본).
+    enforce_market_hours: bool = False
+
     def symbol_whitelist_set(self) -> set[str]:
         """env 콤마 문자열을 set으로 파싱. 공백 strip."""
         if not self.symbol_whitelist:

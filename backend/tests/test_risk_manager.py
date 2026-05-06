@@ -352,6 +352,7 @@ def _settings(**overrides):
         ai_rate_limit_max_count   = 0,
         max_position_size_pct     = 0.0,
         symbol_whitelist          = "",
+        enforce_market_hours      = False,
     )
     base.update(overrides)
     ns = SimpleNamespace(**base)
@@ -897,3 +898,77 @@ def test_settings_parses_whitelist_from_csv():
 def test_settings_default_whitelist_empty():
     p = RiskPolicy.from_settings(_settings())
     assert p.symbol_whitelist == frozenset()
+
+
+# ---------- 176: trading hours guard ----------
+
+def test_market_hours_guard_disabled_by_default():
+    """default False — 회귀 가드. 24/7 모든 주문 통과."""
+    risk = RiskManager(RiskPolicy())
+    result = risk.evaluate_order(
+        order=_buy(1), mode=OperationMode.SIMULATION,
+        balance=_balance(), positions=[], latest_price=100,
+    )
+    assert not any("market is closed" in r for r in result.reasons)
+
+
+def test_is_market_open_helper():
+    """_is_market_open helper 직접 테스트 — 결정적 시각 인자."""
+    from app.risk.risk_manager import _is_market_open
+
+    # KST 평일 10:00 — 장중.
+    weekday_morning_kst = datetime(2026, 5, 6, 10, 0,
+                                    tzinfo=timezone(timedelta(hours=9)))
+    assert _is_market_open(weekday_morning_kst) is True
+
+    # KST 평일 16:00 — 장 종료 후.
+    weekday_evening_kst = datetime(2026, 5, 6, 16, 0,
+                                    tzinfo=timezone(timedelta(hours=9)))
+    assert _is_market_open(weekday_evening_kst) is False
+
+    # KST 평일 08:00 — 장 시작 전.
+    weekday_dawn_kst = datetime(2026, 5, 6, 8, 0,
+                                 tzinfo=timezone(timedelta(hours=9)))
+    assert _is_market_open(weekday_dawn_kst) is False
+
+    # 일요일 — 무조건 closed.
+    sunday_noon = datetime(2026, 5, 10, 12, 0,
+                            tzinfo=timezone(timedelta(hours=9)))
+    assert sunday_noon.weekday() == 6
+    assert _is_market_open(sunday_noon) is False
+
+    # 토요일도 closed.
+    saturday_noon = datetime(2026, 5, 9, 12, 0,
+                              tzinfo=timezone(timedelta(hours=9)))
+    assert saturday_noon.weekday() == 5
+    assert _is_market_open(saturday_noon) is False
+
+    # boundary: 09:00 정확히 — open.
+    open_boundary = datetime(2026, 5, 6, 9, 0,
+                              tzinfo=timezone(timedelta(hours=9)))
+    assert _is_market_open(open_boundary) is True
+
+    # boundary: 15:30 정확히 — closed (< 의미라 같으면 closed).
+    close_boundary = datetime(2026, 5, 6, 15, 30,
+                               tzinfo=timezone(timedelta(hours=9)))
+    assert _is_market_open(close_boundary) is False
+
+
+def test_naive_datetime_treated_as_utc_for_market_hours():
+    """naive datetime은 UTC로 가정 — KST 변환 후 판정."""
+    from app.risk.risk_manager import _is_market_open
+
+    # UTC 02:00 = KST 11:00 — 장중.
+    utc_2am = datetime(2026, 5, 6, 2, 0)  # naive → UTC 가정
+    assert _is_market_open(utc_2am) is True
+
+    # UTC 10:00 = KST 19:00 — 장 종료 후.
+    utc_10am = datetime(2026, 5, 6, 10, 0)  # naive
+    assert _is_market_open(utc_10am) is False
+
+
+def test_policy_from_settings_propagates_market_hours():
+    p = RiskPolicy.from_settings(_settings(enforce_market_hours=True))
+    assert p.enforce_market_hours is True
+    p2 = RiskPolicy.from_settings(_settings(enforce_market_hours=False))
+    assert p2.enforce_market_hours is False
