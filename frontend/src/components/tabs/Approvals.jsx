@@ -90,12 +90,14 @@ export function ReasonsLine({ reasons }) {
 }
 
 
-export function HistoryRow({ a, focused = false, onClick }) {
+export function HistoryRow({ a, focused = false, expanded = false, onClick }) {
   const color = STATUS_COLOR[a.status] || "#475569";
+  const hasAttempts = a.attempts && a.attempts.length > 0;
   return (
     <div
       data-testid={`approval-history-row-${a.id}`}
       data-focused={focused ? "true" : "false"}
+      data-expanded={expanded ? "true" : "false"}
       onClick={onClick}
       style={{
         padding: "8px 0 8px 8px", borderBottom: "1px solid #05121f",
@@ -148,17 +150,46 @@ export function HistoryRow({ a, focused = false, onClick }) {
             <span>{a.note}</span>
           </>
         )}
-        {a.attempts && a.attempts.length > 0 && (
+        {hasAttempts && (
           <>
             <span>·</span>
             <span data-testid="history-attempts-summary"
                   style={{ color: "#fbbf24" }}>
-              ⚠ {a.attempts.length}회 시도
+              ⚠ {a.attempts.length}회 시도 {expanded ? "▲" : "▼"}
             </span>
           </>
         )}
       </div>
       <ReasonsLine reasons={a.reasons} />
+      {expanded && hasAttempts && (
+        <div data-testid={`approval-history-attempts-${a.id}`}
+             style={{ marginTop: 6, paddingLeft: 10,
+                      borderLeft: "2px solid #fbbf2455" }}>
+          {a.attempts.map((entry, idx) => (
+            <div key={idx}
+                 data-testid={`approval-history-attempt-${a.id}-${idx}`}
+                 style={{ fontSize: 9, color: "#94a3b8",
+                          padding: "3px 0", lineHeight: 1.4 }}>
+              <span style={{ color: "#fbbf24", fontWeight: 700, marginRight: 6 }}>
+                {idx + 1}회
+              </span>
+              <span>{new Date(entry.at).toLocaleString("ko-KR")}</span>
+              <span style={{ color: "#64748b", marginLeft: 4 }}>
+                ({formatPendingAge(entry.at)})
+              </span>
+              {entry.decided_by && (
+                <span style={{ marginLeft: 6 }}>· by {entry.decided_by}</span>
+              )}
+              {Array.isArray(entry.reasons) && entry.reasons.length > 0 && (
+                <div style={{ fontSize: 9, color: "#fca5a5",
+                              marginTop: 2, paddingLeft: 6 }}>
+                  {entry.reasons.join(" / ")}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -625,6 +656,18 @@ export function Approvals({ approvals, operatorName = "" }) {
   // 충분. j/k는 한국어 자판에선 ㅓ/ㅏ에 매핑되지만 shouldHandleApprovalsHotkey가
   // input/IME에서 skip하니 안전.
   const [historyFocusedIndex, setHistoryFocusedIndex] = useState(-1);
+  // 121: attempts 펼침 상태. multi-expand 허용 — 운영자가 여러 row의 attempts를
+  // 동시에 비교할 수 있도록. attempts 없는 row는 클릭 시 focus만 변하고 펼침
+  // state는 영향 없음.
+  const [expandedHistoryIds, setExpandedHistoryIds] = useState(() => new Set());
+  const _toggleExpand = (id) => {
+    setExpandedHistoryIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   // pending 폴링이 행을 추가/제거하면 인덱스가 invalid 될 수 있다 — clamp.
   useEffect(() => {
@@ -850,7 +893,13 @@ export function Approvals({ approvals, operatorName = "" }) {
             key={a.id}
             a={a}
             focused={idx === historyFocusedIndex}
-            onClick={() => setHistoryFocusedIndex(idx)}
+            expanded={expandedHistoryIds.has(a.id)}
+            onClick={() => {
+              setHistoryFocusedIndex(idx);
+              if (a.attempts && a.attempts.length > 0) {
+                _toggleExpand(a.id);
+              }
+            }}
           />
         ))}
         <div style={{ marginTop: 8, textAlign: "center" }}>

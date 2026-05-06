@@ -1963,6 +1963,118 @@ describe("<Approvals> history keyboard navigation (107)", () => {
 });
 
 
+describe("<HistoryRow> attempts expansion (121)", () => {
+  afterEach(cleanup);
+
+  function _row(overrides = {}) {
+    return {
+      id: 1, symbol: "005930", side: "BUY", quantity: 1, order_type: "MARKET",
+      limit_price: null, status: "REJECTED", mode: "LIVE_MANUAL_APPROVAL",
+      decided_at: "2026-05-06T12:00:00+00:00",
+      decided_by: "user", note: "", created_at: "2026-05-06T11:50:00+00:00",
+      audit_id: 1, reasons: [],
+      attempts: [
+        { at: "2026-05-06T11:55:00+00:00", decided_by: "ops1",
+          reasons: ["max_order_notional_exceeded"] },
+        { at: "2026-05-06T11:58:00+00:00", decided_by: "ops1",
+          reasons: ["risk_check_failed_at_approve"] },
+      ],
+      ...overrides,
+    };
+  }
+
+  it("collapsed by default — only summary visible, no attempts list", () => {
+    const { container, getByTestId } = render(<HistoryRow a={_row()} />);
+    expect(getByTestId("history-attempts-summary").textContent).toContain("2회 시도");
+    expect(getByTestId("history-attempts-summary").textContent).toContain("▼");
+    expect(container.querySelector('[data-testid="approval-history-attempts-1"]')).toBeNull();
+  });
+
+  it("expanded=true reveals each attempt with timestamp/by/reasons", () => {
+    const { getByTestId } = render(<HistoryRow a={_row()} expanded />);
+    const list = getByTestId("approval-history-attempts-1");
+    expect(list).toBeTruthy();
+    expect(getByTestId("approval-history-attempt-1-0").textContent).toContain("1회");
+    expect(getByTestId("approval-history-attempt-1-0").textContent).toContain("ops1");
+    expect(getByTestId("approval-history-attempt-1-0").textContent).toContain("max_order_notional_exceeded");
+    expect(getByTestId("approval-history-attempt-1-1").textContent).toContain("2회");
+    expect(getByTestId("approval-history-attempt-1-1").textContent).toContain("risk_check_failed_at_approve");
+    expect(getByTestId("history-attempts-summary").textContent).toContain("▲");
+  });
+
+  it("renders no attempts list when attempts is empty even if expanded=true", () => {
+    const { container } = render(
+      <HistoryRow a={_row({ attempts: [] })} expanded />,
+    );
+    expect(container.querySelector('[data-testid="approval-history-attempts-1"]')).toBeNull();
+  });
+
+  it("data-expanded attribute reflects the prop", () => {
+    const { getByTestId, rerender } = render(<HistoryRow a={_row()} />);
+    expect(getByTestId("approval-history-row-1").dataset.expanded).toBe("false");
+    rerender(<HistoryRow a={_row()} expanded />);
+    expect(getByTestId("approval-history-row-1").dataset.expanded).toBe("true");
+  });
+});
+
+
+describe("<Approvals> history expand-on-click (121)", () => {
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _h(id, overrides = {}) {
+    return {
+      id, symbol: "X", side: "BUY", quantity: 1, order_type: "MARKET",
+      limit_price: null, status: "REJECTED", mode: "LIVE_MANUAL_APPROVAL",
+      decided_at: "2026-05-06T12:00:00+00:00",
+      decided_by: "u", note: "", created_at: "2026-05-06T11:50:00+00:00",
+      audit_id: id, reasons: [],
+      attempts: [{ at: "2026-05-06T11:55:00+00:00", decided_by: "ops1",
+                    reasons: ["foo"] }],
+      ...overrides,
+    };
+  }
+
+  it("clicking a row with attempts expands it; clicking again collapses", () => {
+    const approvals = _makeApprovals({ history: [_h(1)] });
+    const { getByTestId, queryByTestId } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    expect(queryByTestId("approval-history-attempts-1")).toBeNull();
+    fireEvent.click(getByTestId("approval-history-row-1"));
+    expect(getByTestId("approval-history-attempts-1")).toBeTruthy();
+    fireEvent.click(getByTestId("approval-history-row-1"));
+    expect(queryByTestId("approval-history-attempts-1")).toBeNull();
+  });
+
+  it("clicking a row without attempts only sets focus (no expansion)", () => {
+    const approvals = _makeApprovals({
+      history: [_h(1, { attempts: [] })],
+    });
+    const { getByTestId, container } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    fireEvent.click(getByTestId("approval-history-row-1"));
+    expect(getByTestId("approval-history-row-1").dataset.focused).toBe("true");
+    expect(container.querySelector('[data-testid="approval-history-attempts-1"]')).toBeNull();
+  });
+
+  it("multiple rows can be expanded simultaneously", () => {
+    const approvals = _makeApprovals({
+      history: [_h(1), _h(2), _h(3)],
+    });
+    const { getByTestId } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    fireEvent.click(getByTestId("approval-history-row-1"));
+    fireEvent.click(getByTestId("approval-history-row-3"));
+    expect(getByTestId("approval-history-attempts-1")).toBeTruthy();
+    expect(getByTestId("approval-history-attempts-3")).toBeTruthy();
+    // row 2 stays collapsed
+    expect(getByTestId("approval-history-row-2").dataset.expanded).toBe("false");
+  });
+});
+
+
 describe("<Approvals> mode badge integration (113)", () => {
   afterEach(() => { cleanup(); localStorage.clear(); });
 
