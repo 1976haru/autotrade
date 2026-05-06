@@ -12,9 +12,12 @@ on:
       - 'frontend/**'
       - '.github/workflows/frontend-ci.yml'
 
+# 157: 일반 CI는 fast unit + lint + build만. stress (Approvals.stress.test.jsx)
+# 는 frontend-ci-nightly.yml에서 별도 실행.
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,10 +33,12 @@ jobs:
         run: |
           cd frontend
           npm run lint
-      - name: Test
+      - name: Test (fast)
+        # vitest run + stress test 파일 제외. vitest config 또는 glob exclude로
+        # 처리 — 본 PR에선 명시적 exclude 패턴 사용.
         run: |
           cd frontend
-          npm test
+          npx vitest run --exclude '**/*.stress.test.jsx'
       - name: Build
         run: |
           cd frontend

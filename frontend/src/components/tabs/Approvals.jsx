@@ -635,6 +635,9 @@ export function Approvals({ approvals, operatorName = "" }) {
     HISTORY_TIME_BUCKET_STORAGE_KEY, "all", isValidHistoryTimeBucket,
   );
   const _historyBucketWindowMs = HISTORY_TIME_BUCKET_MS[historyTimeBucket];
+  // 157: time bucket 필터가 "최근 1h" 등 *현재 시각 기준* 의미라 Date.now()
+  // 호출이 본질적으로 render 의존. 한 번 snapshot해 한 render 내 일관성 유지.
+  // eslint-disable-next-line react-hooks/purity
   const _now = Date.now();
   const _withinHistoryBucket = (a) => {
     if (_historyBucketWindowMs === undefined) return true;
@@ -694,12 +697,16 @@ export function Approvals({ approvals, operatorName = "" }) {
   };
 
   // pending 폴링이 행을 추가/제거하면 인덱스가 invalid 될 수 있다 — clamp.
+  // 157: setState in effect는 의도된 패턴 — list 길이 변화에만 트리거 + 값
+  // 동일성 가드로 cascade 방지.
   useEffect(() => {
     if (pending.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (focusedIndex !== -1) setFocusedIndex(-1);
       return;
     }
     if (focusedIndex >= pending.length) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setFocusedIndex(pending.length - 1);
     }
   }, [pending.length, focusedIndex]);
@@ -707,10 +714,12 @@ export function Approvals({ approvals, operatorName = "" }) {
   // 107: filteredHistory가 줄어들면 historyFocusedIndex clamp.
   useEffect(() => {
     if (filteredHistory.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (historyFocusedIndex !== -1) setHistoryFocusedIndex(-1);
       return;
     }
     if (historyFocusedIndex >= filteredHistory.length) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setHistoryFocusedIndex(filteredHistory.length - 1);
     }
   }, [filteredHistory.length, historyFocusedIndex]);

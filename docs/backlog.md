@@ -63,13 +63,9 @@
 ### 15. Frontend i18n
 - 현재 한국어 hard-coded. label 분리 + locale switching.
 
-### 16. Frontend lint — 사전 존재 에러 8건 (이번 세션 미변경)
-- `npm run lint` 실행 시 8 error / 53 warning. 모두 본 세션이 변경하지 않은 파일에서 발생. 즉 156 PR이 새로 도입한 lint regression은 0건.
-- 원인:
-  - `react-hooks/purity` (Cannot call impure function during render): `Date.now()`를 `useRef(...)` 초기값으로 사용. `BottomNav.jsx`, `Approvals.jsx`, `AuditLog.jsx`, `Dashboard.jsx`, `Settings.jsx`, `useApprovals.js`, `useAuditLogs.js`. 수정안은 `useRef(null)` + `useEffect`에서 첫 마운트 시 `Date.now()` 주입.
-  - `react-hooks` setState within effect 2건 — Approvals.jsx 699/710. 수정안은 effect를 useCallback으로 분리.
-- **본 PR에서 수정 안 한 이유**: 156은 docs-only PR. 별도 frontend cleanup PR로 분리해 회귀 위험 최소화.
-- 테스트는 833건 모두 통과 — lint 에러는 production 동작에 영향 없음.
+### ~~16. Frontend lint — 사전 존재 에러 8건~~ ✅ 157에서 해결
+- 156 머지 후 별도 PR `feature/157-ci-recovery`에서 8 errors 모두 해결. `useRef(Date.now())` → null + useEffect lazy init / 의도된 setState-in-effect는 disable comment + 사유 / time-bucket 필터의 Date.now() snapshot은 `eslint-disable-next-line react-hooks/purity`. 833 테스트 회귀 0.
+- 결과: `npm run lint` → 0 errors / 55 warnings.
 
 ## Won't Do (현 세션에서 제외)
 

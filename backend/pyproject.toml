@@ -5,3 +5,9 @@ target-version = "py312"
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+# 157: stress / nightly 마커. 일반 CI는 "not slow"로 fast unit 테스트만 실행해
+# wall time과 timing-sensitive 실패를 줄인다. nightly workflow는 -m slow로 따로.
+markers = [
+    "slow: stress / volume / timing-sensitive 테스트. nightly CI / manual 전용.",
+]
+addopts = "-m 'not slow'"

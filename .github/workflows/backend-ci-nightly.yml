@@ -1,0 +1,28 @@
+name: Backend CI (Nightly Stress)
+
+# 157: 일반 CI에서 분리된 stress / volume / timing-sensitive 테스트.
+# - schedule: KST 04:00 (UTC 19:00) 매일 — 한국 거래소 시작 5시간 전.
+# - workflow_dispatch: 운영자가 main 브랜치에 수동 트리거 가능.
+on:
+  schedule:
+    - cron: '0 19 * * *'
+  workflow_dispatch:
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Run slow tests (stress / volume)
+        run: |
+          cd backend
+          pytest -m slow -v

@@ -1,0 +1,29 @@
+name: Frontend CI (Nightly Stress)
+
+# 157: 일반 CI에서 분리된 frontend stress / 대량 렌더 테스트.
+# - schedule: KST 04:00 (UTC 19:00) — backend nightly와 동시.
+# - workflow_dispatch: 운영자 수동 트리거.
+on:
+  schedule:
+    - cron: '0 19 * * *'
+  workflow_dispatch:
+
+jobs:
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: |
+          cd frontend
+          npm ci
+      - name: Run stress tests
+        run: |
+          cd frontend
+          npx vitest run --testNamePattern '' src/components/tabs/Approvals.stress.test.jsx
