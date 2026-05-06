@@ -21,6 +21,7 @@ import {
   isValidHistoryMode,
   isValidHistoryStatus,
   isValidHistoryTimeBucket,
+  shouldHandleApprovalsHotkey,
 } from "./Approvals";
 
 
@@ -1362,5 +1363,195 @@ describe("<Approvals> button → modal flow", () => {
     expect(approvals.approve).not.toHaveBeenCalled();
     // Dialog should still be open (Enter was a no-op)
     expect(queryByRole("dialog")).not.toBeNull();
+  });
+});
+
+
+describe("shouldHandleApprovalsHotkey (103)", () => {
+  function _ev(overrides = {}) {
+    return {
+      isComposing: false, keyCode: 65, target: null,
+      ...overrides,
+    };
+  }
+
+  it("returns true for ordinary keypresses outside inputs", () => {
+    expect(shouldHandleApprovalsHotkey(_ev({ target: document.body }))).toBe(true);
+    expect(shouldHandleApprovalsHotkey(_ev({ target: null }))).toBe(true);
+  });
+
+  it("returns false during IME composition (mirrors 095)", () => {
+    expect(shouldHandleApprovalsHotkey(_ev({ isComposing: true }))).toBe(false);
+    expect(shouldHandleApprovalsHotkey(_ev({ keyCode: 229 }))).toBe(false);
+  });
+
+  it("returns false when target is an input / textarea / select", () => {
+    const inp = document.createElement("input");
+    expect(shouldHandleApprovalsHotkey(_ev({ target: inp }))).toBe(false);
+    const ta = document.createElement("textarea");
+    expect(shouldHandleApprovalsHotkey(_ev({ target: ta }))).toBe(false);
+    const sel = document.createElement("select");
+    expect(shouldHandleApprovalsHotkey(_ev({ target: sel }))).toBe(false);
+  });
+
+  it("returns false when target is contentEditable", () => {
+    const div = document.createElement("div");
+    Object.defineProperty(div, "isContentEditable", { value: true });
+    expect(shouldHandleApprovalsHotkey(_ev({ target: div }))).toBe(false);
+  });
+});
+
+
+describe("<Approvals> keyboard navigation (103)", () => {
+  let approvals;
+  const _PEND = (id, symbol = "005930") => ({
+    id, symbol, side: "BUY", quantity: 1,
+    order_type: "MARKET", limit_price: null,
+    mode: "LIVE_MANUAL_APPROVAL",
+    created_at: "2026-05-06T11:55:00+00:00",
+  });
+
+  beforeEach(() => {
+    approvals = _makeApprovals({
+      pending: [_PEND(1, "AAA"), _PEND(2, "BBB"), _PEND(3, "CCC")],
+    });
+  });
+  afterEach(cleanup);
+
+  it("renders the keyboard hint when there is at least one PENDING row", () => {
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    const hint = getByTestId("approvals-keyboard-hint");
+    expect(hint.textContent).toContain("↑↓");
+    expect(hint.textContent).toContain("승인");
+  });
+
+  it("hides the keyboard hint when the queue is empty", () => {
+    const empty = _makeApprovals({ pending: [] });
+    const { container } = render(<Approvals approvals={empty} operatorName="" />);
+    expect(container.querySelector('[data-testid="approvals-keyboard-hint"]')).toBeNull();
+  });
+
+  it("ArrowDown moves focus from -1 → 0 → 1 → ...", () => {
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    expect(getByTestId("approval-pending-row-1").dataset.focused).toBe("false");
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    expect(getByTestId("approval-pending-row-1").dataset.focused).toBe("true");
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    expect(getByTestId("approval-pending-row-2").dataset.focused).toBe("true");
+  });
+
+  it("ArrowDown clamps at the last row", () => {
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    for (let i = 0; i < 10; i++) fireEvent.keyDown(window, { key: "ArrowDown" });
+    expect(getByTestId("approval-pending-row-3").dataset.focused).toBe("true");
+  });
+
+  it("ArrowUp moves focus back; clamps at the first row", () => {
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "ArrowUp" });
+    expect(getByTestId("approval-pending-row-1").dataset.focused).toBe("true");
+    // Clamp at 0
+    fireEvent.keyDown(window, { key: "ArrowUp" });
+    fireEvent.keyDown(window, { key: "ArrowUp" });
+    expect(getByTestId("approval-pending-row-1").dataset.focused).toBe("true");
+  });
+
+  it("clicking a row sets focus to that row", () => {
+    const { getByTestId } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.click(getByTestId("approval-pending-row-2"));
+    expect(getByTestId("approval-pending-row-2").dataset.focused).toBe("true");
+    expect(getByTestId("approval-pending-row-1").dataset.focused).toBe("false");
+  });
+
+  it("'a' on focused row opens approve modal with that row's id", () => {
+    const { getByTestId, getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "a" });
+    expect(getByRole("dialog").getAttribute("aria-label")).toBe("주문 승인");
+    // The modal renders the focused approval's symbol — in our fixture, BBB at idx 1
+    expect(getByTestId("approval-pending-row-2").dataset.focused).toBe("true");
+  });
+
+  it("'r' opens reject modal", () => {
+    const { getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.keyDown(window, { key: "ArrowDown" }); // focus idx 0
+    fireEvent.keyDown(window, { key: "r" });
+    expect(getByRole("dialog").getAttribute("aria-label")).toBe("주문 거부");
+  });
+
+  it("'c' opens cancel modal", () => {
+    const { getByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "c" });
+    expect(getByRole("dialog").getAttribute("aria-label")).toBe("주문 취소");
+  });
+
+  it("a/r/c with no focused row is a no-op (no modal opens)", () => {
+    const { queryByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.keyDown(window, { key: "a" });
+    expect(queryByRole("dialog")).toBeNull();
+    fireEvent.keyDown(window, { key: "r" });
+    expect(queryByRole("dialog")).toBeNull();
+  });
+
+  it("hotkeys are skipped during IME composition", () => {
+    const { queryByRole } = render(<Approvals approvals={approvals} operatorName="" />);
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "a", isComposing: true });
+    expect(queryByRole("dialog")).toBeNull();
+  });
+
+  it("hotkeys are skipped while focus is in an input (filter typing)", () => {
+    const { getByPlaceholderText, queryByRole } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    // Operator types into the history symbol filter — the 'a' should be a
+    // letter, not an approve trigger.
+    const input = getByPlaceholderText(/종목/);
+    input.focus();
+    fireEvent.keyDown(input, { key: "a" });
+    expect(queryByRole("dialog")).toBeNull();
+  });
+
+  it("hotkeys are disabled while busy", () => {
+    const busyApprovals = _makeApprovals({
+      pending: [_PEND(1, "AAA")],
+      busy: true,
+    });
+    const { queryByRole } = render(<Approvals approvals={busyApprovals} operatorName="" />);
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "a" });
+    expect(queryByRole("dialog")).toBeNull();
+  });
+
+  it("ArrowDown is a no-op while a decision modal is open", () => {
+    const { getByRole, getByTestId } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    fireEvent.keyDown(window, { key: "ArrowDown" });   // focus idx 0
+    fireEvent.keyDown(window, { key: "a" });           // open approve modal
+    expect(getByRole("dialog")).toBeTruthy();
+    // Now Approvals' nav should yield — ArrowDown should not advance focus.
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    expect(getByTestId("approval-pending-row-1").dataset.focused).toBe("true");
+  });
+
+  it("focus index clamps when pending rows shrink under it", async () => {
+    const { rerender, getByTestId, queryByTestId } = render(
+      <Approvals approvals={approvals} operatorName="" />,
+    );
+    // Focus row 3 (idx 2)
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    fireEvent.keyDown(window, { key: "ArrowDown" });
+    expect(getByTestId("approval-pending-row-3").dataset.focused).toBe("true");
+    // Re-render with only 1 pending — focus should clamp to that row.
+    const shrunk = _makeApprovals({ pending: [_PEND(1, "AAA")] });
+    rerender(<Approvals approvals={shrunk} operatorName="" />);
+    expect(queryByTestId("approval-pending-row-3")).toBeNull();
+    expect(getByTestId("approval-pending-row-1").dataset.focused).toBe("true");
   });
 });

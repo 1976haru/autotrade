@@ -1,10 +1,24 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Btn, Card, Inp, SectionLabel } from "../common";
 import { ChipFilterBar } from "../common/ChipFilterBar";
 import { DecisionDialog } from "../common/DecisionDialog";
 import { usePersistedState } from "../../store/usePersistedState";
 import { fmtKRW, formatPendingAge, isPendingStale } from "../../utils/format";
+
+
+// 103: 키보드 nav가 hotkey를 받을지 여부. 사용자가 텍스트 입력 중이거나
+// 한국어 IME 조합 중이면 a/r/c/방향키가 의도치 않게 fire되는 사고를 차단.
+// 095/096이 DecisionDialog Enter에 적용한 IME 가드의 키 경로가 더 넓어진 형태.
+export function shouldHandleApprovalsHotkey(event) {
+  if (event.isComposing || event.keyCode === 229) return false;
+  const t = event.target;
+  if (!t) return true;
+  const tag = t.tagName ? t.tagName.toLowerCase() : "";
+  if (tag === "input" || tag === "textarea" || tag === "select") return false;
+  if (t.isContentEditable) return false;
+  return true;
+}
 
 // 087: formatPendingAge / isPendingStale moved to utils/format.js once
 // Dashboard + App started importing them across tabs. Re-export from this
@@ -401,6 +415,57 @@ export function Approvals({ approvals, operatorName = "" }) {
   // 일괄 취소 버튼은 여기 매칭되는 항목이 있을 때만 노출.
   const staleApprovals = pending.filter((a) => isPendingStale(a.created_at));
 
+  // 103: 키보드 nav. ↑↓로 PENDING 행을 이동, a/r/c로 현재 focus된 행에
+  // approve/reject/cancel 모달을 연다. mass 결재 흐름에서 마우스 사이클을
+  // 줄이는 게 목표. -1은 "선택 없음" — 페이지 마운트 직후나 모든 PENDING이
+  // 해소된 직후의 자연스러운 상태.
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+
+  // pending 폴링이 행을 추가/제거하면 인덱스가 invalid 될 수 있다 — clamp.
+  useEffect(() => {
+    if (pending.length === 0) {
+      if (focusedIndex !== -1) setFocusedIndex(-1);
+      return;
+    }
+    if (focusedIndex >= pending.length) {
+      setFocusedIndex(pending.length - 1);
+    }
+  }, [pending.length, focusedIndex]);
+
+  useEffect(() => {
+    const handler = (event) => {
+      // 텍스트 입력 또는 IME 조합 중이면 모든 hotkey 무시.
+      if (!shouldHandleApprovalsHotkey(event)) return;
+      // 모달이 열려 있으면 그 모달의 자체 listener(095 IME-aware Enter/Esc)
+      // 가 처리하도록 양보한다 — a/r/c도 모달 안에선 텍스트로 들어갈 수 있다.
+      if (decisionTarget || bulkOpen) return;
+      // 결재 액션 진행 중에는 hotkey도 disabled — DecisionDialog의 busy
+      // 가드와 같은 규칙.
+      if (busy) return;
+      if (pending.length === 0) return;
+
+      const key = event.key.toLowerCase();
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setFocusedIndex((i) => {
+          if (i < 0) return 0;
+          return Math.min(pending.length - 1, i + 1);
+        });
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setFocusedIndex((i) => Math.max(0, i - 1));
+      } else if (key === "a" || key === "r" || key === "c") {
+        // focus가 없으면 무시 — 잘못된 행에 액션 fire되는 사고를 막는다.
+        if (focusedIndex < 0 || focusedIndex >= pending.length) return;
+        event.preventDefault();
+        const action = key === "a" ? "approve" : key === "r" ? "reject" : "cancel";
+        setDecisionTarget({ action, approval: pending[focusedIndex] });
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [pending, focusedIndex, decisionTarget, bulkOpen, busy]);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <Card>
@@ -423,6 +488,15 @@ export function Approvals({ approvals, operatorName = "" }) {
           <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>
         )}
 
+        {pending.length > 0 && (
+          <div data-testid="approvals-keyboard-hint"
+               style={{ fontSize: 9, color: "#475569", marginBottom: 6, padding: "0 2px" }}>
+            ↑↓ 행 이동 · <span style={{ color: "#22c55e" }}>a</span> 승인 ·{" "}
+            <span style={{ color: "#ef4444" }}>r</span> 거부 ·{" "}
+            <span style={{ color: "#94a3b8" }}>c</span> 취소
+          </div>
+        )}
+
         {loading ? (
           <div style={{ color: "#475569", fontSize: 12, textAlign: "center", padding: 16 }}>
             로딩 중…
@@ -431,10 +505,20 @@ export function Approvals({ approvals, operatorName = "" }) {
           <div style={{ color: "#1e3a5c", fontSize: 12, textAlign: "center", padding: 16 }}>
             승인 대기 중인 주문 없음
           </div>
-        ) : pending.map((a) => (
+        ) : pending.map((a, idx) => (
           <div
             key={a.id}
-            style={{ padding: "10px 0", borderBottom: "1px solid #05121f" }}
+            data-testid={`approval-pending-row-${a.id}`}
+            data-focused={idx === focusedIndex ? "true" : "false"}
+            onClick={() => setFocusedIndex(idx)}
+            style={{
+              padding: "10px 0 10px 8px", borderBottom: "1px solid #05121f",
+              borderLeft: idx === focusedIndex
+                ? "3px solid #7dd3fc"
+                : "3px solid transparent",
+              background: idx === focusedIndex ? "#7dd3fc0a" : "transparent",
+              cursor: "pointer",
+            }}
           >
             <div style={{
               display: "flex", justifyContent: "space-between",
