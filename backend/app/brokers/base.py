@@ -46,6 +46,9 @@ class OrderRequest(BaseModel):
     # 'manual', 'ai_recommendation' 등. None이면 audit row에서 NULL로 surface
     # 되어 운영자가 '미명시 주문'을 식별할 수 있다.
     trade_reason: str | None = None
+    # 138: 주문을 만든 전략 이름 (registry 키와 동일 — 'sma_crossover' 등).
+    # LiveEngine이 자동 채움, 운영자 수동 주문은 None.
+    strategy: str | None = None
 
 
 class OrderResult(BaseModel):

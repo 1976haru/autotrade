@@ -73,6 +73,9 @@ async def route_order(
         # 134: 호출자가 명시한 진입/청산 사유. 미명시(None)는 그대로 NULL — 운영자가
         # '미명시 주문'을 audit에서 식별 가능.
         trade_reason=order.trade_reason,
+        # 138: 주문을 만든 전략. LiveEngine이 자동 채우고, 수동 주문은 NULL —
+        # 두 경우 모두 audit에서 사후 식별 가능.
+        strategy=order.strategy,
     )
     db.add(audit)
 

@@ -27,6 +27,8 @@ class OrderAuditOut(BaseModel):
     reasons:         list
     # 134: 자유 문자열 사유. 0005 이전 row + 호출자 미명시 입력은 NULL.
     trade_reason:    str | None = None
+    # 138: 주문을 만든 전략 이름. 0006 이전 + 수동 주문은 NULL.
+    strategy:        str | None = None
     executed:        bool
     broker_order_id: str | None = None
     broker_status:   str | None = None
@@ -91,6 +93,7 @@ def _to_order_out(row: OrderAuditLog) -> OrderAuditOut:
         decision=row.decision,
         reasons=list(row.reasons or []),
         trade_reason=row.trade_reason,
+        strategy=row.strategy,
         executed=row.executed,
         broker_order_id=row.broker_order_id,
         broker_status=row.broker_status,

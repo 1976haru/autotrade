@@ -67,11 +67,16 @@ class LiveStrategyEngine:
         risk:     RiskManager | None   = None,
         db:       Session | None       = None,
         mode:     OperationMode | None = None,
+        strategy_name: str | None = None,
     ):
         if quantity <= 0:
             raise ValueError("quantity must be positive")
         self.strategy = strategy
         self.quantity = quantity
+        # 138: registry 키와 동일한 이름 (예: 'sma_crossover'). LiveEngine이
+        # 만드는 OrderRequest.strategy에 자동 채워지고 audit row에 surface.
+        # configure 라우트가 알고 있는 이름이라 외부에서 주입.
+        self.strategy_name = strategy_name
         self._bars: list[Bar] = []
         self._holding = False  # logical position state, not broker truth
         self._entry_price: int | None = None     # set on BUY, cleared on SELL
@@ -98,6 +103,8 @@ class LiveStrategyEngine:
                 # trade_reason으로 자동 surface해 사후 분석 시 'A주문이 왜
                 # 들어갔나'가 즉답된다.
                 trade_reason="strategy_signal",
+                # 138: 어느 전략이 만든 주문인지 audit row까지 carry.
+                strategy=self.strategy_name,
             )
             self._entry_price = bar.close
             self._holding = True
@@ -108,6 +115,7 @@ class LiveStrategyEngine:
                 quantity=self.quantity,
                 order_type=OrderType.MARKET,
                 trade_reason="strategy_signal",
+                strategy=self.strategy_name,
             )
             # Snapshot for rollback — without this a rejected SELL would leave
             # the engine in "holding but no entry_price" state, breaking PnL.

@@ -88,7 +88,19 @@ def test_buy_signal_creates_market_buy_when_flat():
     assert order.order_type == OrderType.MARKET
     # 134: 전략 엔진이 만든 주문은 trade_reason="strategy_signal"로 자동 채워진다.
     assert order.trade_reason == "strategy_signal"
+    # 138: strategy_name 미명시 시 None — 명시 시 그대로 carry.
+    assert order.strategy is None
     assert eng.holding is True
+
+
+def test_strategy_name_propagates_to_intended_order():
+    """138: LiveStrategyEngine(strategy_name='x')로 만든 주문은 OrderRequest.strategy
+    에 'x'를 carry — order_router가 그대로 audit row에 저장."""
+    eng = LiveStrategyEngine(_FixedSignals([Signal.BUY]),
+                             strategy_name="sma_crossover")
+    result = eng.run_tick(_bar(0, 100))
+    assert result.intended_order is not None
+    assert result.intended_order.strategy == "sma_crossover"
 
 
 def test_repeated_buy_does_not_stack_position():

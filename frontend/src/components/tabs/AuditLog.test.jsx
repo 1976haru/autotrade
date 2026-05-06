@@ -2823,6 +2823,21 @@ describe("<OrderAuditRow> mode badge integration (108)", () => {
     );
     expect(container.querySelector('[data-testid="trade-reason-badge"]')).toBeNull();
   });
+
+  // 138: strategy badge surface.
+  it("renders a strategy badge when r.strategy is set", () => {
+    const { getByTestId } = render(
+      <OrderAuditRow r={_row({ strategy: "sma_crossover" })} />,
+    );
+    expect(getByTestId("strategy-badge").textContent).toBe("sma_crossover");
+  });
+
+  it("does not render a strategy badge when r.strategy is null", () => {
+    const { container } = render(
+      <OrderAuditRow r={_row({ strategy: null })} />,
+    );
+    expect(container.querySelector('[data-testid="strategy-badge"]')).toBeNull();
+  });
 });
 
 

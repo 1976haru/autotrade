@@ -119,6 +119,19 @@ export function OrderAuditRow({ r }) {
             </span>
           </>
         )}
+        {r.strategy && (
+          <>
+            <span>·</span>
+            <span data-testid="strategy-badge"
+                  style={{
+                    color: "#67e8f9", fontSize: 9, fontWeight: 700,
+                    padding: "1px 5px", borderRadius: 3,
+                    border: "1px solid #67e8f955", background: "#67e8f915",
+                  }}>
+              {r.strategy}
+            </span>
+          </>
+        )}
       </div>
       {r.reasons.length > 0 && (
         <div style={{ fontSize: 9, color: "#64748b", marginTop: 2 }}>
