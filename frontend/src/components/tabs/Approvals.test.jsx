@@ -142,6 +142,28 @@ describe("<HistoryRow>", () => {
     const { container: c2 } = render(<HistoryRow a={_row()} />);
     expect(c2.textContent).not.toContain("사유:");
   });
+
+  it("shows '⚠ N회 시도' when attempts has entries (post-076 history rows)", () => {
+    const { getByTestId } = render(
+      <HistoryRow a={_row({ attempts: [
+        { at: "2026-05-06T11:00:00+00:00", reasons: ["x"] },
+        { at: "2026-05-06T11:30:00+00:00", reasons: ["y"] },
+        { at: "2026-05-06T11:55:00+00:00", reasons: ["z"] },
+      ]})} />,
+    );
+    const summary = getByTestId("history-attempts-summary");
+    expect(summary.textContent).toContain("3회 시도");
+    expect(summary.style.color).toBe("rgb(251, 191, 36)"); // #fbbf24
+  });
+
+  it("omits the attempts summary when attempts is empty or missing", () => {
+    const { queryByTestId, rerender } = render(
+      <HistoryRow a={_row({ attempts: [] })} />,
+    );
+    expect(queryByTestId("history-attempts-summary")).toBeNull();
+    rerender(<HistoryRow a={_row()} />);
+    expect(queryByTestId("history-attempts-summary")).toBeNull();
+  });
 });
 
 
