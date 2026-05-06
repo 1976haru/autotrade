@@ -8,6 +8,12 @@ import {
   PENDING_STALE_THRESHOLD_MS,
   fmtKRW, formatPendingAge, isPendingStale,
 } from "../../utils/format";
+// 113: 108의 ModeBadge를 PENDING/HistoryRow에서도 재사용 — 092 mode chip이
+// 처리 내역 위에 있고, 108이 timeline에서 같은 팔레트로 바뀌었지만 정작
+// 결재 행 자체엔 plain "LIVE_MANUAL_APPROVAL ·" 텍스트가 남아 있었다.
+// AuditLog.jsx와 Approvals.jsx 사이 import 사이클 없음(Approvals는 timeline
+// 시청자가 아니므로 단방향).
+import { ModeBadge } from "./AuditLog";
 
 
 // 103: 키보드 nav가 hotkey를 받을지 여부. 사용자가 텍스트 입력 중이거나
@@ -118,19 +124,33 @@ export function HistoryRow({ a, focused = false, onClick }) {
           {a.status}
         </span>
       </div>
-      <div style={{ fontSize: 9, color: "#475569" }}>
-        #{a.id} · {a.mode} ·{" "}
+      <div style={{ fontSize: 9, color: "#475569",
+                     display: "flex", alignItems: "center",
+                     gap: 6, flexWrap: "wrap" }}>
+        <span>#{a.id}</span>
+        <ModeBadge mode={a.mode} />
+        <span>·</span>
         {a.decided_at ? (
           <>
-            {new Date(a.decided_at).toLocaleString("ko-KR")}{" "}
+            <span>{new Date(a.decided_at).toLocaleString("ko-KR")}</span>
             <span style={{ color: "#64748b" }}>({formatPendingAge(a.decided_at)})</span>
           </>
-        ) : "—"}
-        {a.decided_by ? ` · by ${a.decided_by}` : ""}
-        {a.note ? ` · ${a.note}` : ""}
+        ) : <span>—</span>}
+        {a.decided_by && (
+          <>
+            <span>·</span>
+            <span>by {a.decided_by}</span>
+          </>
+        )}
+        {a.note && (
+          <>
+            <span>·</span>
+            <span>{a.note}</span>
+          </>
+        )}
         {a.attempts && a.attempts.length > 0 && (
           <>
-            {" · "}
+            <span>·</span>
             <span data-testid="history-attempts-summary"
                   style={{ color: "#fbbf24" }}>
               ⚠ {a.attempts.length}회 시도
@@ -708,8 +728,12 @@ export function Approvals({ approvals, operatorName = "" }) {
               </div>
             </div>
 
-            <div style={{ fontSize: 10, color: "#475569", marginBottom: 8 }}>
-              {a.mode} · {new Date(a.created_at).toLocaleString("ko-KR")}
+            <div style={{ fontSize: 10, color: "#475569", marginBottom: 8,
+                           display: "flex", alignItems: "center",
+                           gap: 6, flexWrap: "wrap" }}>
+              <ModeBadge mode={a.mode} />
+              <span>·</span>
+              <span>{new Date(a.created_at).toLocaleString("ko-KR")}</span>
             </div>
 
             <ReasonsLine reasons={a.reasons} />
