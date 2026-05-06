@@ -120,6 +120,8 @@ async def route_order(
         signal_confidence=order.signal_confidence,
         # 140: idempotency 키. 호출자가 보낸 그대로 audit row에 영구화.
         client_order_id=order.client_order_id,
+        # 152: AI decision metadata도 같은 row에 carry.
+        ai_decision_meta=order.ai_decision_meta,
     )
     db.add(audit)
 

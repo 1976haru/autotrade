@@ -53,6 +53,11 @@ class OrderRequest(BaseModel):
     signal_strength:   int | None = Field(default=None, ge=0, le=100)
     signal_confidence: int | None = Field(default=None, ge=0, le=100)
 
+    # 152: VIRTUAL_AI_EXECUTION에서 AI가 만든 주문의 decision metadata.
+    # JSON dict — confidence/reasons/rejected_by_guard 등. Audit row의
+    # ai_decision_meta 컬럼으로 영구화.
+    ai_decision_meta: dict | None = None
+
 
 class OrderResult(BaseModel):
     order_id: str

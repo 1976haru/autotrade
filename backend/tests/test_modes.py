@@ -33,8 +33,13 @@ def test_manual_approval_requires_user_and_blocks_ai_execution():
 
 
 def test_only_ai_execution_mode_lets_ai_execute_when_flag_on():
+    """LIVE_AI_EXECUTION + flag=True 또는 VIRTUAL_AI_EXECUTION(152, flag 무관)
+    만 ai_can_execute=True. 152에서 VIRTUAL_AI_EXECUTION 모드가 추가됨."""
     for mode in OperationMode:
-        expected = mode == OperationMode.LIVE_AI_EXECUTION
+        expected = mode in (
+            OperationMode.LIVE_AI_EXECUTION,
+            OperationMode.VIRTUAL_AI_EXECUTION,
+        )
         assert can_ai_execute(mode, enable_ai_execution=True) is expected
 
 
