@@ -204,7 +204,9 @@ def configure(req: ConfigureRequest) -> StatusResponse:
         strategy = build_strategy(req.strategy, req.params)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    _EngineState.engine = LiveStrategyEngine(strategy, quantity=req.quantity)
+    _EngineState.engine = LiveStrategyEngine(
+        strategy, quantity=req.quantity, strategy_name=req.strategy,
+    )
     _EngineState.strategy_name = req.strategy
     return get_status()
 

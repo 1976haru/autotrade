@@ -79,6 +79,28 @@ def test_order_audit_trade_reason_is_null_when_omitted(client):
     assert row["trade_reason"] is None
 
 
+# 138: strategy column propagated through the audit response.
+def test_order_audit_persists_explicit_strategy(client):
+    """OrderRequest.strategy → audit row + 응답에 surface."""
+    res = client.post("/api/broker/orders", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1,
+        "strategy": "sma_crossover",
+    })
+    assert res.status_code == 200
+    row = client.get("/api/audit/orders").json()[0]
+    assert row["strategy"] == "sma_crossover"
+
+
+def test_order_audit_strategy_is_null_for_manual_orders(client):
+    """수동 주문(strategy 미명시) → audit row의 strategy=NULL."""
+    res = client.post("/api/broker/orders", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1,
+    })
+    assert res.status_code == 200
+    row = client.get("/api/audit/orders").json()[0]
+    assert row["strategy"] is None
+
+
 # ---------- /api/audit/ai ----------
 
 def test_list_ai_audits_empty(client):

@@ -34,6 +34,10 @@ class OrderAuditLog(Base):
     # 'stop_loss', 'manual', 'ai_recommendation' 등. 0005 이전 row는 NULL.
     trade_reason:    Mapped[str | None]     = mapped_column(String(64), nullable=True)
 
+    # 138: 어떤 전략이 만든 주문인지. LiveEngine이 자동 채움, 수동 주문은 NULL.
+    # 0006 이전 row도 NULL. 향후 Strategy Scoreboard에 LIVE 결과 통합 가능.
+    strategy:        Mapped[str | None]     = mapped_column(String(64), nullable=True, index=True)
+
     executed:        Mapped[bool]           = mapped_column(Boolean, default=False)
     broker_order_id: Mapped[str | None]     = mapped_column(String(64), nullable=True)
     broker_status:   Mapped[str | None]     = mapped_column(String(32), nullable=True)
