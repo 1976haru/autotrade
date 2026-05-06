@@ -5,6 +5,7 @@ import {
   AI_MODEL_PRICING,
   AiAuditView,
   AiModelBadge,
+  AiTokenByModel,
   AiTokenSummary,
   ApprovalAttemptAuditRow,
   BACKTEST_OUTCOME_STORAGE_KEY,
@@ -25,6 +26,7 @@ import {
   emptyEventTimelineMessage,
   estimateAiCost,
   flattenApprovalAttempts,
+  formatAiTokenByModel,
   formatUsdCost,
   isValidBacktestOutcome,
   isValidBacktestSort,
@@ -1267,6 +1269,183 @@ describe("<AiAuditView> cost estimate integration (101)", () => {
     });
     const { getByTestId } = render(<AiAuditView />);
     expect(getByTestId("ai-cost-estimate").textContent).toContain("<$0.01");
+  });
+});
+
+
+describe("formatAiTokenByModel (112)", () => {
+  it("returns empty array for empty / nullable input", () => {
+    expect(formatAiTokenByModel([])).toEqual([]);
+    expect(formatAiTokenByModel(null)).toEqual([]);
+    expect(formatAiTokenByModel(undefined)).toEqual([]);
+  });
+
+  it("groups items by Anthropic family with input/output sums", () => {
+    const cells = formatAiTokenByModel([
+      { model: "claude-opus-4-7",   input_tokens: 1000, output_tokens: 500 },
+      { model: "claude-opus-4-7",   input_tokens: 200,  output_tokens: 100 },
+      { model: "claude-sonnet-4-6", input_tokens: 5000, output_tokens: 800 },
+      { model: "claude-haiku-4-5",  input_tokens: 100,  output_tokens: 50  },
+    ]);
+    const opus = cells.find((c) => c.family === "opus");
+    expect(opus.count).toBe(2);
+    expect(opus.inputTotal).toBe(1200);
+    expect(opus.outputTotal).toBe(600);
+    expect(cells.find((c) => c.family === "sonnet").count).toBe(1);
+    expect(cells.find((c) => c.family === "haiku").count).toBe(1);
+  });
+
+  it("orders cells opus → sonnet → haiku → unknown", () => {
+    const cells = formatAiTokenByModel([
+      { model: "gpt-4",             input_tokens: 1, output_tokens: 1 },
+      { model: "claude-haiku-4-5",  input_tokens: 1, output_tokens: 1 },
+      { model: "claude-opus-4-7",   input_tokens: 1, output_tokens: 1 },
+      { model: "claude-sonnet-4-6", input_tokens: 1, output_tokens: 1 },
+    ]);
+    expect(cells.map((c) => c.family)).toEqual(["opus", "sonnet", "haiku", "unknown"]);
+  });
+
+  it("groups unrecognised models under 'unknown' family with neutral color", () => {
+    const cells = formatAiTokenByModel([
+      { model: "gpt-4",          input_tokens: 100, output_tokens: 50 },
+      { model: null,             input_tokens: 200, output_tokens: 50 },
+      { model: "claude-test-x",  input_tokens: 300, output_tokens: 50 },
+    ]);
+    const unknown = cells.find((c) => c.family === "unknown");
+    expect(unknown.count).toBe(3);
+    expect(unknown.inputTotal).toBe(600);
+    expect(unknown.label).toBe("기타");
+    expect(unknown.color).toBe("#475569");
+  });
+
+  it("attaches the same family color modelAccent uses", () => {
+    const cells = formatAiTokenByModel([
+      { model: "claude-opus-4-7", input_tokens: 1, output_tokens: 1 },
+      { model: "claude-sonnet-4-6", input_tokens: 1, output_tokens: 1 },
+    ]);
+    expect(cells.find((c) => c.family === "opus").color).toBe("#c084fc");
+    expect(cells.find((c) => c.family === "sonnet").color).toBe("#67e8f9");
+  });
+
+  it("treats missing token fields as 0 (no NaN propagation)", () => {
+    const cells = formatAiTokenByModel([
+      { model: "claude-sonnet-4-6", input_tokens: undefined, output_tokens: null },
+      { model: "claude-sonnet-4-6" },
+    ]);
+    const sonnet = cells.find((c) => c.family === "sonnet");
+    expect(sonnet.count).toBe(2);
+    expect(sonnet.inputTotal).toBe(0);
+    expect(sonnet.outputTotal).toBe(0);
+  });
+});
+
+
+describe("<AiTokenByModel> (112)", () => {
+  afterEach(cleanup);
+
+  it("renders nothing for empty / nullable input", () => {
+    const { container } = render(<AiTokenByModel items={[]} />);
+    expect(container.querySelector('[data-testid="ai-token-by-model"]')).toBeNull();
+    cleanup();
+    const { container: c2 } = render(<AiTokenByModel items={null} />);
+    expect(c2.querySelector('[data-testid="ai-token-by-model"]')).toBeNull();
+  });
+
+  it("renders one chip per family with count + token totals", () => {
+    const items = [
+      { model: "claude-sonnet-4-6", input_tokens: 5000, output_tokens: 800 },
+      { model: "claude-haiku-4-5",  input_tokens: 200,  output_tokens: 50  },
+    ];
+    const { getByTestId } = render(<AiTokenByModel items={items} />);
+    const sonnet = getByTestId("ai-token-by-model-cell-sonnet");
+    expect(sonnet.textContent).toContain("sonnet");
+    expect(sonnet.textContent).toContain("1건");
+    expect(sonnet.textContent).toContain("in 5,000");
+    expect(sonnet.textContent).toContain("out 800");
+    const haiku = getByTestId("ai-token-by-model-cell-haiku");
+    expect(haiku.textContent).toContain("haiku");
+  });
+
+  it("renders one stacked-bar segment per family with non-zero tokens", () => {
+    const items = [
+      { model: "claude-opus-4-7",   input_tokens: 1000, output_tokens: 500 }, // 1500
+      { model: "claude-sonnet-4-6", input_tokens: 500,  output_tokens: 0   }, //  500
+    ];
+    const { getByTestId, container } = render(<AiTokenByModel items={items} />);
+    expect(getByTestId("ai-token-by-model-bar-opus")).toBeTruthy();
+    expect(getByTestId("ai-token-by-model-bar-sonnet")).toBeTruthy();
+    // The bar is flex-proportional to total tokens
+    const opusBar   = getByTestId("ai-token-by-model-bar-opus");
+    const sonnetBar = getByTestId("ai-token-by-model-bar-sonnet");
+    expect(Number(opusBar.style.flexGrow)).toBe(1500);
+    expect(Number(sonnetBar.style.flexGrow)).toBe(500);
+  });
+
+  it("omits a stacked-bar segment for a family whose tokens are all 0", () => {
+    const items = [
+      { model: "claude-opus-4-7",   input_tokens: 1000, output_tokens: 0 },
+      { model: "claude-sonnet-4-6", input_tokens: 0,    output_tokens: 0 },
+    ];
+    const { container, getByTestId } = render(<AiTokenByModel items={items} />);
+    // Sonnet appears in the chip row (count=1) but not in the bar (zero tokens).
+    expect(getByTestId("ai-token-by-model-cell-sonnet")).toBeTruthy();
+    expect(container.querySelector('[data-testid="ai-token-by-model-bar-sonnet"]')).toBeNull();
+    expect(getByTestId("ai-token-by-model-bar-opus")).toBeTruthy();
+  });
+
+  it("uses '기타' label for the unknown family", () => {
+    const items = [{ model: "gpt-4", input_tokens: 100, output_tokens: 50 }];
+    const { getByTestId } = render(<AiTokenByModel items={items} />);
+    const cell = getByTestId("ai-token-by-model-cell-unknown");
+    expect(cell.textContent).toContain("기타");
+  });
+});
+
+
+describe("<AiAuditView> per-model token distribution integration (112)", () => {
+  beforeEach(() => { _resetAiHook(); });
+  afterEach(cleanup);
+
+  function _ai(overrides = {}) {
+    return {
+      id: 1, ticker: "005930", model: "claude-sonnet-4-6",
+      input_tokens: 1000, output_tokens: 500,
+      score: { total: 75 }, error: null,
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("renders the bar block when there are visible items", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, model: "claude-sonnet-4-6", input_tokens: 1000, output_tokens: 100 }),
+        _ai({ id: 2, model: "claude-haiku-4-5",  input_tokens: 200,  output_tokens: 50 }),
+      ],
+    });
+    const { getByTestId } = render(<AiAuditView />);
+    expect(getByTestId("ai-token-by-model")).toBeTruthy();
+    expect(getByTestId("ai-token-by-model-cell-sonnet")).toBeTruthy();
+    expect(getByTestId("ai-token-by-model-cell-haiku")).toBeTruthy();
+  });
+
+  it("hides the bar block when there are no visible items", () => {
+    _resetAiHook({ items: [] });
+    const { container } = render(<AiAuditView />);
+    expect(container.querySelector('[data-testid="ai-token-by-model"]')).toBeNull();
+  });
+
+  it("recomputes families as filters narrow the visible set", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, model: "claude-sonnet-4-6", input_tokens: 1000 }),
+        _ai({ id: 2, model: "claude-haiku-4-5",  input_tokens: 200 }),
+      ],
+    });
+    const { getByPlaceholderText, container } = render(<AiAuditView />);
+    fireEvent.change(getByPlaceholderText(/모델/), { target: { value: "sonnet" } });
+    expect(container.querySelector('[data-testid="ai-token-by-model-cell-sonnet"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="ai-token-by-model-cell-haiku"]')).toBeNull();
   });
 });
 
