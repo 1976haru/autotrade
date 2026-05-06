@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AiAuditView,
   AiModelBadge,
+  AiTokenSummary,
   ApprovalAttemptAuditRow,
   BacktestRunsView,
   EmergencyStopAuditRow,
@@ -18,6 +19,7 @@ import {
   mergeEvents,
   modelAccent,
   setEventKindFilter,
+  summarizeAiTokens,
 } from "./AuditLog";
 
 
@@ -985,6 +987,119 @@ describe("<AiAuditView> model filter (094)", () => {
     });
     const { container } = render(<AiAuditView />);
     expect(container.querySelector('[data-testid="ai-model-badge"]')).toBeNull();
+  });
+});
+
+
+describe("summarizeAiTokens (098)", () => {
+  it("returns zero shape for empty / nullable items", () => {
+    expect(summarizeAiTokens([])).toEqual({ count: 0, inputTotal: 0, outputTotal: 0 });
+    expect(summarizeAiTokens(null)).toEqual({ count: 0, inputTotal: 0, outputTotal: 0 });
+    expect(summarizeAiTokens(undefined)).toEqual({ count: 0, inputTotal: 0, outputTotal: 0 });
+  });
+
+  it("sums input_tokens and output_tokens across items", () => {
+    expect(summarizeAiTokens([
+      { input_tokens: 1000, output_tokens: 500 },
+      { input_tokens: 2000, output_tokens: 800 },
+    ])).toEqual({ count: 2, inputTotal: 3000, outputTotal: 1300 });
+  });
+
+  it("treats missing token fields as 0 (no NaN propagation)", () => {
+    expect(summarizeAiTokens([
+      { input_tokens: 100, output_tokens: 50 },
+      { input_tokens: undefined, output_tokens: null },
+      {},
+    ])).toEqual({ count: 3, inputTotal: 100, outputTotal: 50 });
+  });
+});
+
+
+describe("<AiTokenSummary> (098)", () => {
+  afterEach(cleanup);
+
+  it("renders nothing when items is empty", () => {
+    const { container } = render(<AiTokenSummary items={[]} />);
+    expect(container.querySelector('[data-testid="ai-token-summary"]')).toBeNull();
+  });
+
+  it("renders nothing when items is undefined", () => {
+    const { container } = render(<AiTokenSummary items={undefined} />);
+    expect(container.querySelector('[data-testid="ai-token-summary"]')).toBeNull();
+  });
+
+  it("renders count + in + out with locale-formatted numbers", () => {
+    const { getByTestId } = render(<AiTokenSummary items={[
+      { input_tokens: 14500, output_tokens: 8200 },
+      { input_tokens: 200,   output_tokens: 100 },
+    ]} />);
+    const footer = getByTestId("ai-token-summary");
+    expect(footer.textContent).toContain("총 2회");
+    expect(footer.textContent).toContain("in 14,700");
+    expect(footer.textContent).toContain("out 8,300");
+  });
+});
+
+
+describe("<AiAuditView> token summary integration (098)", () => {
+  beforeEach(() => { _resetAiHook(); });
+  afterEach(cleanup);
+
+  function _ai(overrides = {}) {
+    return {
+      id: 1, ticker: "005930", model: "claude-sonnet-4-6",
+      input_tokens: 1000, output_tokens: 500,
+      score: { total: 75 }, error: null,
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("renders the footer with totals when rows are present", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, input_tokens: 14500, output_tokens: 8200 }),
+        _ai({ id: 2, input_tokens: 1500,  output_tokens: 800 }),
+      ],
+    });
+    const { getByTestId } = render(<AiAuditView />);
+    const footer = getByTestId("ai-token-summary");
+    expect(footer.textContent).toContain("총 2회");
+    expect(footer.textContent).toContain("in 16,000");
+    expect(footer.textContent).toContain("out 9,000");
+  });
+
+  it("hides the footer when items list is genuinely empty", () => {
+    _resetAiHook({ items: [] });
+    const { container } = render(<AiAuditView />);
+    expect(container.querySelector('[data-testid="ai-token-summary"]')).toBeNull();
+  });
+
+  it("recomputes totals as filters narrow the visible items", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, ticker: "AAA", model: "claude-sonnet-4-6",
+              input_tokens: 1000, output_tokens: 200 }),
+        _ai({ id: 2, ticker: "BBB", model: "claude-haiku-4-5",
+              input_tokens: 5000, output_tokens: 800 }),
+      ],
+    });
+    const { getByTestId, getByPlaceholderText } = render(<AiAuditView />);
+    expect(getByTestId("ai-token-summary").textContent).toContain("총 2회");
+    fireEvent.change(getByPlaceholderText(/모델/), { target: { value: "sonnet" } });
+    const footer = getByTestId("ai-token-summary");
+    expect(footer.textContent).toContain("총 1회");
+    expect(footer.textContent).toContain("in 1,000");
+    expect(footer.textContent).toContain("out 200");
+  });
+
+  it("hides the footer when filters narrow visible items to zero", () => {
+    _resetAiHook({
+      items: [_ai({ id: 1, ticker: "AAA", model: "claude-sonnet-4-6" })],
+    });
+    const { container, getByPlaceholderText } = render(<AiAuditView />);
+    fireEvent.change(getByPlaceholderText(/모델/), { target: { value: "gpt-99" } });
+    expect(container.querySelector('[data-testid="ai-token-summary"]')).toBeNull();
   });
 });
 
