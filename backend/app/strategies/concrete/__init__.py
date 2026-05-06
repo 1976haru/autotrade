@@ -2,11 +2,18 @@ import inspect
 from typing import Any
 
 from app.strategies.base import Strategy
+from app.strategies.concrete.orb_vwap import OrbVwapStrategy
+from app.strategies.concrete.rsi_reversion import RsiReversionStrategy
 from app.strategies.concrete.sma_crossover import SmaCrossoverStrategy
 
 
+# 131: 등록되는 전략은 contract metadata(entry/exit/invalidation/required_regime/
+# risk_profile)를 base.py Strategy 클래스 attrs로 가진다. orb_vwap/rsi_reversion
+# 은 미완성 stub — TODO 표시 + on_bar는 항상 HOLD라 실거래에는 영향 없음.
 STRATEGY_REGISTRY: dict[str, type[Strategy]] = {
     "sma_crossover": SmaCrossoverStrategy,
+    "orb_vwap":      OrbVwapStrategy,
+    "rsi_reversion": RsiReversionStrategy,
 }
 
 
@@ -57,6 +64,13 @@ def describe_strategy(name: str) -> dict:
         "class_name":  cls.__name__,
         "description": (cls.__doc__ or "").strip(),
         "params":      params,
+        # 131: contract metadata. 클래스가 명시 안 하면 base.py의 default(""/
+        # "any"/{})가 그대로 노출돼 운영자가 미완성 신호를 인지.
+        "entry":           cls.entry,
+        "exit":            cls.exit,
+        "invalidation":    cls.invalidation,
+        "required_regime": cls.required_regime,
+        "risk_profile":    dict(cls.risk_profile),
     }
 
 
@@ -69,5 +83,7 @@ __all__ = [
     "build_strategy",
     "describe_strategy",
     "describe_all_strategies",
+    "OrbVwapStrategy",
+    "RsiReversionStrategy",
     "SmaCrossoverStrategy",
 ]

@@ -93,6 +93,14 @@ class StrategyDescription(BaseModel):
     class_name:  str
     description: str
     params:      list[StrategyParamSchema]
+    # 131: contract metadata — 운영자/감사 가독.
+    # 미명시 시 base.py default("", "any", {})가 surface된다 → "이 전략은
+    # 미완성"으로 운영자가 인지.
+    entry:           str  = ""
+    exit:            str  = ""
+    invalidation:    str  = ""
+    required_regime: str  = "any"
+    risk_profile:    dict = {}
 
 
 class RoutingOut(BaseModel):
