@@ -12,6 +12,8 @@ import {
   AiTokenByModel,
   AiTokenSummary,
   ApprovalAttemptAuditRow,
+  EVENT_MODE_STORAGE_KEY,
+  EventModeFilterBar,
   BACKTEST_OUTCOME_STORAGE_KEY,
   BACKTEST_SORT_STORAGE_KEY,
   BacktestOutcomeFilterBar,
@@ -38,6 +40,7 @@ import {
   isValidAiSort,
   isValidBacktestOutcome,
   isValidBacktestSort,
+  isValidEventMode,
   mergeEvents,
   modelAccent,
   modelFamily,
@@ -2590,6 +2593,134 @@ describe("emptyEventTimelineMessage", () => {
 
   it("handles undefined inputs (defensive against partial-state callers)", () => {
     expect(emptyEventTimelineMessage()).toBe("이벤트 없음");
+  });
+
+  // 128: 4번째 axis(mode) 추가, back-compat 유지.
+  it("returns the filtered variant when only mode is active (128)", () => {
+    expect(emptyEventTimelineMessage("all", "", "all", "LIVE_MANUAL_APPROVAL"))
+      .toBe("해당 조건의 이벤트 없음");
+  });
+
+  it("undefined modeFilter falls back to no-mode-filter (back-compat)", () => {
+    expect(emptyEventTimelineMessage("all", "", "all", undefined))
+      .toBe("이벤트 없음");
+  });
+});
+
+
+describe("isValidEventMode (128)", () => {
+  it("accepts the three canonical chip ids", () => {
+    expect(isValidEventMode("all")).toBe(true);
+    expect(isValidEventMode("LIVE_MANUAL_APPROVAL")).toBe(true);
+    expect(isValidEventMode("LIVE_AI_ASSIST")).toBe(true);
+  });
+
+  it("rejects unknown values (forward-compat against future builds)", () => {
+    expect(isValidEventMode("SIMULATION")).toBe(false);
+    expect(isValidEventMode("garbage")).toBe(false);
+    expect(isValidEventMode("")).toBe(false);
+    expect(isValidEventMode(null)).toBe(false);
+  });
+});
+
+
+describe("<EventModeFilterBar> (128)", () => {
+  afterEach(cleanup);
+
+  it("renders three chips", () => {
+    const { getByRole } = render(<EventModeFilterBar active="all" onChange={() => {}} />);
+    expect(getByRole("radiogroup", { name: "이벤트 모드 필터" })).toBeTruthy();
+    expect(getByRole("radio", { name: "모든 모드" })).toBeTruthy();
+    expect(getByRole("radio", { name: "수동" })).toBeTruthy();
+    expect(getByRole("radio", { name: "AI 보조" })).toBeTruthy();
+  });
+
+  it("calls onChange with the chip id", () => {
+    const onChange = vi.fn();
+    const { getByRole } = render(<EventModeFilterBar active="all" onChange={onChange} />);
+    fireEvent.click(getByRole("radio", { name: "수동" }));
+    expect(onChange).toHaveBeenCalledWith("LIVE_MANUAL_APPROVAL");
+  });
+});
+
+
+describe("<EventTimelineView> mode filter (128)", () => {
+  beforeEach(() => {
+    _resetHooks();
+    _resetAiHook();
+    localStorage.clear();
+  });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  it("default '모든 모드' shows orders/ai/attempts of any mode", () => {
+    _resetHooks({
+      items: [
+        _ORDER({ id: 1, mode: "SIMULATION",          symbol: "AAA" }),
+        _ORDER({ id: 2, mode: "LIVE_MANUAL_APPROVAL", symbol: "BBB" }),
+      ],
+    });
+    const { container } = render(<EventTimelineView />);
+    expect(container.textContent).toContain("AAA");
+    expect(container.textContent).toContain("BBB");
+  });
+
+  it("clicking 수동 narrows orders to LIVE_MANUAL_APPROVAL", () => {
+    _resetHooks({
+      items: [
+        _ORDER({ id: 1, mode: "SIMULATION",          symbol: "AAA" }),
+        _ORDER({ id: 2, mode: "LIVE_MANUAL_APPROVAL", symbol: "BBB" }),
+      ],
+    });
+    const { container, getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "수동" }));
+    expect(container.textContent).not.toContain("AAA");
+    expect(container.textContent).toContain("BBB");
+  });
+
+  it("stops are kept as context regardless of mode filter (mode-wide events)", () => {
+    _resetHooks(
+      // No orders
+      { items: [] },
+      // One stop (no mode field — stops are mode-wide)
+      { items: [_STOP({ id: 1, enabled: true,
+                         created_at: "2026-05-05T12:05:00+00:00" })] },
+    );
+    const { container, getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "수동" }));
+    // Stop row should remain visible — mode filter doesn't drop it.
+    expect(container.textContent).toContain("긴급정지");
+  });
+
+  it("AI rows are filtered by mode (123 column applies)", () => {
+    _resetAiHook({
+      items: [
+        { id: 1, ticker: "AAA", model: "claude-sonnet-4-6",
+          mode: "SIMULATION", input_tokens: 0, output_tokens: 0,
+          created_at: "2026-05-06T12:00:00+00:00" },
+        { id: 2, ticker: "BBB", model: "claude-sonnet-4-6",
+          mode: "LIVE_AI_ASSIST", input_tokens: 0, output_tokens: 0,
+          created_at: "2026-05-06T12:01:00+00:00" },
+      ],
+    });
+    const { container, getByRole } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "AI 보조" }));
+    expect(container.textContent).toContain("BBB");
+    expect(container.textContent).not.toContain("AAA");
+  });
+
+  it("persists selection to localStorage", () => {
+    const { getByRole, unmount } = render(<EventTimelineView />);
+    fireEvent.click(getByRole("radio", { name: "AI 보조" }));
+    expect(localStorage.getItem(EVENT_MODE_STORAGE_KEY)).toBe("LIVE_AI_ASSIST");
+    unmount();
+    const { getByRole: g2 } = render(<EventTimelineView />);
+    expect(g2("radio", { name: "AI 보조" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("falls back to '모든 모드' when stored value is unknown", () => {
+    localStorage.setItem(EVENT_MODE_STORAGE_KEY, "garbage");
+    const { getByRole } = render(<EventTimelineView />);
+    expect(getByRole("radio", { name: "모든 모드" }).getAttribute("aria-checked")).toBe("true");
   });
 });
 

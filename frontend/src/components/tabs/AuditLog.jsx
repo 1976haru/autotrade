@@ -338,14 +338,15 @@ const _isValidBucket = (v) => _VALID_BUCKETS.has(v);
 
 
 // Distinguish "really nothing" from "filters narrowed it to zero" so the
-// operator who tightened symbol + time-bucket + kind doesn't think the
-// audit log broke. The chips above the empty message show *which* filters
-// are active — the message just signals that filters are responsible.
-export function emptyEventTimelineMessage(kind, symbolFilter, timeBucket) {
+// operator who tightened symbol + time-bucket + kind + mode doesn't think
+// the audit log broke. 128: 4번째 axis(mode)가 추가됐어도 같은 메시지 — chips
+// 자체가 어느 필터가 활성인지 알려주고 메시지는 단순 신호.
+export function emptyEventTimelineMessage(kind, symbolFilter, timeBucket, modeFilter) {
   const hasFilter =
     (kind && kind !== "all")
     || (symbolFilter && symbolFilter.trim() !== "")
-    || (timeBucket && timeBucket !== "all");
+    || (timeBucket && timeBucket !== "all")
+    || (modeFilter && modeFilter !== "all");
   return hasFilter ? "해당 조건의 이벤트 없음" : "이벤트 없음";
 }
 
@@ -366,6 +367,30 @@ export function KindFilterBar({ active, onChange }) {
 }
 
 
+// 128: timeline에 mode chip을 추가. 092 history mode chip과 같은 모양 + 동일
+// 의미("수동 결재 흐름만 / AI 보조 흐름만 / 모든 모드")이지만 timeline은 source
+// 가 더 다양하므로 stop만 mode-wide(특정 모드에 속하지 않음)이라 mode 필터에서
+// 빠지지 않게 한다(symbol 필터 정책과 같음). 092는 Approvals에 있어 import
+// 사이클 회피를 위해 timeline은 자체 chip 정의.
+const EVENT_MODE_FILTERS = [
+  { id: "all",                   label: "모든 모드", color: "#7dd3fc" },
+  { id: "LIVE_MANUAL_APPROVAL",  label: "수동",      color: "#22c55e" },
+  { id: "LIVE_AI_ASSIST",        label: "AI 보조",   color: "#a78bfa" },
+];
+
+export const EVENT_MODE_STORAGE_KEY = "autotrade.eventModeFilter";
+const _VALID_EVENT_MODES = new Set(EVENT_MODE_FILTERS.map((m) => m.id));
+export const isValidEventMode = (v) => _VALID_EVENT_MODES.has(v);
+
+
+export function EventModeFilterBar({ active, onChange }) {
+  return (
+    <ChipFilterBar items={EVENT_MODE_FILTERS} active={active}
+      onChange={onChange} ariaLabel="이벤트 모드 필터" />
+  );
+}
+
+
 export function EventTimelineView({ approvals = { pending: [], history: [] } }) {
   const orders = useOrderAudits();
   const stops  = useEmergencyStopAudits();
@@ -378,6 +403,10 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
   const [timeBucket, setTimeBucket] = usePersistedState(
     TIME_BUCKET_STORAGE_KEY, "all", _isValidBucket,
   );
+  // 128: mode 필터 — 092 history mode chip과 같은 의미. 영구 저장.
+  const [modeFilter, setModeFilter] = usePersistedState(
+    EVENT_MODE_STORAGE_KEY, "all", isValidEventMode,
+  );
   const _bucketWindowMs = TIME_BUCKET_MS[timeBucket]; // undefined for "all"
   const _now = Date.now();
   // Orders/stops/ai use created_at; attempts (079) use `at` — different field
@@ -386,6 +415,10 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
     _bucketWindowMs === undefined
       ? true
       : _now - new Date(timestamp).getTime() < _bucketWindowMs;
+  // 128: mode 매칭 helper — modeFilter가 "all"이면 통과. row의 mode가 NULL인
+  // 경우(0004 마이그레이션 이전 AI row 등)는 "all"이 아닌 모드 칩 활성 시 빠짐.
+  const _matchesMode = (rowMode) =>
+    modeFilter === "all" || rowMode === modeFilter;
 
   // 필터를 mergeEvents *전에* 적용 — top-50 cap 안에서 한쪽 종류가 밀려나
   // 사라지는 일을 방지한다 ("긴급정지만" 선택 시 가장 최근 50건의 stop이
@@ -393,20 +426,25 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
   // Symbol 필터는 symbol/ticker가 있는 행에만 의미 있음 (주문/결재 시도/AI) —
   // 긴급정지는 mode-wide 이벤트라 검색 중에도 컨텍스트로서 유지 (kind로 명시
   // 끄기 가능). 시간 bucket은 universal — 모든 종류에 적용.
+  // 128: mode 필터도 stop은 컨텍스트로 유지 (symbol 필터와 같은 정책) — stop은
+  // 어느 모드에서도 의미 있는 시스템 토글.
   const flatAttempts = flattenApprovalAttempts(approvals.pending, approvals.history);
 
   const filteredOrders = (kind === "all" || kind === "order" ? orders.items : [])
     .filter((r) => !symbolNeedle || r.symbol.toLowerCase().includes(symbolNeedle))
-    .filter((r) => _withinBucket(r.created_at));
+    .filter((r) => _withinBucket(r.created_at))
+    .filter((r) => _matchesMode(r.mode));
   const filteredStops = (kind === "all" || kind === "stop" ? stops.items : [])
     .filter((r) => _withinBucket(r.created_at));
   const filteredAttempts = (kind === "all" || kind === "attempt" ? flatAttempts : [])
     .filter((r) => !symbolNeedle || r.symbol.toLowerCase().includes(symbolNeedle))
-    .filter((r) => _withinBucket(r.at));
+    .filter((r) => _withinBucket(r.at))
+    .filter((r) => _matchesMode(r.mode));
   // 122: AI 호출은 ticker 필드(symbol 대신)에 substring 매칭.
   const filteredAi = (kind === "all" || kind === "ai" ? ai.items : [])
     .filter((r) => !symbolNeedle || (r.ticker && r.ticker.toLowerCase().includes(symbolNeedle)))
-    .filter((r) => _withinBucket(r.created_at));
+    .filter((r) => _withinBucket(r.created_at))
+    .filter((r) => _matchesMode(r.mode));
   // 064: 페이징 누적 결과 전부 보여줌 (기본 Infinity).
   const events = mergeEvents({
     orders: filteredOrders, stops: filteredStops,
@@ -461,6 +499,9 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
       <div style={{ marginBottom: 8 }}>
         <TimeBucketBar active={timeBucket} onChange={setTimeBucket} />
       </div>
+      <div style={{ marginBottom: 8 }}>
+        <EventModeFilterBar active={modeFilter} onChange={setModeFilter} />
+      </div>
 
       {error && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>}
 
@@ -468,7 +509,7 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
         <div style={{ color: "#475569", fontSize: 11, padding: 12, textAlign: "center" }}>로딩 중…</div>
       ) : events.length === 0 ? (
         <div style={{ color: "#1e3a5c", fontSize: 12, padding: 16, textAlign: "center" }}>
-          {emptyEventTimelineMessage(kind, symbolFilter, timeBucket)}
+          {emptyEventTimelineMessage(kind, symbolFilter, timeBucket, modeFilter)}
         </div>
       ) : (
         <>
