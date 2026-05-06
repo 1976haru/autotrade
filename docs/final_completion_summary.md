@@ -170,11 +170,13 @@ LIVE 활성화 전 사용자 명시 옵트인이 필요한 영역:
 - [`agent_stress_test_report.md`](agent_stress_test_report.md) — Agent 검증
 - [`backlog.md`](backlog.md) — NICE / LIVE 옵트인 항목
 
-## 사후 UI surface 보강 (187-191)
+## 사후 UI surface 보강 (187-196)
 
 186 시점에 백엔드는 모두 영구화되어 있었지만 일부 데이터가 endpoint /
-프론트 화면으로 노출되지 않은 상태였다. 추가 5건의 PR로 운영자 동선에
-직접 보이도록 surface:
+프론트 화면으로 노출되지 않은 상태였다. 추가 PR로 운영자 동선에 직접
+보이도록 surface:
+
+### 1차 보강 (187-191) — AI / Agent 가시성
 
 | PR | 역할 | 위치 |
 |---|---|---|
@@ -184,19 +186,34 @@ LIVE 활성화 전 사용자 명시 옵트인이 필요한 영역:
 | 190 | `ApprovalOut`에 requested_by_ai / strategy / signal_* / ai_decision_meta 추가 + Approvals 카드 AI 배지 | Approvals 탭 결재 카드 |
 | 191 | `AgentLatestTile` | Dashboard 탭 — 최근 chief 결정 한 줄 |
 
-검증 (191 머지 직후):
-- backend pytest **861 passed**, 15 deselected
-- ruff **All checks passed**
-- frontend npm test **860 passed**, 26 files
-- npm run lint **0 errors** / 58 warnings
-- npm run build **354kB → 101kB gzipped**
+### 2차 보강 (193-196) — Virtual / Futures 가시성
 
-187-191은 **모두 read-only 보강**이다 — 새 broker 호출, 새 가드, 새 AI
-실행 경로 0건. CLAUDE.md 절대 원칙 / RiskManager → PermissionGate →
-OrderAuditLog 단일 진입점은 그대로다.
+| PR | 역할 | 위치 |
+|---|---|---|
+| 193 | `routes_virtual` (`/api/virtual/orders`, `/orders/summary`) + `VirtualOrderLedgerCard` | LiveEngine 탭 — 8 status chip + summary + 행 테이블 |
+| 194 | `routes_futures` (`/api/futures/orders`, `/orders/summary`) + `FuturesOrderAuditCard` | Futures 탭 — 강제청산 toggle + margin Δ + 행 |
+| 195 | `routes_virtual` `/positions` + `VirtualPositionsCard` | LiveEngine 탭 — FIFO 포지션 + realized/unrealized 합계 |
+| 196 | Approval history `EXPIRED` status filter + UI chip | Approvals 탭 — 167 자동 만료 행 분리 조회 |
+
+### 검증 (196 머지 직후)
+
+- backend pytest **884 passed**, 15 deselected
+- ruff **All checks passed**
+- frontend npm test **878 passed**, 29 files
+- npm run lint **0 errors** / 58 warnings
+- npm run build **365kB → 104kB gzipped**
+
+### 안전 invariant
+
+187-196은 **모두 read-only 또는 schema-only 보강**이다:
+- 새 broker 호출, 새 가드 분기, 새 AI 실행 경로 0건.
+- 새 endpoint는 모두 SELECT만 — DB write 0건.
+- CLAUDE.md 절대 원칙 / RiskManager → PermissionGate → OrderAuditLog
+  단일 진입점은 그대로다.
+- 192/197은 본 문서 자체 갱신.
 
 ## 종료 상태
 
 **완료**. 사용자 directive 최종 완성 모드의 모든 항목 이행 + 사후 UI
-surface 보강 (187-191) 완료. 추가 자동 진행 여지는 LIVE 옵트인 또는
+surface 보강 (187-196) 완료. 추가 자동 진행 여지는 LIVE 옵트인 또는
 NICE 영역으로만 남음.
