@@ -219,3 +219,81 @@ describe("useOrderAudits adaptive polling (105)", () => {
     r.unmount();
   });
 });
+
+
+describe("useEmergencyStopAudits adaptive polling (109)", () => {
+  beforeEach(() => { backendApi.emergencyStopHistory.mockReset(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  const _mount = async () => {
+    let r;
+    await act(async () => {
+      r = renderHook(() => useEmergencyStopAudits());
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+    });
+    return r;
+  };
+
+  it("polls at the active 5s interval after mount", async () => {
+    backendApi.emergencyStopHistory.mockResolvedValue([
+      { id: 1, enabled: true, created_at: "2026-05-05T12:00:00+00:00" },
+    ]);
+    vi.useFakeTimers();
+    const r = await _mount();
+    expect(backendApi.emergencyStopHistory).toHaveBeenCalledTimes(1);
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(ACTIVE_POLL_MS); });
+    expect(backendApi.emergencyStopHistory).toHaveBeenCalledTimes(2);
+
+    r.unmount();
+  });
+
+  it("transitions to 30s interval after IDLE_THRESHOLD without new top-id", async () => {
+    // 긴급정지는 평소 토글 없음 — 첫 fetch 후 idle drift 자연스러움.
+    backendApi.emergencyStopHistory.mockResolvedValue([
+      { id: 1, enabled: false, created_at: "2026-05-05T12:00:00+00:00" },
+    ]);
+    vi.useFakeTimers();
+    const r = await _mount();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(IDLE_THRESHOLD_MS + 1_000);
+    });
+    const callsAfterIdleEntry = backendApi.emergencyStopHistory.mock.calls.length;
+
+    // 25s — idle 30s 짜리 timer 미발사
+    await act(async () => { await vi.advanceTimersByTimeAsync(25_000); });
+    expect(backendApi.emergencyStopHistory.mock.calls.length).toBe(callsAfterIdleEntry);
+
+    // 6s 더 — t=330s timer fire
+    await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
+    expect(backendApi.emergencyStopHistory.mock.calls.length).toBeGreaterThan(callsAfterIdleEntry);
+
+    r.unmount();
+  });
+
+  it("a new toggle id snaps polling back to active 5s", async () => {
+    // 토글 직후엔 운영자가 즉시 인지해야 — 새 top id가 idle 윈도우에서 잡히면
+    // 다음 cycle은 active 5s로 복귀.
+    backendApi.emergencyStopHistory.mockResolvedValue([]);
+    vi.useFakeTimers();
+    const r = await _mount();
+
+    // Drift past idle threshold
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(IDLE_THRESHOLD_MS + 60_000);
+    });
+
+    // Operator toggled emergency stop — backend now returns a fresh row
+    backendApi.emergencyStopHistory.mockResolvedValue([
+      { id: 42, enabled: true, created_at: "2026-05-05T13:00:00+00:00" },
+    ]);
+    await act(async () => { await vi.advanceTimersByTimeAsync(IDLE_POLL_MS); });
+
+    const callsBefore = backendApi.emergencyStopHistory.mock.calls.length;
+    await act(async () => { await vi.advanceTimersByTimeAsync(ACTIVE_POLL_MS); });
+    expect(backendApi.emergencyStopHistory.mock.calls.length).toBe(callsBefore + 1);
+
+    r.unmount();
+  });
+});
