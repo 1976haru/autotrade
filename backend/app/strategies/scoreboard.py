@@ -1,4 +1,4 @@
-"""Strategy scoreboard (137 + 144).
+"""Strategy scoreboard (137 + 144 + 147).
 
 전략별 누적 성과 — *전체 DB*의 BacktestRun + OrderAuditLog (LIVE 체결분) 합산.
 
@@ -34,13 +34,76 @@ strategy 채워진 행)을 FIFO 페어매칭으로 realized PnL까지 산출해 
 """
 
 from collections import defaultdict, deque
+from datetime import datetime
+
 from sqlalchemy.orm import Session
 
 from app.db.models import BacktestRun, OrderAuditLog
 
 
+def _parse_iso(s: str | None) -> datetime | None:
+    """trades_json의 entry_ts/exit_ts는 isoformat 문자열로 직렬화돼 있다."""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def _trade_metrics(trades: list[dict]) -> dict:
+    """단일 BacktestRun의 trades_json에서 147 metric 산출.
+
+    - hold_time_seconds: 거래의 (exit_ts - entry_ts) 평균 (초). 파싱 실패 시 0.
+    - profit_factor_components: gross_win / gross_loss 누적용 (PF는 strategy 단위
+      합산 후 계산하므로 여기서는 분자/분모만 반환).
+    - max_consecutive_loss: 연속 손실 거래 수의 최대값.
+    """
+    gross_win  = 0
+    gross_loss = 0
+    hold_secs_total = 0.0
+    hold_count = 0
+    cur_consec = 0
+    max_consec = 0
+
+    for t in trades:
+        pnl = t.get("pnl", 0)
+        if pnl > 0:
+            gross_win += pnl
+            cur_consec = 0
+        else:
+            # 본전 0도 손실 측 — wins/losses의 분류와 일치.
+            gross_loss += -pnl
+            cur_consec += 1
+            if cur_consec > max_consec:
+                max_consec = cur_consec
+
+        entry_ts = _parse_iso(t.get("entry_ts"))
+        exit_ts  = _parse_iso(t.get("exit_ts"))
+        if entry_ts is not None and exit_ts is not None and exit_ts > entry_ts:
+            hold_secs_total += (exit_ts - entry_ts).total_seconds()
+            hold_count += 1
+
+    return {
+        "gross_win":          gross_win,
+        "gross_loss":         gross_loss,
+        "hold_secs_total":    hold_secs_total,
+        "hold_count":         hold_count,
+        "max_consecutive_loss": max_consec,
+    }
+
+
 def _backtest_aggregate(db: Session) -> dict[str, dict]:
-    """BacktestRun 기반 strategy별 집계 (기존 137 동작과 동일)."""
+    """BacktestRun 기반 strategy별 집계 (기존 137 동작 + 147 metric).
+
+    147 추가:
+    - gross_win / gross_loss 누적 → strategy 단위의 profit_factor 산출 가능.
+    - hold_secs_total / hold_count → avg_hold_time_seconds 산출.
+    - max_consecutive_loss → 모든 run의 trades를 연속체로 보고 max — run마다
+      다시 시작하면 진정한 strategy 수준의 worst 연속 손실을 놓치므로 단순화로
+      run별 max의 max를 가져간다 (운영 의미: "어떤 run에서든 N회 연속 패가
+      있었다"는 워닝).
+    """
     rows = db.query(BacktestRun).all()
     by_strategy: dict[str, dict] = {}
 
@@ -53,6 +116,11 @@ def _backtest_aggregate(db: Session) -> dict[str, dict]:
             "worst_pnl":  None,
             "wins":       0,
             "losses":     0,
+            "gross_win":  0,
+            "gross_loss": 0,
+            "hold_secs_total": 0.0,
+            "hold_count":      0,
+            "max_consecutive_loss": 0,
         })
         cur["runs"]      += 1
         pnl              = r.total_pnl or 0
@@ -61,7 +129,41 @@ def _backtest_aggregate(db: Session) -> dict[str, dict]:
         cur["losses"]    += r.loss_count or 0
         cur["best_pnl"]  = pnl if cur["best_pnl"]  is None else max(cur["best_pnl"],  pnl)
         cur["worst_pnl"] = pnl if cur["worst_pnl"] is None else min(cur["worst_pnl"], pnl)
+
+        m = _trade_metrics(r.trades_json or [])
+        cur["gross_win"]        += m["gross_win"]
+        cur["gross_loss"]       += m["gross_loss"]
+        cur["hold_secs_total"]  += m["hold_secs_total"]
+        cur["hold_count"]       += m["hold_count"]
+        if m["max_consecutive_loss"] > cur["max_consecutive_loss"]:
+            cur["max_consecutive_loss"] = m["max_consecutive_loss"]
     return by_strategy
+
+
+def _audit_decision_aggregate(db: Session) -> dict[str, dict]:
+    """OrderAuditLog의 decision 분포 — strategy 단위의 approval/rejection rate 산출.
+
+    NEEDS_APPROVAL은 '아직 결정 안 남' 상태라 결정율 계산의 분모에 넣지 않는다.
+    (분모 = APPROVED + REJECTED, 분자 = 각 카운트)
+    strategy=NULL 행은 어디에도 귀속할 수 없으므로 스킵.
+    """
+    rows = (
+        db.query(OrderAuditLog.strategy, OrderAuditLog.decision)
+          .filter(OrderAuditLog.strategy.isnot(None))
+          .all()
+    )
+    out: dict[str, dict] = defaultdict(lambda: {
+        "approved": 0, "rejected": 0, "needs_approval": 0,
+    })
+    for strategy, decision in rows:
+        cur = out[strategy]
+        if decision == "APPROVED":
+            cur["approved"] += 1
+        elif decision == "REJECTED":
+            cur["rejected"] += 1
+        elif decision == "NEEDS_APPROVAL":
+            cur["needs_approval"] += 1
+    return dict(out)
 
 
 def compute_live_strategy_pnl(db: Session) -> dict[str, dict]:
@@ -146,20 +248,53 @@ def compute_live_strategy_pnl(db: Session) -> dict[str, dict]:
 def compute_strategy_scoreboard(db: Session) -> list[dict]:
     backtest = _backtest_aggregate(db)
     live     = compute_live_strategy_pnl(db)
+    audit    = _audit_decision_aggregate(db)
 
-    all_strategies = set(backtest) | set(live)
+    all_strategies = set(backtest) | set(live) | set(audit)
     out: list[dict] = []
     for s in all_strategies:
         bt = backtest.get(s, {
             "runs": 0, "total_pnl": 0,
             "best_pnl": None, "worst_pnl": None,
             "wins": 0, "losses": 0,
+            "gross_win": 0, "gross_loss": 0,
+            "hold_secs_total": 0.0, "hold_count": 0,
+            "max_consecutive_loss": 0,
         })
         lv = live.get(s, {"trades": 0, "pnl": 0, "wins": 0, "losses": 0})
+        au = audit.get(s, {"approved": 0, "rejected": 0, "needs_approval": 0})
 
         runs = bt["runs"]
         bt_trades = bt["wins"] + bt["losses"]
         lv_trades = lv["wins"] + lv["losses"]
+
+        # 147: profit_factor — gross_win / gross_loss. 손실이 0이면 +∞ 위험이라 None.
+        if bt["gross_loss"] > 0:
+            profit_factor = bt["gross_win"] / bt["gross_loss"]
+        else:
+            profit_factor = None
+
+        # 147: expectancy = avg_pnl_per_trade. (wins+losses=0이면 0).
+        if bt_trades > 0:
+            expectancy = (bt["gross_win"] - bt["gross_loss"]) / bt_trades
+        else:
+            expectancy = 0.0
+
+        # 147: avg_hold_time_seconds — 파싱된 trade 수 분모. 0이면 0.
+        if bt["hold_count"] > 0:
+            avg_hold = bt["hold_secs_total"] / bt["hold_count"]
+        else:
+            avg_hold = 0.0
+
+        # 147: rejection / approval rate — denominator는 APPROVED + REJECTED.
+        decided = au["approved"] + au["rejected"]
+        if decided > 0:
+            approval_rate  = au["approved"] / decided
+            rejection_rate = au["rejected"] / decided
+        else:
+            approval_rate  = 0.0
+            rejection_rate = 0.0
+
         out.append({
             "strategy":   s,
             "runs":       runs,
@@ -176,6 +311,16 @@ def compute_strategy_scoreboard(db: Session) -> list[dict]:
             "live_wins":     lv["wins"],
             "live_losses":   lv["losses"],
             "live_win_rate": (lv["wins"] / lv_trades) if lv_trades > 0 else 0.0,
+            # 147: extended metrics
+            "expectancy":              expectancy,
+            "profit_factor":           profit_factor,
+            "avg_hold_time_seconds":   avg_hold,
+            "max_consecutive_loss":    bt["max_consecutive_loss"],
+            "approved_orders":         au["approved"],
+            "rejected_orders":         au["rejected"],
+            "pending_orders":          au["needs_approval"],
+            "approval_rate":           approval_rate,
+            "rejection_rate":          rejection_rate,
         })
     out.sort(key=lambda x: x["total_pnl"] + x["live_pnl"], reverse=True)
     return out
