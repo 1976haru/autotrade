@@ -34,3 +34,33 @@ export const SIGNAL_COLOR = {
   매도:     "#f87171",
   강력매도: "#ef4444",
 };
+
+
+// 058 (PendingAgeBadge), 069 (EmergencyStopStuckBanner), 075→076 (failure
+// badge), 077 (history relative time), 080 (24h activity attempts) all
+// share the same "elapsed since this ISO timestamp, formatted in Korean"
+// math. Initially scoped to PENDING approvals; moved here in 087 once
+// Dashboard/App were importing across tabs to use it.
+
+const _MIN  = 60_000;
+const _HOUR = 60 * _MIN;
+const _DAY  = 24 * _HOUR;
+
+/** 상대 시간 한국어 표시: "방금" / "5분 전" / "3시간 전" / "2일 전".
+ *  Negative deltas (clock skew) clamp to "방금" rather than producing
+ *  negative numbers. */
+export function formatPendingAge(createdAtIso, now = Date.now()) {
+  const elapsed = Math.max(0, now - new Date(createdAtIso).getTime());
+  if (elapsed < 30_000) return "방금";
+  if (elapsed < _HOUR)  return `${Math.floor(elapsed / _MIN)}분 전`;
+  if (elapsed < _DAY)   return `${Math.floor(elapsed / _HOUR)}시간 전`;
+  return `${Math.floor(elapsed / _DAY)}일 전`;
+}
+
+/** PENDING 결재의 노후 임계값. 058에서 도입한 10분 — 062 status pin escalation,
+ *  065 bulk stale cancel과 같은 값. */
+export const PENDING_STALE_THRESHOLD_MS = 10 * 60 * 1000;
+
+export function isPendingStale(createdAtIso, now = Date.now()) {
+  return (now - new Date(createdAtIso).getTime()) >= PENDING_STALE_THRESHOLD_MS;
+}

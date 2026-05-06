@@ -1,7 +1,6 @@
 import { Card, SectionLabel, StatBox } from "../common";
-import { fmtKRW, fmtPct, pnlColor } from "../../utils/format";
+import { fmtKRW, fmtPct, formatPendingAge, pnlColor } from "../../utils/format";
 import { useEmergencyStopAudits, useOrderAudits } from "../../store/useAuditLogs";
-import { formatPendingAge } from "./Approvals";
 import { flattenApprovalAttempts, setEventKindFilter } from "./AuditLog";
 
 
