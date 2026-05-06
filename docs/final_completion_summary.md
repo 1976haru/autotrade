@@ -210,29 +210,38 @@ LIVE 활성화 전 사용자 명시 옵트인이 필요한 영역:
 | 202 | `BacktestRunsView` row 클릭 expand + `BacktestTradesPanel` (side/qty/entry/exit/pnl) + per-id 캐시 | AuditLog 백테스트 서브탭 — `/api/backtest/runs/{id}` 활용 |
 | 203 | `AI_ONLY_FILTER_STORAGE_KEY` + `audit-ai-only-toggle` (requested_by_ai=true 필터) | AuditLog 이벤트 타임라인 — kind="AI 호출"(분석 로그)과 별개 |
 
-### 검증 (203 머지 직후)
+### 5차 보강 (205-206) — Agent 결정 분포 + filter
 
-- backend pytest **887 passed**, 15 deselected
+| PR | 역할 | 위치 |
+|---|---|---|
+| 205 | `/api/ai/agent-decisions/summary` (by_agent / total_chains / recent_chains) + `AgentDecisionSummaryCard` | AI 탭 — agent별 결정 분포 + chain 누적 |
+| 206 | `/api/ai/agent-decisions` agent_name + decision 쿼리 + `AgentCouncilCard` 11-chip filter | AI 탭 — "Chief의 REJECT만" 같은 narrow 가능 |
+
+### 검증 (206 머지 직후)
+
+- backend pytest **893 passed**, 15 deselected
 - ruff **All checks passed**
-- frontend npm test **903 passed**, 29 files
-- npm run lint **0 errors** / 59 warnings
-- npm run build **376kB → 106kB gzipped**
+- frontend npm test **913 passed**, 30 files
+- npm run lint **0 errors** / 60 warnings
+- npm run build **380kB → 107kB gzipped**
 
 ### 안전 invariant
 
-187-203은 **모두 read-only 또는 schema-only 보강**이다:
+187-206은 **모두 read-only 또는 schema-only 보강**이다:
 - 새 broker 호출, 새 가드 분기, 새 AI 실행 경로 0건.
 - 새 endpoint는 모두 SELECT만 — DB write 0건.
 - 199는 `/api/risk/policy` 응답 변경 없이 frontend 표시만 확장.
 - 201은 `/api/status` 응답에 `safety_flags` 블록 추가 (read-only).
 - 202는 기존 `/api/backtest/runs/{id}` 활용 — backend 변경 0.
 - 203은 frontend 필터만 — backend 변경 0.
+- 205는 새 SELECT 집계 endpoint — 어떤 가드 / 결정에도 영향 X.
+- 206은 기존 endpoint에 query param 2개만 추가 (백워드 호환).
 - CLAUDE.md 절대 원칙 / RiskManager → PermissionGate → OrderAuditLog
   단일 진입점은 그대로다.
-- 192/197/200/204는 본 문서 자체 갱신.
+- 192/197/200/204/207은 본 문서 자체 갱신.
 
 ## 종료 상태
 
 **완료**. 사용자 directive 최종 완성 모드의 모든 항목 이행 + 사후 UI
-surface 보강 (187-203) 완료. 추가 자동 진행 여지는 LIVE 옵트인 또는
+surface 보강 (187-206) 완료. 추가 자동 진행 여지는 LIVE 옵트인 또는
 NICE 영역으로만 남음.
