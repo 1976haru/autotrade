@@ -1,12 +1,10 @@
 """Emergency Stop Reason Taxonomy tests (153, MUST)."""
 
-import pytest
 from sqlalchemy import select
 
 from app.db.models import EmergencyStopEvent
 from app.risk.emergency_reasons import (
     EMERGENCY_STOP_REASONS,
-    EmergencyStopReason,
     is_valid_reason,
 )
 

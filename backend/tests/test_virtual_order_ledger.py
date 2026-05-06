@@ -6,7 +6,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.db.base import Base
-from app.db.models import VirtualOrder
 from app.virtual.order_ledger import (
     STATUS_ACCEPTED,
     STATUS_CANCELLED,

@@ -1,5 +1,7 @@
 # 전략 명세 (Strategy Contract)
 
+> 가상 자동매매 시스템 전체 구조는 [`docs/virtual_trading_architecture.md`](virtual_trading_architecture.md) 참조.
+
 각 전략은 단순한 시그널 생산자가 아니라 운영자/감사가 사후 분석할 수 있는 contract를 갖는다.
 [`backend/app/strategies/base.py`](../backend/app/strategies/base.py)의 `Strategy` ABC가 다음을 class-level attribute로 강제한다:
 

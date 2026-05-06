@@ -16,8 +16,8 @@ _DAY2 = datetime(2026, 5, 8, 9, 0, tzinfo=timezone.utc)
 
 
 def _bar(ts: datetime, ohlc: tuple[int, int, int, int], volume: int = 100) -> Bar:
-    o, h, l, c = ohlc
-    return Bar(symbol="X", timestamp=ts, open=o, high=h, low=l, close=c, volume=volume)
+    op, hi, lo, cl = ohlc
+    return Bar(symbol="X", timestamp=ts, open=op, high=hi, low=lo, close=cl, volume=volume)
 
 
 def _feed(strat: OrbVwapStrategy, bars: list[Bar]) -> list[Signal]:

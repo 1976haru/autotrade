@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from app.brokers.base import Balance, OrderRequest, OrderSide, Position
 from app.core.modes import OperationMode
 from app.risk.risk_manager import RiskDecision, RiskManager, RiskPolicy
@@ -405,8 +407,6 @@ def test_lowered_notional_threshold_rejects_orders_that_default_would_approve():
 
 
 # ---------- 143: stale price detection ----------
-
-from datetime import datetime, timedelta, timezone
 
 
 def test_stale_price_rejects_with_explicit_reason():

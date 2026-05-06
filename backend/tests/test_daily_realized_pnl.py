@@ -5,9 +5,8 @@ max_daily_loss 검사가 무효 상태였다. 본 모듈은 (a) audit log 기반
 재구성 함수와 (b) route_order 통합 후 강제력 회복을 검증.
 """
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
-import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -197,9 +196,7 @@ def test_route_order_populates_daily_pnl_and_enforces_max_daily_loss(client):
         "symbol": "005930", "side": "BUY", "quantity": 1,
     })
     assert res.status_code == 400, res.text
-    body = res.json()
-    detail = body.get("detail", body)
-    reasons = detail.get("reasons", []) if isinstance(detail, dict) else []
+    # detail은 라우트 envelope — reasons는 audit row에서 직접 검증.
     # 라우트의 envelope이 reasons를 담지 않더라도 audit에 남아있어야 한다.
     with client.test_db_factory() as db:
         new_rows = db.execute(
