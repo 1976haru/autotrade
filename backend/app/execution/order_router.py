@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.ai.rate_limit import check_rate_limit
+from app.ai.rate_limit import check_global_rate_limit, check_rate_limit
 from app.brokers.base import BrokerAdapter, OrderRequest, OrderResult
 from app.core.modes import OperationMode
 from app.db.models import OrderAuditLog, PendingApproval
@@ -85,6 +85,17 @@ async def route_order(
         if not within:
             ai_rate_violation_count = current_count
 
+    # 177: 시스템 전체 rate limit — 모든 주문 종류 통합. 161과 별개.
+    global_rate_violation_count: int | None = None
+    if risk.policy.global_rate_limit_max_count > 0:
+        within, current_count = check_global_rate_limit(
+            db,
+            window_seconds=risk.policy.global_rate_limit_window_seconds,
+            max_count=risk.policy.global_rate_limit_max_count,
+        )
+        if not within:
+            global_rate_violation_count = current_count
+
     quote     = await broker.get_price(order.symbol)
     balance   = await broker.get_balance()
     positions = await broker.get_positions()
@@ -121,6 +132,15 @@ async def route_order(
             f"in {risk.policy.ai_rate_limit_window_seconds}s window "
             f"(max {risk.policy.ai_rate_limit_max_count}) for "
             f"({order.strategy}, {order.symbol})"
+        )
+        decision.decision = RiskDecision.REJECTED
+
+    # 177: 시스템 전체 rate limit 위반.
+    if global_rate_violation_count is not None:
+        decision.reasons.append(
+            f"global rate limit exceeded: {global_rate_violation_count} orders "
+            f"in {risk.policy.global_rate_limit_window_seconds}s window "
+            f"(max {risk.policy.global_rate_limit_max_count})"
         )
         decision.decision = RiskDecision.REJECTED
 

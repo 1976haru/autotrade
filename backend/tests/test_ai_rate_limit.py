@@ -2,11 +2,16 @@
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.ai.rate_limit import check_rate_limit, count_recent_ai_proposals
+from app.ai.rate_limit import (
+    check_global_rate_limit,
+    check_rate_limit,
+    count_recent_ai_proposals,
+    count_recent_orders,
+)
 from app.db.base import Base
 from app.db.models import OrderAuditLog
 
@@ -275,3 +280,93 @@ def test_route_order_rate_limit_separates_by_strategy(client):
         ))
         db.commit()
     assert result.decision == RiskDecision.APPROVED
+
+
+# ---------- 177: global rate limit (all orders) ----------
+
+def test_count_recent_orders_includes_all_kinds():
+    """count_recent_orders는 requested_by_ai 무관 — 모든 audit row 카운트."""
+    Session = _session()
+    now = datetime.now(timezone.utc)
+    with Session() as db:
+        # AI 1건 + non-AI 2건 = 3.
+        _ai_audit(db, requested_by_ai=True,  created_at=now)
+        _ai_audit(db, requested_by_ai=False, created_at=now)
+        _ai_audit(db, requested_by_ai=False, created_at=now)
+        db.commit()
+        assert count_recent_orders(db, window_seconds=60, now=now) == 3
+
+
+def test_check_global_rate_limit_disabled_when_max_zero():
+    Session = _session()
+    with Session() as db:
+        within, count = check_global_rate_limit(
+            db, window_seconds=60, max_count=0,
+        )
+    assert within is True
+    assert count == 0
+
+
+def test_check_global_rate_limit_above_threshold():
+    Session = _session()
+    now = datetime.now(timezone.utc)
+    with Session() as db:
+        for _ in range(5):
+            _ai_audit(db, requested_by_ai=False, created_at=now)
+        db.commit()
+        within, count = check_global_rate_limit(
+            db, window_seconds=60, max_count=3, now=now,
+        )
+    assert within is False
+    assert count == 5
+
+
+def test_route_order_blocks_when_global_rate_exceeded(client):
+    """177 핵심: 시스템 전체 주문이 N건 누적된 후 다음 주문 거부 — strategy /
+    manual 종류 무관."""
+    from app.db.models import OrderAuditLog
+    risk = client.test_risk_manager
+    risk.policy.max_positions       = 999_999
+    risk.policy.max_symbol_exposure = 999_999_999_999
+    risk.policy.global_rate_limit_max_count = 3
+
+    # 첫 3건 통과.
+    for i in range(3):
+        side = "BUY" if i % 2 == 0 else "SELL"
+        res = client.post("/api/broker/orders", json={
+            "symbol": "005930", "side": side, "quantity": 1,
+        })
+        assert res.status_code == 200, f"unexpected reject at {i}: {res.text}"
+
+    # 4번째는 거부 (이미 3건 누적).
+    res4 = client.post("/api/broker/orders", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1,
+    })
+    assert res4.status_code == 400
+    # audit row에 reason 있음.
+    with client.test_db_factory() as db:
+        rows = db.execute(
+            select(OrderAuditLog).where(OrderAuditLog.decision == "REJECTED")
+        ).scalars().all()
+        assert len(rows) == 1
+        assert any("global rate limit" in r for r in rows[0].reasons), rows[0].reasons
+
+
+def test_global_rate_limit_applies_to_non_ai_orders(client):
+    """161 (AI rate limit)과 별개로 비-AI 주문도 global limit에 카운트.
+    회귀 가드 — 161만 켜둔 상태에서 manual 주문이 빠져나가지 않도록."""
+    risk = client.test_risk_manager
+    risk.policy.max_positions       = 999_999
+    risk.policy.max_symbol_exposure = 999_999_999_999
+    risk.policy.global_rate_limit_max_count = 2
+    # 161은 비활성 — 그래도 177이 작동해야 한다.
+    risk.policy.ai_rate_limit_max_count = 0
+
+    res1 = client.post("/api/broker/orders", json={"symbol": "005930", "side": "BUY", "quantity": 1})
+    res2 = client.post("/api/broker/orders", json={"symbol": "005930", "side": "SELL", "quantity": 1})
+    assert res1.status_code == 200
+    assert res2.status_code == 200
+
+    # 3번째 — 거부.
+    res3 = client.post("/api/broker/orders", json={"symbol": "005930", "side": "BUY", "quantity": 1})
+    assert res3.status_code == 400

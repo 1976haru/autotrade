@@ -69,6 +69,10 @@ class RiskPolicy:
     # 단타 자동매매가 SIMULATION/PAPER에서 24/7 돌아도 LIVE 단계에서는 명시적
     # 옵트인 권장.
     enforce_market_hours: bool = False
+    # 177: 시스템 전체 주문 rate limit (strategy / AI / manual 통합). 161의
+    # AI-specific 한도와 별개. 0이면 비활성 (기본).
+    global_rate_limit_window_seconds: int = 60
+    global_rate_limit_max_count:      int = 0
 
     @classmethod
     def from_settings(cls, settings) -> "RiskPolicy":
@@ -94,6 +98,8 @@ class RiskPolicy:
             max_position_size_pct        = settings.max_position_size_pct,
             symbol_whitelist             = frozenset(settings.symbol_whitelist_set()),
             enforce_market_hours         = settings.enforce_market_hours,
+            global_rate_limit_window_seconds = settings.global_rate_limit_window_seconds,
+            global_rate_limit_max_count      = settings.global_rate_limit_max_count,
         )
 
 

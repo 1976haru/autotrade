@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     # 176: 한국 시장 시간(09:00–15:30 KST 평일) 외 주문 거부. False면 비활성 (기본).
     enforce_market_hours: bool = False
 
+    # 177: 시스템 전체 주문 rate limit (strategy / AI / manual 통합). 0이면 비활성.
+    global_rate_limit_window_seconds: int = 60
+    global_rate_limit_max_count:      int = 0
+
     def symbol_whitelist_set(self) -> set[str]:
         """env 콤마 문자열을 set으로 파싱. 공백 strip."""
         if not self.symbol_whitelist:
