@@ -4,7 +4,10 @@ import { Btn, Card, Inp, SectionLabel } from "../common";
 import { ChipFilterBar } from "../common/ChipFilterBar";
 import { DecisionDialog } from "../common/DecisionDialog";
 import { usePersistedState } from "../../store/usePersistedState";
-import { fmtKRW, formatPendingAge, isPendingStale } from "../../utils/format";
+import {
+  PENDING_STALE_THRESHOLD_MS,
+  fmtKRW, formatPendingAge, isPendingStale,
+} from "../../utils/format";
 
 
 // 103: 키보드 nav가 hotkey를 받을지 여부. 사용자가 텍스트 입력 중이거나
@@ -340,6 +343,46 @@ export function formatDecisionDuration(ms) {
   if (totalHr  < 24)         return `${totalHr}시간 ${totalMin % 60}분`;
   const totalDay = Math.floor(totalHr / 24);
   return `${totalDay}일 ${totalHr % 24}시간`;
+}
+
+
+// 111: 평균/max/min 옆에 "결정에 임계 시간(기본 10분, PENDING stale 임계와 동일)
+// 이상 걸린 비율"을 추가. 110의 max는 worst-case 한 건만 보여주고 중간 영역의
+// 적체 분포를 못 잡는다 — 비율은 "절반이 10분 넘었다 vs 한 건만 그랬다"를
+// 즉시 구분.
+export function summarizeHistoryStaleRatio(items, thresholdMs = PENDING_STALE_THRESHOLD_MS) {
+  let count = 0;
+  let staleCount = 0;
+  for (const a of items || []) {
+    if (!a || !a.created_at || !a.decided_at) continue;
+    const ms = new Date(a.decided_at).getTime() - new Date(a.created_at).getTime();
+    if (!Number.isFinite(ms) || ms < 0) continue;
+    count += 1;
+    if (ms >= thresholdMs) staleCount += 1;
+  }
+  return { count, staleCount, ratio: count > 0 ? staleCount / count : 0 };
+}
+
+
+export function HistoryStaleRatio({ items, thresholdMs = PENDING_STALE_THRESHOLD_MS }) {
+  const s = summarizeHistoryStaleRatio(items, thresholdMs);
+  // 적체가 없으면 아무것도 안 보여줌 — 운영자가 "건강하다"는 신호로 간주.
+  if (s.staleCount === 0) return null;
+  // 50%+이면 빨강(주의), 그 외 amber.
+  const color = s.ratio >= 0.5 ? "#ef4444" : "#fbbf24";
+  const pct = Math.round(s.ratio * 100);
+  const thresholdMin = Math.round(thresholdMs / 60_000);
+  return (
+    <div data-testid="history-stale-ratio"
+         data-ratio={pct}
+         style={{ fontSize: 10, color, marginBottom: 8,
+                  display: "flex", gap: 6, flexWrap: "wrap",
+                  padding: "4px 0", borderBottom: "1px dashed #0c2035" }}>
+      <span style={{ fontWeight: 700 }}>
+        ⚠ stale ({thresholdMin}분+) {s.staleCount}/{s.count}건 ({pct}%)
+      </span>
+    </div>
+  );
 }
 
 
@@ -715,6 +758,7 @@ export function Approvals({ approvals, operatorName = "" }) {
           />
         </div>
         <HistoryDecisionTimeSummary items={filteredHistory} />
+        <HistoryStaleRatio items={filteredHistory} />
         {filteredHistory.length > 0 && (
           <div data-testid="approvals-history-keyboard-hint"
                style={{ fontSize: 9, color: "#475569", marginBottom: 6, padding: "0 2px" }}>
