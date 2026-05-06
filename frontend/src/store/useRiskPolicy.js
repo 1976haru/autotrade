@@ -48,12 +48,14 @@ export function useRiskPolicy() {
   }, [refreshHistory]);
 
   const toggleEmergency = useCallback(async (decision) => {
-    // decision: { decided_by?, note? } | null | undefined.
+    // decision: { decided_by?, note?, reason_code? } | null | undefined.
     // Only forward keys with non-empty values so the audit row records null
-    // for fields the operator left blank rather than "".
+    // for fields the operator left blank rather than "". 153: reason_code
+    // is also forwarded as null when blank — backend accepts null + enforces enum.
     const payload = {};
-    if (decision?.decided_by) payload.decided_by = decision.decided_by;
-    if (decision?.note)       payload.note       = decision.note;
+    if (decision?.decided_by)  payload.decided_by  = decision.decided_by;
+    if (decision?.note)        payload.note        = decision.note;
+    if (decision?.reason_code) payload.reason_code = decision.reason_code;
     setBusy(true);
     try {
       const res = await backendApi.setEmergencyStop(

@@ -47,6 +47,11 @@ export function DecisionDialog({
   busy, defaultDecidedBy = "",
   decidedByPlaceholder = "예: ops1",
   notePlaceholder = "",
+  // 153: 옵션 — 추가 필드 (예: emergency stop reason_code dropdown)와 그 값을
+  // payload에 합칠 함수. extraFields가 자체 상태를 관리하고 extraPayload()가
+  // 현재 값을 반환한다. 미지정 시 기본 동작과 동일.
+  extraFields = null,
+  extraPayload,
   onConfirm, onCancel,
 }) {
   const [decidedBy, setDecidedBy] = useState(defaultDecidedBy);
@@ -67,7 +72,8 @@ export function DecisionDialog({
 
   const _submit = async () => {
     setErrorMessage(null);
-    const payload = { decided_by: decidedBy.trim(), note: note.trim() };
+    const extra = (typeof extraPayload === "function") ? extraPayload() : {};
+    const payload = { decided_by: decidedBy.trim(), note: note.trim(), ...extra };
     const result = await onConfirm(payload);
     // null / undefined / {ok:true} are all "success" — parent closes us.
     // Only an explicit {ok:false} keeps us open with feedback.
@@ -135,6 +141,8 @@ export function DecisionDialog({
           <Inp value={note} onChange={setNote}
                 placeholder={notePlaceholder} inputRef={noteRef} />
         </div>
+
+        {extraFields}
 
         {errorMessage && (
           <div

@@ -163,6 +163,9 @@ class EmergencyStopEvent(Base):
     enabled:    Mapped[bool]           = mapped_column(Boolean)
     decided_by: Mapped[str | None]     = mapped_column(String(64), nullable=True)
     note:       Mapped[str | None]     = mapped_column(String(500), nullable=True)
+    # 153: 구조화된 사유 코드. enum app.risk.emergency_reasons.EmergencyStopReason.
+    # NULL = 0011 이전 row 또는 미명시. 운영 단계에서는 명시 권장.
+    reason_code: Mapped[str | None]    = mapped_column(String(32), nullable=True, index=True)
 
 
 class VirtualOrder(Base):

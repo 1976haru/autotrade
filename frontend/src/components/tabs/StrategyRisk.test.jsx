@@ -133,7 +133,7 @@ describe("<BackendPolicyCard>", () => {
       fireEvent.click(getByText("확인"));
     });
     expect(toggleEmergency).toHaveBeenCalledWith({
-      decided_by: "ops1", note: "circuit-breaker",
+      decided_by: "ops1", note: "circuit-breaker", reason_code: null,
     });
     expect(queryByRole("dialog")).toBeNull();
   });
@@ -193,7 +193,7 @@ describe("<EmergencyStopConfirmModal>", () => {
     fireEvent.change(getByPlaceholderText(/ops1/), { target: { value: "  ops1 " } });
     fireEvent.change(getByPlaceholderText(/vol spike/), { target: { value: " note " } });
     fireEvent.click(getByText("확인"));
-    expect(onConfirm).toHaveBeenCalledWith({ decided_by: "ops1", note: "note" });
+    expect(onConfirm).toHaveBeenCalledWith({ decided_by: "ops1", note: "note", reason_code: null });
   });
 
   it("pre-fills decided_by from defaultDecidedBy when provided", () => {
@@ -207,7 +207,7 @@ describe("<EmergencyStopConfirmModal>", () => {
     expect(getByPlaceholderText(/ops1/).value).toBe("ops-default");
     // Confirming without editing should forward the prefilled value.
     fireEvent.click(getByText("확인"));
-    expect(onConfirm).toHaveBeenCalledWith({ decided_by: "ops-default", note: "" });
+    expect(onConfirm).toHaveBeenCalledWith({ decided_by: "ops-default", note: "", reason_code: null });
   });
 
   it("operator can override the prefilled decided_by before confirming", () => {
@@ -220,7 +220,7 @@ describe("<EmergencyStopConfirmModal>", () => {
     );
     fireEvent.change(getByPlaceholderText(/ops1/), { target: { value: "ops-other" } });
     fireEvent.click(getByText("확인"));
-    expect(onConfirm).toHaveBeenCalledWith({ decided_by: "ops-other", note: "" });
+    expect(onConfirm).toHaveBeenCalledWith({ decided_by: "ops-other", note: "", reason_code: null });
   });
 
   it("disables both buttons while busy", () => {
@@ -272,7 +272,7 @@ describe("<EmergencyStopConfirmModal>", () => {
     fireEvent.change(getByPlaceholderText(/ops1/), { target: { value: " ops1 " } });
     fireEvent.change(getByPlaceholderText(/vol spike/), { target: { value: " spike " } });
     fireEvent.keyDown(window, { key: "Enter" });
-    expect(onConfirm).toHaveBeenCalledWith({ decided_by: "ops1", note: "spike" });
+    expect(onConfirm).toHaveBeenCalledWith({ decided_by: "ops1", note: "spike", reason_code: null });
   });
 
   it("ignores Esc and Enter while busy", () => {
@@ -287,6 +287,34 @@ describe("<EmergencyStopConfirmModal>", () => {
     fireEvent.keyDown(window, { key: "Enter" });
     expect(onCancel).not.toHaveBeenCalled();
     expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  // 153: reason_code dropdown
+  it("renders reason_code dropdown with all 9 codes", () => {
+    const { getByTestId } = render(
+      <EmergencyStopConfirmModal
+        targetEnabled={true} busy={false}
+        onConfirm={() => {}} onCancel={() => {}} />,
+    );
+    const select = getByTestId("emergency-stop-reason-select");
+    // 9 enum + 1 "미지정" placeholder = 10 options
+    expect(select.querySelectorAll("option").length).toBe(10);
+    expect(select.value).toBe("");
+  });
+
+  it("forwards selected reason_code with payload", () => {
+    const onConfirm = vi.fn();
+    const { getByText, getByTestId } = render(
+      <EmergencyStopConfirmModal
+        targetEnabled={true} busy={false}
+        onConfirm={onConfirm} onCancel={() => {}} />,
+    );
+    const select = getByTestId("emergency-stop-reason-select");
+    fireEvent.change(select, { target: { value: "daily_loss_limit" } });
+    fireEvent.click(getByText("확인"));
+    expect(onConfirm).toHaveBeenCalledWith({
+      decided_by: "", note: "", reason_code: "daily_loss_limit",
+    });
   });
 });
 
@@ -324,6 +352,28 @@ describe("<EmergencyStopHistoryRow>", () => {
     );
     expect(container.textContent).toContain("by trader1");
     expect(container.textContent).toContain("circuit breaker");
+  });
+
+  // 153: reason_code badge
+  it("renders reason_code badge when present", () => {
+    const { getByTestId } = render(
+      <EmergencyStopHistoryRow event={{
+        id: 4, created_at: "2026-05-05T12:00:00+00:00",
+        enabled: true, decided_by: "ops", note: "auto", reason_code: "daily_loss_limit",
+      }} />,
+    );
+    const badge = getByTestId("reason-code-badge");
+    expect(badge.textContent).toBe("daily_loss_limit");
+  });
+
+  it("does not render reason_code badge when null", () => {
+    const { queryByTestId } = render(
+      <EmergencyStopHistoryRow event={{
+        id: 5, created_at: "2026-05-05T12:00:00+00:00",
+        enabled: true, decided_by: "ops", note: "x", reason_code: null,
+      }} />,
+    );
+    expect(queryByTestId("reason-code-badge")).toBeNull();
   });
 });
 
