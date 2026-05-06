@@ -49,6 +49,11 @@ class OrderAuditLog(Base):
     # 방지한다 (broker 단의 broker_order_id와는 별개 — 그건 broker가 발급).
     client_order_id: Mapped[str | None]    = mapped_column(String(64), nullable=True, index=True)
 
+    # 152: VIRTUAL_AI_EXECUTION에서 AI가 만든 주문의 decision metadata.
+    # {"confidence": 0..100, "reasons": [...], "rejected_by_guard": bool, ...}
+    # NULL이면 AI 외 경로로 만들어진 주문. 0010 마이그레이션 이전 row도 NULL.
+    ai_decision_meta: Mapped[dict | None]  = mapped_column(JSON, nullable=True)
+
     executed:        Mapped[bool]           = mapped_column(Boolean, default=False)
     broker_order_id: Mapped[str | None]     = mapped_column(String(64), nullable=True)
     broker_status:   Mapped[str | None]     = mapped_column(String(32), nullable=True)
