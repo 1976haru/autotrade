@@ -121,6 +121,10 @@ def _backtest_aggregate(db: Session) -> dict[str, dict]:
             "hold_secs_total": 0.0,
             "hold_count":      0,
             "max_consecutive_loss": 0,
+            # 173: data_source 분포 — 운영자가 LIVE 승격 결정 시 'market'(실 KIS/
+            # yfinance) 데이터로 검증된 비율을 즉시 인지. 'bars'는 운영자가 직접
+            # 주입한 데이터(임의/합성 가능)라 신뢰도 다름.
+            "runs_by_data_source": {},
         })
         cur["runs"]      += 1
         pnl              = r.total_pnl or 0
@@ -129,6 +133,10 @@ def _backtest_aggregate(db: Session) -> dict[str, dict]:
         cur["losses"]    += r.loss_count or 0
         cur["best_pnl"]  = pnl if cur["best_pnl"]  is None else max(cur["best_pnl"],  pnl)
         cur["worst_pnl"] = pnl if cur["worst_pnl"] is None else min(cur["worst_pnl"], pnl)
+
+        # 173: data_source 누적.
+        ds = (r.data_source or "unknown").strip() or "unknown"
+        cur["runs_by_data_source"][ds] = cur["runs_by_data_source"].get(ds, 0) + 1
 
         m = _trade_metrics(r.trades_json or [])
         cur["gross_win"]        += m["gross_win"]
@@ -260,6 +268,7 @@ def compute_strategy_scoreboard(db: Session) -> list[dict]:
             "gross_win": 0, "gross_loss": 0,
             "hold_secs_total": 0.0, "hold_count": 0,
             "max_consecutive_loss": 0,
+            "runs_by_data_source": {},
         })
         lv = live.get(s, {"trades": 0, "pnl": 0, "wins": 0, "losses": 0})
         au = audit.get(s, {"approved": 0, "rejected": 0, "needs_approval": 0})
@@ -320,6 +329,9 @@ def compute_strategy_scoreboard(db: Session) -> list[dict]:
             "rejected_orders":         au["rejected"],
             "pending_orders":          au["needs_approval"],
             "approval_rate":           approval_rate,
+            # 173: data_source 분포 — 운영자가 LIVE 승격 결정 시 'market' 데이터로
+            # 검증된 비율 즉시 인지. 'bars'는 임의 데이터 가능성.
+            "runs_by_data_source":     dict(bt["runs_by_data_source"]),
             "rejection_rate":          rejection_rate,
         })
     out.sort(key=lambda x: x["total_pnl"] + x["live_pnl"], reverse=True)
