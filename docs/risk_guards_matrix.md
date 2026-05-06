@@ -59,6 +59,12 @@
 | 총 노출 자본 % | `max_total_exposure_pct` | 0 (비활성) | `MAX_TOTAL_EXPOSURE_PCT` |
 | 종목별 노출 자본 % | `max_symbol_exposure_pct` | 0 (비활성) | `MAX_SYMBOL_EXPOSURE_PCT` |
 
+### 자동화 가드
+
+| 항목 | 필드 | 기본값 | env |
+|---|---|---:|---|
+| 연속 REJECTED 시 자동 stop | `auto_stop_consecutive_rejections` | 0 (비활성) | `AUTO_STOP_CONSECUTIVE_REJECTIONS` |
+
 ### 시간/window 한도
 
 | 항목 | 필드 | 기본값 | env |

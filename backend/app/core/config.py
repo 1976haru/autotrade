@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     # 181: 종목별 노출의 자본 대비 % 한도 (max_symbol_exposure 절대값에 보완).
     max_symbol_exposure_pct: float = 0.0
 
+    # 182: N건 연속 REJECTED 발생 시 자동 emergency_stop. 0이면 비활성. 권장 5~10.
+    auto_stop_consecutive_rejections: int = 0
+
     def symbol_whitelist_set(self) -> set[str]:
         """env 콤마 문자열을 set으로 파싱. 공백 strip."""
         if not self.symbol_whitelist:
