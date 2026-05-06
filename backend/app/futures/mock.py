@@ -18,6 +18,9 @@ CLAUDE.md 절대 원칙:
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from sqlalchemy.orm import Session
+
+from app.db.models import FuturesOrderAuditLog
 from app.futures.base import FuturesBrokerAdapter
 from app.futures.simulation import (
     FuturesSimulationParams,
@@ -33,6 +36,7 @@ from app.futures.types import (
     FuturesOrderRequest,
     FuturesOrderResult,
     FuturesOrderStatus,
+    FuturesOrderType,
     FuturesPosition,
     FuturesPositionSide,
     FuturesQuote,
@@ -56,6 +60,9 @@ class MockFuturesBroker(FuturesBrokerAdapter):
         self,
         initial_cash: int = 20_000_000,
         params:       FuturesSimulationParams | None = None,
+        *,
+        db:           Session | None = None,
+        audit_mode:   str = "VIRTUAL_FUTURES",
     ):
         self.cash      = initial_cash
         self.positions: dict[str, FuturesPosition] = {}
@@ -68,6 +75,10 @@ class MockFuturesBroker(FuturesBrokerAdapter):
         self.params    = params or FuturesSimulationParams()
         self.leverage  = self.params.default_leverage
         self.realized_pnl_today = 0  # 외부에서 reset 가능 (FuturesRiskManager용)
+        # 169: optional db session — 주입되면 매 broker 호출 후 FuturesOrderAuditLog
+        # 행을 추가한다. None이면 in-memory 동작만 (기존 호출 패턴 유지).
+        self._db        = db
+        self._audit_mode = audit_mode
 
     # ---------- helpers (테스트 / 운영자) ----------
 
@@ -86,6 +97,48 @@ class MockFuturesBroker(FuturesBrokerAdapter):
                 f"leverage must be in (0, {self.params.max_leverage}]"
             )
         self.leverage = leverage
+
+    # ---------- audit (169) ----------
+
+    def _record_audit(
+        self,
+        order:    FuturesOrderRequest,
+        result:   FuturesOrderResult,
+        *,
+        decision: str,
+        reasons:  list[str],
+        liquidation_price: int | None = None,
+        forced:   bool = False,
+    ) -> None:
+        """169: db 주입돼있으면 매 broker 호출 후 audit row 추가. flush만 하고
+        commit은 caller transaction에 위임 — caller가 여러 broker 호출을
+        atomic하게 묶을 수 있다."""
+        if self._db is None:
+            return
+        executed = result.status in (
+            FuturesOrderStatus.FILLED, FuturesOrderStatus.PARTIALLY_FILLED,
+        )
+        row = FuturesOrderAuditLog(
+            mode=self._audit_mode,
+            contract=order.contract,
+            side=order.side.value,
+            quantity=order.quantity,
+            order_type=order.order_type.value,
+            limit_price=order.limit_price,
+            leverage=self.leverage,
+            decision=decision,
+            reasons=list(reasons),
+            executed=executed,
+            broker_status=result.status.value,
+            filled_quantity=result.filled_quantity,
+            avg_fill_price=result.avg_fill_price,
+            margin_delta=result.margin_delta,
+            liquidation_price=liquidation_price,
+            forced_liquidation=forced,
+            message=result.message,
+        )
+        self._db.add(row)
+        self._db.flush()
 
     def margin_used(self) -> int:
         return sum(p.margin_used for p in self.positions.values())
@@ -169,6 +222,9 @@ class MockFuturesBroker(FuturesBrokerAdapter):
                     message="limit_not_crossed",
                 )
                 self.orders[order_id] = result
+                self._record_audit(order, result,
+                                    decision="REJECTED",
+                                    reasons=["limit_not_crossed"])
                 return result
             fill_price = limit
 
@@ -187,6 +243,9 @@ class MockFuturesBroker(FuturesBrokerAdapter):
                     message="insufficient_cash",
                 )
                 self.orders[order_id] = result
+                self._record_audit(order, result,
+                                    decision="REJECTED",
+                                    reasons=["insufficient_cash"])
                 return result
             position_side = (
                 FuturesPositionSide.LONG if order.side == FuturesSide.BUY
@@ -215,6 +274,9 @@ class MockFuturesBroker(FuturesBrokerAdapter):
                 margin_delta=init_margin, message="virtual_open",
             )
             self.orders[order_id] = result
+            self._record_audit(order, result,
+                                decision="APPROVED", reasons=[],
+                                liquidation_price=liq_price)
             return result
 
         # 기존 포지션 존재 — 청산 또는 동일 방향 추가.
@@ -231,6 +293,9 @@ class MockFuturesBroker(FuturesBrokerAdapter):
                     message="insufficient_cash",
                 )
                 self.orders[order_id] = result
+                self._record_audit(order, result,
+                                    decision="REJECTED",
+                                    reasons=["insufficient_cash"])
                 return result
             self.cash -= (init_margin + fee)
             new_qty = existing.quantity + order.quantity
@@ -259,12 +324,16 @@ class MockFuturesBroker(FuturesBrokerAdapter):
                 margin_delta=init_margin, message="virtual_add",
             )
             self.orders[order_id] = result
+            self._record_audit(order, result,
+                                decision="APPROVED", reasons=[],
+                                liquidation_price=new_liq)
             return result
 
-        # 반대 방향 — 청산.
+        # 반대 방향 — 청산. _close_position이 자체적으로 audit 작성.
         return self._close_position(
             order.contract, reason=FuturesOrderStatus.FILLED,
             fill_price=fill_price, close_qty=order.quantity, forced=False,
+            originating_order=order,
         )
 
     async def cancel_order(self, order_id: str) -> FuturesOrderResult:
@@ -305,14 +374,19 @@ class MockFuturesBroker(FuturesBrokerAdapter):
         fill_price:  int,
         close_qty:   int | None = None,
         forced:      bool = False,
+        originating_order: FuturesOrderRequest | None = None,
     ) -> FuturesOrderResult:
+        """청산 (운영자 반대 주문 또는 강제청산). originating_order가 있으면
+        audit row의 입력 컨텍스트로 사용; 강제청산은 합성 OrderRequest로 audit
+        row 작성."""
         pos = self.positions.get(contract)
         if pos is None:
-            return FuturesOrderResult(
+            result = FuturesOrderResult(
                 order_id=str(uuid4()), status=FuturesOrderStatus.REJECTED,
                 contract=contract, side=FuturesSide.SELL, quantity=0,
                 message="no_position",
             )
+            return result
         qty = close_qty if close_qty is not None else pos.quantity
         qty = min(qty, pos.quantity)
         notional = fill_price * qty
@@ -348,4 +422,15 @@ class MockFuturesBroker(FuturesBrokerAdapter):
             margin_delta=-margin_release, message=msg,
         )
         self.orders[order_id] = result
+
+        # 169: audit. 강제청산은 originating_order가 None — 합성 request 생성.
+        audit_order = originating_order or FuturesOrderRequest(
+            contract=contract, side=opposite, quantity=qty,
+            order_type=FuturesOrderType.MARKET,
+        )
+        self._record_audit(audit_order, result,
+                            decision="APPROVED",
+                            reasons=["forced_liquidation"] if forced else [],
+                            liquidation_price=pos.liquidation_price,
+                            forced=forced)
         return result

@@ -90,6 +90,26 @@ SHORT liquidation = entry * (1 + loss_buffer_ratio)
 
 `tests/test_futures_skeleton.py`도 갱신: 기존 stub 테스트(NotImplementedError) → virtual broker 동작 / live still REJECTED로 의도 변경.
 
+## 169: 선물 audit 로그
+
+`MockFuturesBroker(initial_cash, params, *, db=None, audit_mode="VIRTUAL_FUTURES")` —
+optional `db` Session 주입 시 매 broker 호출 후 `FuturesOrderAuditLog` 행 추가.
+미주입(default None)이면 in-memory `orders` dict만 — 기존 호출 패턴 유지.
+
+기록되는 시나리오:
+- 신규 진입 (long/short open)
+- 동일 방향 추가 (add)
+- 부분/전량 청산 (close)
+- 강제청산 — `forced_liquidation=True` flag로 구분
+- 잔고 부족 거부 — `executed=False, broker_status="REJECTED", reasons=["insufficient_cash"]`
+- LIMIT not crossed — `executed=False, broker_status="RECEIVED", reasons=["limit_not_crossed"]`
+
+스키마(`backend/app/db/models.py::FuturesOrderAuditLog`):
+- 주식 OrderAuditLog와 분리 — `contract`(vs symbol), `leverage`, `liquidation_price`, `forced_liquidation` 등 선물 고유 필드.
+- alembic 0013 마이그레이션. 인덱스: created_at / mode / contract / decision / forced_liquidation.
+
+`audit_mode` 기본 `"VIRTUAL_FUTURES"`. 운영자가 LIVE 단계 도달 후 다른 모드 (예: `LIVE_FUTURES_SHADOW`) 명시 가능 — 별도 옵트인.
+
 ## 운영 invariant (단정문)
 
 1. **선물 실거래 endpoint는 본 PR에서 호출되지 않는다.** `FuturesRiskManager.evaluate_order`는 어떤 경로로도 APPROVED를 반환하지 않는다.

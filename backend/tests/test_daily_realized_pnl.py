@@ -63,7 +63,7 @@ def test_returns_zero_when_only_open_buys():
 def test_today_sell_against_today_buy_counts():
     """같은 날 BUY 후 SELL → realized PnL이 카운트."""
     Session = _make_session()
-    today = today_utc()
+    today = today_kst()
     now_utc = datetime.now(timezone.utc)
     with Session() as db:
         db.add_all([
@@ -77,7 +77,7 @@ def test_today_sell_against_today_buy_counts():
 def test_yesterday_sell_does_not_count():
     """SELL이 어제면 today's PnL에 안 들어간다 — 일자 경계 invariant."""
     Session = _make_session()
-    today = today_utc()
+    today = today_kst()
     yesterday = today - timedelta(days=1)
     yesterday_dt = datetime.combine(yesterday, datetime.min.time(), tzinfo=timezone.utc)
     with Session() as db:
@@ -92,7 +92,7 @@ def test_yesterday_sell_does_not_count():
 def test_yesterday_buy_today_sell_counts_today():
     """overnight 보유 후 오늘 청산 — PnL은 today에 귀속."""
     Session = _make_session()
-    today = today_utc()
+    today = today_kst()
     yesterday_dt = datetime.combine(today - timedelta(days=1),
                                      datetime.min.time(), tzinfo=timezone.utc)
     today_dt     = datetime.now(timezone.utc)
@@ -108,7 +108,7 @@ def test_yesterday_buy_today_sell_counts_today():
 def test_loss_is_negative():
     """loss → 음수 — RiskManager의 max_daily_loss 비교가 음수 기준."""
     Session = _make_session()
-    today = today_utc()
+    today = today_kst()
     now = datetime.now(timezone.utc)
     with Session() as db:
         db.add_all([
@@ -122,7 +122,7 @@ def test_loss_is_negative():
 def test_partial_sell_realizes_only_matched_portion():
     """BUY 5 @ 100, SELL 3 @ 110 → realized = 30, 잔량 2주는 미반영."""
     Session = _make_session()
-    today = today_utc()
+    today = today_kst()
     now = datetime.now(timezone.utc)
     with Session() as db:
         db.add_all([
@@ -136,7 +136,7 @@ def test_partial_sell_realizes_only_matched_portion():
 def test_unexecuted_rows_skipped():
     """REJECTED / NEEDS_APPROVAL audit row는 executed=False라 매칭 X."""
     Session = _make_session()
-    today = today_utc()
+    today = today_kst()
     now = datetime.now(timezone.utc)
     with Session() as db:
         db.add_all([
@@ -150,7 +150,7 @@ def test_unexecuted_rows_skipped():
 def test_multiple_symbols_aggregate_independently():
     """다른 symbol의 BUY/SELL은 서로 페어매칭하지 않는다."""
     Session = _make_session()
-    today = today_utc()
+    today = today_kst()
     now = datetime.now(timezone.utc)
     with Session() as db:
         db.add_all([
@@ -168,7 +168,7 @@ def test_multiple_symbols_aggregate_independently():
 def test_naked_sell_ignored():
     """잔량 BUY 없이 SELL → 매칭 X, 0 누적."""
     Session = _make_session()
-    today = today_utc()
+    today = today_kst()
     now = datetime.now(timezone.utc)
     with Session() as db:
         db.add(_audit(side="SELL", qty=1, fill_price=100, created_at=now))
@@ -185,7 +185,7 @@ def test_route_order_populates_daily_pnl_and_enforces_max_daily_loss(client):
     # max_daily_loss를 작게 설정해 명확히 트리거.
     client.test_risk_manager.policy.max_daily_loss = 100
 
-    today = today_utc()
+    today = today_kst()
     yesterday_dt = datetime.combine(today - timedelta(days=1),
                                      datetime.min.time(), tzinfo=timezone.utc)
     today_dt     = datetime.now(timezone.utc)
