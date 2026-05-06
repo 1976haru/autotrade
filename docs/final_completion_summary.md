@@ -1,0 +1,175 @@
+# Final Completion Summary
+
+**시점**: 2026-05-07
+**저장소**: `C:\trade\autotrade`
+**main 커밋**: 186 머지 직후 (origin/main과 동기화)
+
+## 사용자 절대 요구 (전체 이행)
+
+1. ✅ 실제 API Key 미입력 — `.env` 변경 0건. KIS/Anthropic 기본값(빈 문자열) 그대로.
+2. ✅ 실제 broker live order endpoint 미호출 — `KisBrokerAdapter.place_order(is_paper=False)` `NotImplementedError` 유지.
+3. ✅ 실제 주식 실거래 미활성화 — `ENABLE_LIVE_TRADING=false`(default).
+4. ✅ 실제 선물 실거래 미활성화 — `ENABLE_FUTURES_LIVE_TRADING=false`(default), `FuturesRiskManager.evaluate_order` 항상 REJECTED.
+5. ✅ AI 자동매매 `VIRTUAL_AI_EXECUTION` 모드에서만 동작 (152, 158-165, 185).
+6. ✅ 선물 `MockFuturesBroker` + `FuturesSimulationEngine`에서만 (151, 169).
+7. ✅ 전체 체크리스트 + 추가 MUST + 테스트 + stress test 진행.
+8. ✅ 최종 시점 main↔origin/main 동기화, working tree clean.
+
+## 핵심 기능 매핑
+
+### Agent Council (10 agents — 185)
+
+| Agent | 역할 | 결정 카테고리 |
+|---|---|---|
+| ChiefTradingAgent | 종합 결정자 | BUY/SELL/HOLD/REJECT |
+| MarketRegimeAgent | 시장 체제 분류 | INFO |
+| StrategySelectionAgent | regime → strategy | INFO |
+| StockSelectionAgent | candidates 선택 | INFO/HOLD |
+| PositionSizingAgent | quantity 추천 | INFO/HOLD |
+| RiskOfficerAgent | 정책 사전 검토 | APPROVE/REJECT |
+| EntryTimingAgent | 진입 타이밍 | BUY/HOLD |
+| ExitTimingAgent | 청산 타이밍 | SELL/HOLD |
+| NewsTrendAgent | 뉴스/추세 stub | INFO/WARN |
+| PostTradeReviewAgent | 사후 평가 | INFO/WARN |
+
+자세한 내용: [`docs/agent_decision_schema.md`](agent_decision_schema.md), [`docs/agent_stress_test_report.md`](agent_stress_test_report.md).
+
+### 가상 자동매매 스택
+
+| 모듈 | 역할 | PR |
+|---|---|---|
+| `app/virtual/order_ledger.py` | VirtualOrder 7-state 라이프사이클 | 148 |
+| `app/virtual/fill_engine.py` | 시장가/지정가 체결 시뮬 + 슬리피지 + 부분체결 + stale 거부 | 149 |
+| `app/virtual/position_engine.py` | FIFO 페어매칭 + realized/unrealized PnL + 청산 평가 | 150 |
+| `app/virtual/auto_close.py` | 청산 평가 → SELL OrderRequest 자동 라우팅 | 172 |
+| `app/futures/simulation.py` | margin / liquidation_price / slippage / fee | 151 |
+| `app/futures/mock.py` | MockFuturesBroker (in-memory + audit) | 151, 169 |
+| `app/ai/virtual_agent.py` | VirtualAiAgent (152, 158-165) | 152 |
+| `app/ai/agents/council.py` | 10-agent council | 185 |
+
+### RiskPolicy 가드 27개
+
+전체 매트릭스: [`docs/risk_guards_matrix.md`](risk_guards_matrix.md). 평가 순서:
+
+```
+0. client_order_id idempotency (140)
+0.5 AI rate limit (161) / Global rate limit (177) / max_orders_per_day (183)
+1. Emergency stop (060/153) — hard short-circuit
+1.1 AI kill-switch (178) — AI-only short-circuit
+1.5 Stale price (143) — hard short-circuit
+2. Symbol whitelist (175)
+2.5 Trading hours (176)
+3. AI confidence (158)
+3.5 AI reasoning (159)
+4. max_order_notional (001)
+5. max_position_size_pct (174)
+6. max_daily_loss (145, KST 166)
+7. insufficient_cash (001)
+8. max_positions (001)
+9. max_symbol_exposure (001) + _pct (181)
+10. max_total_exposure (179) + _pct (179)
+11. LIVE_SHADOW mode
+12. LIVE_MANUAL/AI_ASSIST early-return (061)
+13. AI execution gate (152)
+14. LIVE 가드 (001)
+```
+
+추가 자동화:
+- 182 auto-stop on consecutive rejections
+- 167 approval queue TTL
+- 168 audit archival flag
+
+### 운영자 / 운영 도구
+
+| 기능 | 위치 | PR |
+|---|---|---|
+| Emergency stop reason taxonomy (9 codes) | `app/risk/emergency_reasons.py` | 153 |
+| AI agent stats endpoint | `/api/ai/agent-stats` | 162, 165 |
+| Strategy scoreboard | `/api/strategies/scoreboard` (backtest+live+confidence histogram+per-strategy PnL) | 137, 144, 147, 165, 173 |
+| Risk policy reference | `docs/risk_guards_matrix.md` | 180 |
+| smartphone 운용 가이드 | `docs/smartphone_operator_mode.md` | 186 |
+
+## 데이터 모델
+
+| 테이블 | 마이그레이션 | 핵심 |
+|---|---|---|
+| `order_audit_log` | 0001 → 0012 | 모든 주문 결정 + 체결 + AI 메타 + archival flag |
+| `pending_approval` | 0001 → 0003 (070 attempts) | 큐 + TTL EXPIRED (167) |
+| `ai_analysis_log` | 0001 → 0004 (mode) | AI read-only 분석 |
+| `emergency_stop_event` | 0002 → 0011 (reason_code) | 토글 이력 |
+| `virtual_order` | 0009 (148) | 가상 주문 라이프사이클 |
+| `futures_order_audit_log` | 0013 (169) | 선물 주문 별도 audit |
+| `agent_decision_log` | 0014 (185) | 10-agent 결정 영구화 |
+
+## 검증 결과 (이번 세션 종료 시점)
+
+| 항목 | 결과 |
+|---|---|
+| backend pytest | **851 passed, 15 deselected** (default suite) |
+| ruff check | **All checks passed** |
+| frontend npm test | **833 passed (23 files)** (직전 검증 시점) |
+| frontend npm run lint | **0 errors / 55 warnings** (157 cleanup 후) |
+| frontend npm run build | **vite built**, 342kB → 98kB gzipped |
+| stress test | 별도 nightly workflow + 본 세션 +6 시나리오 (155) |
+| CI workflow | backend-ci.yml + frontend-ci.yml (10분) + nightly stress 분리 (157) |
+
+## 작성된 docs
+
+| 문서 | 상태 |
+|---|---|
+| `final_checklist_report.md` | ✅ 156에서 작성 |
+| `virtual_trading_architecture.md` | ✅ 156에서 작성 |
+| `futures_simulation_report.md` | ✅ 151 (169 보강) |
+| `ai_virtual_execution_report.md` | ✅ 152 (158-165 보강) |
+| `agent_stress_test_report.md` | ✅ 186 신설 |
+| `stress_test_report.md` | ✅ 133 (155 확장) |
+| `live_activation_blockers.md` | ✅ 156 |
+| `backlog.md` | ✅ 156 (이후 갱신) |
+| `ci_recovery_report.md` | ✅ 157 |
+| `final_completion_summary.md` | ✅ 본 문서, 186 |
+| `smartphone_operator_mode.md` | ✅ 186 신설 |
+| `agent_decision_schema.md` | ✅ 185 신설 |
+
+## 안전 invariant 단정문
+
+1. ❌ **실 API Key 입력**: 본 directive 동안 `.env` 변경 0건. `KIS_APP_KEY` / `KIS_APP_SECRET` / `ANTHROPIC_API_KEY` 모두 빈 문자열 default.
+2. ❌ **실 broker live endpoint 호출**: `KisBrokerAdapter.place_order(is_paper=False)` `NotImplementedError` 유지. 본 세션 모든 테스트 `MockBrokerAdapter` / `MockFuturesBroker` 사용.
+3. ❌ **LIVE_AI_EXECUTION 실 broker 연결**: `OperationMode.LIVE_AI_EXECUTION`은 enum에 존재하지만 실 broker 라우팅 없음. `VIRTUAL_AI_EXECUTION` (152)만 활성.
+4. ❌ **선물 실거래 활성화**: `FuturesRiskManager.evaluate_order` 모든 경로 REJECTED. `MockFuturesBroker`만 작동.
+5. ✅ **모든 주문 audit row 영구화**: REJECTED / NEEDS_APPROVAL / APPROVED 모두 `OrderAuditLog`.
+6. ✅ **모든 Agent 결정 audit 영구화**: `AgentDecisionLog` chain_id 기반.
+7. ✅ **emergency_stop 항상 작동**: hard short-circuit + 153 reason_code 분류 + 182 자동 trigger.
+
+## 남은 리스크
+
+자세한 내용: [`docs/live_activation_blockers.md`](live_activation_blockers.md).
+
+LIVE 활성화 전 사용자 명시 옵트인이 필요한 영역:
+1. KIS LIVE place_order / cancel_order 통합 (별도 PR)
+2. 선물 LIVE 평가 로직 + KIS 선물 adapter (별도 PR)
+3. LiveAiAgent 실 LLM 통합 (별도 PR, 비용 발생)
+4. RiskPolicy 한도 운영 자본 기준으로 재계산
+5. 4주 이상 PAPER / LIVE_SHADOW 검증
+6. Position vs broker reconciliation 메커니즘 (LIVE 시점 필요)
+
+## 다음 권장 단계
+
+본 시점에서 추가 자동 진행은 marginal value. 사용자가 LIVE 활성화 의사가 있으면:
+
+1. `docs/live_activation_blockers.md` 9절 운영자 절차 체크리스트 점검
+2. 별도 옵트인 PR로 KIS LIVE adapter 활성화
+3. 초소액 실거래 (예: 10만원 cap) 단계적 진행
+
+## 관련 문서
+
+- [`final_checklist_report.md`](final_checklist_report.md) — 156 시점 체크리스트
+- [`virtual_trading_architecture.md`](virtual_trading_architecture.md) — 시스템 다이어그램
+- [`risk_guards_matrix.md`](risk_guards_matrix.md) — 27개 가드 reference
+- [`smartphone_operator_mode.md`](smartphone_operator_mode.md) — 운영자 동선
+- [`agent_decision_schema.md`](agent_decision_schema.md) — Agent Council schema
+- [`agent_stress_test_report.md`](agent_stress_test_report.md) — Agent 검증
+- [`backlog.md`](backlog.md) — NICE / LIVE 옵트인 항목
+
+## 종료 상태
+
+**완료**. 사용자 directive 최종 완성 모드의 모든 항목 이행. 추가 자동 진행 여지 0 — 남은 항목은 모두 LIVE 옵트인 또는 NICE 미관 영역.
