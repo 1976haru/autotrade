@@ -116,3 +116,41 @@ def agent_stats(
     """162: AI 에이전트의 의사결정 품질 통계. read-only — 어떤 가드 / 결정에도
     영향 X. lookback_days=0이면 전체 기간."""
     return compute_ai_agent_stats(db, lookback_days=lookback_days)
+
+
+@router.get("/agent-decisions")
+def agent_decisions(
+    limit:    int = Query(50, ge=1, le=200),
+    chain_id: str | None = Query(None, description="특정 chain_id의 모든 결정 조회"),
+    db:       Session = Depends(get_db),
+) -> list[dict]:
+    """187: AgentDecisionLog 조회. read-only.
+
+    chain_id 지정 시 해당 chain의 모든 결정 (1 chief + 9 members) 일괄 조회.
+    미지정 시 최근 N건 (created_at desc).
+    """
+    from sqlalchemy import select
+    from app.db.models import AgentDecisionLog
+    stmt = select(AgentDecisionLog)
+    if chain_id is not None:
+        stmt = stmt.where(AgentDecisionLog.chain_id == chain_id).order_by(
+            AgentDecisionLog.id
+        )
+    else:
+        stmt = stmt.order_by(AgentDecisionLog.id.desc()).limit(limit)
+    rows = db.execute(stmt).scalars().all()
+    return [
+        {
+            "id":         r.id,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "agent_name": r.agent_name,
+            "symbol":     r.symbol,
+            "mode":       r.mode,
+            "decision":   r.decision,
+            "confidence": r.confidence,
+            "reasons":    r.reasons,
+            "meta":       r.meta,
+            "chain_id":   r.chain_id,
+        }
+        for r in rows
+    ]
