@@ -246,6 +246,19 @@ const _VALID_BUCKETS = new Set(TIME_BUCKETS.map((b) => b.id));
 const _isValidBucket = (v) => _VALID_BUCKETS.has(v);
 
 
+// Distinguish "really nothing" from "filters narrowed it to zero" so the
+// operator who tightened symbol + time-bucket + kind doesn't think the
+// audit log broke. The chips above the empty message show *which* filters
+// are active — the message just signals that filters are responsible.
+export function emptyEventTimelineMessage(kind, symbolFilter, timeBucket) {
+  const hasFilter =
+    (kind && kind !== "all")
+    || (symbolFilter && symbolFilter.trim() !== "")
+    || (timeBucket && timeBucket !== "all");
+  return hasFilter ? "해당 조건의 이벤트 없음" : "이벤트 없음";
+}
+
+
 export function TimeBucketBar({ active, onChange }) {
   return (
     <div role="radiogroup" aria-label="시간 범위 필터"
@@ -398,7 +411,7 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
         <div style={{ color: "#475569", fontSize: 11, padding: 12, textAlign: "center" }}>로딩 중…</div>
       ) : events.length === 0 ? (
         <div style={{ color: "#1e3a5c", fontSize: 12, padding: 16, textAlign: "center" }}>
-          {kind === "all" ? "이벤트 없음" : "해당 종류의 이벤트 없음"}
+          {emptyEventTimelineMessage(kind, symbolFilter, timeBucket)}
         </div>
       ) : (
         <>

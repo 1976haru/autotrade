@@ -8,6 +8,7 @@ import {
   KindFilterBar,
   OrderAuditRow,
   TimeBucketBar,
+  emptyEventTimelineMessage,
   flattenApprovalAttempts,
   mergeEvents,
   setEventKindFilter,
@@ -458,7 +459,7 @@ describe("<EventTimelineView> kind filter", () => {
     );
     const { getByText, getByRole } = render(<EventTimelineView />);
     fireEvent.click(getByRole("radio", { name: "긴급정지" }));
-    expect(getByText("해당 종류의 이벤트 없음")).toBeTruthy();
+    expect(getByText("해당 조건의 이벤트 없음")).toBeTruthy();
   });
 
   it("switching back to 전체 restores the merged view", () => {
@@ -765,6 +766,42 @@ describe("<EventTimelineView> time-bucket filter", () => {
     expect(container.textContent).toContain("(2)");
     fireEvent.click(getByRole("radio", { name: "주문" }));
     expect(container.textContent).toContain("(1)");
+  });
+});
+
+
+describe("emptyEventTimelineMessage", () => {
+  it("returns plain '이벤트 없음' when no filter is active", () => {
+    expect(emptyEventTimelineMessage("all", "", "all")).toBe("이벤트 없음");
+  });
+
+  it("returns the filtered variant when only kind is active", () => {
+    expect(emptyEventTimelineMessage("order", "", "all"))
+      .toBe("해당 조건의 이벤트 없음");
+  });
+
+  it("returns the filtered variant when only symbol is active", () => {
+    expect(emptyEventTimelineMessage("all", "005930", "all"))
+      .toBe("해당 조건의 이벤트 없음");
+  });
+
+  it("treats whitespace-only symbol as no symbol filter", () => {
+    expect(emptyEventTimelineMessage("all", "   ", "all"))
+      .toBe("이벤트 없음");
+  });
+
+  it("returns the filtered variant when only time bucket is active", () => {
+    expect(emptyEventTimelineMessage("all", "", "1h"))
+      .toBe("해당 조건의 이벤트 없음");
+  });
+
+  it("returns the filtered variant when multiple filters are active", () => {
+    expect(emptyEventTimelineMessage("attempt", "005930", "24h"))
+      .toBe("해당 조건의 이벤트 없음");
+  });
+
+  it("handles undefined inputs (defensive against partial-state callers)", () => {
+    expect(emptyEventTimelineMessage()).toBe("이벤트 없음");
   });
 });
 
