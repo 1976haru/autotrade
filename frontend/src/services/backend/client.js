@@ -97,6 +97,7 @@ export const backendApi = {
   listBacktestRuns:(limit = 50) => backendFetch(`/api/audit/backtests?limit=${limit}`),
   engineRegistry:  () => backendFetch("/api/strategies/registry"),
   engineStatus:    () => backendFetch("/api/strategies/status"),
+  engineScoreboard: () => backendFetch("/api/strategies/scoreboard"),
   engineConfigure: (req) => backendFetch("/api/strategies/configure", {
     method: "POST",
     body:   JSON.stringify(req),

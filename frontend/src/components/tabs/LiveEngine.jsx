@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Btn, Card, Inp, SectionLabel } from "../common";
 import { fmtKRW, pnlColor } from "../../utils/format";
+import { backendApi } from "../../services/backend/client";
 import { useLiveEngine } from "../../store/useLiveEngine";
 
 
@@ -48,6 +49,109 @@ function StatusCard({ status, busy, onReset }) {
       {configured && <RegimeIndicator status={status} />}
       {status?.holding && status?.entry_price != null && (
         <PositionBlock status={status} />
+      )}
+    </Card>
+  );
+}
+
+
+// 137: 전략별 누적 성과 — backtest run 기반. /api/strategies/scoreboard 응답을
+// 그대로 표시. live 주문의 strategy 추적은 OrderAuditLog.strategy 컬럼 추가
+// 후 통합 (TODO 137-followup). hook 없이 직접 fetch — Strategies 탭의
+// 다른 hook(useLiveEngine)과 라이프사이클 분리.
+export function ScoreboardCard() {
+  const [rows, setRows]       = useState(null);
+  const [error, setError]     = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const refresh = async () => {
+    setLoading(true);
+    try {
+      const data = await backendApi.engineScoreboard();
+      setRows(data);
+      setError("");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    // setState는 await 다음 — 동기 X
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    refresh();
+  }, []);
+
+  return (
+    <Card>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <SectionLabel>전략 누적 성과 (backtest)</SectionLabel>
+        <Btn color="#334155" onClick={refresh} disabled={loading} small>새로고침</Btn>
+      </div>
+      <div style={{ fontSize: 9, color: "#334155", marginBottom: 8, lineHeight: 1.5 }}>
+        모든 backtest run을 strategy별로 누적. LIVE 주문 결과는 향후 OrderAuditLog
+        에 strategy가 추가되면 통합 예정.
+      </div>
+      {error && (
+        <div style={{ fontSize: 11, color: "#f87171", marginBottom: 8 }}>{error}</div>
+      )}
+      {loading && rows === null ? (
+        <div style={{ fontSize: 11, color: "#475569", padding: 12, textAlign: "center" }}>
+          로딩 중…
+        </div>
+      ) : rows && rows.length === 0 ? (
+        <div style={{ fontSize: 12, color: "#1e3a5c", padding: 16, textAlign: "center" }}>
+          아직 backtest 기록이 없습니다
+        </div>
+      ) : rows && (
+        <table data-testid="strategy-scoreboard"
+               style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              {["전략", "runs", "총 PnL", "평균", "최고", "최저", "승률"].map((h, i) => (
+                <th key={h} style={{
+                  fontSize: 10, color: "#475569", fontWeight: 700,
+                  borderBottom: "1px solid #1a3a5c",
+                  textAlign: i === 0 ? "left" : "right", padding: "3px 6px",
+                }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.strategy}
+                  data-testid={`scoreboard-row-${r.strategy}`}>
+                <td style={{ padding: "3px 6px", fontSize: 11,
+                              color: "#7dd3fc", fontWeight: 700 }}>
+                  {r.strategy}
+                </td>
+                <td style={{ padding: "3px 6px", fontSize: 10, textAlign: "right",
+                              color: "#94a3b8" }}>{r.runs}</td>
+                <td style={{ padding: "3px 6px", fontSize: 10, textAlign: "right",
+                              color: pnlColor(r.total_pnl), fontWeight: 700 }}>
+                  {r.total_pnl >= 0 ? "+" : ""}{fmtKRW(r.total_pnl)}
+                </td>
+                <td style={{ padding: "3px 6px", fontSize: 10, textAlign: "right",
+                              color: pnlColor(r.avg_pnl) }}>
+                  {r.avg_pnl >= 0 ? "+" : ""}{fmtKRW(r.avg_pnl)}
+                </td>
+                <td style={{ padding: "3px 6px", fontSize: 10, textAlign: "right",
+                              color: pnlColor(r.best_pnl) }}>
+                  {r.best_pnl >= 0 ? "+" : ""}{fmtKRW(r.best_pnl)}
+                </td>
+                <td style={{ padding: "3px 6px", fontSize: 10, textAlign: "right",
+                              color: pnlColor(r.worst_pnl) }}>
+                  {r.worst_pnl >= 0 ? "+" : ""}{fmtKRW(r.worst_pnl)}
+                </td>
+                <td style={{ padding: "3px 6px", fontSize: 10, textAlign: "right",
+                              color: "#a78bfa" }}>
+                  {Math.round(r.win_rate * 1000) / 10}%
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </Card>
   );
@@ -547,6 +651,7 @@ export function LiveEngine() {
       <ReplayCard    status={status} busy={busy} onReplay={replay} summary={replaySummary} />
       <TickCard      status={status} busy={busy} onTick={tick} />
       <ResultCard    result={lastResult} />
+      <ScoreboardCard />
 
       <div style={{ fontSize: 10, color: "#1e3a5c", lineHeight: 1.6, padding: "0 4px" }}>
         ⚠ 엔진은 단일 인스턴스로, 한 번에 한 전략만 실행합니다. replay는 신호 워밍업

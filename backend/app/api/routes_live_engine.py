@@ -156,6 +156,26 @@ def get_registry() -> list[StrategyDescription]:
     return [StrategyDescription(**d) for d in describe_all_strategies()]
 
 
+class ScoreboardEntry(BaseModel):
+    strategy:  str
+    runs:      int
+    total_pnl: int
+    avg_pnl:   int
+    best_pnl:  int
+    worst_pnl: int
+    wins:      int
+    losses:    int
+    win_rate:  float
+
+
+@router.get("/scoreboard", response_model=list[ScoreboardEntry])
+def get_scoreboard(db: Session = Depends(get_db)) -> list[ScoreboardEntry]:
+    """137: 전략별 누적 성과(BacktestRun 기반). LIVE 주문의 strategy 추적은
+    OrderAuditLog.strategy 컬럼 추가 후 통합 예정 (TODO 137-followup)."""
+    from app.strategies.scoreboard import compute_strategy_scoreboard
+    return [ScoreboardEntry(**r) for r in compute_strategy_scoreboard(db)]
+
+
 @router.get("/status", response_model=StatusResponse)
 def get_status() -> StatusResponse:
     eng = _EngineState.engine
