@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -173,6 +173,46 @@ class EmergencyStopEvent(Base):
     # 153: 구조화된 사유 코드. enum app.risk.emergency_reasons.EmergencyStopReason.
     # NULL = 0011 이전 row 또는 미명시. 운영 단계에서는 명시 권장.
     reason_code: Mapped[str | None]    = mapped_column(String(32), nullable=True, index=True)
+
+
+class FuturesOrderAuditLog(Base):
+    """선물 주문/청산 감사 로그 (169, MUST).
+
+    OrderAuditLog는 주식 전용 스키마라(`symbol`, `latest_price` 등) 선물 주문은
+    별도 테이블에 기록한다 — `contract`, `leverage`, `liquidation_price`,
+    `forced_liquidation` 등 선물 고유 필드 보존.
+
+    `MockFuturesBroker`가 db session을 받으면 매 place_order / 청산 / 강제청산
+    호출 후 한 행을 추가한다. db 미주입 시 in-memory state만 — 기존 동작 유지.
+    """
+
+    __tablename__ = "futures_order_audit_log"
+
+    id:            Mapped[int]            = mapped_column(primary_key=True)
+    created_at:    Mapped[datetime]       = mapped_column(DateTime, default=_utcnow, index=True)
+
+    mode:          Mapped[str]            = mapped_column(String(32), index=True)
+    contract:      Mapped[str]            = mapped_column(String(32), index=True)
+    side:          Mapped[str]            = mapped_column(String(8))
+    quantity:      Mapped[int]            = mapped_column(Integer)
+    order_type:    Mapped[str]            = mapped_column(String(16))
+    limit_price:   Mapped[int | None]     = mapped_column(Integer, nullable=True)
+    leverage:      Mapped[float]          = mapped_column(Float, default=1.0)
+
+    decision:      Mapped[str]            = mapped_column(String(32), index=True)
+    reasons:       Mapped[list]           = mapped_column(JSON, default=list)
+
+    executed:        Mapped[bool]         = mapped_column(Boolean, default=False)
+    broker_status:   Mapped[str | None]   = mapped_column(String(32), nullable=True)
+    filled_quantity: Mapped[int]          = mapped_column(Integer, default=0)
+    avg_fill_price:  Mapped[int | None]   = mapped_column(Integer, nullable=True)
+    margin_delta:    Mapped[int]          = mapped_column(Integer, default=0)
+
+    # 선물 고유 — 진입 시점의 강제청산 가격, 본 거래가 강제청산이었는지.
+    liquidation_price:   Mapped[int | None]  = mapped_column(Integer, nullable=True)
+    forced_liquidation:  Mapped[bool]        = mapped_column(Boolean, default=False, index=True)
+
+    message:       Mapped[str]            = mapped_column(String(255), default="")
 
 
 class VirtualOrder(Base):
