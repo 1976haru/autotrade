@@ -356,6 +356,8 @@ def _settings(**overrides):
         global_rate_limit_window_seconds = 60,
         global_rate_limit_max_count      = 0,
         disable_ai_orders                = False,
+        max_total_exposure               = 0,
+        max_total_exposure_pct           = 0.0,
     )
     base.update(overrides)
     ns = SimpleNamespace(**base)
@@ -1075,3 +1077,121 @@ def test_emergency_stop_takes_priority_over_ai_kill_switch():
 def test_policy_from_settings_propagates_disable_ai_orders():
     p = RiskPolicy.from_settings(_settings(disable_ai_orders=True))
     assert p.disable_ai_orders is True
+
+
+# ---------- 179: total exposure cap ----------
+
+def _pos(symbol: str, qty: int, price: int) -> Position:
+    return Position(symbol=symbol, quantity=qty, avg_price=price, market_price=price)
+
+
+def test_total_exposure_cap_disabled_by_default():
+    risk = RiskManager(RiskPolicy())
+    result = risk.evaluate_order(
+        order=_buy(1), mode=OperationMode.SIMULATION,
+        balance=_balance(), positions=[
+            _pos("A", 100, 1000),  # 100K 노출
+        ],
+        latest_price=100,
+    )
+    # max_total_exposure=0이라 검사 안 함.
+    assert not any("total exposure" in r for r in result.reasons)
+
+
+def test_total_exposure_absolute_cap_enforced():
+    """max_total_exposure 절대값 — 누적 한도 초과 거부."""
+    risk = RiskManager(RiskPolicy(
+        max_total_exposure=300_000,
+        max_symbol_exposure=999_999_999,  # 종목별 가드 우회
+        max_order_notional=999_999_999,
+        max_positions=999,
+    ))
+    # 기존 200K 노출 + 신규 200K → 400K > 300K cap.
+    result = risk.evaluate_order(
+        order=_buy(2), mode=OperationMode.SIMULATION,
+        balance=_balance(), positions=[
+            _pos("A", 2, 100_000),  # 200K
+        ],
+        latest_price=100_000,  # 신규 BUY 200K
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert any("total exposure" in r and "max_total_exposure" in r
+                for r in result.reasons)
+
+
+def test_total_exposure_pct_cap_enforced():
+    """equity 대비 % 한도 — 자본 1M, 30% = 300K cap. 기존 200K + 신규 200K = 400K 거부."""
+    risk = RiskManager(RiskPolicy(
+        max_total_exposure_pct=30.0,
+        max_symbol_exposure=999_999_999,
+        max_order_notional=999_999_999,
+        max_positions=999,
+    ))
+    result = risk.evaluate_order(
+        order=_buy(2), mode=OperationMode.SIMULATION,
+        balance=_balance(cash=1_000_000),
+        positions=[_pos("A", 2, 100_000)],  # 200K
+        latest_price=100_000,
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert any("total exposure" in r and "of equity" in r for r in result.reasons)
+
+
+def test_total_exposure_within_caps_passes():
+    risk = RiskManager(RiskPolicy(
+        max_total_exposure=1_000_000,
+        max_total_exposure_pct=80.0,
+        max_symbol_exposure=999_999_999,
+        max_order_notional=999_999_999,
+        max_positions=999,
+    ))
+    result = risk.evaluate_order(
+        order=_buy(2), mode=OperationMode.SIMULATION,
+        balance=_balance(cash=1_000_000),  # equity 1M, 80% = 800K cap
+        positions=[_pos("A", 2, 100_000)],  # 200K
+        latest_price=100_000,  # 신규 200K → total 400K < 800K + < 1M abs cap
+    )
+    assert result.decision == RiskDecision.APPROVED
+
+
+def test_total_exposure_only_buy_side_checked():
+    """SELL은 노출 감소 — 검사 우회 (회귀 가드)."""
+    risk = RiskManager(RiskPolicy(
+        max_total_exposure=100_000,  # 작은 한도
+        max_symbol_exposure=999_999_999,
+        max_order_notional=999_999_999,
+    ))
+    # SELL — total exposure 검사 무관.
+    result = risk.evaluate_order(
+        order=OrderRequest(symbol="A", side=OrderSide.SELL, quantity=2),
+        mode=OperationMode.SIMULATION,
+        balance=_balance(), positions=[_pos("A", 5, 100_000)],  # 500K (한도 초과)
+        latest_price=100_000,
+    )
+    # SELL이라 노출 감소 — total exposure reason 없음.
+    assert not any("total exposure" in r for r in result.reasons)
+
+
+def test_total_exposure_combines_with_other_violations():
+    risk = RiskManager(RiskPolicy(
+        max_total_exposure=100_000,
+        max_order_notional=50_000,
+    ))
+    result = risk.evaluate_order(
+        order=_buy(2), mode=OperationMode.SIMULATION,
+        balance=_balance(),
+        positions=[_pos("A", 1, 100_000)],
+        latest_price=100_000,  # notional 200K + total 300K
+    )
+    assert result.decision == RiskDecision.REJECTED
+    assert any("max_order_notional" in r for r in result.reasons)
+    assert any("total exposure" in r for r in result.reasons)
+
+
+def test_policy_from_settings_propagates_total_exposure_caps():
+    p = RiskPolicy.from_settings(_settings(
+        max_total_exposure=5_000_000,
+        max_total_exposure_pct=50.0,
+    ))
+    assert p.max_total_exposure == 5_000_000
+    assert p.max_total_exposure_pct == 50.0
