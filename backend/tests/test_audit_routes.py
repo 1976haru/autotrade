@@ -132,6 +132,43 @@ def test_order_audit_signal_quality_clamped_at_pydantic_layer(client):
     assert res.status_code == 422
 
 
+# 140: client_order_id propagation + duplicate detection.
+def test_order_audit_persists_client_order_id(client):
+    cid = "cid-test-001"
+    res = client.post("/api/broker/orders", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1, "client_order_id": cid,
+    })
+    assert res.status_code == 200
+    row = client.get("/api/audit/orders").json()[0]
+    assert row["client_order_id"] == cid
+
+
+def test_order_audit_duplicate_client_order_id_returns_409(client):
+    cid = "cid-test-dup"
+    first = client.post("/api/broker/orders", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1, "client_order_id": cid,
+    })
+    assert first.status_code == 200
+    second = client.post("/api/broker/orders", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1, "client_order_id": cid,
+    })
+    assert second.status_code == 409
+
+    # audit에는 정확히 첫 row 1건만.
+    rows = client.get("/api/audit/orders").json()
+    assert len([r for r in rows if r["client_order_id"] == cid]) == 1
+
+
+def test_order_audit_null_client_order_id_does_not_block_anything(client):
+    """idempotency 검사는 client_order_id가 set된 주문에만 적용 — NULL 주문
+    여러 건은 정상 처리."""
+    for _ in range(3):
+        res = client.post("/api/broker/orders", json={
+            "symbol": "005930", "side": "BUY", "quantity": 1,
+        })
+        assert res.status_code == 200
+
+
 # ---------- /api/audit/ai ----------
 
 def test_list_ai_audits_empty(client):

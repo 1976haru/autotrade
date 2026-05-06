@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.brokers.base import BrokerAdapter, OrderRequest, OrderResult
@@ -8,6 +9,12 @@ from app.db.models import OrderAuditLog, PendingApproval
 from app.execution.executor import OrderExecutor
 from app.permission.gate import PermissionGate
 from app.risk.risk_manager import RiskDecision, RiskManager
+
+
+class DuplicateOrderError(Exception):
+    """140: 같은 client_order_id로 이미 audit row가 있는데 다시 들어온 주문.
+    onClick double-fire 같은 사고에서 두 번 체결되는 사고를 차단한다. caller는
+    이 예외를 catch해 409 Conflict로 surface하거나 idempotently 무시한다."""
 
 
 @dataclass(frozen=True)
@@ -37,6 +44,9 @@ async def route_order(
     """Run an order through the full guardrail chain.
 
     Steps (CLAUDE.md absolute principle 2 — every order goes through this):
+    0. (140) idempotency: 호출자가 client_order_id를 보냈고 같은 id의 audit
+       row가 이미 있으면 DuplicateOrderError raise — broker 호출 없이 즉시
+       거부. NULL id 주문은 검사 X.
     1. Read live broker state (price, balance, positions).
     2. RiskManager.evaluate_order — produces APPROVED / NEEDS_APPROVAL / REJECTED.
     3. Always write OrderAuditLog (the record exists even when rejected).
@@ -46,6 +56,18 @@ async def route_order(
 
     Caller decides the surface (HTTP status, log entry, etc.).
     """
+    # 140: idempotency 첫 검사 — broker/risk 호출 비용을 들이기 전에 차단.
+    if order.client_order_id:
+        existing = db.execute(
+            select(OrderAuditLog.id).where(
+                OrderAuditLog.client_order_id == order.client_order_id
+            )
+        ).first()
+        if existing is not None:
+            raise DuplicateOrderError(
+                f"client_order_id={order.client_order_id} already processed"
+            )
+
     quote     = await broker.get_price(order.symbol)
     balance   = await broker.get_balance()
     positions = await broker.get_positions()
@@ -79,6 +101,8 @@ async def route_order(
         # 139: 신호 quality (136) 영구화. 산출되지 않은 경로는 NULL.
         signal_strength=order.signal_strength,
         signal_confidence=order.signal_confidence,
+        # 140: idempotency 키. 호출자가 보낸 그대로 audit row에 영구화.
+        client_order_id=order.client_order_id,
     )
     db.add(audit)
 

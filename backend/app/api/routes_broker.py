@@ -6,7 +6,7 @@ from app.api.deps import get_broker, get_risk_manager
 from app.brokers.base import Balance, BrokerAdapter, OrderRequest, Position, Quote
 from app.core.config import get_settings
 from app.db.session import get_db
-from app.execution.order_router import route_order
+from app.execution.order_router import DuplicateOrderError, route_order
 from app.risk.risk_manager import RiskDecision, RiskManager
 
 router = APIRouter(prefix="/broker", tags=["broker"])
@@ -34,14 +34,18 @@ async def place_order(
     risk: RiskManager = Depends(get_risk_manager),
     db: Session = Depends(get_db),
 ):
-    routing = await route_order(
-        order=order,
-        requested_by_ai=False,
-        mode=get_settings().default_mode,
-        broker=broker,
-        risk=risk,
-        db=db,
-    )
+    try:
+        routing = await route_order(
+            order=order,
+            requested_by_ai=False,
+            mode=get_settings().default_mode,
+            broker=broker,
+            risk=risk,
+            db=db,
+        )
+    except DuplicateOrderError as e:
+        # 140: 같은 client_order_id로 이미 처리된 주문 — 409 Conflict.
+        raise HTTPException(status_code=409, detail=str(e))
 
     if routing.decision == RiskDecision.REJECTED:
         raise HTTPException(
