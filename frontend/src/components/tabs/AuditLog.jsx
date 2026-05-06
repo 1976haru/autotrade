@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Btn, Card, Inp, SectionLabel } from "../common";
 import { ChipFilterBar } from "../common/ChipFilterBar";
 import { fmtKRW, pnlColor } from "../../utils/format";
 import { MODE_DISPLAY, findModeDisplay } from "../../utils/modes";
+import { backendApi } from "../../services/backend/client";
 import {
   useAiAudits,
   useBacktestRuns,
@@ -39,6 +40,8 @@ const SUBTABS = [
   { id: "events",    label: "이벤트" },
   { id: "ai",        label: "AI" },
   { id: "backtests", label: "백테스트" },
+  // 198: 168 archived row 분리 조회. cold storage row를 운영자가 본다.
+  { id: "archived",  label: "아카이브" },
 ];
 
 
@@ -1496,6 +1499,84 @@ export function BacktestRunsView() {
 }
 
 
+export function ArchivedAuditView() {
+  const [rows,  setRows]  = useState([]);
+  const [busy,  setBusy]  = useState(false);
+  const [error, setError] = useState("");
+
+  const load = async () => {
+    setBusy(true); setError("");
+    try {
+      const all = await backendApi.listOrderAudits({
+        limit: 200, include_archived: true,
+      });
+      const archived = (all || []).filter((r) => r.archived === true);
+      setRows(archived);
+    } catch (e) {
+      setError("아카이브 조회 실패: " + e.message);
+    }
+    setBusy(false);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setBusy(true); setError("");
+      try {
+        const all = await backendApi.listOrderAudits({
+          limit: 200, include_archived: true,
+        });
+        const archived = (all || []).filter((r) => r.archived === true);
+        if (!cancelled) setRows(archived);
+      } catch (e) {
+        if (!cancelled) setError("아카이브 조회 실패: " + e.message);
+      }
+      if (!cancelled) setBusy(false);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <div data-testid="archived-audit-view"
+         style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ display: "flex", justifyContent: "space-between",
+                    alignItems: "center", padding: "0 4px" }}>
+        <span style={{ fontSize: 11, color: "#94a3b8" }}>
+          168 archived row · {rows.length}건
+        </span>
+        <button
+          onClick={load}
+          disabled={busy}
+          style={{
+            fontSize: 10, padding: "3px 8px",
+            background: "#0c2035", border: "1px solid #1e3a5c",
+            color: "#7dd3fc", borderRadius: 3, cursor: "pointer",
+          }}
+        >
+          {busy ? "⟳" : "↻ 새로고침"}
+        </button>
+      </div>
+
+      {error && (
+        <div style={{ color: "#f87171", fontSize: 12, padding: "0 4px" }}>{error}</div>
+      )}
+
+      {!error && rows.length === 0 && !busy && (
+        <div data-testid="archived-empty"
+             style={{ fontSize: 11, color: "#64748b", padding: "8px 4px" }}>
+          아카이브된 주문 없음 — 168 cold storage 분리가 아직 작동하지 않았거나
+          모든 row가 hot 상태입니다.
+        </div>
+      )}
+
+      {rows.map((r) => (
+        <OrderAuditRow key={`archived-${r.id}`} r={r} />
+      ))}
+    </div>
+  );
+}
+
+
 export function AuditLog({ approvals }) {
   const [view, setView] = useState("events");
   return (
@@ -1504,6 +1585,7 @@ export function AuditLog({ approvals }) {
       {view === "events"    && <EventTimelineView approvals={approvals} />}
       {view === "ai"        && <AiAuditView />}
       {view === "backtests" && <BacktestRunsView />}
+      {view === "archived"  && <ArchivedAuditView />}
     </div>
   );
 }

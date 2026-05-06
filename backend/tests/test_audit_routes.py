@@ -152,6 +152,37 @@ def test_order_audit_ai_decision_meta_null_for_non_ai_orders(client):
     assert row["ai_decision_meta"] is None
 
 
+# 198: archived flag surface — operator wants to see cold rows separately.
+def test_order_audit_archived_flag_default_false(client):
+    res = client.post("/api/broker/orders", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1,
+    })
+    assert res.status_code == 200
+    row = client.get("/api/audit/orders").json()[0]
+    assert row["archived"] is False
+
+
+def test_order_audit_include_archived_returns_cold_rows(client):
+    """기본 응답은 hot만, ?include_archived=true는 cold도 함께."""
+    from datetime import datetime, timezone
+    from app.db.models import OrderAuditLog
+    with client.test_db_factory() as db:
+        db.add(OrderAuditLog(
+            mode="SIMULATION", requested_by_ai=False,
+            symbol="005930", side="BUY", quantity=1, order_type="MARKET",
+            latest_price=70_000, decision="APPROVED", reasons=[],
+            executed=True, filled_quantity=1, avg_fill_price=70_000,
+            broker_status="FILLED", message="",
+            created_at=datetime.now(timezone.utc), archived=True,
+        ))
+        db.commit()
+    hot_only = client.get("/api/audit/orders").json()
+    assert len(hot_only) == 0
+    with_cold = client.get("/api/audit/orders?include_archived=true").json()
+    assert len(with_cold) == 1
+    assert with_cold[0]["archived"] is True
+
+
 def test_order_audit_signal_quality_clamped_at_pydantic_layer(client):
     """OrderRequest의 ge=0 le=100 제약 — out-of-range는 422."""
     res = client.post("/api/broker/orders", json={

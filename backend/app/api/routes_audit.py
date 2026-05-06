@@ -44,6 +44,9 @@ class OrderAuditOut(BaseModel):
     # 운영자가 거부 사유 / confidence / reasoning을 audit에서 직접 볼 수 있어야 한다.
     # 0010 이전 row + AI 미경유 주문은 NULL.
     ai_decision_meta: dict | None = None
+    # 198: 168 archival flag — frontend AuditLog에서 archived sub-tab을 만들어
+    # cold rows를 분리해서 볼 수 있도록 surface한다.
+    archived:         bool = False
 
 
 class AiAuditOut(BaseModel):
@@ -113,6 +116,7 @@ def _to_order_out(row: OrderAuditLog) -> OrderAuditOut:
         avg_fill_price=row.avg_fill_price,
         message=row.message,
         ai_decision_meta=row.ai_decision_meta,
+        archived=bool(row.archived),
     )
 
 
