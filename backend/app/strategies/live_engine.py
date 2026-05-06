@@ -26,11 +26,14 @@ class TickResult:
     already in the requested state (long position open on BUY, flat on SELL).
     `routing` is set only when submit_tick() has run the intended order
     through the Risk/Permission/Executor pipeline.
+    `quality` (136) is the {strength, confidence} 0-100 advisory pair from
+    quality.signal_quality — both 0 for HOLD signals.
     """
     bar:            Bar
     signal:         Signal
     intended_order: OrderRequest | None
     routing:        OrderRoutingResult | None = None
+    quality:        dict | None = None
 
 
 class LiveStrategyEngine:
@@ -112,7 +115,18 @@ class LiveStrategyEngine:
             self._entry_price = None
             self._holding = False
 
-        return TickResult(bar=bar, signal=signal, intended_order=intended)
+        # 136: signal quality는 advisory — 신호를 차단하지 않고 운영자에게
+        # 강도/신뢰도 두 축으로 점수 노출. HOLD 신호도 0/0으로 채워 응답
+        # 클라이언트가 '신호 없음'과 '약한 신호'를 명확히 구분 가능.
+        from app.strategies.quality import signal_quality
+        from app.market.regime import matches_required_regime
+        regime = self.current_regime
+        required = getattr(self.strategy, "required_regime", "any")
+        quality = signal_quality(self._bars, signal,
+                                 regime_matches=matches_required_regime(regime, required))
+
+        return TickResult(bar=bar, signal=signal, intended_order=intended,
+                          quality=quality)
 
     async def submit_tick(self, bar: Bar, *, requested_by_ai: bool = False) -> TickResult:
         result = self.run_tick(bar)

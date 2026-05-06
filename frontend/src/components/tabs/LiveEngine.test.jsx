@@ -2,7 +2,8 @@ import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  ConfigureCard, PositionBlock, RegimeIndicator, StrategyContractPanel,
+  ConfigureCard, PositionBlock, RegimeIndicator, SignalQualityBadge,
+  StrategyContractPanel,
 } from "./LiveEngine";
 
 
@@ -292,5 +293,47 @@ describe("<RegimeIndicator> (135)", () => {
     const ind = getByTestId("regime-indicator");
     expect(ind.dataset.regime).toBe("any");
     expect(ind.dataset.matches).toBe("true");
+  });
+});
+
+
+describe("<SignalQualityBadge> (136)", () => {
+  afterEach(cleanup);
+
+  it("renders nothing when quality is null", () => {
+    const { container } = render(<SignalQualityBadge quality={null} signal="BUY" />);
+    expect(container.querySelector('[data-testid="signal-quality-badge"]')).toBeNull();
+  });
+
+  it("renders nothing for HOLD signal even if quality is provided", () => {
+    const { container } = render(
+      <SignalQualityBadge quality={{ strength: 80, confidence: 90 }} signal="HOLD" />,
+    );
+    expect(container.querySelector('[data-testid="signal-quality-badge"]')).toBeNull();
+  });
+
+  it("renders strength + confidence mini-bars for BUY/SELL", () => {
+    const { getByTestId } = render(
+      <SignalQualityBadge quality={{ strength: 80, confidence: 60 }} signal="BUY" />,
+    );
+    expect(getByTestId("signal-quality-badge")).toBeTruthy();
+    expect(getByTestId("signal-quality-strength").textContent).toContain("80");
+    expect(getByTestId("signal-quality-confidence").textContent).toContain("60");
+  });
+
+  it("low strength rendered with red color (advisory severity)", () => {
+    const { getByTestId } = render(
+      <SignalQualityBadge quality={{ strength: 20, confidence: 90 }} signal="BUY" />,
+    );
+    const numCell = getByTestId("signal-quality-strength").lastElementChild;
+    expect(numCell.style.color).toBe("rgb(239, 68, 68)"); // #ef4444
+  });
+
+  it("high values rendered green", () => {
+    const { getByTestId } = render(
+      <SignalQualityBadge quality={{ strength: 85, confidence: 75 }} signal="SELL" />,
+    );
+    const numCell = getByTestId("signal-quality-strength").lastElementChild;
+    expect(numCell.style.color).toBe("rgb(34, 197, 94)"); // #22c55e
   });
 });
