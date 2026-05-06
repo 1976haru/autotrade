@@ -54,6 +54,47 @@ function StatusCard({ status, busy, onReset }) {
 }
 
 
+// 136: 신호 강도/신뢰도 advisory. HOLD 신호는 의미 없으므로 미렌더. 그 외엔
+// strength / confidence 두 0-100 scale을 mini-bar로 표시 — 운영자가 'BUY인데
+// 신뢰도 낮음'을 즉시 인지.
+const _BAR_COLOR_FOR = (v) => (
+  v >= 70 ? "#22c55e" :
+  v >= 40 ? "#fbbf24" :
+            "#ef4444"
+);
+
+export function SignalQualityBadge({ quality, signal }) {
+  if (!quality || signal === "HOLD") return null;
+  const _MiniBar = ({ label, value, testId }) => (
+    <div data-testid={testId}
+         style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
+      <span style={{ color: "#475569", fontSize: 9, width: 50 }}>{label}</span>
+      <div style={{ flex: 1, height: 6, background: "#020e1c",
+                     borderRadius: 3, overflow: "hidden" }}>
+        <div style={{
+          width: `${value}%`, height: "100%",
+          background: _BAR_COLOR_FOR(value), transition: "width 0.3s",
+        }} />
+      </div>
+      <span style={{ color: _BAR_COLOR_FOR(value), fontSize: 10,
+                      fontWeight: 700, width: 32, textAlign: "right" }}>
+        {value}
+      </span>
+    </div>
+  );
+  return (
+    <div data-testid="signal-quality-badge"
+         style={{ display: "flex", flexDirection: "column", gap: 4,
+                  marginBottom: 8, padding: "6px 8px",
+                  background: "#010a14", border: "1px solid #0c2035",
+                  borderRadius: 4 }}>
+      <_MiniBar label="강도"   value={quality.strength}   testId="signal-quality-strength" />
+      <_MiniBar label="신뢰도" value={quality.confidence} testId="signal-quality-confidence" />
+    </div>
+  );
+}
+
+
 // 135: 현재 시장 체제 + 전략과의 호환성 표시. advisory만 — 신호를 차단하지
 // 않는다. 호환되면 청록(neutral OK), 불일치이면 amber(주의). regime이 'any'
 // 또는 봉 부족이면 회색.
@@ -373,7 +414,7 @@ function TickCard({ status, busy, onTick }) {
 
 function ResultCard({ result }) {
   if (!result) return null;
-  const { signal, intended_order, routing } = result;
+  const { signal, intended_order, routing, quality } = result;
   const signalColor =
     signal === "BUY"  ? "#22c55e" :
     signal === "SELL" ? "#ef4444" : "#94a3b8";
@@ -395,6 +436,7 @@ function ResultCard({ result }) {
           </div>
         )}
       </div>
+      <SignalQualityBadge quality={quality} signal={signal} />
 
       {routing && (
         <div style={{ borderTop: "1px solid #0c2035", paddingTop: 8, marginTop: 6 }}>

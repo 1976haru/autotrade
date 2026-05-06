@@ -123,6 +123,8 @@ class TickResponse(BaseModel):
     unrealized_pnl:     int | None = None
     unrealized_pnl_pct: float | None = None
     routing:        RoutingOut | None = None
+    # 136: 신호 강도/신뢰도 advisory.
+    quality:        dict | None = None
 
 
 class _EngineState:
@@ -235,6 +237,7 @@ async def tick_route(
         unrealized_pnl=engine.unrealized_pnl,
         unrealized_pnl_pct=engine.unrealized_pnl_pct,
         routing=routing_out,
+        quality=result.quality,
     )
 
 
