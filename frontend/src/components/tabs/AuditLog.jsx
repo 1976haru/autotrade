@@ -901,6 +901,82 @@ export function BacktestSortBar({ active, onChange }) {
 }
 
 
+// 117: strategy별 운영 통계 요약. 099 outcome chip + 104 정렬은 row 단위
+// 분석을 돕고, 098/106 footer는 list 전체 합계를 보여주는데, "전략별 평균
+// 성과 비교"는 그 사이에 있는 빈 자리. 같은 sma_crossover를 여러 파라미터로
+// 50번 돌렸을 때 평균 PnL / 승률을 옆 strategy(rsi_revert 등)와 한 화면에서
+// 비교하기 위함. items가 단일 strategy거나 비면 의미가 없어 미렌더.
+export function summarizeBacktestByStrategy(items) {
+  const map = new Map();
+  for (const r of items || []) {
+    if (!r) continue;
+    const s = r.strategy || "(unknown)";
+    const cur = map.get(s) || {
+      strategy: s, count: 0, totalPnl: 0, totalWins: 0, totalTrades: 0,
+    };
+    cur.count       += 1;
+    cur.totalPnl    += r.total_pnl  || 0;
+    cur.totalWins   += r.win_count  || 0;
+    cur.totalTrades += (r.win_count || 0) + (r.loss_count || 0);
+    map.set(s, cur);
+  }
+  return Array.from(map.values()).map((c) => ({
+    strategy:   c.strategy,
+    count:      c.count,
+    avgPnl:     c.count > 0 ? Math.round(c.totalPnl / c.count) : 0,
+    totalPnl:   c.totalPnl,
+    avgWinRate: c.totalTrades > 0 ? c.totalWins / c.totalTrades : 0,
+  })).sort((a, b) => b.count - a.count);
+}
+
+
+export function BacktestStrategyMiniTable({ items }) {
+  const rows = summarizeBacktestByStrategy(items);
+  // 0개거나 1개면 비교가 의미 없어 hide — 단일 strategy의 합계는 098 list
+  // 자체 + 정렬로 충분.
+  if (rows.length < 2) return null;
+  const _td = { padding: "3px 6px", fontSize: 10 };
+  const _th = { ..._td, color: "#475569", fontWeight: 700,
+                 borderBottom: "1px solid #1a3a5c", textAlign: "left" };
+  return (
+    <div data-testid="backtest-strategy-table"
+         style={{ marginBottom: 8, padding: "4px 0",
+                  borderBottom: "1px dashed #0c2035" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th style={_th}>전략</th>
+            <th style={{ ..._th, textAlign: "right" }}>건수</th>
+            <th style={{ ..._th, textAlign: "right" }}>평균 PnL</th>
+            <th style={{ ..._th, textAlign: "right" }}>평균 승률</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.strategy}
+                data-testid={`backtest-strategy-row-${r.strategy}`}>
+              <td style={{ ..._td, color: "#7dd3fc", fontWeight: 700 }}>
+                {r.strategy}
+              </td>
+              <td style={{ ..._td, textAlign: "right", color: "#94a3b8" }}>
+                {r.count}건
+              </td>
+              <td style={{ ..._td, textAlign: "right",
+                           color: pnlColor(r.avgPnl), fontWeight: 700 }}>
+                {r.avgPnl >= 0 ? "+" : ""}{fmtKRW(r.avgPnl)}
+              </td>
+              <td style={{ ..._td, textAlign: "right", color: "#a78bfa" }}>
+                {Math.round(r.avgWinRate * 1000) / 10}%
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+
 const BACKTEST_OUTCOME_FILTERS = [
   { id: "all",       label: "전체",     color: "#7dd3fc" },
   { id: "profit",    label: "수익",     color: "#22c55e" },
@@ -985,6 +1061,8 @@ export function BacktestRunsView() {
           onChange={setSortKey}
         />
       </div>
+
+      <BacktestStrategyMiniTable items={filteredItems} />
 
       {error && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>}
 
