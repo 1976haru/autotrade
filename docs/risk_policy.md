@@ -2,6 +2,8 @@
 
 CLAUDE.md "감사 로그를 우선한다" 원칙에 따라 모든 리스크 평가 결과는 `OrderAuditLog`에 기록된다. 본 문서는 코드(`app/risk/risk_manager.py`, `app/futures/risk.py`)와 동기화된 정책 명세.
 
+> **빠른 reference**: 모든 가드 한 페이지 정리는 [`docs/risk_guards_matrix.md`](risk_guards_matrix.md) 참조.
+
 ## 주식 RiskPolicy 기본값
 
 | 항목 | 코드 필드 | 기본값 | 운영자 env override |
