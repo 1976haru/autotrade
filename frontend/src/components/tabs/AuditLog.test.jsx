@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -3032,6 +3032,117 @@ describe("<BacktestRunsView> extremes integration (120)", () => {
     expect(container.querySelector('[data-testid="backtest-extremes-summary"]')).toBeTruthy();
     fireEvent.change(getByPlaceholderText(/전략/), { target: { value: "winner" } });
     expect(container.querySelector('[data-testid="backtest-extremes-summary"]')).toBeNull();
+  });
+});
+
+
+describe("<BacktestExtremesSummary> jump-to-row (126)", () => {
+  afterEach(cleanup);
+
+  function _r(id, total_pnl, strategy = "sma") {
+    return { id, strategy, total_pnl };
+  }
+
+  it("renders best/worst as plain spans when onJump is omitted", () => {
+    const items = [_r(1, 1000), _r(2, -500)];
+    const { getByTestId } = render(<BacktestExtremesSummary items={items} />);
+    expect(getByTestId("backtest-extremes-best").tagName).toBe("SPAN");
+    expect(getByTestId("backtest-extremes-worst").tagName).toBe("SPAN");
+  });
+
+  it("renders best/worst as buttons when onJump is provided", () => {
+    const items = [_r(1, 1000), _r(2, -500)];
+    const { getByTestId } = render(
+      <BacktestExtremesSummary items={items} onJump={() => {}} />,
+    );
+    expect(getByTestId("backtest-extremes-best").tagName).toBe("BUTTON");
+    expect(getByTestId("backtest-extremes-worst").tagName).toBe("BUTTON");
+  });
+
+  it("calls onJump with the run id when best/worst is clicked", () => {
+    const items = [_r(1, 1000, "winner"), _r(2, -500, "loser")];
+    const onJump = vi.fn();
+    const { getByTestId } = render(
+      <BacktestExtremesSummary items={items} onJump={onJump} />,
+    );
+    fireEvent.click(getByTestId("backtest-extremes-best"));
+    expect(onJump).toHaveBeenCalledWith(1);
+    fireEvent.click(getByTestId("backtest-extremes-worst"));
+    expect(onJump).toHaveBeenLastCalledWith(2);
+  });
+});
+
+
+describe("<BacktestRunsView> jump-and-highlight (126)", () => {
+  beforeEach(() => { _resetBacktestHook(); localStorage.clear(); });
+  afterEach(() => { cleanup(); localStorage.clear(); vi.useRealTimers(); });
+
+  function _bt(overrides = {}) {
+    return {
+      id: 1, strategy: "sma_crossover",
+      params: {}, initial_cash: 10_000_000, quantity: 10, bars_processed: 100,
+      final_cash: 10_500_000, total_pnl: 0,
+      win_count: 5, loss_count: 5, max_drawdown: 0,
+      data_source: "bars", data_symbol: "005930",
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("rows carry data-testid='backtest-row-{id}' for jump targeting", () => {
+    _resetBacktestHook({
+      items: [_bt({ id: 1, strategy: "winner", total_pnl: 100 })],
+    });
+    const { getByTestId } = render(<BacktestRunsView />);
+    expect(getByTestId("backtest-row-1")).toBeTruthy();
+  });
+
+  it("clicking 최고 highlights the matching row and calls scrollIntoView", () => {
+    vi.useFakeTimers();
+    const scrollSpy = vi.fn();
+    Element.prototype.scrollIntoView = scrollSpy;
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "winner", total_pnl: 1000 }),
+        _bt({ id: 2, strategy: "loser",  total_pnl: -500 }),
+      ],
+    });
+    const { getByTestId } = render(<BacktestRunsView />);
+    expect(getByTestId("backtest-row-1").dataset.highlighted).toBe("false");
+    fireEvent.click(getByTestId("backtest-extremes-best"));
+    expect(getByTestId("backtest-row-1").dataset.highlighted).toBe("true");
+    expect(scrollSpy).toHaveBeenCalled();
+  });
+
+  it("highlight clears after the timeout", () => {
+    vi.useFakeTimers();
+    Element.prototype.scrollIntoView = vi.fn();
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "winner", total_pnl: 1000 }),
+        _bt({ id: 2, strategy: "loser",  total_pnl: -500 }),
+      ],
+    });
+    const { getByTestId } = render(<BacktestRunsView />);
+    fireEvent.click(getByTestId("backtest-extremes-best"));
+    expect(getByTestId("backtest-row-1").dataset.highlighted).toBe("true");
+    act(() => { vi.advanceTimersByTime(2000); });
+    expect(getByTestId("backtest-row-1").dataset.highlighted).toBe("false");
+  });
+
+  it("clicking 최저 highlights the worst row, not the best", () => {
+    vi.useFakeTimers();
+    Element.prototype.scrollIntoView = vi.fn();
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "winner", total_pnl: 1000 }),
+        _bt({ id: 2, strategy: "loser",  total_pnl: -500 }),
+      ],
+    });
+    const { getByTestId } = render(<BacktestRunsView />);
+    fireEvent.click(getByTestId("backtest-extremes-worst"));
+    expect(getByTestId("backtest-row-1").dataset.highlighted).toBe("false");
+    expect(getByTestId("backtest-row-2").dataset.highlighted).toBe("true");
   });
 });
 

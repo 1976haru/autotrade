@@ -1097,28 +1097,54 @@ export function summarizeBacktestExtremes(items) {
 }
 
 
-export function BacktestExtremesSummary({ items }) {
+export function BacktestExtremesSummary({ items, onJump }) {
   const { best, worst } = summarizeBacktestExtremes(items);
   // 동일 행이면(=1건뿐이거나 모든 PnL이 같음) 비교 의미 없음.
   if (!best || !worst || best.id === worst.id) return null;
-  const _row = (label, r, testId) => (
-    <span data-testid={testId}
-          style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-      <span style={{ color: "#475569" }}>{label}:</span>
-      <span style={{ color: "#7dd3fc", fontWeight: 700 }}>{r.strategy}</span>
-      <span style={{ color: "#475569" }}>#{r.id}</span>
-      <span style={{ color: pnlColor(r.total_pnl), fontWeight: 700 }}>
-        {r.total_pnl >= 0 ? "+" : ""}{fmtKRW(r.total_pnl)}
+  // 126: clickable buttons jump to the matching row in the list. onJump
+  // 미제공이면 plain span fallback — 정보는 그대로 보이지만 액션 없음.
+  const _Row = ({ label, r, testId }) => {
+    const inner = (
+      <>
+        <span style={{ color: "#475569" }}>{label}:</span>
+        <span style={{ color: "#7dd3fc", fontWeight: 700 }}>{r.strategy}</span>
+        <span style={{ color: "#475569" }}>#{r.id}</span>
+        <span style={{ color: pnlColor(r.total_pnl), fontWeight: 700 }}>
+          {r.total_pnl >= 0 ? "+" : ""}{fmtKRW(r.total_pnl)}
+        </span>
+      </>
+    );
+    if (onJump) {
+      return (
+        <button
+          type="button"
+          data-testid={testId}
+          onClick={() => onJump(r.id)}
+          style={{
+            display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap",
+            background: "transparent", border: "none", padding: 0, cursor: "pointer",
+            fontFamily: "inherit", fontSize: "inherit", color: "inherit",
+            textAlign: "left",
+          }}
+        >
+          {inner}
+        </button>
+      );
+    }
+    return (
+      <span data-testid={testId}
+            style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+        {inner}
       </span>
-    </span>
-  );
+    );
+  };
   return (
     <div data-testid="backtest-extremes-summary"
          style={{ fontSize: 10, marginBottom: 8,
                   display: "flex", gap: 16, flexWrap: "wrap",
                   padding: "4px 0", borderBottom: "1px dashed #0c2035" }}>
-      {_row("최고", best,  "backtest-extremes-best")}
-      {_row("최저", worst, "backtest-extremes-worst")}
+      <_Row label="최고" r={best}  testId="backtest-extremes-best" />
+      <_Row label="최저" r={worst} testId="backtest-extremes-worst" />
     </div>
   );
 }
@@ -1204,6 +1230,10 @@ export function backtestEmptyMessage(items, strategyNeedle, outcome) {
 }
 
 
+// 126: 운영자가 best/worst row를 클릭하면 list에서 그 row까지 자동 스크롤 +
+// 짧게 강조. timeout 길이는 대시보드 전체 톤(2초 정도)에 맞춰 1.5s.
+const BACKTEST_ROW_HIGHLIGHT_MS = 1500;
+
 export function BacktestRunsView() {
   const { items, loading, error, refresh } = useBacktestRuns();
   // 090: transient strategy filter (not persisted) — operators investigating
@@ -1228,6 +1258,22 @@ export function BacktestRunsView() {
       .filter((r) => outcomeFilter === "all" || classifyBacktestOutcome(r) === outcomeFilter),
     sortKey,
   );
+  // 126: extremes footer 클릭 시 row scroll + transient highlight.
+  const [_highlightId, setHighlightId] = useState(null);
+  const _jumpToRow = (id) => {
+    const el = typeof document !== "undefined"
+      ? document.querySelector(`[data-testid="backtest-row-${id}"]`)
+      : null;
+    if (el && typeof el.scrollIntoView === "function") {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    setHighlightId(id);
+    setTimeout(() => {
+      // setHighlightId clears regardless — async stale id wouldn't matter
+      // because new clicks overwrite synchronously.
+      setHighlightId((cur) => (cur === id ? null : cur));
+    }, BACKTEST_ROW_HIGHLIGHT_MS);
+  };
 
   return (
     <Card>
@@ -1256,7 +1302,7 @@ export function BacktestRunsView() {
         />
       </div>
 
-      <BacktestExtremesSummary items={filteredItems} />
+      <BacktestExtremesSummary items={filteredItems} onJump={_jumpToRow} />
       <BacktestStrategyMiniTable items={filteredItems} />
 
       {error && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>}
@@ -1270,8 +1316,22 @@ export function BacktestRunsView() {
       ) : filteredItems.map((r) => {
         const trades = r.win_count + r.loss_count;
         const winRate = trades > 0 ? Math.round(r.win_count / trades * 1000) / 10 : 0;
+        const isHighlighted = _highlightId === r.id;
         return (
-          <div key={r.id} style={{ padding: "8px 0", borderBottom: "1px solid #05121f" }}>
+          <div
+            key={r.id}
+            data-testid={`backtest-row-${r.id}`}
+            data-highlighted={isHighlighted ? "true" : "false"}
+            style={{
+              padding: "8px 8px 8px 8px",
+              borderBottom: "1px solid #05121f",
+              borderLeft: isHighlighted
+                ? "3px solid #fbbf24"
+                : "3px solid transparent",
+              background: isHighlighted ? "#fbbf2415" : "transparent",
+              transition: "background 0.3s, border-left-color 0.3s",
+            }}
+          >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
               <div>
                 <span style={{ color: "#7dd3fc", fontSize: 11, fontWeight: 700 }}>
