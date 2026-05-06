@@ -2,7 +2,9 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { backendApi } from "../services/backend/client";
-import { ACTIVE_POLL_MS, IDLE_POLL_MS, IDLE_THRESHOLD_MS } from "./useApprovals";
+import {
+  ACTIVE_POLL_MS, HIDDEN_POLL_MS, IDLE_POLL_MS, IDLE_THRESHOLD_MS,
+} from "./useApprovals";
 import {
   useAiAudits,
   useBacktestRuns,
@@ -406,6 +408,87 @@ describe("useBacktestRuns adaptive polling (114)", () => {
 
     await act(async () => { await vi.advanceTimersByTimeAsync(6_000); });
     expect(backendApi.listBacktestRuns.mock.calls.length).toBeGreaterThan(callsAfterIdleEntry);
+
+    r.unmount();
+  });
+});
+
+
+// 130: 125는 useApprovals 안에서 visibility 회귀 테스트를 추가했지만 같은
+// 가드를 공유하는 useAdaptivePollingByTopId(105/109/114) 쪽은 테스트가 없어
+// 미래 helper 변경 시 회귀가 새지 않는다. useOrderAudits를 대표 hook으로
+// 잡아 hidden→60s 전환과 visible 복귀 시 active 5s 복귀를 확인.
+describe("useAdaptivePollingByTopId visibility-aware polling (130)", () => {
+  beforeEach(() => { backendApi.listOrderAudits.mockReset(); });
+  afterEach(() => {
+    vi.useRealTimers();
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true, get: () => "visible",
+    });
+  });
+
+  const _setVisibility = (state) => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true, get: () => state,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+
+  const _mount = async () => {
+    let r;
+    await act(async () => {
+      r = renderHook(() => useOrderAudits());
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+    });
+    return r;
+  };
+
+  it("polls at the hidden 60s interval when the tab is backgrounded", async () => {
+    backendApi.listOrderAudits.mockResolvedValue([]);
+    vi.useFakeTimers();
+    const r = await _mount();
+
+    // Backgrounding bumps the next-cycle interval to HIDDEN_POLL_MS.
+    await act(async () => {
+      _setVisibility("hidden");
+      // Let the in-flight active-paced timer fire once.
+      await vi.advanceTimersByTimeAsync(ACTIVE_POLL_MS);
+    });
+    const callsAfterFirstActive = backendApi.listOrderAudits.mock.calls.length;
+
+    // 50s passes — hidden 60s timer hasn't fired yet
+    await act(async () => { await vi.advanceTimersByTimeAsync(50_000); });
+    expect(backendApi.listOrderAudits.mock.calls.length).toBe(callsAfterFirstActive);
+
+    // Cross 60s — hidden tick fires
+    await act(async () => { await vi.advanceTimersByTimeAsync(11_000); });
+    expect(backendApi.listOrderAudits.mock.calls.length)
+      .toBeGreaterThan(callsAfterFirstActive);
+
+    r.unmount();
+  });
+
+  it("snaps back to active 5s when the tab becomes visible again", async () => {
+    backendApi.listOrderAudits.mockResolvedValue([]);
+    vi.useFakeTimers();
+    const r = await _mount();
+
+    await act(async () => {
+      _setVisibility("hidden");
+      await vi.advanceTimersByTimeAsync(HIDDEN_POLL_MS + ACTIVE_POLL_MS);
+    });
+
+    // Return to foreground — lastActivity bumped, next cycle is active 5s.
+    await act(async () => {
+      _setVisibility("visible");
+      // Let the in-flight hidden 60s timer fire so scheduleNext re-runs.
+      await vi.advanceTimersByTimeAsync(HIDDEN_POLL_MS);
+    });
+    const callsBefore = backendApi.listOrderAudits.mock.calls.length;
+
+    // Within 5s an active tick must fire.
+    await act(async () => { await vi.advanceTimersByTimeAsync(ACTIVE_POLL_MS); });
+    expect(backendApi.listOrderAudits.mock.calls.length).toBe(callsBefore + 1);
 
     r.unmount();
   });
