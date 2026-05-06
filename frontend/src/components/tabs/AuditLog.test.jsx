@@ -794,17 +794,31 @@ describe("<EventTimelineView> time-bucket filter", () => {
 
 describe("aiAuditEmptyMessage", () => {
   it("returns plain '없음' message when items is empty", () => {
-    expect(aiAuditEmptyMessage([], "")).toBe("AI 호출 기록 없음");
-    expect(aiAuditEmptyMessage(undefined, "")).toBe("AI 호출 기록 없음");
+    expect(aiAuditEmptyMessage([], "", "all")).toBe("AI 호출 기록 없음");
+    expect(aiAuditEmptyMessage(undefined, "", "all")).toBe("AI 호출 기록 없음");
   });
 
-  it("returns the filter-narrowed variant when items exist but ticker matches none", () => {
-    expect(aiAuditEmptyMessage([{ id: 1 }], "005930"))
-      .toBe("해당 종목의 AI 호출 없음");
+  it("returns the filter-narrowed variant when ticker filter narrows to zero", () => {
+    expect(aiAuditEmptyMessage([{ id: 1 }], "005930", "all"))
+      .toBe("해당 조건의 AI 호출 없음");
   });
 
-  it("falls back to plain message when no ticker filter active", () => {
-    expect(aiAuditEmptyMessage([{ id: 1 }], "")).toBe("AI 호출 기록 없음");
+  it("returns the filter-narrowed variant when time bucket narrows to zero (091)", () => {
+    expect(aiAuditEmptyMessage([{ id: 1 }], "", "1h"))
+      .toBe("해당 조건의 AI 호출 없음");
+  });
+
+  it("returns the filter-narrowed variant when both ticker + bucket are active", () => {
+    expect(aiAuditEmptyMessage([{ id: 1 }], "005930", "24h"))
+      .toBe("해당 조건의 AI 호출 없음");
+  });
+
+  it("falls back to plain message when no filter active", () => {
+    expect(aiAuditEmptyMessage([{ id: 1 }], "", "all")).toBe("AI 호출 기록 없음");
+  });
+
+  it("undefined time bucket arg behaves as 'no time filter' (back-compat)", () => {
+    expect(aiAuditEmptyMessage([{ id: 1 }], "", undefined)).toBe("AI 호출 기록 없음");
   });
 });
 
@@ -866,7 +880,7 @@ describe("<AiAuditView> ticker filter", () => {
     _resetAiHook({ items: [_ai({ id: 1, ticker: "005930" })] });
     const { getByText, getByPlaceholderText } = render(<AiAuditView />);
     fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "999999" } });
-    expect(getByText("해당 종목의 AI 호출 없음")).toBeTruthy();
+    expect(getByText("해당 조건의 AI 호출 없음")).toBeTruthy();
   });
 
   it("plain '없음' message when items list itself is empty", () => {
@@ -881,6 +895,103 @@ describe("<AiAuditView> ticker filter", () => {
     fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "AAA" } });
     expect(container.textContent).toContain("AAA");
     expect(container.textContent).toContain("(1)");
+  });
+});
+
+
+describe("<AiAuditView> time bucket (091)", () => {
+  const STORAGE_KEY = "autotrade.aiAuditTimeBucket";
+  const NOW = new Date("2026-05-06T12:00:00Z").getTime();
+  const minutesAgo = (m) => new Date(NOW - m * 60_000).toISOString();
+  const hoursAgo = (h) => new Date(NOW - h * 3600_000).toISOString();
+
+  function _ai(overrides = {}) {
+    return {
+      id: 1, ticker: "005930", extra: "", active_strats: [], risk_params: {},
+      text: "...", model: "claude-test", input_tokens: 100, output_tokens: 200,
+      score: { total: 75 }, error: null, created_at: minutesAgo(10),
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(NOW));
+    _resetAiHook();
+  });
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+    vi.useRealTimers();
+  });
+
+  it("default '전 기간' shows all rows regardless of created_at", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, ticker: "AAA", created_at: minutesAgo(10) }),
+        _ai({ id: 2, ticker: "BBB", created_at: hoursAgo(48) }),
+      ],
+    });
+    const { container } = render(<AiAuditView />);
+    expect(container.textContent).toContain("AAA");
+    expect(container.textContent).toContain("BBB");
+    expect(container.textContent).toContain("(2)");
+  });
+
+  it("1시간 chip narrows to recent calls", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, ticker: "AAA", created_at: minutesAgo(15) }),  // included
+        _ai({ id: 2, ticker: "BBB", created_at: hoursAgo(2) }),     // excluded
+      ],
+    });
+    const { container, getByRole } = render(<AiAuditView />);
+    fireEvent.click(getByRole("radio", { name: "1시간" }));
+    expect(container.textContent).toContain("AAA");
+    expect(container.textContent).not.toContain("BBB");
+    expect(container.textContent).toContain("(1)");
+  });
+
+  it("composes with ticker filter (24시간 × ticker substring)", () => {
+    _resetAiHook({
+      items: [
+        _ai({ id: 1, ticker: "005930", created_at: minutesAgo(30) }),
+        _ai({ id: 2, ticker: "000660", created_at: minutesAgo(30) }),
+        _ai({ id: 3, ticker: "005930", created_at: hoursAgo(48) }),
+      ],
+    });
+    const { container, getByRole, getByPlaceholderText } = render(<AiAuditView />);
+    fireEvent.click(getByRole("radio", { name: "24시간" }));
+    fireEvent.change(getByPlaceholderText(/종목/), { target: { value: "005930" } });
+    expect(container.textContent).toContain("(1)"); // recent + matching ticker
+  });
+
+  it("persists selection to localStorage", () => {
+    _resetAiHook({ items: [_ai()] });
+    const { getByRole, unmount } = render(<AiAuditView />);
+    fireEvent.click(getByRole("radio", { name: "7일" }));
+    expect(localStorage.getItem(STORAGE_KEY)).toBe("7d");
+    unmount();
+    _resetAiHook({ items: [_ai()] });
+    const { getByRole: g2 } = render(<AiAuditView />);
+    expect(g2("radio", { name: "7일" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("falls back to 전 기간 when stored value is unknown", () => {
+    localStorage.setItem(STORAGE_KEY, "garbage");
+    _resetAiHook({ items: [_ai()] });
+    const { getByRole } = render(<AiAuditView />);
+    expect(getByRole("radio", { name: "전 기간" }).getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("shows the filter-narrowed empty message when bucket eliminates everything", () => {
+    _resetAiHook({
+      items: [_ai({ id: 1, ticker: "AAA", created_at: hoursAgo(48) })],
+    });
+    const { getByText, getByRole } = render(<AiAuditView />);
+    fireEvent.click(getByRole("radio", { name: "1시간" }));
+    expect(getByText("해당 조건의 AI 호출 없음")).toBeTruthy();
   });
 });
 

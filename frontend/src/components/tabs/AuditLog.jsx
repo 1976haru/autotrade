@@ -413,13 +413,23 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
 }
 
 
-// 089: distinguish "the AI call log is genuinely empty" from "ticker filter
-// narrowed it to zero" — same shape as 081 audit timeline / 082 history.
-export function aiAuditEmptyMessage(items, tickerNeedle) {
+// 089/091: distinguish "the AI call log is genuinely empty" from "filter
+// narrowed it to zero". 089 introduced this for ticker; 091 extended to
+// time bucket. Mirrors 081/082 multi-axis empty-state convention.
+export function aiAuditEmptyMessage(items, tickerNeedle, timeBucket) {
   if (!items || items.length === 0) return "AI 호출 기록 없음";
-  if (tickerNeedle) return "해당 종목의 AI 호출 없음";
-  return "AI 호출 기록 없음";
+  const hasFilter =
+    (tickerNeedle && tickerNeedle.length > 0)
+    || (timeBucket && timeBucket !== "all");
+  return hasFilter ? "해당 조건의 AI 호출 없음" : "AI 호출 기록 없음";
 }
+
+
+// 091: time bucket persistence — same pattern as 073 (audit timeline) and
+// 086 (approvals history). Reuses TIME_BUCKETS / TIME_BUCKET_MS / _isValidBucket
+// from 073 (same module, same shape) but a distinct storage key so the AI
+// sub-tab's selection doesn't collide with the event timeline's.
+const AI_TIME_BUCKET_STORAGE_KEY = "autotrade.aiAuditTimeBucket";
 
 
 export function AiAuditView() {
@@ -430,9 +440,21 @@ export function AiAuditView() {
   // matches that workflow.
   const [tickerFilter, setTickerFilter] = useState("");
   const _tickerNeedle = tickerFilter.trim().toLowerCase();
-  const filteredItems = _tickerNeedle
-    ? items.filter((r) => r.ticker && r.ticker.toLowerCase().includes(_tickerNeedle))
-    : items;
+  // 091: persisted time bucket — investigation sessions tend to fix a window
+  // ("recent 24h") for a stretch.
+  const [timeBucket, setTimeBucket] = usePersistedState(
+    AI_TIME_BUCKET_STORAGE_KEY, "all", _isValidBucket,
+  );
+  const _bucketWindowMs = TIME_BUCKET_MS[timeBucket];
+  const _now = Date.now();
+  const _withinBucket = (r) =>
+    _bucketWindowMs === undefined
+      ? true
+      : _now - new Date(r.created_at).getTime() < _bucketWindowMs;
+  const filteredItems = items
+    .filter((r) =>
+      !_tickerNeedle || (r.ticker && r.ticker.toLowerCase().includes(_tickerNeedle)))
+    .filter(_withinBucket);
 
   return (
     <Card>
@@ -448,6 +470,14 @@ export function AiAuditView() {
           placeholder="🔍 종목 (예: 005930)"
         />
       </div>
+      <div style={{ marginBottom: 8 }}>
+        <ChipFilterBar
+          items={TIME_BUCKETS}
+          active={timeBucket}
+          onChange={setTimeBucket}
+          ariaLabel="AI 호출 시간 범위 필터"
+        />
+      </div>
 
       {error && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>}
 
@@ -455,7 +485,7 @@ export function AiAuditView() {
         <div style={{ color: "#475569", fontSize: 11, padding: 12, textAlign: "center" }}>로딩 중…</div>
       ) : filteredItems.length === 0 ? (
         <div style={{ color: "#1e3a5c", fontSize: 12, padding: 16, textAlign: "center" }}>
-          {aiAuditEmptyMessage(items, _tickerNeedle)}
+          {aiAuditEmptyMessage(items, _tickerNeedle, timeBucket)}
         </div>
       ) : filteredItems.map((r) => (
         <div key={r.id} style={{ padding: "8px 0", borderBottom: "1px solid #05121f" }}>
