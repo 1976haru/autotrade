@@ -15,6 +15,7 @@ import {
   BacktestOutcomeFilterBar,
   BacktestRunsView,
   BacktestSortBar,
+  BacktestStrategyMiniTable,
   EmergencyStopAuditRow,
   EventTimelineView,
   KindFilterBar,
@@ -40,6 +41,7 @@ import {
   sortAiCalls,
   sortBacktestRuns,
   summarizeAiTokens,
+  summarizeBacktestByStrategy,
 } from "./AuditLog";
 
 
@@ -2495,5 +2497,159 @@ describe("flattenApprovalAttempts mode hoist (108)", () => {
     const flat = flattenApprovalAttempts([], history);
     expect(flat).toHaveLength(1);
     expect(flat[0].mode).toBe("LIVE_AI_ASSIST");
+  });
+});
+
+
+describe("summarizeBacktestByStrategy (117)", () => {
+  function _r(strategy, total_pnl = 0, win = 0, loss = 0) {
+    return { id: Math.random(), strategy, total_pnl, win_count: win, loss_count: loss };
+  }
+
+  it("returns empty array for nullable / empty input", () => {
+    expect(summarizeBacktestByStrategy([])).toEqual([]);
+    expect(summarizeBacktestByStrategy(null)).toEqual([]);
+    expect(summarizeBacktestByStrategy(undefined)).toEqual([]);
+  });
+
+  it("groups runs by strategy with count + averages", () => {
+    const items = [
+      _r("sma_crossover",  100,  6, 4),
+      _r("sma_crossover",  300,  4, 6),
+      _r("rsi_revert",    -50,   2, 8),
+    ];
+    const rows = summarizeBacktestByStrategy(items);
+    const sma = rows.find((r) => r.strategy === "sma_crossover");
+    expect(sma.count).toBe(2);
+    expect(sma.totalPnl).toBe(400);
+    expect(sma.avgPnl).toBe(200);
+    expect(sma.avgWinRate).toBeCloseTo(0.5, 6); // (6+4)/(10+10) = 10/20
+    const rsi = rows.find((r) => r.strategy === "rsi_revert");
+    expect(rsi.count).toBe(1);
+    expect(rsi.totalPnl).toBe(-50);
+    expect(rsi.avgPnl).toBe(-50);
+    expect(rsi.avgWinRate).toBeCloseTo(0.2, 6);
+  });
+
+  it("sorts by count desc (most-used strategies first)", () => {
+    const items = [
+      _r("rare", 0),
+      _r("common", 0),
+      _r("common", 0),
+      _r("common", 0),
+      _r("medium", 0),
+      _r("medium", 0),
+    ];
+    const rows = summarizeBacktestByStrategy(items);
+    expect(rows.map((r) => r.strategy)).toEqual(["common", "medium", "rare"]);
+  });
+
+  it("treats missing strategy as '(unknown)' and zero counts safely", () => {
+    const items = [
+      { id: 1, strategy: null, total_pnl: 0, win_count: 0, loss_count: 0 },
+      { id: 2, strategy: "x", total_pnl: undefined, win_count: undefined, loss_count: undefined },
+    ];
+    const rows = summarizeBacktestByStrategy(items);
+    expect(rows.find((r) => r.strategy === "(unknown)")).toBeDefined();
+    const x = rows.find((r) => r.strategy === "x");
+    expect(x.totalPnl).toBe(0);
+    expect(x.avgWinRate).toBe(0); // 0 trades — avoid divide-by-zero
+  });
+
+  it("avgWinRate is 0 when there were no trades for a strategy", () => {
+    const items = [_r("flat", 0, 0, 0), _r("flat", 100, 0, 0)];
+    const rows = summarizeBacktestByStrategy(items);
+    expect(rows[0].avgWinRate).toBe(0);
+  });
+});
+
+
+describe("<BacktestStrategyMiniTable> (117)", () => {
+  afterEach(cleanup);
+
+  function _r(strategy, total_pnl, win = 0, loss = 0) {
+    return { id: Math.random(), strategy, total_pnl, win_count: win, loss_count: loss };
+  }
+
+  it("renders nothing when items are empty", () => {
+    const { container } = render(<BacktestStrategyMiniTable items={[]} />);
+    expect(container.querySelector('[data-testid="backtest-strategy-table"]')).toBeNull();
+  });
+
+  it("renders nothing when there is only one strategy (no comparison value)", () => {
+    const items = [_r("sma_crossover", 100), _r("sma_crossover", 200)];
+    const { container } = render(<BacktestStrategyMiniTable items={items} />);
+    expect(container.querySelector('[data-testid="backtest-strategy-table"]')).toBeNull();
+  });
+
+  it("renders one row per distinct strategy when 2+ exist", () => {
+    const items = [
+      _r("sma_crossover", 100, 6, 4),
+      _r("sma_crossover", 300, 4, 6),
+      _r("rsi_revert", -50, 2, 8),
+    ];
+    const { getByTestId } = render(<BacktestStrategyMiniTable items={items} />);
+    expect(getByTestId("backtest-strategy-table")).toBeTruthy();
+    const sma = getByTestId("backtest-strategy-row-sma_crossover");
+    expect(sma.textContent).toContain("sma_crossover");
+    expect(sma.textContent).toContain("2건");
+    expect(sma.textContent).toContain("+200"); // avg = 200
+    expect(sma.textContent).toContain("50%");  // avg win rate
+    const rsi = getByTestId("backtest-strategy-row-rsi_revert");
+    expect(rsi.textContent).toContain("rsi_revert");
+    expect(rsi.textContent).toContain("-50");
+  });
+});
+
+
+describe("<BacktestRunsView> strategy table integration (117)", () => {
+  beforeEach(() => { _resetBacktestHook(); localStorage.clear(); });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _bt(overrides = {}) {
+    return {
+      id: 1, strategy: "sma_crossover",
+      params: {}, initial_cash: 10_000_000, quantity: 10, bars_processed: 100,
+      final_cash: 10_500_000, total_pnl: 0,
+      win_count: 5, loss_count: 5, max_drawdown: 0,
+      data_source: "bars", data_symbol: "005930",
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("hides the table when only one strategy is present", () => {
+    _resetBacktestHook({
+      items: [_bt({ id: 1, strategy: "sma_crossover" }),
+              _bt({ id: 2, strategy: "sma_crossover" })],
+    });
+    const { container } = render(<BacktestRunsView />);
+    expect(container.querySelector('[data-testid="backtest-strategy-table"]')).toBeNull();
+  });
+
+  it("shows the table once 2+ strategies are present", () => {
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "sma_crossover" }),
+        _bt({ id: 2, strategy: "rsi_revert" }),
+      ],
+    });
+    const { getByTestId } = render(<BacktestRunsView />);
+    expect(getByTestId("backtest-strategy-table")).toBeTruthy();
+    expect(getByTestId("backtest-strategy-row-sma_crossover")).toBeTruthy();
+    expect(getByTestId("backtest-strategy-row-rsi_revert")).toBeTruthy();
+  });
+
+  it("recomputes when filters narrow visible rows to a single strategy", () => {
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "sma_crossover" }),
+        _bt({ id: 2, strategy: "rsi_revert" }),
+      ],
+    });
+    const { container, getByPlaceholderText } = render(<BacktestRunsView />);
+    expect(container.querySelector('[data-testid="backtest-strategy-table"]')).toBeTruthy();
+    fireEvent.change(getByPlaceholderText(/전략/), { target: { value: "rsi" } });
+    expect(container.querySelector('[data-testid="backtest-strategy-table"]')).toBeNull();
   });
 });
