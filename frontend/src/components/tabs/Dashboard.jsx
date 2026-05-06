@@ -1,6 +1,8 @@
 import { Card, SectionLabel, StatBox } from "../common";
+import { ChipFilterBar } from "../common/ChipFilterBar";
 import { fmtKRW, fmtPct, formatPendingAge, pnlColor } from "../../utils/format";
 import { useEmergencyStopAudits, useOrderAudits } from "../../store/useAuditLogs";
+import { usePersistedState } from "../../store/usePersistedState";
 import { flattenApprovalAttempts, setEventKindFilter } from "./AuditLog";
 
 
@@ -58,12 +60,35 @@ export function EmergencyStopStuckBanner({ since, now = Date.now(), onClick }) {
 const _DAY_MS = 24 * 60 * 60 * 1000;
 
 
-// 097 supporting helper — Dashboard가 봇 idle 경고를 위해 24h 주문 카운트만
-// 쓰는 가벼운 경로. computeActivity24h를 그대로 쓰면 stops/byMode 등을 다 도는
-// 비용이 매 렌더 발생해 분리.
-function _count24h(orders, now = Date.now()) {
-  const since = now - _DAY_MS;
-  return orders.filter((r) => new Date(r.created_at).getTime() >= since).length;
+// 097 supporting helper — Dashboard가 봇 idle 경고를 위해 임계 시간 안 주문
+// 카운트만 쓰는 가벼운 경로. computeActivity24h를 그대로 쓰면 stops/byMode
+// 등을 다 도는 비용이 매 렌더 발생해 분리. 102에서 24h 고정에서 windowMs
+// 인자로 일반화 — 6h/12h/24h chip이 동일 helper를 공유.
+export function countOrdersWithinWindow(orders, windowMs, now = Date.now()) {
+  const since = now - windowMs;
+  return (orders || []).filter((r) => new Date(r.created_at).getTime() >= since).length;
+}
+
+
+// 102: 097의 24h 임계가 너무 둔감하다는 가능성에 대응. 운영자가 6h/12h/24h
+// 중 선택해서 봇 핀의 idle 판단 윈도우를 좁히거나 넓힐 수 있다. 영구 저장 —
+// investigation 세션이 한 임계로 lock되는 흐름이 자연스러움.
+export const BOT_IDLE_THRESHOLD_OPTIONS = [
+  { id: "6h",  label: "6시간",  color: "#7dd3fc", windowMs:  6 * 60 * 60_000 },
+  { id: "12h", label: "12시간", color: "#7dd3fc", windowMs: 12 * 60 * 60_000 },
+  { id: "24h", label: "24시간", color: "#7dd3fc", windowMs: 24 * 60 * 60_000 },
+];
+
+export const BOT_IDLE_THRESHOLD_STORAGE_KEY = "autotrade.botIdleThreshold";
+const _VALID_BOT_IDLE_THRESHOLDS = new Set(BOT_IDLE_THRESHOLD_OPTIONS.map((o) => o.id));
+export const isValidBotIdleThreshold = (v) => _VALID_BOT_IDLE_THRESHOLDS.has(v);
+
+
+export function BotIdleThresholdBar({ active, onChange }) {
+  return (
+    <ChipFilterBar items={BOT_IDLE_THRESHOLD_OPTIONS} active={active}
+      onChange={onChange} ariaLabel="봇 idle 임계 윈도우" />
+  );
 }
 
 // 시간 필터 + 카운팅을 컴포넌트에서 분리해 vi.setSystemTime 없이도 단위 테스트
@@ -188,10 +213,14 @@ export function StatusPin({ icon, label, value, alarm, accent, onClick, testId }
 
 export function StatusSummaryCard({
   emergencyStop, pendingCount, stalePendingCount = 0, running, onJumpTab,
-  // 097: 봇 RUNNING + 24h 주문 0건이면 idle 의심으로 escalate. 기본값은 1로
-  // 둬서 "데이터 모름" 호출자(예: 097 이전 시점에 만들어진 wrapper)가 idle
+  // 097: 봇 RUNNING + window 안 주문 0건이면 idle 의심으로 escalate. 기본값은
+  // 1로 둬서 "데이터 모름" 호출자(예: 097 이전 시점에 만들어진 wrapper)가 idle
   // 경고를 잘못 트리거하지 않도록 — 명시적으로 0을 넘긴 경우만 idle 분기.
-  ordersIn24h = 1,
+  // 102: 24h → arbitrary window. prop명도 ordersIn24h → ordersInWindow로 일반화.
+  ordersInWindow = 1,
+  // 102: idle 라벨에 임계 윈도우를 표기하기 위해 chip의 id ("6h"/"12h"/"24h")
+  // 를 그대로 받는다. 미지정 시 097과 동일한 "24h"로 폴백.
+  idleThresholdLabel = "24h",
 }) {
   const _jump = onJumpTab || (() => {});
 
@@ -206,8 +235,12 @@ export function StatusSummaryCard({
 
   // 097: 봇 핀의 세 단계 — STOPPED(회색) / RUNNING(초록) / idle(노랑).
   // 같은 testId(`status-pin-bot`)를 유지해 058~077의 기존 회귀가 깨지지 않도록.
-  const _botSignal = botIdleSignal(running, ordersIn24h);
+  // 102: idle 라벨은 임계 윈도우(`6h`/`12h`/`24h`)를 표시하도록 동적 조립.
+  const _botSignal = botIdleSignal(running, ordersInWindow);
   const _botDisplay = BOT_SIGNAL_DISPLAY[_botSignal];
+  const _botValue = _botSignal === "idle"
+    ? `RUNNING (${idleThresholdLabel} 0건)`
+    : _botDisplay.value;
 
   return (
     <div style={{ display: "flex", gap: 8 }}>
@@ -232,7 +265,7 @@ export function StatusSummaryCard({
       <StatusPin
         icon="🤖"
         label="봇"
-        value={_botDisplay.value}
+        value={_botValue}
         alarm={_botDisplay.alarm}
         accent={_botDisplay.color}
         onClick={() => _jump("bot")}
@@ -387,11 +420,19 @@ export function Dashboard({
   const { stats, winRate, trades, running } = bot;
   const { start, stop } = botControls;
 
-  // 097: 봇 핀 idle 경고용 24h 주문 수 — useOrderAudits를 한 번 더 호출하는
+  // 097: 봇 핀 idle 경고용 윈도우 안 주문 수 — useOrderAudits를 한 번 더 호출하는
   // 비용은 같은 5s 폴링이 두 인스턴스가 되는 정도로 미미. 데이터 일관성을
   // 위해 Activity24hCard와 hook을 lift up하는 refactor는 별도 PR.
+  // 102: 임계 chip이 영구 저장된 id로 윈도우 ms를 결정.
   const _orderAudits = useOrderAudits();
-  const _ordersIn24h = _count24h(_orderAudits.items);
+  const [idleThresholdId, setIdleThresholdId] = usePersistedState(
+    BOT_IDLE_THRESHOLD_STORAGE_KEY, "24h", isValidBotIdleThreshold,
+  );
+  const _idleThresholdEntry = BOT_IDLE_THRESHOLD_OPTIONS.find((o) => o.id === idleThresholdId)
+    || BOT_IDLE_THRESHOLD_OPTIONS[BOT_IDLE_THRESHOLD_OPTIONS.length - 1];
+  const _ordersInWindow = countOrdersWithinWindow(
+    _orderAudits.items, _idleThresholdEntry.windowMs,
+  );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -408,9 +449,24 @@ export function Dashboard({
         pendingCount={pendingCount}
         stalePendingCount={stalePendingCount}
         running={running}
-        ordersIn24h={_ordersIn24h}
+        ordersInWindow={_ordersInWindow}
+        idleThresholdLabel={idleThresholdId}
         onJumpTab={onJumpTab}
       />
+
+      {/* 102: 봇 idle 임계 chip — RUNNING일 때만 의미 있어 그때만 노출 */}
+      {running && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8,
+          fontSize: 9, color: "#475569", padding: "0 4px",
+        }}>
+          <span>봇 idle 임계:</span>
+          <BotIdleThresholdBar
+            active={idleThresholdId}
+            onChange={setIdleThresholdId}
+          />
+        </div>
+      )}
 
       {/* KPI */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
