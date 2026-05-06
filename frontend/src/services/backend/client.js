@@ -118,4 +118,12 @@ export const backendApi = {
     const q = chainId ? `chain_id=${encodeURIComponent(chainId)}` : `limit=${limit}`;
     return backendFetch(`/api/ai/agent-decisions?${q}`);
   },
+  // 193: Virtual order ledger surface.
+  virtualOrders: ({ limit = 50, offset = 0, status = null, symbol = null } = {}) => {
+    const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (status) qs.set("status", status);
+    if (symbol) qs.set("symbol", symbol);
+    return backendFetch(`/api/virtual/orders?${qs.toString()}`);
+  },
+  virtualOrdersSummary: () => backendFetch("/api/virtual/orders/summary"),
 };
