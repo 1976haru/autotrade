@@ -189,6 +189,21 @@ class LiveStrategyEngine:
             return None
         return (self._last_price - self._entry_price) / self._entry_price
 
+    @property
+    def current_regime(self) -> str:
+        """135: 현재 누적된 봉을 기반으로 추정한 시장 체제. < 20봉이면 'any'."""
+        # local import — circular import 회피 (regime은 순수 함수라 부담 없음)
+        from app.market.regime import classify_regime
+        return classify_regime(self._bars)
+
+    @property
+    def regime_matches_strategy(self) -> bool:
+        """135: 현재 체제가 strategy.required_regime과 호환되는지 advisory.
+        False여도 신호는 그대로 — UI가 경고만 표시한다."""
+        from app.market.regime import matches_required_regime
+        required = getattr(self.strategy, "required_regime", "any")
+        return matches_required_regime(self.current_regime, required)
+
     def start(self) -> None:
         raise NotImplementedError(_STUB_MESSAGE)
 
