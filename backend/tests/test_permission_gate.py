@@ -470,3 +470,97 @@ def test_successful_approve_does_not_append_attempts():
                                  _risk_for_live_manual()))
         refreshed = db.get(PendingApproval, approval.id)
         assert refreshed.attempts == []
+
+
+# ---------- 146: approve-time safety gates (143 stale price, 145 daily PnL) ----------
+
+def test_approve_rejects_when_quote_is_stale_at_approve_time():
+    """146: 143 stale price 가드가 approve 시점에도 적용되어야 한다 — submit과
+    approve 시점의 invariant 일치. broker가 stale timestamp 반환하면 re-eval에서
+    REJECTED로 차단."""
+    Session = _session()
+    with Session() as db:
+        audit = _audit(db)
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(qty=1),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+
+        # broker가 매 호출마다 stale timestamp 반환하도록 강제.
+        broker = MockBrokerAdapter()
+        risk   = _risk_for_live_manual()
+        threshold = risk.policy.stale_price_max_age_seconds
+        assert threshold > 0
+        broker.set_stale_price_for_test("005930", age_seconds=threshold + 30)
+
+        with pytest.raises(ApprovalRiskCheckFailedError) as exc:
+            asyncio.run(gate.approve(approval.id, broker, risk))
+        assert any("stale" in r.lower() for r in exc.value.reasons), exc.value.reasons
+
+        # 접근권은 여전히 PENDING — 운영자가 시세 회복 후 재시도 가능.
+        refreshed = db.get(PendingApproval, approval.id)
+        assert refreshed.status == "PENDING"
+        assert len(refreshed.attempts) == 1
+        assert any("stale" in r.lower() for r in refreshed.attempts[0]["reasons"])
+
+
+def test_approve_rejects_when_daily_loss_breached_after_submit():
+    """146: 145 daily realized PnL 가드가 approve 시점에도 적용. submit 후 다른
+    거래로 max_daily_loss를 초과한 손실이 누적되면 approve가 차단."""
+    Session = _session()
+    with Session() as db:
+        audit = _audit(db)
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(qty=1),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+
+        # submit 후 손실 거래 시드 — 오늘 청산된 -10000원.
+        from datetime import datetime, timezone
+        today_dt = datetime.now(timezone.utc)
+        db.add_all([
+            OrderAuditLog(
+                mode="LIVE_MANUAL_APPROVAL", symbol="000660", side="BUY", quantity=1,
+                order_type="MARKET", latest_price=10_000,
+                decision="APPROVED", reasons=[], executed=True,
+                broker_status="FILLED", filled_quantity=1, avg_fill_price=10_000,
+                created_at=today_dt,
+            ),
+            OrderAuditLog(
+                mode="LIVE_MANUAL_APPROVAL", symbol="000660", side="SELL", quantity=1,
+                order_type="MARKET", latest_price=0,
+                decision="APPROVED", reasons=[], executed=True,
+                broker_status="FILLED", filled_quantity=1, avg_fill_price=0,
+                created_at=today_dt,
+            ),
+        ])
+        db.commit()
+
+        # max_daily_loss를 5000원으로 — 이미 -10000 손실이라 한도 초과.
+        risk = RiskManager(RiskPolicy(enable_live_trading=True, max_daily_loss=5_000))
+
+        with pytest.raises(ApprovalRiskCheckFailedError) as exc:
+            asyncio.run(gate.approve(approval.id, MockBrokerAdapter(), risk))
+        assert any("daily loss" in r.lower() for r in exc.value.reasons)
+
+        # 다시 PENDING으로 — 운영자가 새 날 또는 한도 조정 후 재시도.
+        refreshed = db.get(PendingApproval, approval.id)
+        assert refreshed.status == "PENDING"
+
+
+def test_approve_recomputes_daily_pnl_per_call():
+    """매 approve 호출이 daily_realized_pnl을 audit log에서 재계산 — singleton
+    risk manager의 누적 상태에 의존하지 않는다."""
+    Session = _session()
+    with Session() as db:
+        audit = _audit(db)
+        gate = PermissionGate(db)
+        approval = gate.submit(audit=audit, order=_order(qty=1),
+                               mode=OperationMode.LIVE_MANUAL_APPROVAL)
+
+        risk = _risk_for_live_manual()
+        # 운영 중 다른 곳에서 카운터가 오염된 상황을 흉내냄 — approve가 재계산.
+        risk.daily_realized_pnl = -999_999
+
+        # audit 기반 실제 PnL은 0 (체결된 거래 없음). approve 통과해야 정상.
+        asyncio.run(gate.approve(approval.id, MockBrokerAdapter(), risk))
+        # 재계산되어 0이어야 한다.
+        assert risk.daily_realized_pnl == 0
