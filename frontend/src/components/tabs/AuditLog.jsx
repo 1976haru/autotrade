@@ -356,6 +356,8 @@ const KIND_FILTERS = [
 ];
 
 const KIND_FILTER_STORAGE_KEY = "autotrade.eventKindFilter";
+// 203: separate from kind chip — orthogonal filter that lives alongside it.
+export const AI_ONLY_FILTER_STORAGE_KEY = "autotrade.eventAiOnlyFilter";
 const _VALID_KINDS = new Set(KIND_FILTERS.map((f) => f.id));
 const _isValidKind = (v) => _VALID_KINDS.has(v);
 
@@ -467,6 +469,15 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
   const [modeFilter, setModeFilter] = usePersistedState(
     EVENT_MODE_STORAGE_KEY, "all", isValidEventMode,
   );
+  // 203: AI-routed orders only toggle. Distinct from kind="ai" which filters
+  // AI ANALYSIS rows; this narrows kind=order rows to those with
+  // requested_by_ai=true. usePersistedState only handles strings, so we
+  // store "true" / "false" strings and adapt at the boundary.
+  const [aiOnlyStr, setAiOnlyStr] = usePersistedState(
+    AI_ONLY_FILTER_STORAGE_KEY, "false", (v) => v === "true" || v === "false",
+  );
+  const aiOnly = aiOnlyStr === "true";
+  const setAiOnly = (next) => setAiOnlyStr(next ? "true" : "false");
   const _bucketWindowMs = TIME_BUCKET_MS[timeBucket]; // undefined for "all"
   // 157: time bucket 필터가 "최근 1h" 등 현재 시각 기준 의미라 Date.now()
   // 호출이 본질적으로 render 의존. 한 render 내 일관성 위해 한 번만 snapshot.
@@ -496,7 +507,9 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
   const filteredOrders = (kind === "all" || kind === "order" ? orders.items : [])
     .filter((r) => !symbolNeedle || r.symbol.toLowerCase().includes(symbolNeedle))
     .filter((r) => _withinBucket(r.created_at))
-    .filter((r) => _matchesMode(r.mode));
+    .filter((r) => _matchesMode(r.mode))
+    // 203: when aiOnly is on, drop rows that didn't go through the AI route.
+    .filter((r) => !aiOnly || r.requested_by_ai === true);
   const filteredStops = (kind === "all" || kind === "stop" ? stops.items : [])
     .filter((r) => _withinBucket(r.created_at));
   const filteredAttempts = (kind === "all" || kind === "attempt" ? flatAttempts : [])
@@ -557,6 +570,30 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
             placeholder="🔍 종목 (예: 005930)"
           />
         </div>
+      </div>
+
+      {/* 203: AI-routed orders toggle. Disabled when kind=stop/attempt/ai
+          since requested_by_ai only applies to OrderAuditLog rows. */}
+      <div style={{ marginBottom: 8 }}>
+        <button
+          onClick={() => setAiOnly(!aiOnly)}
+          data-testid="audit-ai-only-toggle"
+          aria-pressed={aiOnly ? "true" : "false"}
+          disabled={kind !== "all" && kind !== "order"}
+          style={{
+            fontSize: 10, padding: "3px 10px", borderRadius: 3,
+            cursor: (kind !== "all" && kind !== "order") ? "not-allowed" : "pointer",
+            background: aiOnly ? "#a78bfa22" : "#010a14",
+            border: `1px solid ${aiOnly ? "#a78bfa" : "#1e3a5c"}`,
+            color: aiOnly ? "#a78bfa" : "#475569",
+            opacity: (kind !== "all" && kind !== "order") ? 0.4 : 1,
+          }}
+        >
+          {aiOnly ? "✓ AI 주문만" : "AI 주문만 보기"}
+        </button>
+        <span style={{ fontSize: 9, color: "#334155", marginLeft: 8 }}>
+          requested_by_ai=true 인 주문만 — kind="AI 호출"(분석 로그)과는 별개
+        </span>
       </div>
 
       <div style={{ marginBottom: 8 }}>

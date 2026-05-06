@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   AI_MODEL_PRICING,
+  AI_ONLY_FILTER_STORAGE_KEY,
   AI_SORT_STORAGE_KEY,
   AiAuditView,
   ArchivedAuditView,
@@ -3793,5 +3794,74 @@ describe("<BacktestRunsView> drill-in (202)", () => {
     const { getByTestId, findByText } = render(<BacktestRunsView />);
     fireEvent.click(getByTestId("backtest-row-toggle-7"));
     await findByText(/상세 조회 실패: offline/);
+  });
+});
+
+
+describe("<EventTimelineView> AI-routed orders toggle (203)", () => {
+  beforeEach(() => {
+    _resetHooks();
+    _resetAiHook();
+    localStorage.clear();
+  });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _o(overrides = {}) {
+    return {
+      id: 1, mode: "SIMULATION", requested_by_ai: false,
+      symbol: "005930", side: "BUY", quantity: 1, order_type: "MARKET",
+      limit_price: null, latest_price: 70_000,
+      decision: "APPROVED", reasons: [],
+      executed: true, broker_order_id: null, broker_status: "FILLED",
+      filled_quantity: 1, avg_fill_price: 70_000, message: "",
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("toggle starts off; rendering shows both AI and manual orders", () => {
+    _resetHooks({ items: [
+      _o({ id: 1, requested_by_ai: false, symbol: "005930" }),
+      _o({ id: 2, requested_by_ai: true,  symbol: "000660" }),
+    ]});
+    const { container } = render(<EventTimelineView approvals={{ pending: [], history: [] }} />);
+    expect(container.textContent).toContain("005930");
+    expect(container.textContent).toContain("000660");
+  });
+
+  it("toggling on filters out non-AI orders", () => {
+    _resetHooks({ items: [
+      _o({ id: 1, requested_by_ai: false, symbol: "005930" }),
+      _o({ id: 2, requested_by_ai: true,  symbol: "000660" }),
+    ]});
+    const { container, getByTestId } = render(
+      <EventTimelineView approvals={{ pending: [], history: [] }} />,
+    );
+    fireEvent.click(getByTestId("audit-ai-only-toggle"));
+    expect(container.textContent).not.toContain("005930");
+    expect(container.textContent).toContain("000660");
+  });
+
+  it("toggle disabled when kind chip narrows to stop/attempt/ai", () => {
+    _resetHooks({ items: [_o()] });
+    localStorage.setItem("autotrade.eventKindFilter", "ai");
+    const { getByTestId } = render(
+      <EventTimelineView approvals={{ pending: [], history: [] }} />,
+    );
+    expect(getByTestId("audit-ai-only-toggle").disabled).toBe(true);
+  });
+
+  it("toggle persists across renders via localStorage", () => {
+    _resetHooks({ items: [_o({ requested_by_ai: true })] });
+    const { unmount, getByTestId } = render(
+      <EventTimelineView approvals={{ pending: [], history: [] }} />,
+    );
+    fireEvent.click(getByTestId("audit-ai-only-toggle"));
+    unmount();
+    expect(localStorage.getItem(AI_ONLY_FILTER_STORAGE_KEY)).toBe("true");
+    const { getByTestId: byId2 } = render(
+      <EventTimelineView approvals={{ pending: [], history: [] }} />,
+    );
+    expect(byId2("audit-ai-only-toggle").getAttribute("aria-pressed")).toBe("true");
   });
 });
