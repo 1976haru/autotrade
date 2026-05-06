@@ -7,15 +7,21 @@ import { backendApi } from "../services/backend/client";
 //  - active(5s): 큐가 비어있지 않거나, 마지막 활동(큐 변화/액션)이 IDLE_THRESHOLD
 //                안에 있을 때. 결재 흐름이 진행 중인 상태.
 //  - idle(30s): 큐가 비어있고 IDLE_THRESHOLD 동안 변화 없을 때.
+//  - hidden(60s, 125): 탭 자체가 backgrounded — 운영자가 다른 탭을 보고 있을
+//                  때까지도 5s/30s를 doors-knocking할 이유가 없다. 페이지가
+//                  visible로 돌아오는 순간 lastActivity를 갱신해 active로 복귀.
 //
-// 결재 도착이 감지되는 latency가 idle 시 최대 30s로 늘어나지만, BottomNav 배지가
-// 첫 active tick에서 곧장 5s로 돌아가는 만큼 운영 영향은 미미. 사이트가 늘
-// 비어 있는 경우(SIM 단독 운영) 백엔드 호출이 6배 줄어든다.
+// 결재 도착이 감지되는 latency가 hidden 시 최대 60s로 늘어나지만 backgrounded
+// 탭이라 사용자 인지 영향 없음. visible 복귀 즉시 fresh fetch 트리거.
 export const ACTIVE_POLL_MS = 5000;
 export const IDLE_POLL_MS = 30_000;
+export const HIDDEN_POLL_MS = 60_000;
 export const IDLE_THRESHOLD_MS = 5 * 60 * 1000;
 
-export function computePollIntervalMs({ pendingCount, lastActivityAt, now }) {
+export function computePollIntervalMs({
+  pendingCount, lastActivityAt, now, hidden = false,
+}) {
+  if (hidden) return HIDDEN_POLL_MS;
   if (pendingCount > 0) return ACTIVE_POLL_MS;
   if (now - lastActivityAt < IDLE_THRESHOLD_MS) return ACTIVE_POLL_MS;
   return IDLE_POLL_MS;
@@ -52,6 +58,12 @@ export function useApprovals() {
   // schedule react to live data.
   const _pendingCountRef  = useRef(0);
   const _lastActivityRef  = useRef(Date.now());
+  // 125: visibility 상태도 ref로 추적. visibilitychange 이벤트가 ref만 갱신
+  // 하면 다음 polling tick의 schedule 결정에서 자연스럽게 반영. visible 복귀
+  // 시점에 _lastActivityRef도 갱신해 즉시 active로 복귀.
+  const _hiddenRef = useRef(
+    typeof document !== "undefined" && document.visibilityState === "hidden"
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -111,6 +123,23 @@ export function useApprovals() {
     }
   }, [history.length, historyHasMore, historyLoadingMore]);
 
+  // 125: visibilitychange 추적. 백그라운드 진입 시엔 ref만 갱신하고 진행
+  // 중인 timer는 그대로 — 그 timer가 fire되면 다음 cycle은 hidden 60s로
+  // 잡힌다. visible 복귀 시점엔 lastActivity를 갱신해 다음 cycle이 active.
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const handler = () => {
+      const wasHidden = _hiddenRef.current;
+      _hiddenRef.current = document.visibilityState === "hidden";
+      if (wasHidden && !_hiddenRef.current) {
+        // 백그라운드에서 돌아옴 — 활동으로 간주.
+        _lastActivityRef.current = Date.now();
+      }
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, []);
+
   // 100: adaptive scheduler — setTimeout 재귀라 매 fetch 직후 다음 간격을
   // 다시 계산한다. setInterval로는 동적 변경이 어렵고, hook 재마운트로 강제
   // 재시작하면 다른 effect deps까지 영향을 받는다.
@@ -123,6 +152,7 @@ export function useApprovals() {
         pendingCount:   _pendingCountRef.current,
         lastActivityAt: _lastActivityRef.current,
         now: Date.now(),
+        hidden: _hiddenRef.current,
       });
       timerId = setTimeout(async () => {
         if (cancelled) return;

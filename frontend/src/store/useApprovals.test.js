@@ -1,9 +1,10 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { backendApi } from "../services/backend/client";
 import {
   ACTIVE_POLL_MS,
+  HIDDEN_POLL_MS,
   IDLE_POLL_MS,
   IDLE_THRESHOLD_MS,
   computePollIntervalMs,
@@ -460,6 +461,27 @@ describe("computePollIntervalMs (100)", () => {
     expect(IDLE_POLL_MS).toBe(30_000);
     expect(IDLE_THRESHOLD_MS).toBe(5 * 60 * 1000);
   });
+
+  // 125: visibility-aware override.
+  it("returns HIDDEN_POLL_MS when hidden=true regardless of other inputs", () => {
+    expect(computePollIntervalMs({
+      pendingCount: 5, lastActivityAt: 0, now: 0, hidden: true,
+    })).toBe(HIDDEN_POLL_MS);
+    expect(computePollIntervalMs({
+      pendingCount: 0, lastActivityAt: 0, now: 0, hidden: true,
+    })).toBe(HIDDEN_POLL_MS);
+  });
+
+  it("HIDDEN_POLL_MS is the documented 60s default", () => {
+    expect(HIDDEN_POLL_MS).toBe(60_000);
+  });
+
+  it("hidden defaults to false (back-compat with pre-125 callers)", () => {
+    // No `hidden` arg — same behavior as 100.
+    expect(computePollIntervalMs({
+      pendingCount: 1, lastActivityAt: 0, now: 0,
+    })).toBe(ACTIVE_POLL_MS);
+  });
 });
 
 
@@ -583,6 +605,105 @@ describe("useApprovals adaptive polling (100)", () => {
     // 5s 후 — active tick fire.
     await act(async () => { vi.advanceTimersByTime(5_000); await _flush(); });
     expect(backendApi.listApprovals.mock.calls.length).toBe(callsAfterIdleFires + 1);
+
+    r.unmount();
+    vi.useRealTimers();
+  });
+});
+
+
+describe("useApprovals visibility-aware polling (125)", () => {
+  beforeEach(() => {
+    backendApi.listApprovals.mockReset();
+    backendApi.listApprovalHistory.mockReset();
+    backendApi.approveApproval.mockReset();
+    backendApi.rejectApproval.mockReset();
+    backendApi.cancelApproval.mockReset();
+    backendApi.listApprovalHistory.mockResolvedValue([]);
+  });
+
+  // jsdom의 document.visibilityState는 'visible'이 default — 쓰기 가능한
+  // property로 다시 정의해 테스트에서 토글한다.
+  const _setVisibility = (state) => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true, get: () => state,
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+
+  const _flush = async () => {
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+  };
+
+  const _mount = async () => {
+    let r;
+    await act(async () => {
+      r = renderHook(() => useApprovals());
+      await _flush();
+    });
+    return r;
+  };
+
+  afterEach(() => {
+    // 다음 테스트가 깨끗한 visible 상태에서 시작하도록 reset.
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true, get: () => "visible",
+    });
+  });
+
+  it("polls at the hidden 60s interval when the tab is backgrounded", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    vi.useFakeTimers();
+    const r = await _mount();
+
+    // 백그라운드 진입 — 진행 중인 active 5s timer는 그대로 fire되지만 그 이후
+    // schedule이 hidden 60s를 고른다.
+    await act(async () => {
+      _setVisibility("hidden");
+      await _flush();
+    });
+
+    // 첫 active timer fire (5s)
+    await act(async () => { await vi.advanceTimersByTimeAsync(ACTIVE_POLL_MS); });
+    const callsAfterActive = backendApi.listApprovals.mock.calls.length;
+
+    // 50s 더 — hidden 60s timer 미발사
+    await act(async () => { await vi.advanceTimersByTimeAsync(50_000); });
+    expect(backendApi.listApprovals.mock.calls.length).toBe(callsAfterActive);
+
+    // 11s 더 → t=61s, hidden timer fire
+    await act(async () => { await vi.advanceTimersByTimeAsync(11_000); });
+    expect(backendApi.listApprovals.mock.calls.length).toBeGreaterThan(callsAfterActive);
+
+    r.unmount();
+    vi.useRealTimers();
+  });
+
+  it("snaps back to active 5s when the tab becomes visible again", async () => {
+    backendApi.listApprovals.mockResolvedValue([]);
+    vi.useFakeTimers();
+    const r = await _mount();
+
+    // hidden으로 진입 + 한 hidden tick 발사
+    await act(async () => {
+      _setVisibility("hidden");
+      await _flush();
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(HIDDEN_POLL_MS + ACTIVE_POLL_MS); });
+
+    // 다시 visible — lastActivity 갱신, 다음 cycle은 active 5s
+    await act(async () => {
+      _setVisibility("visible");
+      await _flush();
+    });
+
+    // 진행 중 hidden timer가 fire되도록 60s 진행
+    await act(async () => { await vi.advanceTimersByTimeAsync(HIDDEN_POLL_MS); });
+    const callsBefore = backendApi.listApprovals.mock.calls.length;
+
+    // 그 다음은 active 5s 짧은 cycle
+    await act(async () => { await vi.advanceTimersByTimeAsync(ACTIVE_POLL_MS); });
+    expect(backendApi.listApprovals.mock.calls.length).toBe(callsBefore + 1);
 
     r.unmount();
     vi.useRealTimers();
