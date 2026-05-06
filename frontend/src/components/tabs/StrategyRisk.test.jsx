@@ -12,13 +12,30 @@ import {
 
 // Defaults from backend/app/risk/risk_manager.py::RiskPolicy() — kept in
 // lockstep with the frontend constants table.
+// 199: full 22-field surface — was 6.
 const _DEFAULT_POLICY = {
-  max_order_notional:  1_000_000,
-  max_daily_loss:        200_000,
-  max_positions:               5,
-  max_symbol_exposure: 1_500_000,
-  enable_live_trading:     false,
-  enable_ai_execution:     false,
+  max_order_notional:               1_000_000,
+  max_daily_loss:                     200_000,
+  max_positions:                            5,
+  max_symbol_exposure:              1_500_000,
+  enable_live_trading:                  false,
+  enable_ai_execution:                  false,
+  disable_ai_orders:                    false,
+  stale_price_max_age_seconds:             60,
+  min_ai_confidence:                        0,
+  enforce_ai_reasoning:                  true,
+  ai_rate_limit_window_seconds:            60,
+  ai_rate_limit_max_count:                  0,
+  max_position_size_pct:                  0.0,
+  symbol_whitelist:                        [],
+  enforce_market_hours:                 false,
+  global_rate_limit_window_seconds:        60,
+  global_rate_limit_max_count:              0,
+  max_total_exposure:                       0,
+  max_total_exposure_pct:                 0.0,
+  max_symbol_exposure_pct:                0.0,
+  auto_stop_consecutive_rejections:         0,
+  max_orders_per_day:                       0,
 };
 
 
@@ -37,10 +54,11 @@ function _wrap(policy, overrides = {}) {
 describe("<BackendPolicyCard>", () => {
   afterEach(cleanup);
 
-  it("renders all six policy fields when policy is loaded", () => {
-    const { getByText } = render(<BackendPolicyCard riskPolicy={_wrap(_DEFAULT_POLICY)} />);
+  it("renders every policy field when policy is loaded", () => {
+    const { getAllByText, getByText } = render(<BackendPolicyCard riskPolicy={_wrap(_DEFAULT_POLICY)} />);
     for (const f of RISK_POLICY_FIELDS) {
-      expect(getByText(f.label)).toBeTruthy();
+      // 199: a couple of labels could clash if we ever re-use them, so allow >=1 match.
+      expect(getAllByText(f.label).length).toBeGreaterThanOrEqual(1);
       expect(getByText(f.envVar)).toBeTruthy();
     }
   });
@@ -49,8 +67,8 @@ describe("<BackendPolicyCard>", () => {
     const { container } = render(<BackendPolicyCard riskPolicy={_wrap(_DEFAULT_POLICY)} />);
     const badges = Array.from(container.querySelectorAll("span"))
       .filter((el) => el.textContent === "DEFAULT" || el.textContent === "OVERRIDDEN");
-    // 6 fields × 1 badge each
-    expect(badges).toHaveLength(6);
+    // 199: 22 fields surfaced → 22 badges.
+    expect(badges).toHaveLength(RISK_POLICY_FIELDS.length);
     for (const b of badges) {
       expect(b.textContent).toBe("DEFAULT");
     }
@@ -68,14 +86,49 @@ describe("<BackendPolicyCard>", () => {
     expect(overridden).toHaveLength(2);
   });
 
-  it("renders KRW amounts with the won suffix and bool flags as ON/OFF", () => {
+  // 199: array fields (symbol_whitelist) need element-wise comparison, not ===.
+  it("treats an empty whitelist as DEFAULT (not OVERRIDDEN)", () => {
+    const { container } = render(<BackendPolicyCard riskPolicy={_wrap(_DEFAULT_POLICY, {
+      symbol_whitelist: [],
+    })} />);
+    const overridden = Array.from(container.querySelectorAll("span"))
+      .filter((el) => el.textContent === "OVERRIDDEN");
+    expect(overridden).toHaveLength(0);
+  });
+
+  it("treats a populated whitelist as OVERRIDDEN", () => {
+    const { container, getByText } = render(<BackendPolicyCard riskPolicy={_wrap(_DEFAULT_POLICY, {
+      symbol_whitelist: ["005930", "000660"],
+    })} />);
+    const overridden = Array.from(container.querySelectorAll("span"))
+      .filter((el) => el.textContent === "OVERRIDDEN");
+    expect(overridden).toHaveLength(1);
+    expect(getByText("005930, 000660")).toBeTruthy();
+  });
+
+  it("formats pct fields with 1-decimal % suffix", () => {
     const { getByText } = render(<BackendPolicyCard riskPolicy={_wrap(_DEFAULT_POLICY, {
+      max_position_size_pct: 0.05,  // 5.0%
+    })} />);
+    expect(getByText("5.0%")).toBeTruthy();
+  });
+
+  it("formats seconds fields with 's' suffix", () => {
+    const { getAllByText } = render(<BackendPolicyCard riskPolicy={_wrap(_DEFAULT_POLICY)} />);
+    // stale_price_max_age_seconds + 2 rate-limit window fields all default to 60.
+    expect(getAllByText("60s").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("renders KRW amounts with the won suffix and bool flags as ON/OFF", () => {
+    const { getByText, getAllByText } = render(<BackendPolicyCard riskPolicy={_wrap(_DEFAULT_POLICY, {
       enable_live_trading: true,
       enable_ai_execution: false,
     })} />);
     expect(getByText("1,000,000원")).toBeTruthy(); // max_order_notional
-    expect(getByText("ON")).toBeTruthy();           // enable_live_trading
-    expect(getByText("OFF")).toBeTruthy();          // enable_ai_execution
+    // enable_live_trading=true + enforce_ai_reasoning=true (default) → ≥2 ON.
+    expect(getAllByText("ON").length).toBeGreaterThanOrEqual(2);
+    // enable_ai_execution=false + disable_ai_orders=false + enforce_market_hours=false → ≥3 OFF.
+    expect(getAllByText("OFF").length).toBeGreaterThanOrEqual(3);
   });
 
   it("renders a loading state when policy is null and loading is true", () => {

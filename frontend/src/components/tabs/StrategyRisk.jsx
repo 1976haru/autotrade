@@ -7,10 +7,30 @@ import { DecisionDialog } from "../common/DecisionDialog";
 import { fmtKRW } from "../../utils/format";
 
 
+// 199: extended for the broader RiskPolicy surface — pct / seconds / list types
+// the original 6-field card never needed.
 function _formatPolicyValue(value, kind) {
+  if (value == null)    return "—";
   if (kind === "krw")   return `${fmtKRW(value)}원`;
   if (kind === "bool")  return value ? "ON" : "OFF";
+  if (kind === "pct")   return `${(Number(value) * 100).toFixed(1)}%`;
+  if (kind === "seconds") return `${value}s`;
+  if (kind === "list") {
+    if (!Array.isArray(value) || value.length === 0) return "(전체)";
+    return value.length <= 4 ? value.join(", ") : `${value.length}개`;
+  }
   return String(value);
+}
+
+
+// 199: Compare arrays element-wise so an empty list parses as DEFAULT, not
+// always-OVERRIDDEN (=== between two distinct empty arrays is false).
+export function isPolicyValueOverridden(value, defaultValue) {
+  if (Array.isArray(value) && Array.isArray(defaultValue)) {
+    return value.length !== defaultValue.length
+      || value.some((v, i) => v !== defaultValue[i]);
+  }
+  return value !== defaultValue;
 }
 
 
@@ -194,7 +214,7 @@ export function BackendPolicyCard({ riskPolicy, operatorName = "" }) {
                   label={f.label}
                   envVar={f.envVar}
                   value={_formatPolicyValue(v, f.kind)}
-                  isOverridden={v !== f.defaultValue}
+                  isOverridden={isPolicyValueOverridden(v, f.defaultValue)}
                 />
               );
             })}
