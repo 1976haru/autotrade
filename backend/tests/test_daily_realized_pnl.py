@@ -17,7 +17,6 @@ from app.risk.daily_pnl import (
     KST,
     compute_today_realized_pnl,
     today_kst,
-    today_utc,
 )
 
 

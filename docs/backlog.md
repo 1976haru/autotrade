@@ -30,8 +30,8 @@
 ### 7. LiveAiAgent (실 LLM)
 - 현재 `VirtualAiAgent`는 결정적 stub. Anthropic API를 호출해 신호를 만드는 `LiveAiAgent` 별도 PR 필요. 사용량 한도 + retry + 비용 추적도 함께.
 
-### 8. Strategy contract validation
-- `Strategy.entry/exit/invalidation`이 빈 문자열이면 register 거부 — 현재는 surface만 함. `concrete/__init__.py::STRATEGY_REGISTRY` 등록 시 검증.
+### ~~8. Strategy contract validation~~ ✅ 170에서 해결
+- 170 진행: `build_strategy()` 기본 enforce_contract=True. base.py default(빈 entry/exit/invalidation, "any" regime, 빈 risk_profile)면 `StrategyContractError`. 백테스트 / 검증 흐름은 `enforce_contract=False` 명시로 우회. `validate_strategy_contract(cls)` 헬퍼 별도 호출 가능. backend +8 테스트.
 
 ### 9. 봉 데이터 stale detection (broker가 아닌 데이터 피드)
 - 143은 broker quote timestamp 기반. yfinance / KIS bar cache의 `MarketBar.fetched_at`이 오래됐을 때도 별도 가드.

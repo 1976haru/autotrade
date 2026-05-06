@@ -137,3 +137,126 @@ def test_unannotated_strategy_falls_back_to_base_metadata_defaults():
         assert d["risk_profile"] == {}
     finally:
         STRATEGY_REGISTRY.pop("_bare")
+
+
+# ---------- 170: contract validation ----------
+
+def test_validate_strategy_contract_accepts_concrete():
+    """sma_crossover / orb_vwap / rsi_reversion 모두 violation 없음."""
+    from app.strategies.concrete import STRATEGY_REGISTRY, validate_strategy_contract
+    for name in ("sma_crossover", "orb_vwap", "rsi_reversion"):
+        cls = STRATEGY_REGISTRY[name]
+        assert validate_strategy_contract(cls) == [], \
+            f"{name} should pass contract validation"
+
+
+def test_validate_strategy_contract_rejects_bare_class():
+    """base.py default를 그대로 가진 _Bare는 모든 필드 violation."""
+    from app.backtest.types import Bar, Signal
+    from app.strategies.base import Strategy
+    from app.strategies.concrete import validate_strategy_contract
+
+    class _Bare(Strategy):
+        def __init__(self):
+            pass
+        def on_bar(self, bars: list[Bar]) -> Signal:
+            return Signal.HOLD
+
+    violations = validate_strategy_contract(_Bare)
+    # entry / exit / invalidation / required_regime / risk_profile 5건.
+    assert len(violations) == 5
+    assert any("entry" in v for v in violations)
+    assert any("exit" in v for v in violations)
+    assert any("invalidation" in v for v in violations)
+    assert any("required_regime" in v for v in violations)
+    assert any("risk_profile" in v for v in violations)
+
+
+def test_validate_rejects_any_regime():
+    """required_regime='any'는 'specific' 의도와 어긋남 — 거부."""
+    from app.backtest.types import Bar, Signal
+    from app.strategies.base import Strategy
+    from app.strategies.concrete import validate_strategy_contract
+
+    class _AnyRegime(Strategy):
+        entry        = "test entry"
+        exit         = "test exit"
+        invalidation = "test invalidation"
+        required_regime = "any"  # default — violation
+        risk_profile = {"position_size_pct": 5}
+        def __init__(self):
+            pass
+        def on_bar(self, bars: list[Bar]) -> Signal:
+            return Signal.HOLD
+
+    violations = validate_strategy_contract(_AnyRegime)
+    assert len(violations) == 1
+    assert "required_regime" in violations[0]
+
+
+def test_build_strategy_default_enforces_contract():
+    """build_strategy 기본은 enforce — base.py default class는 거부."""
+    from app.backtest.types import Bar, Signal
+    from app.strategies.base import Strategy
+    from app.strategies.concrete import (
+        STRATEGY_REGISTRY,
+        StrategyContractError,
+        build_strategy,
+    )
+
+    class _Bare(Strategy):
+        def __init__(self):
+            pass
+        def on_bar(self, bars: list[Bar]) -> Signal:
+            return Signal.HOLD
+
+    STRATEGY_REGISTRY["_bare"] = _Bare
+    try:
+        with pytest.raises(StrategyContractError) as exc:
+            build_strategy("_bare", None)
+        # violation 메시지에 contract 'incomplete' 포함.
+        assert "contract incomplete" in str(exc.value)
+    finally:
+        STRATEGY_REGISTRY.pop("_bare")
+
+
+def test_build_strategy_concrete_passes_contract():
+    """sma_crossover 같은 정상 strategy는 build 통과."""
+    from app.strategies.concrete import build_strategy
+    s = build_strategy("sma_crossover", None)
+    assert s is not None
+
+
+def test_build_strategy_can_bypass_contract_via_flag():
+    """enforce_contract=False — 백테스트/검증 흐름의 의도적 우회."""
+    from app.backtest.types import Bar, Signal
+    from app.strategies.base import Strategy
+    from app.strategies.concrete import STRATEGY_REGISTRY, build_strategy
+
+    class _Bare(Strategy):
+        def __init__(self):
+            pass
+        def on_bar(self, bars: list[Bar]) -> Signal:
+            return Signal.HOLD
+
+    STRATEGY_REGISTRY["_bare"] = _Bare
+    try:
+        s = build_strategy("_bare", None, enforce_contract=False)
+        assert s is not None
+    finally:
+        STRATEGY_REGISTRY.pop("_bare")
+
+
+def test_build_strategy_invalid_params_still_raise_value_error():
+    """contract 통과 후 params 오류는 그대로 ValueError — 회귀 가드."""
+    from app.strategies.concrete import build_strategy
+    with pytest.raises(ValueError) as exc:
+        # sma_crossover의 short=long는 invalid (short < long 강제).
+        build_strategy("sma_crossover", {"short": 20, "long": 5})
+    assert "invalid params" in str(exc.value)
+
+
+def test_build_strategy_unknown_name_raises():
+    from app.strategies.concrete import build_strategy
+    with pytest.raises(ValueError, match="unknown strategy"):
+        build_strategy("does_not_exist", None)
