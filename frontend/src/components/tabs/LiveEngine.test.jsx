@@ -1,7 +1,9 @@
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ConfigureCard, PositionBlock, StrategyContractPanel } from "./LiveEngine";
+import {
+  ConfigureCard, PositionBlock, RegimeIndicator, StrategyContractPanel,
+} from "./LiveEngine";
 
 
 const _REGISTRY = [
@@ -237,5 +239,58 @@ describe("<StrategyContractPanel> (131)", () => {
     expect(text).toContain("position_size_pct=5");
     expect(text).toContain("stop_loss_pct=2");
     expect(text).toContain("max_concurrent=1");
+  });
+});
+
+
+describe("<RegimeIndicator> (135)", () => {
+  afterEach(cleanup);
+
+  it("renders the regime label with the canonical color when matching", () => {
+    const { getByTestId } = render(
+      <RegimeIndicator status={{
+        current_regime: "trending_up", regime_matches_strategy: true,
+      }} />,
+    );
+    const ind = getByTestId("regime-indicator");
+    expect(ind.dataset.regime).toBe("trending_up");
+    expect(ind.dataset.matches).toBe("true");
+    expect(ind.textContent).toContain("상승 추세");
+  });
+
+  it("flags mismatch with amber background and warning text", () => {
+    const { getByTestId } = render(
+      <RegimeIndicator status={{
+        current_regime: "ranging", regime_matches_strategy: false,
+      }} />,
+    );
+    const ind = getByTestId("regime-indicator");
+    expect(ind.dataset.matches).toBe("false");
+    expect(getByTestId("regime-mismatch-warning")).toBeTruthy();
+  });
+
+  it("renders 'any' label when bars are insufficient", () => {
+    const { getByTestId } = render(
+      <RegimeIndicator status={{
+        current_regime: "any", regime_matches_strategy: true,
+      }} />,
+    );
+    expect(getByTestId("regime-indicator").textContent).toContain("분류 전");
+  });
+
+  it("falls back to raw label for unknown regimes (forward-compat)", () => {
+    const { getByTestId } = render(
+      <RegimeIndicator status={{
+        current_regime: "future_regime_xyz", regime_matches_strategy: true,
+      }} />,
+    );
+    expect(getByTestId("regime-indicator").textContent).toContain("future_regime_xyz");
+  });
+
+  it("treats missing status fields as 'any' / matching", () => {
+    const { getByTestId } = render(<RegimeIndicator status={{}} />);
+    const ind = getByTestId("regime-indicator");
+    expect(ind.dataset.regime).toBe("any");
+    expect(ind.dataset.matches).toBe("true");
   });
 });

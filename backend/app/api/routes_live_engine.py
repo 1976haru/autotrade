@@ -79,6 +79,9 @@ class StatusResponse(BaseModel):
     last_price:         int | None = None
     unrealized_pnl:     int | None = None
     unrealized_pnl_pct: float | None = None
+    # 135: market regime advisory.
+    current_regime:           str  = "any"
+    regime_matches_strategy:  bool = True
 
 
 class StrategyParamSchema(BaseModel):
@@ -166,6 +169,8 @@ def get_status() -> StatusResponse:
         last_price=eng.last_price,
         unrealized_pnl=eng.unrealized_pnl,
         unrealized_pnl_pct=eng.unrealized_pnl_pct,
+        current_regime=eng.current_regime,
+        regime_matches_strategy=eng.regime_matches_strategy,
     )
 
 

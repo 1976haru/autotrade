@@ -45,10 +45,51 @@ function StatusCard({ status, busy, onReset }) {
         <Field label="처리 봉 수" value={String(status?.bars_seen ?? 0)} />
         <Field label="포지션"    value={status?.holding ? "보유 중" : "없음"} />
       </div>
+      {configured && <RegimeIndicator status={status} />}
       {status?.holding && status?.entry_price != null && (
         <PositionBlock status={status} />
       )}
     </Card>
+  );
+}
+
+
+// 135: 현재 시장 체제 + 전략과의 호환성 표시. advisory만 — 신호를 차단하지
+// 않는다. 호환되면 청록(neutral OK), 불일치이면 amber(주의). regime이 'any'
+// 또는 봉 부족이면 회색.
+const _REGIME_LABEL = {
+  any:            { label: "분류 전",  color: "#475569" },
+  trending_up:    { label: "상승 추세", color: "#22c55e" },
+  trending_down:  { label: "하락 추세", color: "#ef4444" },
+  trending:       { label: "추세장",    color: "#22c55e" },
+  ranging:        { label: "횡보장",    color: "#7dd3fc" },
+  high_vol:       { label: "고변동",    color: "#fbbf24" },
+};
+
+export function RegimeIndicator({ status }) {
+  const regime  = status?.current_regime || "any";
+  const matches = status?.regime_matches_strategy !== false;
+  const display = _REGIME_LABEL[regime] || { label: regime, color: "#94a3b8" };
+  return (
+    <div data-testid="regime-indicator"
+         data-regime={regime}
+         data-matches={matches ? "true" : "false"}
+         style={{
+           marginTop: 8, padding: "6px 8px",
+           border: `1px solid ${matches ? "#0c2035" : "#fbbf2466"}`,
+           background: matches ? "#010a14" : "#fbbf2415",
+           borderRadius: 4, fontSize: 10,
+           display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+         }}>
+      <span style={{ color: "#475569" }}>현재 시장 체제:</span>
+      <span style={{ color: display.color, fontWeight: 700 }}>{display.label}</span>
+      {!matches && (
+        <span data-testid="regime-mismatch-warning"
+              style={{ color: "#fbbf24" }}>
+          ⚠ 전략 required_regime과 불일치 — 신호 신뢰도 주의
+        </span>
+      )}
+    </div>
   );
 }
 
