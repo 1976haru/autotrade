@@ -187,7 +187,11 @@ export function ApprovalAttemptAuditRow({ r }) {
 // key로 종류를 함께 묶어야 한다. created_at(또는 at) 역순으로 병합. limit이
 // 명시되면 그만큼 자르지만, 064 이후 EventTimelineView는 페이징 누적 결과를
 // 통째로 넘기므로 기본은 한도 없음 (Infinity).
-export function mergeEvents(orders, stops, attempts = [], limit = Infinity) {
+//
+// 088: options-object 시그니처 — 050에서 시작한 (orders, stops)가 079에서
+// (orders, stops, attempts, limit) 4-positional로 늘어나면서 호출부 가독성이
+// 떨어졌다. 향후 새 source 종류가 추가되더라도 호출부가 깨지지 않도록 정리.
+export function mergeEvents({ orders = [], stops = [], attempts = [], limit = Infinity } = {}) {
   const tagged = [
     ...orders.map((r) => ({ kind: "order", row: r, ts: new Date(r.created_at).getTime() })),
     ...stops.map((r)  => ({ kind: "stop",  row: r, ts: new Date(r.created_at).getTime() })),
@@ -313,7 +317,9 @@ export function EventTimelineView({ approvals = { pending: [], history: [] } }) 
     .filter((r) => !symbolNeedle || r.symbol.toLowerCase().includes(symbolNeedle))
     .filter((r) => _withinBucket(r.at));
   // 064: 페이징 누적 결과 전부 보여줌 (기본 Infinity).
-  const events = mergeEvents(filteredOrders, filteredStops, filteredAttempts);
+  const events = mergeEvents({
+    orders: filteredOrders, stops: filteredStops, attempts: filteredAttempts,
+  });
 
   const loading = orders.loading || stops.loading;
   // 두 소스 중 하나라도 실패하면 그 메시지를 보여줌. 둘 다 실패하면 주문 쪽
