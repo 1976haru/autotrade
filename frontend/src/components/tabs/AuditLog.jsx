@@ -930,6 +930,49 @@ export function summarizeBacktestByStrategy(items) {
 }
 
 
+// 120: 117 strategy table은 strategy별 평균을 보여주고, 098/106 footer 패턴은
+// 합계를 보여준다. 그 사이 빈 자리 — "단일 best/worst run"은 운영자가 가장
+// 자주 묻는 질문 중 하나라 한 줄 footer로 즉답. items가 1건 이하면 best와
+// worst가 같아 의미 없으므로 미렌더.
+export function summarizeBacktestExtremes(items) {
+  let best = null;
+  let worst = null;
+  for (const r of items || []) {
+    if (!r || r.total_pnl === undefined || r.total_pnl === null) continue;
+    if (best === null  || r.total_pnl > best.total_pnl)  best = r;
+    if (worst === null || r.total_pnl < worst.total_pnl) worst = r;
+  }
+  return { best, worst };
+}
+
+
+export function BacktestExtremesSummary({ items }) {
+  const { best, worst } = summarizeBacktestExtremes(items);
+  // 동일 행이면(=1건뿐이거나 모든 PnL이 같음) 비교 의미 없음.
+  if (!best || !worst || best.id === worst.id) return null;
+  const _row = (label, r, testId) => (
+    <span data-testid={testId}
+          style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+      <span style={{ color: "#475569" }}>{label}:</span>
+      <span style={{ color: "#7dd3fc", fontWeight: 700 }}>{r.strategy}</span>
+      <span style={{ color: "#475569" }}>#{r.id}</span>
+      <span style={{ color: pnlColor(r.total_pnl), fontWeight: 700 }}>
+        {r.total_pnl >= 0 ? "+" : ""}{fmtKRW(r.total_pnl)}
+      </span>
+    </span>
+  );
+  return (
+    <div data-testid="backtest-extremes-summary"
+         style={{ fontSize: 10, marginBottom: 8,
+                  display: "flex", gap: 16, flexWrap: "wrap",
+                  padding: "4px 0", borderBottom: "1px dashed #0c2035" }}>
+      {_row("최고", best,  "backtest-extremes-best")}
+      {_row("최저", worst, "backtest-extremes-worst")}
+    </div>
+  );
+}
+
+
 export function BacktestStrategyMiniTable({ items }) {
   const rows = summarizeBacktestByStrategy(items);
   // 0개거나 1개면 비교가 의미 없어 hide — 단일 strategy의 합계는 098 list
@@ -1062,6 +1105,7 @@ export function BacktestRunsView() {
         />
       </div>
 
+      <BacktestExtremesSummary items={filteredItems} />
       <BacktestStrategyMiniTable items={filteredItems} />
 
       {error && <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>}

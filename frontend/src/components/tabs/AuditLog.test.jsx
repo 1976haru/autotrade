@@ -14,6 +14,7 @@ import {
   BACKTEST_SORT_STORAGE_KEY,
   BacktestOutcomeFilterBar,
   BacktestRunsView,
+  BacktestExtremesSummary,
   BacktestSortBar,
   BacktestStrategyMiniTable,
   EmergencyStopAuditRow,
@@ -42,6 +43,7 @@ import {
   sortBacktestRuns,
   summarizeAiTokens,
   summarizeBacktestByStrategy,
+  summarizeBacktestExtremes,
 } from "./AuditLog";
 
 
@@ -2651,5 +2653,151 @@ describe("<BacktestRunsView> strategy table integration (117)", () => {
     expect(container.querySelector('[data-testid="backtest-strategy-table"]')).toBeTruthy();
     fireEvent.change(getByPlaceholderText(/전략/), { target: { value: "rsi" } });
     expect(container.querySelector('[data-testid="backtest-strategy-table"]')).toBeNull();
+  });
+});
+
+
+describe("summarizeBacktestExtremes (120)", () => {
+  function _r(id, total_pnl, strategy = "x") {
+    return { id, strategy, total_pnl };
+  }
+
+  it("returns nulls for empty / nullable input", () => {
+    expect(summarizeBacktestExtremes([])).toEqual({ best: null, worst: null });
+    expect(summarizeBacktestExtremes(null)).toEqual({ best: null, worst: null });
+    expect(summarizeBacktestExtremes(undefined)).toEqual({ best: null, worst: null });
+  });
+
+  it("identifies the highest- and lowest-pnl rows", () => {
+    const items = [_r(1, 100), _r(2, -200), _r(3, 50), _r(4, 800)];
+    const { best, worst } = summarizeBacktestExtremes(items);
+    expect(best.id).toBe(4);
+    expect(best.total_pnl).toBe(800);
+    expect(worst.id).toBe(2);
+    expect(worst.total_pnl).toBe(-200);
+  });
+
+  it("returns the same row for best and worst when only one entry has a pnl", () => {
+    const items = [_r(7, 42)];
+    const { best, worst } = summarizeBacktestExtremes(items);
+    expect(best.id).toBe(7);
+    expect(worst.id).toBe(7);
+  });
+
+  it("skips rows missing total_pnl (defensive against partial fixtures)", () => {
+    const items = [
+      { id: 1, strategy: "x", total_pnl: null },
+      _r(2, 100),
+      { id: 3, strategy: "x" /* total_pnl undefined */ },
+    ];
+    const { best, worst } = summarizeBacktestExtremes(items);
+    expect(best.id).toBe(2);
+    expect(worst.id).toBe(2);
+  });
+});
+
+
+describe("<BacktestExtremesSummary> (120)", () => {
+  afterEach(cleanup);
+
+  function _r(id, total_pnl, strategy = "sma") {
+    return { id, strategy, total_pnl };
+  }
+
+  it("renders nothing for empty input", () => {
+    const { container } = render(<BacktestExtremesSummary items={[]} />);
+    expect(container.querySelector('[data-testid="backtest-extremes-summary"]')).toBeNull();
+  });
+
+  it("renders nothing when only one row exists (best === worst)", () => {
+    const { container } = render(<BacktestExtremesSummary items={[_r(1, 100)]} />);
+    expect(container.querySelector('[data-testid="backtest-extremes-summary"]')).toBeNull();
+  });
+
+  it("renders nothing when all rows have the same pnl (best.id === worst.id)", () => {
+    // 같은 pnl이면 첫 row가 best, worst 둘 다라 best.id === worst.id
+    const { container } = render(
+      <BacktestExtremesSummary items={[_r(1, 100), _r(2, 100)]} />,
+    );
+    expect(container.querySelector('[data-testid="backtest-extremes-summary"]')).toBeNull();
+  });
+
+  it("renders best + worst with strategy/id/pnl when 2+ distinct rows", () => {
+    const items = [
+      _r(1,  100, "sma"),
+      _r(2, -200, "rsi"),
+      _r(3,  500, "sma_breakout"),
+    ];
+    const { getByTestId } = render(<BacktestExtremesSummary items={items} />);
+    const best  = getByTestId("backtest-extremes-best");
+    const worst = getByTestId("backtest-extremes-worst");
+    expect(best.textContent).toContain("최고");
+    expect(best.textContent).toContain("sma_breakout");
+    expect(best.textContent).toContain("#3");
+    expect(best.textContent).toContain("+500");
+    expect(worst.textContent).toContain("최저");
+    expect(worst.textContent).toContain("rsi");
+    expect(worst.textContent).toContain("#2");
+    expect(worst.textContent).toContain("-200");
+  });
+});
+
+
+describe("<BacktestRunsView> extremes integration (120)", () => {
+  beforeEach(() => { _resetBacktestHook(); localStorage.clear(); });
+  afterEach(() => { cleanup(); localStorage.clear(); });
+
+  function _bt(overrides = {}) {
+    return {
+      id: 1, strategy: "sma_crossover",
+      params: {}, initial_cash: 10_000_000, quantity: 10, bars_processed: 100,
+      final_cash: 10_500_000, total_pnl: 0,
+      win_count: 5, loss_count: 5, max_drawdown: 0,
+      data_source: "bars", data_symbol: "005930",
+      created_at: "2026-05-06T12:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  it("hides the extremes footer when the list is empty", () => {
+    _resetBacktestHook({ items: [] });
+    const { container } = render(<BacktestRunsView />);
+    expect(container.querySelector('[data-testid="backtest-extremes-summary"]')).toBeNull();
+  });
+
+  it("hides the extremes footer when only one row passes the filters", () => {
+    _resetBacktestHook({
+      items: [_bt({ id: 1, strategy: "sma_crossover", total_pnl: 100 })],
+    });
+    const { container } = render(<BacktestRunsView />);
+    expect(container.querySelector('[data-testid="backtest-extremes-summary"]')).toBeNull();
+  });
+
+  it("shows the extremes footer with 2+ visible rows", () => {
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "winner", total_pnl: 1000 }),
+        _bt({ id: 2, strategy: "loser",  total_pnl: -500 }),
+      ],
+    });
+    const { getByTestId } = render(<BacktestRunsView />);
+    const footer = getByTestId("backtest-extremes-summary");
+    expect(footer.textContent).toContain("winner");
+    expect(footer.textContent).toContain("+1,000");
+    expect(footer.textContent).toContain("loser");
+    expect(footer.textContent).toContain("-500");
+  });
+
+  it("recomputes when filters narrow rows to a single one (footer hides)", () => {
+    _resetBacktestHook({
+      items: [
+        _bt({ id: 1, strategy: "winner", total_pnl: 1000 }),
+        _bt({ id: 2, strategy: "loser",  total_pnl: -500 }),
+      ],
+    });
+    const { container, getByPlaceholderText } = render(<BacktestRunsView />);
+    expect(container.querySelector('[data-testid="backtest-extremes-summary"]')).toBeTruthy();
+    fireEvent.change(getByPlaceholderText(/전략/), { target: { value: "winner" } });
+    expect(container.querySelector('[data-testid="backtest-extremes-summary"]')).toBeNull();
   });
 });
