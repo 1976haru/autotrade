@@ -7,6 +7,7 @@ from app.brokers.base import BrokerAdapter, OrderRequest, OrderResult, OrderSide
 from app.core.modes import OperationMode
 from app.db.models import OrderAuditLog, PendingApproval
 from app.execution.executor import OrderExecutor
+from app.risk.daily_pnl import compute_today_realized_pnl
 from app.risk.risk_manager import RiskDecision, RiskManager
 
 
@@ -159,12 +160,28 @@ class PermissionGate:
         quote     = await broker.get_price(order.symbol)
         balance   = await broker.get_balance()
         positions = await broker.get_positions()
+
+        # 146: re-eval은 route_order와 동일한 가드를 적용해야 한다 — 그렇지 않으면
+        # submit 시점엔 차단됐을 주문이 approve 시점에 빠져나간다.
+        # (a) 143 stale price: Quote.timestamp 파싱 후 RiskManager에 carry. 파싱
+        #     실패는 안전 측 None (검사 우회).
+        # (b) 145 daily realized PnL: max_daily_loss를 강제하려면 audit log 기반
+        #     으로 카운터를 채워야 한다 — submit 후 다른 거래로 손실이 누적된
+        #     상황에서 approve 시점에는 한도 초과일 수 있다.
+        quote_ts = None
+        try:
+            quote_ts = datetime.fromisoformat(quote.timestamp)
+        except (TypeError, ValueError):
+            quote_ts = None
+        risk.daily_realized_pnl = compute_today_realized_pnl(self.db)
+
         re_eval   = risk.evaluate_order(
             order=order,
             mode=OperationMode(approval.mode),
             balance=balance,
             positions=positions,
             latest_price=quote.price,
+            latest_price_timestamp=quote_ts,
         )
         if _approve_re_eval_blocks_execution(re_eval):
             # 076: persist the failed attempt on the row before raising.
