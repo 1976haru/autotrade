@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { TopBar }       from "./components/layout/TopBar";
 import { BottomNav }    from "./components/layout/BottomNav";
+import { TopNav }       from "./components/layout/TopNav";
 import { Dashboard }    from "./components/tabs/Dashboard";
 import { StrategyRisk } from "./components/tabs/StrategyRisk";
 import { BotControl }   from "./components/tabs/BotControl";
@@ -77,6 +78,7 @@ function AppShell() {
   return (
     <div className="app-shell" style={{ minHeight:"100vh", background:"#010a14", color:"#c9d6e3", fontFamily:"'JetBrains Mono','Courier New',monospace", display:"flex", flexDirection:"column" }}>
       <TopBar brokerId={settings.brokerId} tradeMode={settings.tradeMode} connected={settings.connected} />
+      <TopNav active={tab} onChange={setTab} badges={{ approve: approvals.pending.length }} />
       <BackendOfflineBanner />
       <div style={{ flex:1, overflowY:"auto", padding:"14px 14px 90px", scrollbarWidth:"thin" }}>
         <ErrorBoundary label="현재 탭">

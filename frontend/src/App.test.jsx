@@ -165,9 +165,9 @@ describe("<App> smoke", () => {
     await waitFor(() => {
       expect(view.getByTestId("status-pin-bot")).toBeTruthy();
     });
-    // BottomNav 의 정확한 라벨로 한정 — Dashboard 텍스트에 "전략"이 들어가는
-    // 다른 카드(예: 활성 전략 리스트)와 충돌하지 않도록 정확 매칭.
-    const btn = view.getByText("전략·리스크");
+    // 231 (UI-003): TopNav + BottomNav가 같은 라벨을 둘 다 렌더하므로 단일
+    // testid로 클릭 — TopNav 항목이 데스크톱 기본 가시 nav.
+    const btn = view.getByTestId("top-nav-strat");
     await act(async () => { fireEvent.click(btn); });
     // 전환 후에도 BottomNav는 살아있고 ErrorBoundary fallback이 보이지 않아야.
     expect(view.queryByTestId("error-boundary")).toBeNull();
@@ -194,27 +194,28 @@ describe("<App> smoke", () => {
   // 시그니처 텍스트로 도착을 검증한다 (탭마다 unique한 SectionLabel 또는
   // testid). Pages demo 사용자가 "어떤 탭에서 흰 화면이 나는가"를 회귀로 잠금.
   const _DEMO_TARGET_TABS = [
-    { label: "대시보드",     signature: { kind: "testid", value: "status-pin-bot" } },
-    { label: "전략·리스크",  signature: { kind: "text",   value: "백엔드 리스크 정책" } },
-    { label: "승인",         signature: { kind: "text",   value: /승인/ } },
-    { label: "로그",         signature: { kind: "text",   value: /이벤트 타임라인/ } },
-    { label: "AI시그널",     signature: { kind: "text",   value: /AI 합류 신호 분석/ } },
+    { tabId: "dash",     signature: { kind: "testid", value: "status-pin-bot" } },
+    { tabId: "strat",    signature: { kind: "text",   value: "백엔드 리스크 정책" } },
+    { tabId: "approve",  signature: { kind: "text",   value: /승인/ } },
+    { tabId: "audit",    signature: { kind: "text",   value: /이벤트 타임라인/ } },
+    { tabId: "signal",   signature: { kind: "text",   value: /AI 합류 신호 분석/ } },
     // Engine 탭 안에 Virtual Orders + Virtual Positions 카드가 함께 마운트된다.
-    { label: "엔진",         signature: { kind: "text",   value: /엔진 상태/ } },
-    { label: "선물",         signature: { kind: "text",   value: /다층 안전 가드/ } },
+    { tabId: "engine",   signature: { kind: "text",   value: /엔진 상태/ } },
+    { tabId: "futures",  signature: { kind: "text",   value: /다층 안전 가드/ } },
   ];
 
   it.each(_DEMO_TARGET_TABS)(
-    "renders %s tab without ErrorBoundary fallback in empty/demo data",
-    async ({ label, signature }) => {
+    "renders $tabId tab without ErrorBoundary fallback in empty/demo data",
+    async ({ tabId, signature }) => {
       _activeApi = _emptyApi;
       let view;
       await act(async () => { view = render(<App />); });
       await waitFor(() => {
         expect(view.getByTestId("status-pin-bot")).toBeTruthy();
       });
-      if (label !== "대시보드") {
-        const btn = view.getByText(label);
+      if (tabId !== "dash") {
+        // 231: TopNav가 데스크톱 기본이라 testid로 단일 매칭.
+        const btn = view.getByTestId(`top-nav-${tabId}`);
         await act(async () => { fireEvent.click(btn); });
       }
       await waitFor(() => {

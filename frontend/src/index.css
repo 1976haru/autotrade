@@ -405,3 +405,74 @@ code {
   font-size: var(--fs-xs);
   color: var(--c-text-3);
 }
+
+
+/* 231 (UI-003): Responsive nav — desktop top nav + mobile bottom nav.
+ * 두 nav 모두 같은 TABS / onChange contract. 모바일은 BottomNav가, 데스크톱
+ * 은 TopNav가 활성화되도록 가시성을 미디어쿼리로 분리한다. */
+.ui-topnav {
+  display: none;            /* 모바일에서는 숨김 */
+  background: var(--c-surface);
+  border-bottom: 1px solid var(--c-border);
+  padding: var(--s-2) var(--s-3);
+  gap: var(--s-1);
+  flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  z-index: 80;
+}
+.ui-topnav__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  color: var(--c-text-3);
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
+  position: relative;
+  transition: all 0.15s;
+}
+.ui-topnav__item:hover {
+  color: var(--c-text);
+  background: var(--c-surface-2);
+}
+.ui-topnav__item.is-active {
+  color: var(--c-info);
+  background: rgba(125, 211, 252, 0.10);
+  border-color: rgba(125, 211, 252, 0.4);
+}
+.ui-topnav__label {
+  font-size: var(--fs-sm);
+}
+.ui-topnav__badge {
+  display: inline-flex;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  background: var(--c-danger);
+  color: #fff;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  line-height: 1;
+}
+
+/* mobile-only utility — BottomNav를 ≥768px에서 숨기고 TopNav를 보이게 */
+@media (min-width: 768px) {
+  .ui-topnav { display: flex; }
+  .ui-bottomnav-mobile-only { display: none !important; }
+}
+
+/* 모바일 BottomNav 가독성 개선 — 아이콘/라벨 크기 상향. 기존 9px 라벨이 너무
+ * 작다는 피드백 반영. */
+@media (max-width: 767px) {
+  .app-bottomnav button > div > span:first-child { font-size: 22px !important; }
+  .app-bottomnav button > span:last-child        { font-size: 11px !important; }
+}

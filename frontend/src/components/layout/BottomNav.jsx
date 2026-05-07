@@ -23,7 +23,9 @@ export function BottomNav({ active, onChange, badges = {} }) {
   return (
     // 222: max-width를 .app-bottomnav 클래스로 옮겨 미디어쿼리에서 반응형 처리.
     // 모바일 520px / PC 1280px. 나머지 위치/색은 인라인 유지.
-    <div className="app-bottomnav" style={{
+    // 231 (UI-003): 데스크톱(≥768px)에서는 TopNav가 활성화되며 BottomNav는
+    // ui-bottomnav-mobile-only 클래스로 숨겨진다.
+    <div className="app-bottomnav ui-bottomnav-mobile-only" style={{
       position:   "fixed",
       bottom:     0,
       left:       "50%",
