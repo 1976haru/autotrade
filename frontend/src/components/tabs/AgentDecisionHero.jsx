@@ -124,25 +124,40 @@ export function AgentDecisionHero() {
         </StatusBadge>
       </div>
 
-      {/* Confidence + symbol */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--s-2)",
-                    alignItems: "baseline", marginTop: "var(--s-2)" }}>
+      {/* Symbol + confidence with visual bar */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--s-3)",
+                    alignItems: "center", marginTop: "var(--s-3)" }}>
         {chief.symbol && (
-          <span style={{ fontSize: "var(--fs-lg)", fontWeight: "var(--fw-bold)",
-                          color: "var(--c-text)", fontFamily: "monospace" }}
+          <span style={{ fontSize: "var(--fs-2xl)", fontWeight: "var(--fw-bold)",
+                          color: "var(--c-text)", fontFamily: "monospace",
+                          letterSpacing: "0.02em" }}
                 data-testid="agent-hero-symbol">
             {chief.symbol}
           </span>
         )}
         {conf !== null && (
-          <span style={{ fontSize: "var(--fs-md)", color: "var(--c-text-2)" }}
-                data-testid="agent-hero-confidence">
-            confidence <b style={{ color: "var(--c-text)" }}>{conf}</b>
-          </span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 160 }}
+               data-testid="agent-hero-confidence">
+            <div style={{ display: "flex", justifyContent: "space-between",
+                          fontSize: "var(--fs-xs)", color: "var(--c-text-3)",
+                          textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              <span>confidence</span>
+              <span style={{ color: "var(--c-text)", fontWeight: "var(--fw-bold)" }}>{conf}</span>
+            </div>
+            <div style={{ height: 8, background: "var(--c-surface-3)",
+                           borderRadius: 999, overflow: "hidden" }}>
+              <div style={{
+                width: `${Math.max(0, Math.min(100, conf))}%`,
+                height: "100%",
+                background: "linear-gradient(90deg, #818cf8, #a78bfa)",
+                transition: "width 0.3s",
+              }} />
+            </div>
+          </div>
         )}
       </div>
 
-      {/* Reasons (top 3) */}
+      {/* Reasons (top 3) — chip 스타일로 한눈에 */}
       {reasons.length > 0 && (
         <ul data-testid="agent-hero-reasons"
             style={{
@@ -152,9 +167,14 @@ export function AgentDecisionHero() {
           {reasons.map((r, idx) => (
             <li key={idx} style={{
               fontSize: "var(--fs-sm)", color: "var(--c-text-2)",
-              padding: "4px 8px", background: "var(--c-surface-2)",
-              borderRadius: "var(--r-sm)", lineHeight: "var(--lh-base)",
+              padding: "8px 12px",
+              background: "var(--c-surface-2)",
+              border: "1px solid var(--c-border)",
+              borderRadius: "var(--r-md)",
+              lineHeight: "var(--lh-base)",
+              display: "flex", alignItems: "center", gap: 8,
             }}>
+              <span style={{ color: "var(--c-accent)", fontWeight: "var(--fw-bold)" }}>·</span>
               {String(r)}
             </li>
           ))}

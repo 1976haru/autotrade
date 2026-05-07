@@ -82,22 +82,33 @@ export function OperatingLoopCard() {
   const stages = Array.isArray(status?.stages) ? status.stages : [];
 
   return (
-    <Card data-testid="operating-loop-card" accentColor={`${readinessColor}33`}>
-      <SectionLabel>🧭 오늘 Agent 운용 흐름</SectionLabel>
+    // 242 (Light-005): light surface + 토큰 색.
+    <div data-testid="operating-loop-card" style={{
+      background: "var(--c-surface)",
+      border: "1px solid var(--c-border)",
+      borderRadius: "var(--r-xl)",
+      padding: "var(--s-5)",
+      boxShadow: "var(--sh-1)",
+    }}>
+      <div style={{
+        fontSize: "var(--fs-md)", fontWeight: "var(--fw-bold)",
+        color: "var(--c-text)", marginBottom: 4,
+      }}>🧭 오늘 Agent 운용 흐름</div>
 
-      <div style={{ fontSize: 9, color: "#334155", marginBottom: 8, lineHeight: 1.5 }}>
-        Agent가 하루를 5단계로 나눠 자체 운용. 모든 결정은 RiskManager + PermissionGate
-        + Audit Log를 통과합니다 (가상 모드).
+      <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)",
+                     marginBottom: 12, lineHeight: "var(--lh-loose)" }}>
+        Agent가 하루를 5단계로 나눠 자체 운용. 모든 결정은 RiskManager +
+        PermissionGate + Audit Log를 통과합니다 (가상 모드).
       </div>
 
       {/* 현재 단계 */}
-      <div data-testid="operating-loop-stage" style={{
-        background: "#0c2035", padding: 8, borderRadius: 4, marginBottom: 8,
-      }}>
-        <div style={{ fontSize: 9, color: "#475569" }}>현재 단계</div>
-        <div style={{ fontSize: 14, fontWeight: 700, color: "#7dd3fc" }}>{stageLabel}</div>
+      <div data-testid="operating-loop-stage" style={_subStyle()}>
+        <div style={_subLabel()}>현재 단계</div>
+        <div style={{ fontSize: "var(--fs-lg)", fontWeight: "var(--fw-bold)",
+                       color: "var(--c-info)", marginTop: 4 }}>{stageLabel}</div>
         {stages.length > 0 && (
-          <div style={{ fontSize: 9, color: "#334155", marginTop: 3 }}>
+          <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)",
+                         marginTop: 6, lineHeight: "var(--lh-base)" }}>
             {stages.map((s) => STAGE_LABEL[s] ?? s).join(" → ")}
           </div>
         )}
@@ -105,19 +116,19 @@ export function OperatingLoopCard() {
 
       {/* readiness */}
       {brief && (
-        <div data-testid="operating-loop-brief" style={{
-          background: "#0c2035", padding: 8, borderRadius: 4, marginBottom: 8,
-        }}>
+        <div data-testid="operating-loop-brief" style={_subStyle()}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: readinessColor }}>
+            <div style={{ fontSize: "var(--fs-md)", fontWeight: "var(--fw-bold)",
+                           color: readinessColor }}>
               {brief.readiness_label} · 점수 {brief.readiness_score}
             </div>
-            <div style={{ fontSize: 9, color: "#475569" }}>
+            <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)" }}>
               위험도 {brief.market_risk_level}
             </div>
           </div>
           {Array.isArray(brief.operator_summary) && brief.operator_summary.map((line, idx) => (
-            <div key={idx} style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
+            <div key={idx} style={{ fontSize: "var(--fs-sm)",
+                                     color: "var(--c-text-2)", marginTop: 4 }}>
               {line}
             </div>
           ))}
@@ -126,32 +137,48 @@ export function OperatingLoopCard() {
 
       {/* intraday */}
       {intra && (
-        <div data-testid="operating-loop-intraday" style={{
-          background: "#0c2035", padding: 8, borderRadius: 4, marginBottom: 8,
-        }}>
-          <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 3 }}>장중 누적</div>
-          <div style={{ display: "flex", gap: 10, fontSize: 10 }}>
-            <span>후보 <b style={{ color: "#7dd3fc" }}>{intra.candidates_evaluated}</b></span>
-            <span>가상 주문 <b style={{ color: "#22c55e" }}>{intra.virtual_orders_made}</b></span>
-            <span>거절 <b style={{ color: "#ef4444" }}>{intra.rejected_signals}</b></span>
+        <div data-testid="operating-loop-intraday" style={_subStyle()}>
+          <div style={_subLabel()}>장중 누적</div>
+          <div style={{ display: "flex", gap: 12, fontSize: "var(--fs-sm)",
+                          marginTop: 4, color: "var(--c-text-2)" }}>
+            <span>후보 <b style={{ color: "var(--c-info)" }}>{intra.candidates_evaluated}</b></span>
+            <span>가상 주문 <b style={{ color: "var(--c-success)" }}>{intra.virtual_orders_made}</b></span>
+            <span>거절 <b style={{ color: "var(--c-danger)" }}>{intra.rejected_signals}</b></span>
           </div>
         </div>
       )}
 
       {/* post-market score */}
       {review && (
-        <div data-testid="operating-loop-review" style={{
-          background: "#0c2035", padding: 8, borderRadius: 4,
-        }}>
-          <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 3 }}>장 마감 복기</div>
-          <div style={{ fontSize: 10 }}>
-            총 결정 <b style={{ color: "#7dd3fc" }}>{review.total_decisions}</b>
+        <div data-testid="operating-loop-review" style={{ ..._subStyle(), marginBottom: 0 }}>
+          <div style={_subLabel()}>장 마감 복기</div>
+          <div style={{ fontSize: "var(--fs-sm)", marginTop: 4,
+                          color: "var(--c-text-2)" }}>
+            총 결정 <b style={{ color: "var(--c-info)" }}>{review.total_decisions}</b>
             {" · "}점수 변화 <b style={{
-              color: review.agent_score_delta >= 0 ? "#22c55e" : "#ef4444",
+              color: review.agent_score_delta >= 0 ? "var(--c-success)" : "var(--c-danger)",
             }}>{review.agent_score_delta >= 0 ? "+" : ""}{review.agent_score_delta}</b>
           </div>
         </div>
       )}
-    </Card>
+    </div>
   );
+}
+
+
+function _subStyle() {
+  return {
+    background: "var(--c-surface-2)",
+    border: "1px solid var(--c-border)",
+    padding: "12px 14px",
+    borderRadius: "var(--r-md)",
+    marginBottom: 8,
+  };
+}
+function _subLabel() {
+  return {
+    fontSize: "var(--fs-xs)", color: "var(--c-text-3)",
+    textTransform: "uppercase", letterSpacing: "0.06em",
+    fontWeight: "var(--fw-bold)",
+  };
 }

@@ -47,17 +47,28 @@ export function MarketRegimeBadge() {
   const perm     = regime.trade_permission ?? "—";
 
   return (
+    // 242 (Light-005): light surface + 큰 글자.
     <div data-testid="market-regime-badge" style={{
-      display: "flex", alignItems: "center", gap: 8, padding: "6px 10px",
-      background: "#020e1c", border: `1px solid ${palette.color}55`,
-      borderRadius: 6, fontSize: 11,
+      display: "flex", alignItems: "center", gap: 12,
+      padding: "10px 14px",
+      background: "var(--c-surface)",
+      border: `1px solid ${palette.color}55`,
+      borderRadius: "var(--r-lg)",
+      fontSize: "var(--fs-sm)",
+      boxShadow: "var(--sh-1)",
     }}>
       <span data-testid="market-regime-label"
-            style={{ color: palette.color, fontWeight: 700 }}>
+            style={{
+              color: palette.color, fontWeight: "var(--fw-bold)",
+              fontSize: "var(--fs-md)",
+            }}>
         장세: {palette.label}
       </span>
-      <span style={{ color: "#475569", fontSize: 9 }}>
-        ({perm} · 리스크 ×{riskMult.toFixed(1)})
+      <span style={{
+        color: "var(--c-text-3)", fontSize: "var(--fs-xs)",
+        marginLeft: "auto",
+      }}>
+        {perm} · 리스크 ×{riskMult.toFixed(1)}
       </span>
     </div>
   );
