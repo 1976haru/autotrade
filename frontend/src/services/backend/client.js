@@ -152,4 +152,27 @@ export const backendApi = {
   futuresOrdersSummary: () => backendFetch("/api/futures/orders/summary"),
   // 212: Position vs broker reconciliation status.
   reconciliationStatus: () => backendFetch("/api/reconciliation/status"),
+  // 223: Agent Operating Loop — 모든 라우트가 deterministic stub이라 AI Key
+  // 미설정 환경에서도 mock output 반환.
+  operatingLoopStatus: () => backendFetch("/api/agents/operating-loop/status"),
+  preMarketBrief: (req) => backendFetch("/api/agents/pre-market-brief", {
+    method: "POST",
+    body: JSON.stringify(req || {}),
+  }),
+  marketOpenWatch: (req) => backendFetch("/api/agents/market-open-watch", {
+    method: "POST",
+    body: JSON.stringify(req || {}),
+  }),
+  intradaySummary: (req) => backendFetch("/api/agents/intraday-summary", {
+    method: "POST",
+    body: JSON.stringify(req || {}),
+  }),
+  positionMonitor: (req) => backendFetch("/api/agents/position-monitor", {
+    method: "POST",
+    body: JSON.stringify(req || {}),
+  }),
+  postMarketReview: (req) => backendFetch("/api/agents/post-market-review", {
+    method: "POST",
+    body: JSON.stringify(req || {}),
+  }),
 };

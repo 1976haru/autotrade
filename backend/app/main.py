@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes_agents import router as agents_router
 from app.api.routes_ai import router as ai_router
 from app.api.routes_approvals import router as approvals_router
 from app.api.routes_audit import router as audit_router
@@ -67,6 +68,7 @@ app.include_router(live_engine_router, prefix="/api")
 app.include_router(virtual_router, prefix="/api")
 app.include_router(futures_router, prefix="/api")
 app.include_router(reconciliation_router, prefix="/api")
+app.include_router(agents_router, prefix="/api")
 
 
 @app.get("/")

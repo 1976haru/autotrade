@@ -7,6 +7,7 @@ import { fmtKRW } from "../../utils/format";
 import { AgentCouncilCard } from "./AgentCouncilCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
+import { OperatingLoopCard } from "./OperatingLoopCard";
 
 export function AISignal({ activeStratIds }) {
   const [ticker,  setTicker]  = useState("");
@@ -39,6 +40,7 @@ export function AISignal({ activeStratIds }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <OperatingLoopCard />
       <AgentCouncilCard />
       <AgentDecisionSummaryCard />
       <AgentStatsCard />
