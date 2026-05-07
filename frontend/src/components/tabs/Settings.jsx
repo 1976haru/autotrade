@@ -1,6 +1,7 @@
 import { BROKERS } from "../../config/brokers";
 import { Card, SectionLabel, Btn, Inp } from "../common";
 import { PageHeader } from "../common/primitives";
+import { friendlyErrorMessage } from "../../utils/errorMessage";
 import { useBackendStatus } from "../../store/useBackendStatus";
 
 
@@ -89,7 +90,11 @@ export function SafetyFlagsCard({ status, loading, error }) {
     return (
       <Card>
         <SectionLabel>🛡 안전 플래그</SectionLabel>
-        <div style={{ fontSize: 11, color: "#f87171" }}>조회 실패: {error}</div>
+        <div style={{
+          fontSize: "var(--fs-sm)", color: "var(--c-danger)",
+          padding: "10px 14px", background: "#fef2f2",
+          border: "1px solid #fecaca", borderRadius: "var(--r-md)",
+        }}>{friendlyErrorMessage(error) || "안전 플래그 정보를 불러올 수 없어요."}</div>
       </Card>
     );
   }

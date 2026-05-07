@@ -55,7 +55,9 @@ describe("<StatusPin>", () => {
       />,
     );
     const pin = getByTestId("pin-x");
-    expect(pin.style.color).toBe("rgb(148, 163, 184)"); // #94a3b8
+    // 245 (Light-008): neutral state는 토큰 var(--c-text) (slate-900). jsdom
+    // 은 CSS var를 resolve하지 않으므로 literal 문자열로 검증.
+    expect(pin.style.color).toBe("var(--c-text)");
   });
 
   it("switches to accent color when alarm is true", () => {
@@ -118,7 +120,7 @@ describe("<StatusSummaryCard>", () => {
     );
     pin = getByTestId("status-pin-emergency-stop");
     expect(pin.textContent).toContain("OFF");
-    expect(pin.style.color).toBe("rgb(148, 163, 184)");
+    expect(pin.style.color).toBe("var(--c-text)");
   });
 
   it("pending-approvals pin shows count in amber when none are stale", () => {
@@ -156,7 +158,7 @@ describe("<StatusSummaryCard>", () => {
     );
     const pin = getByTestId("status-pin-pending-approvals");
     expect(pin.textContent).toContain("없음");
-    expect(pin.style.color).toBe("rgb(148, 163, 184)");
+    expect(pin.style.color).toBe("var(--c-text)");
   });
 
   it("bot pin shows RUNNING in green when running", () => {
@@ -211,7 +213,7 @@ describe("<StatusSummaryCard>", () => {
     );
     const pin = getByTestId("status-pin-bot");
     expect(pin.textContent).toContain("STOPPED");
-    expect(pin.style.color).toBe("rgb(148, 163, 184)"); // neutral
+    expect(pin.style.color).toBe("var(--c-text)"); // neutral
   });
 
   it("ordersInWindow defaults to 1 so existing callers don't trigger idle (097 back-compat)", () => {

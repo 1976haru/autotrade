@@ -4,6 +4,7 @@ import { STRATEGIES } from "../../config/strategies";
 import { RISK_POLICY_FIELDS } from "../../config/riskPolicy";
 import { Btn, Card, SectionLabel, Toggle, Slider } from "../common";
 import { PageHeader } from "../common/primitives";
+import { friendlyErrorMessage } from "../../utils/errorMessage";
 import { DecisionDialog } from "../common/DecisionDialog";
 import { fmtKRW } from "../../utils/format";
 import { backendApi } from "../../services/backend/client";
@@ -137,7 +138,11 @@ export function EmergencyStopSummaryCard({ summary, loading, error, onRefresh })
     return (
       <Card>
         <SectionLabel>긴급정지 요약</SectionLabel>
-        <div style={{ fontSize: 11, color: "#f87171" }}>조회 실패: {error}</div>
+        <div style={{
+          fontSize: "var(--fs-sm)", color: "var(--c-danger)",
+          padding: "10px 14px", background: "#fef2f2",
+          border: "1px solid #fecaca", borderRadius: "var(--r-md)",
+        }}>{friendlyErrorMessage(error) || "긴급정지 요약을 불러올 수 없어요."}</div>
       </Card>
     );
   }
