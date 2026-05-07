@@ -43,11 +43,26 @@
 
 ## 테스트 2 — 잔고/포지션 조회 (`GET /uapi/domestic-stock/v1/trading/inquire-balance`, tr_id=`VTTC8434R`)
 
+### 1차 실행 (2026-05-08 초기 검증)
+
 | 결과 | 사유 |
 |---|---|
-| **SKIP** | `KIS_ACCOUNT_NO` 길이가 8자. KIS 표준은 10자(8자리 CANO + 2자리 PRDT_CD)이며 `KisBrokerAdapter._split_account()`가 `account_no[:-2]`/`account_no[-2:]`로 분리한다. 길이 8로 분리 시 `cano=6자, prdt=2자`가 되어 명백히 잘못된 호출이 생성되므로 read-only 조회조차 시도하지 않음 |
+| **SKIP** | `KIS_ACCOUNT_NO` 길이가 8자. `KisBrokerAdapter._split_account()`가 `account_no[:-2]`/`account_no[-2:]`로 분리하므로 8자 입력은 `cano=6, prdt=2`라는 잘못된 분리를 생성. 안전상 호출 자체를 막음 |
 
-본 단계는 [`backend/app/brokers/kis.py`](../backend/app/brokers/kis.py)의 `_split_account()` 계약을 준수한다. 잔고 조회는 운영자가 `KIS_ACCOUNT_NO`를 10자로 갱신한 뒤 재실행하면 통과 가능.
+### 2차 재실행 (`PRDT_CD=01` 폴백, 같은 날)
+
+`KIS_ACCOUNT_NO`가 여전히 8자(CANO만)인 상태에서 위탁계좌 paper 표준 PRDT_CD인 `01`을 명시적으로 가정하고 read-only 호출을 1회 시도.
+
+| 항목 | 값 |
+|---|---|
+| 결과 | **PASS** |
+| `rt_cd` | `"0"` (정상) |
+| `msg_cd` | `"20310000"` (정상 조회 완료) |
+| `output1` (positions) | 0행 (PAPER 계좌가 비어 있는 정상 상태) |
+| `output2` (summary) | 1행 (현금/평가 요약, 값은 redact) |
+| 가정 | `PRDT_CD="01"` (운영자 후속 조치 1번 참고) |
+
+→ 잔고 endpoint와의 통신, tr_id(`VTTC8434R`) 정합성, 권한 모두 정상.
 
 ## 실제 주문(`place_order`) 호출 여부
 
@@ -60,11 +75,11 @@
 | KIS PAPER 게이트웨이 연결성 | **OK** |
 | App Key / App Secret 유효성 | **OK** |
 | Token issuance | **OK** |
-| 잔고/포지션 조회 | **PENDING** — 계좌번호 길이 보정 후 재시도 |
+| 잔고/포지션 조회 | **OK** (2차 재실행, `PRDT_CD=01` 가정) |
 | 안전 플래그 정합성 | **OK** — `ENABLE_LIVE_TRADING=false`, `ENABLE_AI_EXECUTION=false`, `KIS_IS_PAPER=true` |
 | 실주문 호출 | **None (의도된 부재)** |
 
-체크리스트 #14는 토큰 발급까지를 PASS로 판정 — 잔고 단계는 운영자 후속 조치 후 재실행 대기.
+체크리스트 #14 PASS — 토큰·잔고 모두 read-only 검증 완료.
 
 ## 오류 코드 정리
 
@@ -74,18 +89,12 @@
 
 ## 권장 후속 조치 (운영자)
 
-1. **`backend/notepad .env` → `backend/.env`로 정리**
-   - 현재 backend `Settings`는 `.env`만 로드하므로 실제 서버 부팅 시 KIS 자격증명이 미주입 상태.
-   - 동일 디렉터리에서 파일명만 변경(또는 내용 복사)하고 `notepad .env`는 삭제 권장.
-   - 두 파일 모두 `.gitignore` 적용 중이므로 커밋 위험은 없음.
-2. **`KIS_ACCOUNT_NO`를 10자로 보정**
-   - 현재 8자 → KIS 표준 `CANO(8) + PRDT_CD(2)` 형식으로 갱신.
-   - 위탁계좌(주식): PRDT_CD = `01`이 일반적. 실제 값은 운영자 KIS 계좌 정보로 확인 필요.
-3. **(2) 완료 후 본 테스트 재실행**
-   - `cd backend && python data/kis_connection_test.py` (스크립트 재생성 시)
-   - 또는 동등한 ad-hoc 검증 절차를 통해 `inquire_balance` rt_cd=`0` 확인.
-4. **`LIVE_MANUAL_APPROVAL` 라우팅 PR 진입 전 본 로그를 다시 갱신**
-   - 잔고 조회까지 PASS 상태가 되어야 다음 단계(`docs/promotion_policy.md`) 진입 안전.
+1. ~~**`backend/notepad .env` → `backend/.env`로 정리**~~ — **완료** (2026-05-08).
+2. **`KIS_ACCOUNT_NO`를 10자로 보정 (권장, 미완료)**
+   - 현재 8자(CANO만). 2차 재실행은 코드 외부에서 `PRDT_CD="01"`을 가정해 통과시켰으나, `KisBrokerAdapter._split_account()`는 10자 입력을 전제하므로 backend 부팅 경로에서는 여전히 잘못 분리됨.
+   - 운영자 KIS 마이페이지에서 실제 PRDT_CD를 확인해 `KIS_ACCOUNT_NO`를 10자로 갱신 필요. 위탁계좌(주식)는 일반적으로 `01`.
+3. **`LIVE_MANUAL_APPROVAL` 라우팅 PR 진입 전 본 로그를 다시 갱신**
+   - (2) 완료 + `inquire_balance`가 backend 정상 경로(`KisBrokerAdapter`)로도 PASS 됨을 확인한 뒤 다음 단계(`docs/promotion_policy.md`) 진입.
 
 ## 본 테스트가 검증하지 않은 것 (의도된 범위 밖)
 
