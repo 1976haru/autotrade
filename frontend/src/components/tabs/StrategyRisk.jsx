@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { STRATEGIES } from "../../config/strategies";
 import { RISK_POLICY_FIELDS } from "../../config/riskPolicy";
 import { Btn, Card, SectionLabel, Toggle, Slider } from "../common";
+import { PageHeader } from "../common/primitives";
 import { DecisionDialog } from "../common/DecisionDialog";
 import { fmtKRW } from "../../utils/format";
 import { backendApi } from "../../services/backend/client";
@@ -416,6 +417,10 @@ export function StrategyRisk({ strategyOn, toggle, strategyParams, updateParam, 
   const reconciliation = useReconciliationStatus();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <PageHeader
+        title="전략·리스크"
+        subtitle="백엔드 리스크 정책, 긴급 정지, 포지션 reconciliation"
+      />
       <BackendPolicyCard riskPolicy={riskPolicy} operatorName={operatorName} />
       <EmergencyStopSummaryCard
         summary={esSummary.summary}
