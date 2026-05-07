@@ -70,7 +70,7 @@ export function HeroSummaryCard({
              }}>
       <PageHeader
         title="AI 단타 자동매매"
-        subtitle="지능형 Agent OS · 가상 자동운용 검증 단계"
+        subtitle="지능형 에이전트가 시장을 분석하고, 나는 핵심만 확인하는 자동매매 대시보드"
         right={
           <StatusBadge status={connStatus} testId="hero-mode-badge">
             {modeMeta.label}
