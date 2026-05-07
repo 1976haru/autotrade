@@ -156,3 +156,252 @@ code {
     grid-column: 1 / -1;
   }
 }
+
+/* ============================================================
+ * 229 (UI-001): Premium Operator Dashboard — Design Tokens
+ * ============================================================
+ * 기존 인라인 hex 색이 컴포넌트 전반에 흩어져 있어 점진적 마이그레이션을
+ * 위해 :root 변수로 토큰을 도입한다. 신규 primitive (PageHeader,
+ * MetricCard, StatusBadge, EmptyState, ErrorState, LoadingState,
+ * DemoModeBanner)는 모두 이 토큰을 참조. 기존 컴포넌트는 그대로 두고,
+ * Dashboard 등 핵심 화면부터 점진적으로 toggle.
+ */
+:root {
+  /* surface */
+  --c-bg:        #010a14;        /* page bg */
+  --c-surface:   #020e1c;        /* card bg */
+  --c-surface-2: #0c2035;        /* nested cell bg */
+  --c-surface-3: #1a3a5c;        /* hover/active */
+  --c-border:    #1e3a5c;        /* default border */
+  --c-border-strong: #334155;    /* emphasized border */
+
+  /* text */
+  --c-text:    #c9d6e3;          /* primary */
+  --c-text-2:  #94a3b8;          /* secondary */
+  --c-text-3:  #64748b;          /* tertiary */
+  --c-text-4:  #475569;          /* muted */
+  --c-text-5:  #334155;          /* disabled */
+
+  /* status */
+  --c-success:  #22c55e;
+  --c-warning:  #f59e0b;
+  --c-danger:   #ef4444;
+  --c-info:     #7dd3fc;
+  --c-accent:   #a78bfa;
+
+  /* radius */
+  --r-xs: 3px;
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 10px;
+  --r-xl: 14px;
+
+  /* spacing scale (4-based) */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+
+  /* shadow */
+  --sh-1: 0 1px 2px rgba(0,0,0,0.4);
+  --sh-2: 0 4px 12px rgba(0,0,0,0.45);
+
+  /* type scale — 운영자 가독성 우선. 기존 9-11px 폭주를 해소. */
+  --fs-xs:    11px;   /* tiny labels */
+  --fs-sm:    13px;   /* secondary text */
+  --fs-base:  14px;   /* body */
+  --fs-md:    16px;   /* card subtitle */
+  --fs-lg:    18px;   /* card title */
+  --fs-xl:    22px;   /* section title */
+  --fs-2xl:   28px;   /* metric value */
+  --fs-3xl:   34px;   /* hero metric */
+
+  --fw-regular: 400;
+  --fw-medium:  500;
+  --fw-bold:    700;
+
+  --lh-tight: 1.2;
+  --lh-base:  1.4;
+  --lh-loose: 1.55;
+}
+
+
+/* 229: 데스크톱에서 max-width 1280 → 1440 (sub-monitor 24"+ 활용). 패널이 더
+ * 넓어져도 grid auto-fit minmax 360 유지로 카드 크기는 안정. */
+@media (min-width: 1280px) {
+  .app-shell    { max-width: 1440px; }
+  .app-bottomnav { max-width: 1440px; }
+}
+
+
+/* primitives: shared utility classes for the new operator UI.
+ * 토큰만으로는 부족한 layout/typography 패턴을 별도 class로 노출.
+ * 인라인 style 비중을 줄이는 첫 단계. */
+
+.ui-page-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-3) 0 var(--s-2);
+}
+.ui-page-header__title {
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
+  color: var(--c-text);
+  letter-spacing: 0.01em;
+  line-height: var(--lh-tight);
+  margin: 0;
+}
+.ui-page-header__subtitle {
+  font-size: var(--fs-sm);
+  color: var(--c-text-3);
+  line-height: var(--lh-base);
+}
+
+.ui-section-header {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-bold);
+  color: var(--c-text);
+  letter-spacing: 0.06em;
+  margin: 0 0 var(--s-2);
+  text-transform: uppercase;
+}
+.ui-section-header__sub {
+  display: block;
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+  font-weight: var(--fw-regular);
+  text-transform: none;
+  letter-spacing: normal;
+  margin-top: 2px;
+}
+
+.ui-metric-card {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--r-lg);
+  padding: var(--s-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+.ui-metric-card__label {
+  font-size: var(--fs-sm);
+  color: var(--c-text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.ui-metric-card__value {
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-bold);
+  color: var(--c-text);
+  line-height: var(--lh-tight);
+  font-variant-numeric: tabular-nums;
+}
+.ui-metric-card__sub {
+  font-size: var(--fs-sm);
+  color: var(--c-text-3);
+  line-height: var(--lh-base);
+}
+
+.ui-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--r-md);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+  letter-spacing: 0.02em;
+  border: 1px solid currentColor;
+}
+
+.ui-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-bold);
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  color: var(--c-text-2);
+}
+.ui-status-pill__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.ui-empty-state,
+.ui-error-state,
+.ui-loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
+  padding: var(--s-6) var(--s-4);
+  border: 1px dashed var(--c-border);
+  border-radius: var(--r-lg);
+  background: var(--c-surface);
+  color: var(--c-text-3);
+  text-align: center;
+}
+.ui-empty-state__icon,
+.ui-error-state__icon,
+.ui-loading-state__icon {
+  font-size: 24px;
+}
+.ui-empty-state__title,
+.ui-error-state__title,
+.ui-loading-state__title {
+  font-size: var(--fs-md);
+  color: var(--c-text);
+  font-weight: var(--fw-bold);
+}
+.ui-empty-state__hint,
+.ui-error-state__hint,
+.ui-loading-state__hint {
+  font-size: var(--fs-sm);
+  color: var(--c-text-3);
+  line-height: var(--lh-base);
+  max-width: 32em;
+}
+
+.ui-error-state {
+  border-color: rgba(239, 68, 68, 0.3);
+  color: var(--c-danger);
+}
+.ui-loading-state {
+  border-style: solid;
+}
+
+.ui-demo-banner {
+  background: linear-gradient(180deg, rgba(125, 211, 252, 0.08), rgba(125, 211, 252, 0.02));
+  border: 1px solid rgba(125, 211, 252, 0.4);
+  border-radius: var(--r-lg);
+  padding: var(--s-3) var(--s-4);
+  color: var(--c-info);
+  font-size: var(--fs-sm);
+  line-height: var(--lh-base);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+.ui-demo-banner__title {
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-md);
+}
+.ui-demo-banner__body {
+  color: var(--c-text-2);
+}
+.ui-demo-banner__hint {
+  font-size: var(--fs-xs);
+  color: var(--c-text-3);
+}
