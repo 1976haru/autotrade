@@ -25,14 +25,16 @@ export function BottomNav({ active, onChange, badges = {} }) {
     // 모바일 520px / PC 1280px. 나머지 위치/색은 인라인 유지.
     // 231 (UI-003): 데스크톱(≥768px)에서는 TopNav가 활성화되며 BottomNav는
     // ui-bottomnav-mobile-only 클래스로 숨겨진다.
+    // 241 (Light-004): light theme — white surface + 위쪽 그림자, 토큰 색.
     <div className="app-bottomnav ui-bottomnav-mobile-only" style={{
       position:   "fixed",
       bottom:     0,
       left:       "50%",
       transform:  "translateX(-50%)",
       width:      "100%",
-      background: "#020e1c",
-      borderTop:  "1px solid #0c2035",
+      background: "var(--c-surface)",
+      borderTop:  "1px solid var(--c-border)",
+      boxShadow:  "0 -2px 12px rgba(15, 23, 42, 0.08)",
       display:    "flex",
       zIndex:     100,
     }}>
@@ -52,7 +54,7 @@ export function BottomNav({ active, onChange, badges = {} }) {
               flexDirection: "column",
               alignItems:  "center",
               gap:         3,
-              borderTop:   `2px solid ${active === t.id ? "#7dd3fc" : "transparent"}`,
+              borderTop:   `2px solid ${active === t.id ? "var(--c-info)" : "transparent"}`,
               transition:  "all .15s",
             }}
           >
@@ -84,9 +86,10 @@ export function BottomNav({ active, onChange, badges = {} }) {
               )}
             </div>
             <span style={{
-              fontSize:      9,
-              color:         active === t.id ? "#7dd3fc" : "#475569",
-              letterSpacing: "0.04em",
+              fontSize:      11,
+              color:         active === t.id ? "var(--c-info)" : "var(--c-text-3)",
+              fontWeight:    active === t.id ? 700 : 500,
+              letterSpacing: "0.02em",
               fontFamily:    "inherit",
             }}>
               {t.label}
