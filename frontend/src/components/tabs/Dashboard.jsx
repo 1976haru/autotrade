@@ -17,6 +17,7 @@ import {
 import { HistoryStaleBanner } from "./Approvals";
 import { AgentLatestTile } from "./AgentLatestTile";
 import { MarketRegimeBadge } from "./MarketRegimeBadge";
+import { OperatorPanel } from "./OperatorPanel";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
 // AuditLog timeline에서도 mode badge로 쓰기 위해 공유. Dashboard는 re-export
@@ -467,6 +468,9 @@ export function Dashboard({
   pendingCount = 0, stalePendingCount = 0,
   approvals,
   onJumpTab,
+  // 227: Operator panel은 긴급정지 토글 호출이 필요 — App에서 riskPolicy의
+  // toggleEmergency를 props로 흘려준다. 미지정시 no-op (테스트 호환).
+  onEmergencyStop,
 }) {
   const { totalAsset, totalPnL, totalPnLPct, cash, positions } = portfolio;
   const { stats, winRate, trades, running } = bot;
@@ -491,6 +495,15 @@ export function Dashboard({
     // PC(≥768px)는 auto-fit grid로 카드들이 2~3열로 흐른다. 인라인 style은
     // class CSS를 이기므로 layout 관련 인라인 속성은 두지 않는다.
     <div className="dashboard-body">
+
+      {/* 227: 스마트폰 운영자 패널 — 시작/일시정지/긴급정지 + 핵심 상태 한 화면 */}
+      <div className="dashboard-span-full">
+        <OperatorPanel
+          pendingCount={pendingCount}
+          emergencyStop={emergencyStop}
+          onEmergencyStop={onEmergencyStop}
+        />
+      </div>
 
       {/* 225: 현재 장세 배지 — 위험/상태 요약 위에 한 줄로 */}
       <div className="dashboard-span-full">
