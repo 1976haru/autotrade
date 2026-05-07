@@ -21,6 +21,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from app.agents.market_regime import classify_market_regime
 from app.agents.operating_loop import (
     OPERATING_STAGES,
     build_intraday_summary,
@@ -173,6 +174,44 @@ def post_intraday_summary(req: IntradaySummaryIn) -> IntradaySummaryOut:
 def post_position_monitor(req: PositionMonitorIn) -> list[PositionMonitorEntryOut]:
     rows = review_positions(req.positions)
     return [PositionMonitorEntryOut(**r.__dict__) for r in rows]
+
+
+class MarketRegimeIn(BaseModel):
+    trend_strength_pct: float = 0.0
+    volatility_pct:     float = 0.0
+    volume_ratio:       float = 1.0
+    gap_pct:            float = 0.0
+    news_sentiment:     int   = 50
+    is_opening_30min:   bool  = False
+    is_late_day_30min:  bool  = False
+    risk_off_signal:    bool  = False
+
+
+class MarketRegimeOut(BaseModel):
+    regime:                       str
+    confidence:                   int
+    reasons:                      list[str]
+    allowed_strategies:           list[str]
+    blocked_strategies:           list[str]
+    risk_multiplier:              float
+    max_position_size_multiplier: float
+    trade_permission:             str
+    operator_summary:             list[str]
+
+
+@router.post("/market-regime", response_model=MarketRegimeOut)
+def post_market_regime(req: MarketRegimeIn) -> MarketRegimeOut:
+    out = classify_market_regime(
+        trend_strength_pct=req.trend_strength_pct,
+        volatility_pct=req.volatility_pct,
+        volume_ratio=req.volume_ratio,
+        gap_pct=req.gap_pct,
+        news_sentiment=req.news_sentiment,
+        is_opening_30min=req.is_opening_30min,
+        is_late_day_30min=req.is_late_day_30min,
+        risk_off_signal=req.risk_off_signal,
+    )
+    return MarketRegimeOut(**out.__dict__)
 
 
 @router.post("/post-market-review", response_model=PostMarketReviewOut)
