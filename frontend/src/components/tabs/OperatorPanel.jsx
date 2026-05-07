@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Card, SectionLabel } from "../common";
 import { backendApi } from "../../services/backend/client";
 import { usePersistedState } from "../../store/usePersistedState";
 
@@ -66,40 +65,60 @@ export function OperatorPanel({ pendingCount = 0, emergencyStop = false, onEmerg
   const tradePerm   = regime?.trade_permission || "—";
 
   return (
-    <Card data-testid="operator-panel" accentColor={emergencyStop ? "#ef444466" : `${readinessColor}33`}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-        <SectionLabel>📱 Operator</SectionLabel>
+    // 239 (Light-002): light surface + 토큰 기반 색.
+    <div data-testid="operator-panel" style={_panelStyle(emergencyStop, readinessColor)}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <span style={{
+          fontSize: "var(--fs-md)", fontWeight: "var(--fw-bold)",
+          color: "var(--c-text)", letterSpacing: "0.04em",
+        }}>📱 Operator</span>
         <span data-testid="virtual-mode-badge" style={{
-          fontSize: 9, padding: "2px 6px", borderRadius: 3,
-          color: "#7dd3fc", border: "1px solid #7dd3fc55", background: "#0c2035",
+          fontSize: "var(--fs-xs)", padding: "4px 10px", borderRadius: "var(--r-md)",
+          color: "var(--c-accent)",
+          border: "1px solid #ddd6fe",
+          background: "#f5f3ff",
+          fontWeight: "var(--fw-bold)",
         }}>🧪 VIRTUAL MODE</span>
       </div>
 
       {error && (
-        <div style={{ fontSize: 11, color: "#f87171", marginBottom: 6 }}>
-          데이터 일부 조회 실패: {error}
+        <div style={{
+          fontSize: "var(--fs-sm)", color: "var(--c-danger)",
+          marginBottom: 8, padding: "6px 10px",
+          background: "#fef2f2", border: "1px solid #fecaca",
+          borderRadius: "var(--r-md)",
+        }}>
+          ⚠ 일부 데이터를 불러올 수 없습니다 (데모 모드일 수 있어요).
         </div>
       )}
 
-      {/* 3 big buttons */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 10 }}>
+      {/* 3 big buttons — 모바일에서도 누르기 쉽게 큰 hit area */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
         <button data-testid="operator-start"
                 onClick={start}
                 disabled={intent === "running"}
-                style={_buttonStyle(intent === "running" ? "#22c55e" : "#0c2035",
-                                    intent === "running" ? "#010a14" : "#22c55e")}>
+                style={_buttonStyle({
+                  active: intent === "running", color: "#10b981",
+                  bgIdle: "#ecfdf5", bgActive: "#10b981",
+                })}>
           ▶ 시작
         </button>
         <button data-testid="operator-pause"
                 onClick={pause}
                 disabled={intent === "paused"}
-                style={_buttonStyle(intent === "paused" ? "#94a3b8" : "#0c2035",
-                                    intent === "paused" ? "#010a14" : "#94a3b8")}>
+                style={_buttonStyle({
+                  active: intent === "paused", color: "#64748b",
+                  bgIdle: "#f1f5f9", bgActive: "#64748b",
+                })}>
           ⏸ 일시정지
         </button>
         <button data-testid="operator-emergency-stop"
                 onClick={onEmergencyStop}
-                style={_buttonStyle("#ef4444", "#fff", true)}>
+                style={_buttonStyle({
+                  active: false, color: "#fff",
+                  bgIdle: "#ef4444", bgActive: "#ef4444",
+                  big: true,
+                })}>
           🛑 긴급정지
         </button>
       </div>
@@ -107,58 +126,79 @@ export function OperatorPanel({ pendingCount = 0, emergencyStop = false, onEmerg
       {/* compact status grid */}
       <div data-testid="operator-status" style={{
         display: "grid", gridTemplateColumns: "1fr 1fr",
-        gap: 6, fontSize: 11,
+        gap: 6, fontSize: "var(--fs-sm)",
       }}>
         <_StatusRow label="운영자 의도" value={intentLabel} color={intentColor} />
         <_StatusRow label="긴급 정지"
                     value={emergencyStop ? "ON" : "OFF"}
-                    color={emergencyStop ? "#ef4444" : "#22c55e"} />
+                    color={emergencyStop ? "var(--c-danger)" : "var(--c-success)"} />
         <_StatusRow label="준비도"
                     value={readinessScore !== null ? `${readinessLabel} (${readinessScore})` : readinessLabel}
                     color={readinessColor} />
         <_StatusRow label="장세"
                     value={`${regimeLabel} · ${tradePerm}`}
-                    color="#7dd3fc" />
+                    color="var(--c-info)" />
         <_StatusRow label="가상 포지션"
                     value={openPos === null ? "—" : `${openPos}건`}
-                    color="#a78bfa" />
+                    color="var(--c-accent)" />
         <_StatusRow label="결재 대기"
                     value={`${pendingCount}건`}
-                    color={pendingCount > 0 ? "#f59e0b" : "#94a3b8"} />
+                    color={pendingCount > 0 ? "var(--c-warning)" : "var(--c-text-3)"} />
       </div>
 
-      <div style={{ fontSize: 9, color: "#334155", marginTop: 8, lineHeight: 1.5 }}>
-        시작/일시정지는 운영자 의도 기록(가상 모드 advisory). 긴급정지는 RiskManager
+      <div style={{
+        fontSize: "var(--fs-xs)", color: "var(--c-text-3)",
+        marginTop: 12, lineHeight: "var(--lh-loose)",
+      }}>
+        시작/일시정지는 운영자 의도 기록 (가상 모드 advisory). 긴급정지는 RiskManager
         의 실제 토글입니다 — ON 상태에서는 모든 모드의 신규 주문이 차단됩니다.
       </div>
-    </Card>
+    </div>
   );
+}
+
+
+function _panelStyle(emergencyStop, readinessColor) {
+  // accent border — emergency 시 빨강, 평소 readiness 색.
+  const border = emergencyStop ? "#fca5a5" : "var(--c-border)";
+  return {
+    background: "var(--c-surface)",
+    border: `1px solid ${border}`,
+    borderRadius: "var(--r-xl)",
+    padding: "var(--s-5)",
+    boxShadow: "var(--sh-1)",
+  };
 }
 
 
 function _StatusRow({ label, value, color }) {
   return (
     <div style={{
-      background: "#0c2035", padding: "4px 8px", borderRadius: 3,
+      background: "var(--c-surface-2)",
+      border: "1px solid var(--c-border)",
+      padding: "8px 12px", borderRadius: "var(--r-md)",
       display: "flex", justifyContent: "space-between", alignItems: "center",
     }}>
-      <span style={{ color: "#475569", fontSize: 9 }}>{label}</span>
-      <span style={{ color, fontWeight: 700 }}>{value}</span>
+      <span style={{ color: "var(--c-text-3)", fontSize: "var(--fs-xs)",
+                      fontWeight: "var(--fw-medium)" }}>{label}</span>
+      <span style={{ color, fontWeight: "var(--fw-bold)",
+                      fontSize: "var(--fs-sm)" }}>{value}</span>
     </div>
   );
 }
 
 
-function _buttonStyle(bg, color, big = false) {
+function _buttonStyle({ active, color, bgIdle, bgActive, big = false }) {
+  // active(현재 의도가 이 버튼인 상태)면 강조 색 그대로, 그 외엔 light idle.
   return {
-    padding: big ? "10px 0" : "8px 0",
-    border: "none",
-    borderRadius: 4,
+    padding: big ? "14px 0" : "12px 0",
+    border: `1px solid ${active ? bgActive : (big ? "transparent" : "var(--c-border)")}`,
+    borderRadius: "var(--r-md)",
     cursor: "pointer",
-    background: bg,
-    color: color,
+    background: active ? bgActive : bgIdle,
+    color: active ? "#fff" : (big ? color : color),
     fontFamily: "inherit",
-    fontSize: big ? 13 : 11,
-    fontWeight: 700,
+    fontSize: big ? "var(--fs-md)" : "var(--fs-sm)",
+    fontWeight: "var(--fw-bold)",
   };
 }

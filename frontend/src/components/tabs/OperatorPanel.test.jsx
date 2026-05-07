@@ -93,7 +93,7 @@ describe("<OperatorPanel>", () => {
     const { getByTestId, findByText } = render(
       <OperatorPanel pendingCount={0} emergencyStop={false} onEmergencyStop={() => {}} />
     );
-    expect(await findByText(/조회 실패/)).toBeTruthy();
+    expect(await findByText(/일부 데이터를 불러올 수 없습니다/)).toBeTruthy();
     // 버튼은 여전히 동작 — 실패해도 패널 자체는 unmount되지 않는다.
     expect(getByTestId("operator-start")).toBeTruthy();
     expect(getByTestId("virtual-mode-badge")).toBeTruthy();
