@@ -15,7 +15,10 @@ function useAuditList(fetcher) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await fetcher();
+      const raw = await fetcher();
+      // 213: 비정상 응답이라도 .filter/.map이 호출 가능하도록 정규화. 정상
+      // 경로(FastAPI list endpoint)는 항상 array라 영향 없음.
+      const list = Array.isArray(raw) ? raw : [];
       setItems(list);
       setError("");
       // 114: list를 return — useAdaptivePollingByTopId의 polling callback이
@@ -54,7 +57,8 @@ function usePaginatedAuditList(fetchPage) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await fetchPage({ offset: 0, limit: AUDIT_PAGE_SIZE });
+      const raw = await fetchPage({ offset: 0, limit: AUDIT_PAGE_SIZE });
+      const list = Array.isArray(raw) ? raw : [];
       setItems(list);
       setHasMore(list.length === AUDIT_PAGE_SIZE);
       setError("");

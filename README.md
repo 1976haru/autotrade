@@ -55,7 +55,26 @@ npm run dev
 ```
 
 Backend API 문서: <http://127.0.0.1:8000/docs>
-Frontend: <http://127.0.0.1:5173>
+Frontend: <http://localhost:5173> 또는 <http://127.0.0.1:5173>
+
+### 스마트폰에서 PC UI 확인
+
+같은 Wi-Fi 위에서 모바일 폰으로 dev 서버를 보고 싶다면 `--host` 옵션으로 모든
+인터페이스를 바인딩한 뒤 PC IP로 접속한다.
+
+```bash
+cd frontend
+npm run dev -- --host 0.0.0.0
+```
+
+접속 주소: `http://<내PC_IP>:5173` (예: `http://192.168.0.10:5173`)
+
+### 백엔드가 꺼져 있어도 빈 화면이 아니다
+
+백엔드 미기동 상태로 프론트만 띄우면 상단에 "백엔드 연결 실패" 배너 + uvicorn
+실행 가이드가 표시되고, 각 탭은 빈 데이터 상태로 렌더된다. 탭 내부에서 발생한
+runtime error는 ErrorBoundary가 격리해 BottomNav와 다른 탭은 계속 사용할 수
+있다.
 
 ### 테스트 / 린트 / 빌드
 

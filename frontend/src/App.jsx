@@ -21,8 +21,18 @@ import { useStrategy }   from "./store/useStrategy";
 import { useRisk }       from "./store/useRisk";
 import { useRiskPolicy } from "./store/useRiskPolicy";
 import { useSettings }   from "./store/useSettings";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { BackendOfflineBanner } from "./components/BackendOfflineBanner";
 
 export default function App() {
+  return (
+    <ErrorBoundary label="앱 전체">
+      <AppShell />
+    </ErrorBoundary>
+  );
+}
+
+function AppShell() {
   const [tab, setTab] = useState("dash");
   const portfolio  = usePortfolio();
   const strategy   = useStrategy();
@@ -67,8 +77,11 @@ export default function App() {
   return (
     <div style={{ minHeight:"100vh", background:"#010a14", color:"#c9d6e3", fontFamily:"'JetBrains Mono','Courier New',monospace", maxWidth:520, margin:"0 auto", display:"flex", flexDirection:"column" }}>
       <TopBar brokerId={settings.brokerId} tradeMode={settings.tradeMode} connected={settings.connected} />
+      <BackendOfflineBanner />
       <div style={{ flex:1, overflowY:"auto", padding:"14px 14px 90px", scrollbarWidth:"thin" }}>
-        {renderTab()}
+        <ErrorBoundary label="현재 탭">
+          {renderTab()}
+        </ErrorBoundary>
       </div>
       <BottomNav active={tab} onChange={setTab} badges={{ approve: approvals.pending.length }} />
       <style>{`
