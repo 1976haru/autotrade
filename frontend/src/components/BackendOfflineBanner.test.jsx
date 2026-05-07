@@ -35,9 +35,10 @@ describe("<BackendOfflineBanner>", () => {
     _set({ error: "Failed to fetch" });
     const { getByTestId } = render(<BackendOfflineBanner />);
     const banner = getByTestId("backend-offline-banner");
-    expect(banner.textContent).toContain("백엔드 연결 실패");
+    // 240 (Light-003): friendly copy — raw 'Failed to fetch'는 더 이상 노출 X.
+    expect(banner.textContent).toContain("백엔드 연결 대기 중");
     expect(banner.textContent).toContain("uvicorn app.main:app");
-    expect(banner.textContent).toContain("Failed to fetch");
+    expect(banner.textContent).not.toContain("Failed to fetch");
   });
 
   // 214: VITE_DEMO_MODE=true 빌드(GitHub Pages용)에서는 같은 error 상황이라도

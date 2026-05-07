@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, SectionLabel, Btn } from "../common";
+import { friendlyErrorMessage } from "../../utils/errorMessage";
 import { backendApi } from "../../services/backend/client";
 
 const HISTO_ORDER = ["0-25", "25-50", "50-75", "75-100"];
@@ -96,7 +97,11 @@ export function AgentStatsCard() {
       </div>
 
       {error && (
-        <div style={{ color: "#f87171", fontSize: 12 }}>{error}</div>
+        <div style={{
+          color: "var(--c-danger)", fontSize: "var(--fs-sm)",
+          padding: "8px 10px", background: "#fef2f2",
+          border: "1px solid #fecaca", borderRadius: "var(--r-md)",
+        }}>{friendlyErrorMessage(error) || "Agent 통계를 불러올 수 없어요."}</div>
       )}
 
       {!error && stats && (

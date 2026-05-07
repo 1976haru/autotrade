@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, SectionLabel, Btn } from "../common";
+import { friendlyErrorMessage } from "../../utils/errorMessage";
 import { backendApi } from "../../services/backend/client";
 
 const DECISION_COLOR = {
@@ -116,7 +117,11 @@ export function AgentCouncilCard() {
       </div>
 
       {error && (
-        <div style={{ color: "#f87171", fontSize: 12, marginBottom: 8 }}>{error}</div>
+        <div style={{
+          color: "var(--c-danger)", fontSize: "var(--fs-sm)", marginBottom: 8,
+          padding: "8px 10px", background: "#fef2f2",
+          border: "1px solid #fecaca", borderRadius: "var(--r-md)",
+        }}>{friendlyErrorMessage(error) || "Agent 데이터를 불러올 수 없어요."}</div>
       )}
 
       {!error && chains.length === 0 && !busy && (

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Card, SectionLabel, Btn } from "../common";
+import { friendlyErrorMessage } from "../../utils/errorMessage";
 import { backendApi } from "../../services/backend/client";
 
 const DECISION_COLOR = {
@@ -104,7 +105,11 @@ export function AgentDecisionSummaryCard() {
       </div>
 
       {error && (
-        <div style={{ color: "#f87171", fontSize: 12, marginBottom: 6 }}>{error}</div>
+        <div style={{
+          color: "var(--c-danger)", fontSize: "var(--fs-sm)", marginBottom: 6,
+          padding: "8px 10px", background: "#fef2f2",
+          border: "1px solid #fecaca", borderRadius: "var(--r-md)",
+        }}>{friendlyErrorMessage(error.replace(/^Agent 요약 조회 실패: /, "")) || "Agent 요약을 불러올 수 없어요."}</div>
       )}
 
       {!error && data && (
