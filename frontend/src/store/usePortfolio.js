@@ -28,8 +28,11 @@ export function usePortfolio() {
           backendApi.brokerPositions(),
         ]);
         if (cancelled) return;
-        setCash(balance.cash);
-        setPositions(raw.map(toFrontPosition));
+        // 213: balance/positions가 비정상 응답이어도 빈 값으로 정규화해 .reduce/
+        // .map 폭발을 막는다 (Dashboard StatBox가 NaN/undefined를 받지 않도록).
+        setCash(typeof balance?.cash === "number" ? balance.cash : 0);
+        const list = Array.isArray(raw) ? raw : [];
+        setPositions(list.map(toFrontPosition));
         setError("");
       } catch (e) {
         if (!cancelled) setError(e.message);

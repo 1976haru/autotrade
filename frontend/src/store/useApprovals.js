@@ -70,7 +70,10 @@ export function useApprovals() {
 
   const refresh = useCallback(async () => {
     try {
-      const list = await backendApi.listApprovals();
+      const raw = await backendApi.listApprovals();
+      // 213: 백엔드가 비정상 응답(예: null, 객체)을 줘도 .filter/.length로 죽지
+      // 않도록 array가 아니면 빈 배열로 정규화. 정상 경로는 영향 없음.
+      const list = Array.isArray(raw) ? raw : [];
       // 100: any change to the pending list — count or content — counts as
       // activity. Only resetting on count change would miss replacement (an
       // approval cleared and a new one queued in the same tick) which we
@@ -95,9 +98,10 @@ export function useApprovals() {
   // deeper lose that scroll position — acceptable trade for consistency.
   const refreshHistory = useCallback(async (status) => {
     try {
-      const list = await backendApi.listApprovalHistory({
+      const raw = await backendApi.listApprovalHistory({
         status, limit: HISTORY_PAGE_SIZE, offset: 0,
       });
+      const list = Array.isArray(raw) ? raw : [];
       setHistory(list);
       setHistoryHasMore(list.length === HISTORY_PAGE_SIZE);
     } catch (e) {

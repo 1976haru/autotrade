@@ -22,7 +22,9 @@ export function useRiskPolicy() {
   const refreshHistory = useCallback(async () => {
     try {
       const list = await backendApi.emergencyStopHistory();
-      setHistory(list);
+      // 213: 비정상 응답 정규화 — EmergencyStopHistoryCard / emergencyStopOnSince는
+      // history.length / history[0]을 직접 호출해 array가 아니면 throw된다.
+      setHistory(Array.isArray(list) ? list : []);
     } catch (e) {
       // History 실패는 정책 표시에 영향 없음 — 같은 error 슬롯에만 노출.
       setError(e.message);

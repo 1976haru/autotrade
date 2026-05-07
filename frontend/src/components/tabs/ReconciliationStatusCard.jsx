@@ -131,9 +131,9 @@ export function ReconciliationStatusCard({ status, loading, error, onRefresh }) 
       {drift ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
           <div style={{ fontSize: 10, color: "#94a3b8", marginBottom: 2 }}>
-            불일치 ({status.mismatches.length}건) · 일치 {status.matched_count}
+            불일치 ({(status.mismatches || []).length}건) · 일치 {status.matched_count}
           </div>
-          {status.mismatches.map((m) => (
+          {(status.mismatches || []).map((m) => (
             <MismatchRow key={m.symbol} mismatch={m} />
           ))}
         </div>
