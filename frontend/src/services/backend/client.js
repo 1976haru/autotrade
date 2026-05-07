@@ -181,4 +181,10 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify(req || {}),
   }),
+  // 226: Signal Quality Gate — agent-aware scoring. 입력은 항목별 0-100 점수,
+  // 출력은 quality_score / grade / approval_recommendation / breakdown.
+  signalQuality: (req) => backendFetch("/api/agents/signal-quality", {
+    method: "POST",
+    body: JSON.stringify(req || {}),
+  }),
 };

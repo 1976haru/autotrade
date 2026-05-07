@@ -22,6 +22,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.agents.market_regime import classify_market_regime
+from app.agents.signal_quality import evaluate_signal_quality
 from app.agents.operating_loop import (
     OPERATING_STAGES,
     build_intraday_summary,
@@ -212,6 +213,44 @@ def post_market_regime(req: MarketRegimeIn) -> MarketRegimeOut:
         risk_off_signal=req.risk_off_signal,
     )
     return MarketRegimeOut(**out.__dict__)
+
+
+class SignalQualityIn(BaseModel):
+    signal_strength:    int = 0
+    regime_fit:         int = 0
+    agent_agreement:    int = 0
+    scenario_stress:    int = 0
+    exit_plan_quality:  int = 0
+    sizing_safety:      int = 0
+    data_freshness:     int = 100
+    duplicate_penalty:  int = 100
+    min_required_score: int = 60
+
+
+class SignalQualityOut(BaseModel):
+    quality_score:           int
+    quality_grade:           str
+    approval_recommendation: str
+    rejection_reasons:       list[str]
+    min_required_score:      int
+    breakdown:               dict[str, int]
+    operator_summary:        list[str]
+
+
+@router.post("/signal-quality", response_model=SignalQualityOut)
+def post_signal_quality(req: SignalQualityIn) -> SignalQualityOut:
+    out = evaluate_signal_quality(
+        signal_strength=req.signal_strength,
+        regime_fit=req.regime_fit,
+        agent_agreement=req.agent_agreement,
+        scenario_stress=req.scenario_stress,
+        exit_plan_quality=req.exit_plan_quality,
+        sizing_safety=req.sizing_safety,
+        data_freshness=req.data_freshness,
+        duplicate_penalty=req.duplicate_penalty,
+        min_required_score=req.min_required_score,
+    )
+    return SignalQualityOut(**out.__dict__)
 
 
 @router.post("/post-market-review", response_model=PostMarketReviewOut)
