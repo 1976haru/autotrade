@@ -15,6 +15,11 @@ name: GitHub Pages Demo
 #
 # 두 경로(GitHub Actions deploy + gh-pages branch publish)는 서로 독립이라
 # 병행 가능. Source 설정에 따라 둘 중 하나가 라이브로 매핑됨.
+#
+# 219: 실제 운영 중 Source는 "Branch: main / (root)"로 안착 — 218에서 빌드
+# 산출물을 main root에 직접 커밋해 Pages가 그대로 serve. 이 워크플로의 세 번째
+# job(sync-main-root)이 매 빌드 후 dist 산출물을 main root에 자동 sync해,
+# 운영자가 frontend/ 변경 push만 하면 Pages 데모가 자동 갱신되도록.
 
 on:
   push:
@@ -117,3 +122,55 @@ jobs:
           # 빈 commit message — peaceiris가 자동으로 채워줌.
           user_name: 'github-actions[bot]'
           user_email: 'github-actions[bot]@users.noreply.github.com'
+
+  # 219: Source = "Branch: main / (root)" 모드 경로 — 실제 운영 중인 설정.
+  # 빌드 산출물을 main root에 직접 commit & push 해 Pages가 그대로 serve 한다.
+  #
+  # 무한 루프 방지: 자동 커밋 메시지에 [skip ci] 토큰 + 워크플로 트리거 path
+  # 필터(`frontend/**`, `pages-deploy.yml`)에 root 산출물 경로(index.html,
+  # 404.html, .nojekyll, assets/**)가 포함되지 않으므로 root 변경만으로는 이
+  # 워크플로가 다시 트리거되지 않는다. 이중 안전장치.
+  #
+  # 변경 없으면 commit 자체를 skip — 매 push마다 빈 커밋이 쌓이지 않도록.
+  sync-main-root:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          # checkout이 push에 사용할 credentials를 persist (default true).
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: _dist
+      - name: Sync dist to repo root
+        # 기존 root 산출물을 갱신. assets/는 hash 변경 시 파일명이 바뀌어 stale
+        # 파일이 남을 수 있으므로 통째로 교체.
+        run: |
+          rm -rf assets
+          cp -r _dist/assets assets
+          cp _dist/index.html index.html
+          cp _dist/404.html 404.html
+          # .nojekyll 재생성 (멱등). dist에 이미 존재하지만 root에서도 보장.
+          touch .nojekyll
+          rm -rf _dist
+      - name: Commit and push if dist changed
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add .nojekyll 404.html index.html assets/
+          if git diff --staged --quiet; then
+            echo "No content change in dist — skipping commit."
+            exit 0
+          fi
+          git commit -m "deploy(pages): auto-sync dist to root from $SOURCE_SHA [skip ci]"
+          # 동시 push 대비 rebase 후 push (concurrency 락이 같은 워크플로 내
+          # 직렬화는 보장하지만, 운영자 manual push와는 race 가능).
+          git pull --rebase origin main
+          git push origin main
