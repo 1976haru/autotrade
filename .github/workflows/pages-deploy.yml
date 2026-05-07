@@ -8,6 +8,8 @@ name: GitHub Pages Demo
 # 215: Pages Source가 "Deploy from a branch"(Jekyll)에서 "GitHub Actions"로
 # 전환된 뒤 첫 강제 재배포를 위해 path 필터가 다시 매칭되도록 이 코멘트를
 # 추가. 이후 일반 frontend/ 변경에서만 자동 재트리거되는 동작은 동일.
+# 216: Source 전환이 실제 적용되도록 두 번째 강제 재배포 (첫 215 시점에는
+# 아직 Source가 branch였음 — 이번 푸시는 Source=GitHub Actions 상태에서 실행).
 
 on:
   push:
