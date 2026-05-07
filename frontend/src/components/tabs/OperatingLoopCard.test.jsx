@@ -55,11 +55,14 @@ describe("<OperatingLoopCard>", () => {
   });
 
   it("renders error message when backend fails", async () => {
-    backendApi.operatingLoopStatus.mockRejectedValue(new Error("offline"));
-    backendApi.preMarketBrief.mockRejectedValue(new Error("offline"));
-    backendApi.intradaySummary.mockRejectedValue(new Error("offline"));
-    backendApi.postMarketReview.mockRejectedValue(new Error("offline"));
-    const { findByText } = render(<OperatingLoopCard />);
-    expect(await findByText(/조회 실패/)).toBeTruthy();
+    backendApi.operatingLoopStatus.mockRejectedValue(new Error("Failed to fetch"));
+    backendApi.preMarketBrief.mockRejectedValue(new Error("Failed to fetch"));
+    backendApi.intradaySummary.mockRejectedValue(new Error("Failed to fetch"));
+    backendApi.postMarketReview.mockRejectedValue(new Error("Failed to fetch"));
+    const { findByTestId, queryByText } = render(<OperatingLoopCard />);
+    const err = await findByTestId("operating-loop-error");
+    expect(err.textContent).toContain("Agent 흐름 조회 실패");
+    // 233 (UI-005): raw 'Failed to fetch'는 사용자에게 노출되지 않아야 한다.
+    expect(queryByText(/Failed to fetch/)).toBeNull();
   });
 });

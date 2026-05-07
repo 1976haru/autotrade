@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { Card, SectionLabel } from "../common";
+import { ErrorState } from "../common/primitives";
+import { friendlyErrorMessage } from "../../utils/errorMessage";
 import { backendApi } from "../../services/backend/client";
 
 // 212: Position vs broker reconciliation surface (read-only).
@@ -65,14 +67,13 @@ export function ReconciliationStatusCard({ status, loading, error, onRefresh }) 
     return (
       <Card>
         <SectionLabel>포지션 reconciliation</SectionLabel>
-        <div style={{ fontSize: 11, color: "#f87171" }}>조회 실패: {error}</div>
-        {onRefresh && (
-          <button onClick={onRefresh} style={{
-            marginTop: 6, fontSize: 10, padding: "3px 8px",
-            background: "#0c2035", border: "1px solid #1e3a5c",
-            borderRadius: 3, cursor: "pointer", color: "#7dd3fc",
-          }}>↻ 다시 시도</button>
-        )}
+        <ErrorState
+          title="reconciliation 조회 실패"
+          hint={friendlyErrorMessage(error)}
+          onRetry={onRefresh || undefined}
+          retryLabel="↻ 다시 시도"
+          testId="reconciliation-error"
+        />
       </Card>
     );
   }

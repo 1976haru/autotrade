@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { Card, SectionLabel } from "../common";
+import { ErrorState, LoadingState } from "../common/primitives";
+import { friendlyErrorMessage } from "../../utils/errorMessage";
 import { backendApi } from "../../services/backend/client";
 
 // 223: 오늘 Agent 운용 흐름 — 사용자가 스마트폰 한 화면에서 현재 단계 +
@@ -58,7 +60,7 @@ export function OperatingLoopCard() {
     return (
       <Card>
         <SectionLabel>🧭 오늘 Agent 운용 흐름</SectionLabel>
-        <div style={{ fontSize: 11, color: "#475569" }}>로딩 중…</div>
+        <LoadingState title="Agent 흐름 조회 중" />
       </Card>
     );
   }
@@ -66,7 +68,11 @@ export function OperatingLoopCard() {
     return (
       <Card>
         <SectionLabel>🧭 오늘 Agent 운용 흐름</SectionLabel>
-        <div style={{ fontSize: 11, color: "#f87171" }}>조회 실패: {error}</div>
+        <ErrorState
+          title="Agent 흐름 조회 실패"
+          hint={friendlyErrorMessage(error)}
+          testId="operating-loop-error"
+        />
       </Card>
     );
   }
