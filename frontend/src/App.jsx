@@ -76,7 +76,7 @@ function AppShell() {
   };
 
   return (
-    <div className="app-shell" style={{ minHeight:"100vh", background:"#010a14", color:"#c9d6e3", fontFamily:"'JetBrains Mono','Courier New',monospace", display:"flex", flexDirection:"column" }}>
+    <div className="app-shell" style={{ minHeight:"100vh", background:"var(--c-bg)", color:"var(--c-text)", fontFamily:"'Inter', system-ui, -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif", display:"flex", flexDirection:"column" }}>
       <TopBar brokerId={settings.brokerId} tradeMode={settings.tradeMode} connected={settings.connected} />
       <TopNav active={tab} onChange={setTab} badges={{ approve: approvals.pending.length }} />
       <BackendOfflineBanner />
