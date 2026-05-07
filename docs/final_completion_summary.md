@@ -270,3 +270,18 @@ blocker #6 해소. broker view vs audit view 사이의 quantity drift 감지를
 **완료**. 사용자 directive 최종 완성 모드의 모든 항목 이행 + 사후 UI
 surface 보강 (187-210) + MUST 복귀 (212 position reconciliation) 완료.
 추가 자동 진행 여지는 LIVE 옵트인 또는 NICE 영역으로만 남음.
+
+## 후속 (213 ~ 236)
+
+213-228: ErrorBoundary + responsive layout + GitHub Pages demo + auto-update
++ Smartphone Operator panel + Agent OS (operating loop / 5 enhanced agents /
+market regime / signal quality gate / stress).
+
+**229-236 (UI Premium Redesign 시리즈)**: 9 phase로 design system 토대 +
+Dashboard hero + responsive nav + agent-centric UI + error/empty/loading 정규화
++ Pages demo polish + core tabs PageHeader + smoke tests + report. 자세한
+내역은 `docs/ui_redesign_report.md`. 이 시리즈는 frontend UI만 — broker /
+RiskManager / PermissionGate / LIVE flag는 어떤 코드도 수정되지 않음.
+
+frontend tests **1008 passed**, lint 0 errors, build OK. Live demo:
+<https://1976haru.github.io/autotrade/>.
