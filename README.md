@@ -32,6 +32,35 @@ npm run dev -- --host 0.0.0.0
 4. API Key, Secret, 계좌번호는 프론트엔드에 저장하지 않습니다.
 5. 선물 기능은 주식 MVP 안정화 이후 별도 모듈로 확장합니다.
 
+## MVP 범위
+
+1차 MVP는 **검증 가능한 안전한 자동매매 연구 플랫폼** 구축을 목표로 한다. 아래 표는 위 [핵심 원칙](#핵심-원칙)과 [`docs/promotion_policy.md`](docs/promotion_policy.md)의 단계별 승격 정책을 위배하지 않는다.
+
+### 1차 포함 (In-Scope)
+
+| 영역 | 포함 내용 |
+|---|---|
+| 거래 대상 | 국내주식 단타 |
+| 운용모드 | `SIMULATION`, `PAPER` (KIS 모의투자), `LIVE_SHADOW` (실 시세 read-only) |
+| 주문 경로 | MockBroker 주문, KIS 모의투자(Paper) 주문, Virtual(가상자금) 주문까지만 |
+| AI | 시세/지표 분석, 매매 후보 제안·판단, **Virtual AI Execution** (가상 자금 한정) |
+| 선물 | `FuturesMockBroker` 기반 가상 시뮬레이션까지만 |
+| 클라이언트 | React/Vite 기반 **PWA 관제 UI** (Dashboard / 승인 / 백테스트 / 감사로그 등 11개 탭) — 1차 앱 |
+| 보안 | API Key·Secret·계좌번호는 backend `.env` 또는 환경변수로만 주입 |
+
+### 1차 제외 (Out-of-Scope)
+
+| 영역 | 제외 사유 / 후속 단계 |
+|---|---|
+| 실제 broker LIVE 주문 (`KisBrokerAdapter.place_order(is_paper=False)`) | `LIVE_MANUAL_APPROVAL` 라우팅 PR에서 옵트인 후 활성화 |
+| `LIVE_AI_EXECUTION` 실제 주문 연결 | 8개 옵트인 조건 모두 충족 시 별도 PR (`promotion_policy.md`) |
+| 실제 선물 실거래 (LIVE `FuturesBrokerAdapter`) | 주식 MVP 안정화 이후 별도 모듈로 확장 |
+| 프론트엔드의 API Key / App Secret / 계좌번호 저장·노출 | 절대 원칙 4번에 의해 영구 제외 |
+| 네이티브 iOS/Android 앱 | 1차는 PWA 관제 UI로 대체. 네이티브 진입은 MVP 종료 후 재평가 |
+| 사용자 승인 없는 무인 LIVE 자동매매 | `PermissionGate` 우회 금지 — 영구 제외 |
+
+이 범위는 [`docs/promotion_policy.md`](docs/promotion_policy.md)와 [`CLAUDE.md`의 "현재 단계"](CLAUDE.md) 단계별 승격 흐름과 일치한다.
+
 ## 개발 환경 셋업
 
 ### Backend
