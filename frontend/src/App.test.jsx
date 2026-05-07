@@ -56,6 +56,38 @@ const _emptyApi = new Proxy({}, {
           total_decisions: 0, total_chains: 0, by_agent: {}, recent_chains: [],
         });
       }
+      if (prop === "marketRegime") {
+        return Promise.resolve({
+          regime: "CHOPPY", confidence: 60, reasons: [],
+          allowed_strategies: [], blocked_strategies: [],
+          risk_multiplier: 1.0, max_position_size_multiplier: 1.0,
+          trade_permission: "ALLOW", operator_summary: [],
+        });
+      }
+      if (prop === "operatingLoopStatus") {
+        return Promise.resolve({ stage: "intraday", stages: [] });
+      }
+      if (prop === "preMarketBrief") {
+        return Promise.resolve({
+          market_risk_level: "MEDIUM", interesting_themes: [],
+          available_strategies: [], daily_loss_cap: 0,
+          trading_allowed: true, readiness_score: 70,
+          readiness_label: "READY", operator_summary: [],
+        });
+      }
+      if (prop === "intradaySummary") {
+        return Promise.resolve({
+          candidates_evaluated: 0, virtual_orders_made: 0, rejected_signals: 0,
+          last_chief_decision: null, notable_reasons: [], operator_summary: [],
+        });
+      }
+      if (prop === "postMarketReview") {
+        return Promise.resolve({
+          total_decisions: 0, successes: 0, failures: 0,
+          misclassified_signals: 0, pnl_estimate: 0,
+          next_day_adjustments: [], agent_score_delta: 0, operator_summary: [],
+        });
+      }
       // list-style endpoints
       return Promise.resolve([]);
     };

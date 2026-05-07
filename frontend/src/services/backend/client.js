@@ -175,4 +175,10 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify(req || {}),
   }),
+  // 225: Market Regime Filter — 10가지 regime 분류 + 전략 허용/차단 + risk
+  // 곱셈 계수. 입력은 정량 지표만, deterministic.
+  marketRegime: (req) => backendFetch("/api/agents/market-regime", {
+    method: "POST",
+    body: JSON.stringify(req || {}),
+  }),
 };
