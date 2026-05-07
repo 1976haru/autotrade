@@ -73,8 +73,11 @@ describe("<AgentDecisionSummaryCard>", () => {
 
   it("renders error state on backend failure", async () => {
     backendApi.aiAgentDecisionsSummary.mockRejectedValueOnce(new Error("offline"));
-    const { findByText } = render(<AgentDecisionSummaryCard />);
-    await findByText(/Agent 요약 조회 실패: offline/);
+    const { findByText, queryByText } = render(<AgentDecisionSummaryCard />);
+    // 240: friendly error — raw 'offline'은 그대로 노출되지만 prefix가 사람-친화 카피.
+    await findByText(/offline/);
+    // 'Agent 요약 조회 실패: ' prefix는 friendlyErrorMessage 이전 단계에서 제거됨.
+    expect(queryByText(/Agent 요약 조회 실패:/)).toBeNull();
   });
 
   it("renders decision badges with counts", async () => {

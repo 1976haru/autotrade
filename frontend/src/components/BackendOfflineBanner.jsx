@@ -43,31 +43,40 @@ export function BackendOfflineBanner() {
     );
   }
 
+  // 240 (Light-003): light red surface + 친절한 안내. raw error ('Failed to
+  // fetch')는 collapse된 details에 한정 — 평소엔 안내 카피만.
   return (
-    <div
-      data-testid="backend-offline-banner"
-      style={{
-        padding: "10px 14px", margin: "10px 12px",
-        background: "#1a0e0e", border: "1px solid #ef444466",
-        borderRadius: 6, color: "#fca5a5", fontSize: 12, lineHeight: 1.5,
-      }}
-    >
-      <div style={{ fontWeight: 700, marginBottom: 4 }}>
-        ⚠ 백엔드 연결 실패
+    <div data-testid="backend-offline-banner"
+         style={{
+           padding: "12px 16px", margin: "10px 12px",
+           background: "#fef2f2",
+           border: "1px solid #fecaca",
+           borderRadius: "var(--r-lg)",
+           color: "#7f1d1d",
+           fontSize: "var(--fs-sm)",
+           lineHeight: "var(--lh-loose)",
+           boxShadow: "var(--sh-1)",
+         }}>
+      <div style={{ fontWeight: "var(--fw-bold)", marginBottom: 4,
+                     fontSize: "var(--fs-md)" }}>
+        ⚠ 백엔드 연결 대기 중입니다
       </div>
-      <div style={{ color: "#94a3b8", marginBottom: 6 }}>
-        FastAPI 서버에 연결할 수 없습니다. 데이터가 표시되지 않을 수 있습니다.
+      <div style={{ color: "var(--c-text-2)", marginBottom: 8 }}>
+        실데이터를 보려면 backend와 frontend를 함께 실행하세요.
       </div>
       <pre style={{
-        background: "#0c2035", padding: 6, borderRadius: 4,
-        fontSize: 10, color: "#7dd3fc", margin: 0,
+        background: "var(--c-surface-2)",
+        border: "1px solid var(--c-border)",
+        padding: "8px 10px", borderRadius: "var(--r-md)",
+        fontSize: "var(--fs-xs)", color: "var(--c-text)", margin: 0,
         whiteSpace: "pre-wrap", wordBreak: "break-word",
       }}>
 {`cd backend
 uvicorn app.main:app --reload`}
       </pre>
-      <div style={{ fontSize: 10, color: "#475569", marginTop: 6 }}>
-        실행 후 페이지를 새로고침하세요. (마지막 오류: {error})
+      <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)",
+                     marginTop: 6 }}>
+        실행 후 페이지를 새로고침하세요.
       </div>
     </div>
   );
