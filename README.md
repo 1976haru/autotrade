@@ -2,6 +2,22 @@
 
 국내주식 단타 자동매매 연구 플랫폼입니다. 현재 단계의 목표는 **수익 자동화**가 아니라 **검증 가능한 전략 엔진, 리스크 통제, 모의투자/Shadow Mode, 관제 PWA**를 순서대로 구축하는 것입니다.
 
+## 확인 주소
+
+| 환경 | 주소 |
+|---|---|
+| Local UI | <http://localhost:5173> |
+| Local API Docs | <http://127.0.0.1:8000/docs> |
+| **GitHub Pages Demo** | <https://1976haru.github.io/autotrade/> |
+
+스마트폰에서 같은 Wi-Fi의 PC dev 서버를 보려면:
+
+```bash
+cd frontend
+npm run dev -- --host 0.0.0.0
+# 접속: http://<PC_IP>:5173 (예: http://192.168.0.49:5173)
+```
+
 ## 현재 상태
 
 - `frontend/`: React/Vite 기반 관제 UI. 백엔드 라우트와 실연결.

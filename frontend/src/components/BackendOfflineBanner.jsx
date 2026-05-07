@@ -20,30 +20,24 @@ export function BackendOfflineBanner() {
   if (!error) return null;
 
   if (isDemoBuild()) {
+    // 234 (UI-006): 새 .ui-demo-banner 토큰으로 시각 통일. wrapper margin은
+    // 그대로 유지해 기존 레이아웃과 호환.
     return (
-      <div
-        data-testid="demo-mode-banner"
-        style={{
-          padding: "10px 14px", margin: "10px 12px",
-          background: "#0c2035", border: "1px solid #7dd3fc66",
-          borderRadius: 6, color: "#7dd3fc", fontSize: 12, lineHeight: 1.5,
-        }}
-      >
-        <div style={{ fontWeight: 700, marginBottom: 4 }}>
-          🧪 Demo Mode (GitHub Pages)
-        </div>
-        <div style={{ color: "#94a3b8" }}>
-          이 화면은 <b>UI 데모</b>입니다. 실제 백엔드/브로커가 없어 모든 데이터는 mock·virtual 입니다.
-          실거래·실주문은 발생하지 않으며, 일부 카드는 빈 상태로 표시됩니다.
-        </div>
-        <div style={{ fontSize: 10, color: "#475569", marginTop: 6 }}>
-          전체 기능을 보려면 로컬에서 backend(uvicorn) + frontend(npm run dev)를 함께 실행하세요.
-        </div>
-        {/* 220: 자동 갱신 회로 검증용 빌드 태그. 운영자에게는 작은 회색 글씨로
-            빌드 추적이 가능하다는 신호만 — 실데이터 의미는 없음. */}
-        <div data-testid="demo-build-tag"
-             style={{ fontSize: 9, color: "#334155", marginTop: 4 }}>
-          build · auto-update-220
+      <div data-testid="demo-mode-banner" style={{ margin: "10px 12px" }}>
+        <div className="ui-demo-banner">
+          <div className="ui-demo-banner__title">🧪 Demo Mode (GitHub Pages)</div>
+          <div className="ui-demo-banner__body">
+            이 화면은 <b>UI 데모</b>입니다. 실제 백엔드/브로커가 없어 모든 데이터는 mock·virtual 입니다.
+            실거래·실주문은 발생하지 않으며, 일부 카드는 빈 상태로 표시됩니다.
+          </div>
+          <div className="ui-demo-banner__hint">
+            전체 기능을 보려면 로컬에서 backend(uvicorn) + frontend(npm run dev)를 함께 실행하세요.
+          </div>
+          {/* 220 build tag — auto-update 회로 검증용. 작은 회색 글씨로 유지. */}
+          <div data-testid="demo-build-tag"
+               style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-5)" }}>
+            build · auto-update-220
+          </div>
         </div>
       </div>
     );
