@@ -27,4 +27,10 @@ export default [
       "no-unused-vars": ["warn", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
     },
   },
+  // 214: vite.config.js는 Node 컨텍스트에서 실행 — process.env 등 Node 전역
+  // 사용을 위해 별도 override.
+  {
+    files: ["vite.config.js", "eslint.config.js"],
+    languageOptions: { globals: globals.node },
+  },
 ];

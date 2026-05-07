@@ -130,4 +130,63 @@ describe("<App> smoke", () => {
     // 에서 직접 검증. 여기서는 shell이 깨지지 않는 것만 확인.
     expect(view.queryAllByRole("button").length).toBeGreaterThan(3);
   });
+
+  // 214: 8개 demo target 화면이 mock/empty 데이터에서도 렌더링되는지 — 한 탭씩
+  // 클릭해서 ErrorBoundary fallback이 한 번도 등장하지 않는지 확인. 각 탭의
+  // 시그니처 텍스트로 도착을 검증한다 (탭마다 unique한 SectionLabel 또는
+  // testid). Pages demo 사용자가 "어떤 탭에서 흰 화면이 나는가"를 회귀로 잠금.
+  const _DEMO_TARGET_TABS = [
+    { label: "대시보드",     signature: { kind: "testid", value: "status-pin-bot" } },
+    { label: "전략·리스크",  signature: { kind: "text",   value: "백엔드 리스크 정책" } },
+    { label: "승인",         signature: { kind: "text",   value: /승인/ } },
+    { label: "로그",         signature: { kind: "text",   value: /이벤트 타임라인/ } },
+    { label: "AI시그널",     signature: { kind: "text",   value: /AI 합류 신호 분석/ } },
+    // Engine 탭 안에 Virtual Orders + Virtual Positions 카드가 함께 마운트된다.
+    { label: "엔진",         signature: { kind: "text",   value: /엔진 상태/ } },
+    { label: "선물",         signature: { kind: "text",   value: /다층 안전 가드/ } },
+  ];
+
+  it.each(_DEMO_TARGET_TABS)(
+    "renders %s tab without ErrorBoundary fallback in empty/demo data",
+    async ({ label, signature }) => {
+      _activeApi = _emptyApi;
+      let view;
+      await act(async () => { view = render(<App />); });
+      await waitFor(() => {
+        expect(view.getByTestId("status-pin-bot")).toBeTruthy();
+      });
+      if (label !== "대시보드") {
+        const btn = view.getByText(label);
+        await act(async () => { fireEvent.click(btn); });
+      }
+      await waitFor(() => {
+        if (signature.kind === "testid") {
+          expect(view.getByTestId(signature.value)).toBeTruthy();
+        } else {
+          expect(view.getAllByText(signature.value).length).toBeGreaterThan(0);
+        }
+      });
+      // 어떤 탭으로 가도 ErrorBoundary fallback 은 한 번도 등장하지 말 것.
+      expect(view.queryByTestId("error-boundary")).toBeNull();
+    },
+  );
+});
+
+
+// 214: 빌드 플래그(VITE_DEMO_MODE) 분기 헬퍼는 별도 단위 테스트. import.meta.env
+// 를 vi.stubEnv로 갈아끼워 양쪽 분기를 모두 검증.
+describe("isDemoBuild()", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  it("returns false when VITE_DEMO_MODE is unset", async () => {
+    vi.stubEnv("VITE_DEMO_MODE", "");
+    const { isDemoBuild } = await import("./components/BackendOfflineBanner.jsx");
+    expect(isDemoBuild()).toBe(false);
+  });
+
+  it("returns true when VITE_DEMO_MODE is the string 'true'", async () => {
+    vi.stubEnv("VITE_DEMO_MODE", "true");
+    const { isDemoBuild } = await import("./components/BackendOfflineBanner.jsx");
+    expect(isDemoBuild()).toBe(true);
+  });
 });
