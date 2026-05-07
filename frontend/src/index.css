@@ -109,3 +109,50 @@ code {
   padding: 4px 8px;
   background: var(--code-bg);
 }
+
+/* 222: PC/모바일 반응형 레이아웃.
+ *
+ * 기본(모바일 우선)은 기존 520px 폭의 스마트폰형 shell — 운영자가 휴대폰으로
+ * 관제할 때 그대로 작동. 768px 이상(PC, 태블릿 가로)은 1280px까지 확장해
+ * Dashboard 카드들이 2~3열 grid로 펼쳐지고 BottomNav도 같은 폭에서 중앙
+ * 정렬된다.
+ *
+ * 인라인 style을 그대로 두면 max-width를 미디어쿼리로 못 바꾸므로 App.jsx /
+ * BottomNav.jsx의 폭 결정 부분만 className으로 옮기고, 나머지(색·폰트·여백)
+ * 인라인 style은 유지 — 점진적 마이그레이션.
+ */
+.app-shell {
+  max-width: 520px;
+  margin: 0 auto;
+}
+.app-bottomnav {
+  max-width: 520px;
+}
+
+/* Dashboard 본문은 모바일에서 세로 스택, PC에서 auto-fit grid로 펼친다.
+ * inline style이 class를 이긴다는 CSS 특이성 문제를 피하기 위해 display/gap도
+ * 여기에 정의하고, Dashboard.jsx에서 해당 인라인 style은 제거. */
+.dashboard-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+@media (min-width: 768px) {
+  .app-shell    { max-width: 1280px; }
+  .app-bottomnav { max-width: 1280px; }
+
+  /* Dashboard 본문 — 카드들이 자동으로 2~3열로 흐르도록 auto-fit grid.
+   * 단, 화면 폭에 가로지르는 알림(EmergencyStop banner / HistoryStaleBanner /
+   * StatusSummaryCard / Activity24hCard)은 .dashboard-span-full로 모든 열을
+   * 차지하게 해서 위에 단일 row로 노출. */
+  .dashboard-body {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 12px;
+    align-items: start;
+  }
+  .dashboard-span-full {
+    grid-column: 1 / -1;
+  }
+}

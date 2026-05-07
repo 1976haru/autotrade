@@ -75,7 +75,7 @@ function AppShell() {
   };
 
   return (
-    <div style={{ minHeight:"100vh", background:"#010a14", color:"#c9d6e3", fontFamily:"'JetBrains Mono','Courier New',monospace", maxWidth:520, margin:"0 auto", display:"flex", flexDirection:"column" }}>
+    <div className="app-shell" style={{ minHeight:"100vh", background:"#010a14", color:"#c9d6e3", fontFamily:"'JetBrains Mono','Courier New',monospace", display:"flex", flexDirection:"column" }}>
       <TopBar brokerId={settings.brokerId} tradeMode={settings.tradeMode} connected={settings.connected} />
       <BackendOfflineBanner />
       <div style={{ flex:1, overflowY:"auto", padding:"14px 14px 90px", scrollbarWidth:"thin" }}>

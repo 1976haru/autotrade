@@ -86,6 +86,32 @@ describe("<App> smoke", () => {
     expect(view.queryAllByRole("button").length).toBeGreaterThan(3);
   });
 
+  // 222: 반응형 레이아웃 클래스가 적용됐는지 — 인라인 maxWidth: 520이 사라지고
+  // .app-shell / .app-bottomnav 클래스가 붙어야 PC 미디어쿼리에서 1280px로
+  // 확장된다. jsdom에서 window 폭은 1024(default)지만 클래스 적용 자체는 폭과
+  // 무관하게 검증 가능 — DOM에 className이 박혀 있으면 됨.
+  it("applies responsive layout classes on shell and bottom nav", async () => {
+    _activeApi = _emptyApi;
+    let view;
+    await act(async () => { view = render(<App />); });
+    await waitFor(() => {
+      expect(view.getByTestId("status-pin-bot")).toBeTruthy();
+    });
+    // app-shell은 최외곽 div. querySelector로 추적해 인라인 maxWidth가 더 이상
+    // 박혀 있지 않은 것까지 확인.
+    const shell = view.container.querySelector(".app-shell");
+    expect(shell).toBeTruthy();
+    expect(shell.style.maxWidth).toBe("");
+    const nav = view.container.querySelector(".app-bottomnav");
+    expect(nav).toBeTruthy();
+    expect(nav.style.maxWidth).toBe("");
+    // Dashboard 본문도 .dashboard-body 클래스로 layout이 옮겨져야 PC에서 grid
+    // 적용이 가능. 인라인 display: flex는 더 이상 박혀 있지 않아야 한다.
+    const body = view.container.querySelector(".dashboard-body");
+    expect(body).toBeTruthy();
+    expect(body.style.display).toBe("");
+  });
+
   it("renders Dashboard tab content in the empty-data happy path", async () => {
     _activeApi = _emptyApi;
     let view;
