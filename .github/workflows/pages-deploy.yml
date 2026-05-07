@@ -20,6 +20,10 @@ name: GitHub Pages Demo
 # 산출물을 main root에 직접 커밋해 Pages가 그대로 serve. 이 워크플로의 세 번째
 # job(sync-main-root)이 매 빌드 후 dist 산출물을 main root에 자동 sync해,
 # 운영자가 frontend/ 변경 push만 하면 Pages 데모가 자동 갱신되도록.
+#
+# 221: Actions가 일시 비활성화된 동안 218~220 push가 워크플로를 트리거하지
+# 못해 round-trip 회로 검증이 미실행. 이 push로 재기동 + sync-main-root가
+# 220의 'auto-update-220' 태그를 main root에 반영하는지 확인.
 
 on:
   push:
