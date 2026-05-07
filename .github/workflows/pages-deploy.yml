@@ -4,6 +4,10 @@ name: GitHub Pages Demo
 # 백엔드(FastAPI)는 Pages에서 실행되지 않으므로, 빌드 시 VITE_DEMO_MODE=true
 # 를 주입해 BackendOfflineBanner가 친화적인 "🧪 Demo Mode" 배너로 분기되게
 # 한다. 실제 broker / API key / 계좌번호는 어떤 빌드 산출물에도 포함되지 않는다.
+#
+# 215: Pages Source가 "Deploy from a branch"(Jekyll)에서 "GitHub Actions"로
+# 전환된 뒤 첫 강제 재배포를 위해 path 필터가 다시 매칭되도록 이 코멘트를
+# 추가. 이후 일반 frontend/ 변경에서만 자동 재트리거되는 동작은 동일.
 
 on:
   push:
