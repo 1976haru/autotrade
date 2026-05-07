@@ -208,6 +208,13 @@ auto-trader/
 
 ## 작업 흐름 (브랜치)
 
-- `main`은 항상 안정 상태. backend pytest와 frontend build가 통과하는 커밋만 허용.
-- 새 기능은 `feature/<번호>-<짧은-슬러그>` 브랜치에서 작업.
-- LIVE / LIVE_AI_EXECUTION / 선물 관련 위험 코드는 stub 또는 TODO로 남기고, 별도 PR에서 단계별로 구현.
+| 브랜치 | 역할 |
+|---|---|
+| `main` | 항상 안정 상태. backend pytest와 frontend build가 통과한 커밋만 허용. 릴리스 가능 기준선. |
+| `develop` | 다음 릴리스를 위한 통합 브랜치. 여러 feature를 모은 뒤 검증되면 `main`으로 머지. |
+| `feature/<번호>-<짧은-슬러그>` | 단일 기능/버그 단위 작업 브랜치. `develop` 또는 `main` 대상으로 PR 생성. |
+
+CI(`backend-ci.yml` / `frontend-ci.yml`)는 `main`, `develop`, `feature/**` 푸시와 `main` / `develop` 대상 PR에서 자동 실행된다.
+
+- LIVE / LIVE_AI_EXECUTION / 선물 관련 위험 코드는 stub 또는 TODO로 남기고, 별도 옵트인 PR에서 단계별로 구현.
+- API Key, App Secret, 계좌번호, `.env` 파일은 어떤 브랜치에도 커밋하지 않는다 (`.gitignore`로 강제).
