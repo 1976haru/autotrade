@@ -1,196 +1,170 @@
-# UI Redesign Completion Report (229–236, UI-001 ~ UI-009)
+# UI Premium Light Redesign — Completion Report
 
 ## 배경
 
-기존 UI는 기능은 많지만 가독성·직관성·완성도가 낮음:
+기존 UI 피드백:
+- 배경이 너무 어둡고 글자가 잘 안 보임
+- 글자 크기가 작고 대비가 약함
+- 카드 위계가 약함
+- 데스크톱에서도 모바일 화면처럼 답답함
+- "Failed to fetch" 같은 원시 에러 문구가 그대로 보임
+- 기능은 많지만 첫인상이 개발자용 콘솔처럼 보임
 
-- 9~11px 폰트가 카드 곳곳에 흩어져 있어 작고 답답함.
-- 인라인 hex 색이 컴포넌트마다 달라 위계가 약함.
-- 데스크톱에서도 모바일 폭(520px)으로만 보여 관제 대시보드가 아니라 폰 앱처럼 느껴짐.
-- "Failed to fetch" 같은 raw 에러 문구가 그대로 노출.
-- GitHub Pages 데모에서 빈 화면이 보일 위험.
+목표: **Soft Fintech + Smart Assistant + Lifestyle App** 톤. 밝은 라이트 테마 +
+파스텔 포인트 + 둥근 카드 + 큰 글자 + 명확한 위계 + Agent 강조.
 
-## 구현 결과 (229 ~ 236)
+## 7-Phase 결과 (Light-001 ~ Light-007)
 
-### Phase 1 (UI-001) — Design System & Layout Foundation
+### Light-001 — Design system + responsive shell
 
-`feat(ui): introduce responsive design system and app shell`
+`feat(ui): introduce light design system and responsive shell`
 
-- `frontend/src/index.css`에 design tokens 도입: `--c-bg / --c-surface /
-  --c-border / --c-text / --c-success/warning/danger/info / --r-* / --s-* /
-  --fs-* / --sh-*`. 인라인 hex 색을 점진 마이그레이션할 토큰 기반.
-- 데스크톱 max-width를 `1280 → 1440px`로 확장 (`@media (min-width: 1280px)`).
-- 신규 primitives (`components/common/primitives.jsx`): `PageHeader /
-  SectionHeader / MetricCard / StatusBadge / StatusPill / EmptyState /
-  ErrorState / LoadingState / DemoModeBanner`. 모두 token 참조, 인라인 색은
-  동적 값(상태별)만.
-- 기존 `Card / SectionLabel / Btn / StatBox`는 그대로 유지 — 다수 callers
-  깨지지 않도록 점진 도입.
+- `index.css` `:root` 토큰을 light palette로 재정의:
+  - `--c-bg`: `#f6f8fc` (slate-50 + 청회색 hint)
+  - `--c-surface`: `#ffffff` (pure white cards)
+  - `--c-text`: `#0f172a` (slate-900 — 흰 위에 진한 글씨)
+  - 상태색: emerald-500 / amber-500 / red-500 / blue-500 / violet-500
+- body·#root에 light 배경 + Inter / Apple SD Gothic Neo 폰트 적용.
+- App shell의 인라인 dark `#010a14`를 토큰 reference로 교체.
+- TopNav: white sticky bar + 활성 탭 `#eff6ff` blue-200 border.
+- Demo Mode banner: indigo light gradient.
+- EmptyState/ErrorState/LoadingState 토큰 기반 light 카드.
 
-테스트: 10건 신규 (`primitives.test.jsx`).
+### Light-002 — Dashboard premium redesign
 
-### Phase 2 (UI-002) — Dashboard Premium Redesign
+`feat(ui): redesign dashboard for premium operator view`
 
-`feat(ui): redesign dashboard for operator-grade readability`
+- **HeroSummaryCard subtitle**: "지능형 에이전트가 시장을 분석하고, 나는 핵심만
+  확인하는 자동매매 대시보드"로 사용자 친화 카피.
+- **OperatorPanel** light migration: white surface + accent border (emergency
+  시 적색). VIRTUAL MODE 배지 violet-50/violet-500. 3 buttons: idle 시 light
+  fill + 색 텍스트, active 시 강조 색 fill. Status 6-cell grid 큰 글자 + 토큰.
+- Error 카피: "일부 데이터를 불러올 수 없습니다 (데모 모드일 수 있어요)" —
+  raw "Failed to fetch" 노출 X.
 
-- `tabs/HeroSummaryCard.jsx`: Dashboard 최상단 hero. 앱명, 운용 모드 배지,
-  Demo/Backend 연결 상태 pill, 긴급 정지 pill, 결재 대기 pill (stale 경우
-  red escalate), 마지막 업데이트 시각, '실거래 미실행' 영구 노출, 모드별
-  운용 노트.
-- `tabs/Dashboard.jsx`: HeroSummaryCard를 가장 위에 마운트.
-- 7개 분기 시나리오 테스트 (`HeroSummaryCard.test.jsx`).
+### Light-003 — Friendly error/empty/loading states
 
-### Phase 3 (UI-003) — Responsive Navigation
+`fix(ui): normalize empty error and loading states`
 
-`feat(ui): improve responsive navigation for desktop and mobile`
+- AgentCouncilCard / AgentDecisionSummaryCard / AgentStatsCard: raw error 표시
+  를 `friendlyErrorMessage` + light red surface(`#fef2f2` + `#fecaca`)로 교체.
+- BackendOfflineBanner offline 분기: "백엔드 연결 대기 중입니다 / 실데이터를
+  보려면 backend와 frontend를 함께 실행하세요" 친절 카피, raw error 제거.
+- 모든 폴백 카피에 친근한 어조 적용("…를 불러올 수 없어요").
 
-- `layout/TopNav.jsx`: 데스크톱(≥768px) sticky 가로 탭 바. 같은 `TABS` 데이터,
-  동일 `onChange` contract. active 탭 시안 강조 + `aria-current=page` + badge.
-- 모바일(<768px) BottomNav 가독성 향상: 아이콘 22px / 라벨 11px.
-- `BottomNav`에 `.ui-bottomnav-mobile-only` 클래스 — 데스크톱에서 자동 숨김.
-- `TopNav.test.jsx` 5건 (active state, badge cap 99+, onChange 호출).
-- `App.test.jsx`: 탭 전환 단언을 testid 기반으로 갱신해 라벨 중복 회피.
+### Light-004 — Navigation refresh
 
-### Phase 4 (UI-004) — Agent-Centric UI
+`feat(ui): improve navigation for desktop and mobile`
 
-`feat(ui): elevate agent intelligence summary and decision cards`
+- BottomNav light migration: white surface + 위쪽 부드러운 그림자, 활성 탭
+  `var(--c-info)` blue, 비활성 `var(--c-text-3)`. 라벨 11px + 활성 시 fw-700.
+- TopNav는 Light-001에서 이미 light 전환.
 
-- `tabs/AgentDecisionHero.jsx`: ChiefTradingAgent 종합 결정을 즉시 인지할 수
-  있도록 시각화. BUY/SELL/HOLD/APPROVE/REJECT/WARN/INFO StatusBadge + symbol
-  + confidence (큰 글씨) + 주요 reasons 3줄 + 장세/준비도 2-up 그리드.
-- 상태 분기: Loading / Error (Demo Mode 친절 안내 vs uvicorn 가이드) /
-  Empty (Demo Mode면 mock 안내) / Unknown decision (neutral fallback).
-- AI Agent는 broker 주문 API를 직접 호출하지 않음을 footer에 명시 (CLAUDE.md).
-- 4건 테스트 (`AgentDecisionHero.test.jsx`).
+### Light-005 — Agent emphasis
 
-### Phase 5 (UI-005) — Error / Empty / Loading State Normalization
+`feat(ui): highlight intelligent agent decision summaries`
 
-`fix(ui): add resilient empty error and loading states`
+- **AgentDecisionHero confidence 시각화**: 큰 monospace symbol(28px) + confidence
+  progress bar (linear-gradient indigo→violet, 8px height, 둥근 끝).
+- Reasons chip 스타일 + accent dot.
+- OperatingLoopCard 인라인 dark hex → 토큰 전부 교체. sub-row helpers.
+- MarketRegimeBadge: white surface + box-shadow + 큰 글자.
 
-- `utils/errorMessage.js`: `friendlyErrorMessage(rawError)` 헬퍼.
-  · 'Failed to fetch' / 'NetworkError' 등 → Demo Mode이면 'GitHub Pages
-    데모...', 로컬이면 'uvicorn' 안내로 변환.
-  · 의미 있는 한국어 메시지(예: '승인 시점 재평가에서 거부됨')는 그대로 통과.
-  · `isDemoBuild()` 분기 + 6건 테스트.
-- `ReconciliationStatusCard`, `OperatingLoopCard`: raw "조회 실패: {error}"
-  → ErrorState primitive + friendlyErrorMessage. retry 버튼 통합.
-- 회귀 테스트 갱신 — testid 기반 단언.
+### Light-006 — Core primitives light
 
-### Phase 6 (UI-006) — GitHub Pages Demo Mode Polish
+`feat(ui): polish core operator tabs`
 
-`feat(ui): polish github pages demo mode`
+- `components/common/index.jsx`의 Card / SectionLabel / Btn / Inp / ScoreBar /
+  StatBox / Toggle / Slider 8개 primitive를 light token 기반으로 일괄 교체.
+- 한 번의 변경으로 모든 탭의 카드 컨테이너 + 버튼 + 입력 + 통계가 동시에 light.
+- StatBox: `--fs-2xl` 큰 숫자 + uppercase 라벨로 KPI 가독성 ↑.
+- Btn: primary blue (#3b82f6) + 흰 텍스트 + 더 큰 hit area.
+- Toggle: 더 큰 토글 + 그림자 — 모바일 탭하기 편함.
 
-- `BackendOfflineBanner`: Demo Mode 분기를 `.ui-demo-banner` 토큰 기반
-  gradient + token 색으로 시각 통일. 운영자(uvicorn) 분기 유지.
-- `README.md` 상단에 확인 주소 표 (Local UI / Local API Docs / GitHub Pages
-  Demo) + 스마트폰 접속 명령(`npm run dev -- --host 0.0.0.0`) 추가.
+### Light-007 — Pages demo final + report
 
-### Phase 7 (UI-007) — Core Tabs Visual Pass
+`docs(ui): finalize responsive light dashboard redesign`
 
-`feat(ui): apply visual pass to core operator tabs`
-
-- 4개 핵심 탭(StrategyRisk / Approvals / AuditLog / Settings)에 PageHeader
-  primitive를 prepend — 사용자가 탭에 들어가는 순간 어떤 화면인지 즉시 인지.
-- 기존 카드/배지/EmptyState 동작은 100% 보존 — 회귀 0.
-
-### Phase 8 (UI-008) — Browser Smoke Verification
-
-`test(ui): add browser smoke coverage for demo dashboard`
-
-- `frontend/src/smoke.test.jsx`: 8개 자동 smoke 시나리오 — backend offline
-  에서도 App shell + Dashboard 핵심 카드 + 5개 핵심 탭 전환이 ErrorBoundary
-  fallback 없이 동작하는지 회귀 잠금.
-- `docs/ui_smoke_test_report.md`: 자동 + 수동 체크리스트. 환경 1(Local backend
-  on) / 환경 2(Local backend off) / 환경 3(GitHub Pages Demo) 각 6-8개 항목.
-
-### Phase 9 (UI-009) — Final Report
-
-본 문서 + `docs/final_completion_summary.md` 갱신.
+본 문서. README는 Light-001 시점에 이미 확인 주소(Local UI / API Docs / Pages
+Demo) + 모바일 명령 정리됨.
 
 ## 변경 통계
 
 | 항목 | Before | After |
 |---|---|---|
-| Frontend tests | 957 | **1008** (+51) |
+| Frontend tests | 1008 | **1008** (regression-free) |
 | Lint errors | 0 | 0 |
 | Build | OK | OK |
-| Core primitives | Card/SectionLabel/Btn/StatBox | + PageHeader/SectionHeader/MetricCard/StatusBadge/StatusPill/EmptyState/ErrorState/LoadingState/DemoModeBanner |
-| Desktop max-width | 1280px | 1440px (≥1280px viewport) |
-| Mobile shell | 520px | 520px (preserved) |
-| Tab page header | (none) | PageHeader on 4 core tabs |
-| Demo Mode banner | inline hex | token-based gradient |
-| Friendly error messages | (raw 'Failed to fetch') | `friendlyErrorMessage()` helper |
-| Hero summary card | (none) | new on Dashboard |
-| Agent decision hero | (in subcards) | dedicated card on Dashboard |
+| Theme | Dark (slate-950) | **Light** (slate-50 + white cards) |
+| Body bg | `#010a14` | `#f6f8fc` |
+| Card bg | `#020e1c` | `#ffffff` |
+| Primary text | `#c9d6e3` | `#0f172a` |
+| Primitive count | 8 (dark) | **8 (light)** |
+| Raw "Failed to fetch" | 다수 surface | **0 사용자-facing surface** |
+| Agent confidence | 숫자만 | **progress bar + 큰 symbol** |
 
 ## 개선 전 vs 개선 후
 
 | 영역 | 개선 전 | 개선 후 |
 |---|---|---|
-| Typography | 9-11px 폭주 | --fs-xs(11) ~ --fs-3xl(34) 토큰화 |
-| Color | 인라인 hex 매번 다름 | 토큰 (--c-success, --c-info, ...) |
-| Spacing | 인라인 4/6/8/10 혼재 | --s-1 ~ --s-8 토큰 |
-| Desktop layout | 폰 폭 520px | 1440px 와이드 + 2-3열 grid |
-| Mobile layout | 그대로 | 그대로 (의도) + 아이콘/라벨 가독성 ↑ |
-| Page identity | 없음 | PageHeader title + subtitle |
-| Error UX | "Failed to fetch" raw | "GitHub Pages 데모..." / "uvicorn ..." |
-| Agent decision visibility | 카드 깊숙이 | Dashboard hero level |
-| Demo Mode UX | 빨간 에러 분위기 | 친근한 시안 톤 + 안내 |
+| 첫인상 | 개발자 콘솔 풍 어두운 배경 | Soft fintech 라이트 톤 |
+| 가독성 | 9-11px 글자 + 약한 대비 | 13-16px + slate-900 ↔ white |
+| 카드 위계 | 인라인 hex 색 매번 다름 | 토큰 + box-shadow + 둥근 radius |
+| 버튼 | 작은 hit area | 큰 padding + 명확한 primary blue |
+| Agent | 카드 깊숙이 | progress bar + 큰 symbol + chip |
+| Demo Mode | 빨간 에러 분위기 | 친근한 인디고 light banner |
+| Error UX | "Failed to fetch" raw | 친절한 한국어 안내 + light red |
+| Navigation | 한 줄 작은 라벨 | desktop sticky top + 모바일 light bottom |
+| Mobile | 그대로 | 그대로 + 더 큰 글자/탭 영역 |
+
+## 확인 주소
+
+- **Local UI**: <http://localhost:5173>
+- **Local API Docs**: <http://127.0.0.1:8000/docs>
+- **GitHub Pages Demo**: <https://1976haru.github.io/autotrade/>
+
+스마트폰에서 PC dev 서버를 보려면:
+
+```bash
+cd frontend
+npm run dev -- --host 0.0.0.0
+# 접속: http://<PC_IP>:5173
+```
 
 ## 남은 UI Backlog (다음 단계)
 
-이번 시리즈에서 다루지 않은 후속 후보 — 본 PR 종료 후 별도로 추진:
+이번 시리즈에서 다루지 않은 후속 후보:
 
-1. OperatorPanel `데이터 일부 조회 실패: {error}` 등 보조 카드의 raw 문구도
-   `friendlyErrorMessage`로 통일.
-2. Audit timeline / Approvals history의 표 형태를 데스크톱에서 진짜 table
-   레이아웃으로 (현재는 row stack).
-3. 다크/라이트 토큰 분리 — 현재 dark만.
-4. KPI 카드 리뉴얼: MetricCard primitive로 마이그레이션 (현재 인라인 div).
-5. AI 시그널 / 백테스트 / 가상 주문 탭의 표 가독성 강화.
-6. focus ring 표준화 — 키보드 접근성 일관성.
-
-## GitHub Pages Demo
-
-- 주소: <https://1976haru.github.io/autotrade/>
-- 자동 배포: 매 main push마다 `pages-deploy.yml` 워크플로 실행 → `dist/`를
-  main root에 auto-sync (`[skip ci]`) → Pages serve.
-- Demo Mode UI: 토큰 기반 시안 banner + 모든 탭 친절한 fallback.
-
-## 로컬 실행
-
-```bash
-# backend
-cd backend
-uvicorn app.main:app --host 0.0.0.0 --port 8000
-
-# frontend (새 터미널)
-cd frontend
-npm run dev -- --host 0.0.0.0   # 같은 Wi-Fi 모바일 동시 확인 가능
-
-# 접속:
-#   PC:  http://localhost:5173
-#   폰:  http://<PC_IP>:5173 (예: http://192.168.0.49:5173)
-```
-
-`VITE_BACKEND_URL=http://<PC_IP>:8000`을 frontend dev 서버에 주입해야 폰에서
-backend도 도달 가능.
+1. **Tab 내부 카드 inline dark 정리** — 일부 row(예: Approvals row, AuditLog
+   timeline row)는 여전히 인라인 hex `#0c2035` 등을 사용. 토큰으로 마이그레이션.
+2. **Table 데스크톱 레이아웃** — Audit timeline / Approvals history는 모바일은
+   row stack OK, 데스크톱에서는 진짜 table grid가 가독성 ↑.
+3. **다크 테마 토글** — 시스템 prefers-color-scheme 또는 운영자 setting.
+4. **focus ring 표준화** — 키보드 접근성 일관성 (현재 inline outline 없음).
+5. **애니메이션 micro-interaction** — 카드 hover, 토글 transition, 차트 진입 등.
+6. **차트 시각화** — 24h activity / KPI / agent confidence를 sparkline으로.
 
 ## 안전성 (절대 원칙 준수)
 
-- 실 broker live order endpoint 호출: **0건**.
-- LIVE_AI_EXECUTION 활성화: **0건**.
-- FUTURES_LIVE 활성화: **0건**.
-- API Key / App Secret / 계좌번호 추가/수정/커밋: **0건**.
-- RiskManager / PermissionGate / OrderExecutor 우회: **0건**.
-- backend API contract 변경: **0건** (UI는 기존 라우트만 소비).
+- 실 broker live order endpoint 호출: **0건**
+- LIVE_AI_EXECUTION 활성화: **0건**
+- FUTURES_LIVE 활성화: **0건**
+- API Key / App Secret / 계좌번호 추가/수정/커밋: **0건**
+- RiskManager / PermissionGate / OrderExecutor 우회: **0건**
+- backend API contract 변경: **0건**
 
-본 시리즈는 **frontend UI 개선만** — 자동매매 비즈니스 로직 / 주문 흐름 /
-리스크 가드는 어떤 코드도 수정되지 않았습니다.
+본 시리즈는 **frontend UI만** 개선. 자동매매 비즈니스 로직 / 주문 흐름 /
+리스크 가드는 어떤 코드도 수정되지 않음.
 
 ## 테스트 결과
 
-- `npm test` (frontend): **1008 passed**
-- `npm run lint` (frontend): **0 errors / 65 warnings** (기존 baseline)
-- `npm run build` (frontend): **OK** (~414 KB JS / 4.6 KB CSS)
-- backend pytest는 본 시리즈에서 영향 없음 — 마지막 head에서 996 unit + 10 stress.
+- `npm test` (frontend): **1008 passed** (regression 0)
+- `npm run lint` (frontend): **0 errors / 66 warnings** (기존 baseline)
+- `npm run build` (frontend): **OK** (~417 KB JS / ~7 KB CSS)
+- backend pytest: 영향 없음 — 이전 head 996 unit + 10 stress 그대로.
+
+## 종료
+
+7개 phase 모두 완료. 각 phase는 독립 feature 브랜치 → test/lint/build →
+commit → main merge → 브랜치 삭제까지 진행. main ↔ origin/main 동기화,
+working tree clean. 신규 후보 제안 없이 종료.
