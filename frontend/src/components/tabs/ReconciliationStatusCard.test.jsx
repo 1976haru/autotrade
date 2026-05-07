@@ -140,9 +140,12 @@ describe("<ReconciliationStatusCard>", () => {
 
   it("shows error state with retry button", () => {
     const onRefresh = vi.fn();
-    const { getByText } = render(<ReconciliationStatusCard
+    const { getByText, getByTestId } = render(<ReconciliationStatusCard
       status={null} loading={false} error="boom" onRefresh={onRefresh} />);
-    expect(getByText(/조회 실패: boom/)).toBeTruthy();
+    // 233 (UI-005): ErrorState primitive 사용 — 'reconciliation 조회 실패' title
+    // + raw error는 hint로. 'boom' 같은 의미 없는 raw는 friendlyErrorMessage가
+    // 그대로 통과.
+    expect(getByTestId("reconciliation-error").textContent).toContain("reconciliation 조회 실패");
     fireEvent.click(getByText(/다시 시도/));
     expect(onRefresh).toHaveBeenCalled();
   });
@@ -211,8 +214,9 @@ describe("useReconciliationStatus integration via card", () => {
       );
     }
 
-    const { findByText, getByText } = render(<Probe />);
-    await findByText(/조회 실패: offline/);
+    const { findByTestId, findByText, getByText } = render(<Probe />);
+    // 233: ErrorState로 surface — raw 'offline' 문구 노출 X.
+    await findByTestId("reconciliation-error");
 
     backendApi.reconciliationStatus.mockReset();
     backendApi.reconciliationStatus.mockResolvedValue({
