@@ -52,18 +52,28 @@
 
 body {
   margin: 0;
+  /* 238 (Light-001): light page bg + readable text. inline dark surface는
+   * 점진 마이그레이션으로 정리한다. */
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+  font-size: var(--fs-base);
+  line-height: var(--lh-base);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 #root {
-  width: 1126px;
+  width: 100%;
   max-width: 100%;
   margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
+  text-align: left;       /* 238: 기본 left-align — 카드/문단 가독성 */
   min-height: 100svh;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
+  background: var(--c-bg);
+  color: var(--c-text);
 }
 
 h1,
@@ -158,36 +168,37 @@ code {
 }
 
 /* ============================================================
- * 229 (UI-001): Premium Operator Dashboard — Design Tokens
+ * 238 (Light-001): Soft Fintech Light Theme — Design Tokens
  * ============================================================
- * 기존 인라인 hex 색이 컴포넌트 전반에 흩어져 있어 점진적 마이그레이션을
- * 위해 :root 변수로 토큰을 도입한다. 신규 primitive (PageHeader,
- * MetricCard, StatusBadge, EmptyState, ErrorState, LoadingState,
- * DemoModeBanner)는 모두 이 토큰을 참조. 기존 컴포넌트는 그대로 두고,
- * Dashboard 등 핵심 화면부터 점진적으로 toggle.
+ * 229 dark token set을 light palette로 전환 — 사용자 피드백:
+ * '배경이 너무 어둡고 글자가 잘 안 보임'. 라이트 + 파스텔 포인트로 재구성.
+ * 신규 primitive(PageHeader/StatusBadge/EmptyState/...)와 light bg를
+ * 사용하는 chrome(App shell, TopNav)부터 light로 전환된다. 기존 inline
+ * dark 카드는 phase 6까지 단계적 마이그레이션 — intermediate phase에서는
+ * light 페이지 위에 dark 카드가 같이 보이는 hybrid 상태를 거친다.
  */
 :root {
-  /* surface */
-  --c-bg:        #010a14;        /* page bg */
-  --c-surface:   #020e1c;        /* card bg */
-  --c-surface-2: #0c2035;        /* nested cell bg */
-  --c-surface-3: #1a3a5c;        /* hover/active */
-  --c-border:    #1e3a5c;        /* default border */
-  --c-border-strong: #334155;    /* emphasized border */
+  /* surface — soft fintech palette */
+  --c-bg:        #f6f8fc;        /* page bg — slate-50 with hint of blue */
+  --c-surface:   #ffffff;        /* card bg — pure white */
+  --c-surface-2: #f1f5f9;        /* nested cell bg — slate-100 */
+  --c-surface-3: #e2e8f0;        /* hover/active — slate-200 */
+  --c-border:    #e2e8f0;        /* default border — slate-200 */
+  --c-border-strong: #cbd5e1;    /* emphasized border — slate-300 */
 
-  /* text */
-  --c-text:    #c9d6e3;          /* primary */
-  --c-text-2:  #94a3b8;          /* secondary */
-  --c-text-3:  #64748b;          /* tertiary */
-  --c-text-4:  #475569;          /* muted */
-  --c-text-5:  #334155;          /* disabled */
+  /* text — high contrast on white */
+  --c-text:    #0f172a;          /* primary — slate-900 */
+  --c-text-2:  #334155;          /* secondary — slate-700 */
+  --c-text-3:  #64748b;          /* tertiary — slate-500 */
+  --c-text-4:  #94a3b8;          /* muted — slate-400 */
+  --c-text-5:  #cbd5e1;          /* disabled — slate-300 */
 
-  /* status */
-  --c-success:  #22c55e;
-  --c-warning:  #f59e0b;
-  --c-danger:   #ef4444;
-  --c-info:     #7dd3fc;
-  --c-accent:   #a78bfa;
+  /* status — pastel-leaning, fintech-friendly */
+  --c-success:  #10b981;         /* emerald-500 */
+  --c-warning:  #f59e0b;         /* amber-500 */
+  --c-danger:   #ef4444;         /* red-500 */
+  --c-info:     #3b82f6;         /* blue-500 */
+  --c-accent:   #8b5cf6;         /* violet-500 — AI/Agent emphasis */
 
   /* radius */
   --r-xs: 3px;
@@ -347,11 +358,12 @@ code {
   justify-content: center;
   gap: var(--s-2);
   padding: var(--s-6) var(--s-4);
-  border: 1px dashed var(--c-border);
+  border: 1px dashed var(--c-border-strong);
   border-radius: var(--r-lg);
   background: var(--c-surface);
-  color: var(--c-text-3);
+  color: var(--c-text-2);
   text-align: center;
+  box-shadow: var(--sh-1);
 }
 .ui-empty-state__icon,
 .ui-error-state__icon,
@@ -383,16 +395,17 @@ code {
 }
 
 .ui-demo-banner {
-  background: linear-gradient(180deg, rgba(125, 211, 252, 0.08), rgba(125, 211, 252, 0.02));
-  border: 1px solid rgba(125, 211, 252, 0.4);
+  background: linear-gradient(180deg, #eff6ff, #f5f3ff);
+  border: 1px solid #c7d2fe;
   border-radius: var(--r-lg);
   padding: var(--s-3) var(--s-4);
-  color: var(--c-info);
+  color: #4f46e5;
   font-size: var(--fs-sm);
   line-height: var(--lh-base);
   display: flex;
   flex-direction: column;
   gap: var(--s-1);
+  box-shadow: var(--sh-1);
 }
 .ui-demo-banner__title {
   font-weight: var(--fw-bold);
@@ -414,25 +427,26 @@ code {
   display: none;            /* 모바일에서는 숨김 */
   background: var(--c-surface);
   border-bottom: 1px solid var(--c-border);
-  padding: var(--s-2) var(--s-3);
+  padding: var(--s-3) var(--s-4);
   gap: var(--s-1);
   flex-wrap: wrap;
   position: sticky;
   top: 0;
   z-index: 80;
+  box-shadow: var(--sh-1);
 }
 .ui-topnav__item {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 8px 14px;
   border: 1px solid transparent;
   background: transparent;
   border-radius: var(--r-md);
   cursor: pointer;
-  color: var(--c-text-3);
+  color: var(--c-text-2);
   font-family: inherit;
-  font-size: var(--fs-sm);
+  font-size: var(--fs-base);
   font-weight: var(--fw-medium);
   position: relative;
   transition: all 0.15s;
@@ -443,8 +457,8 @@ code {
 }
 .ui-topnav__item.is-active {
   color: var(--c-info);
-  background: rgba(125, 211, 252, 0.10);
-  border-color: rgba(125, 211, 252, 0.4);
+  background: #eff6ff;
+  border-color: #bfdbfe;
 }
 .ui-topnav__label {
   font-size: var(--fs-sm);

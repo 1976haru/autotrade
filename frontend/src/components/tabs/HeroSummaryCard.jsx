@@ -61,7 +61,8 @@ export function HeroSummaryCard({
   return (
     <section data-testid="hero-summary"
              style={{
-               background: "linear-gradient(180deg, var(--c-surface), rgba(2, 14, 28, 0.6))",
+               // 238 (Light-001): light gradient — pure white into very light blue.
+               background: "linear-gradient(180deg, #ffffff, #f0f9ff)",
                border: "1px solid var(--c-border)",
                borderRadius: "var(--r-xl)",
                padding: "var(--s-5)",
@@ -108,10 +109,11 @@ export function HeroSummaryCard({
       </div>
 
       <div style={{
-        marginTop: "var(--s-3)", padding: "var(--s-2) var(--s-3)",
+        marginTop: "var(--s-3)", padding: "var(--s-3) var(--s-4)",
         background: "var(--c-surface-2)", borderRadius: "var(--r-md)",
         fontSize: "var(--fs-sm)", color: "var(--c-text-2)",
-        lineHeight: "var(--lh-base)",
+        lineHeight: "var(--lh-loose)",
+        border: "1px solid var(--c-border)",
       }} data-testid="hero-mode-note">
         <b style={{ color: "var(--c-text)" }}>운용 모드 안내:</b> {modeMeta.note}.
         모든 주문은 RiskManager + PermissionGate를 통과하며, AI Agent는 broker

@@ -195,22 +195,25 @@ export function AgentDecisionHero() {
 
 
 function _cardStyle() {
+  // 238 (Light-001): light surface + subtle shadow + larger radius.
   return {
     background: "var(--c-surface)",
     border: "1px solid var(--c-border)",
-    borderRadius: "var(--r-lg)",
-    padding: "var(--s-4)",
+    borderRadius: "var(--r-xl)",
+    padding: "var(--s-5)",
     display: "flex",
     flexDirection: "column",
-    gap: "var(--s-1)",
+    gap: "var(--s-2)",
+    boxShadow: "var(--sh-1)",
   };
 }
 
 function _subCardStyle() {
   return {
     background: "var(--c-surface-2)",
-    padding: "var(--s-2) var(--s-3)",
-    borderRadius: "var(--r-sm)",
+    padding: "var(--s-3) var(--s-4)",
+    borderRadius: "var(--r-md)",
+    border: "1px solid var(--c-border)",
   };
 }
 function _subLabel() {
