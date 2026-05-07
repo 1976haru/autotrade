@@ -18,6 +18,7 @@ import { HistoryStaleBanner } from "./Approvals";
 import { AgentLatestTile } from "./AgentLatestTile";
 import { MarketRegimeBadge } from "./MarketRegimeBadge";
 import { OperatorPanel } from "./OperatorPanel";
+import { HeroSummaryCard } from "./HeroSummaryCard";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
 // AuditLog timeline에서도 mode badge로 쓰기 위해 공유. Dashboard는 re-export
@@ -495,6 +496,15 @@ export function Dashboard({
     // PC(≥768px)는 auto-fit grid로 카드들이 2~3열로 흐른다. 인라인 style은
     // class CSS를 이기므로 layout 관련 인라인 속성은 두지 않는다.
     <div className="dashboard-body">
+
+      {/* 230 (UI-002): Hero Summary — 앱명/모드/연결상태/긴급정지/결재대기 한 줄로 */}
+      <div className="dashboard-span-full">
+        <HeroSummaryCard
+          emergencyStop={emergencyStop}
+          pendingCount={pendingCount}
+          stalePendingCount={stalePendingCount}
+        />
+      </div>
 
       {/* 227: 스마트폰 운영자 패널 — 시작/일시정지/긴급정지 + 핵심 상태 한 화면 */}
       <div className="dashboard-span-full">
