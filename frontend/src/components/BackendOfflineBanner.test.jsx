@@ -50,6 +50,8 @@ describe("<BackendOfflineBanner>", () => {
     expect(banner.textContent).toContain("Demo Mode");
     expect(banner.textContent).toContain("UI 데모");
     expect(banner.textContent).toContain("mock");
+    // 220: 빌드 태그가 화면에 노출되는지. 자동 갱신 회로의 round-trip 회귀 잠금.
+    expect(banner.textContent).toContain("auto-update-220");
     // uvicorn 분기는 노출되지 말 것.
     expect(queryByTestId("backend-offline-banner")).toBeNull();
     vi.unstubAllEnvs();

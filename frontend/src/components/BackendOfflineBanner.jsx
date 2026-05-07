@@ -39,6 +39,12 @@ export function BackendOfflineBanner() {
         <div style={{ fontSize: 10, color: "#475569", marginTop: 6 }}>
           전체 기능을 보려면 로컬에서 backend(uvicorn) + frontend(npm run dev)를 함께 실행하세요.
         </div>
+        {/* 220: 자동 갱신 회로 검증용 빌드 태그. 운영자에게는 작은 회색 글씨로
+            빌드 추적이 가능하다는 신호만 — 실데이터 의미는 없음. */}
+        <div data-testid="demo-build-tag"
+             style={{ fontSize: 9, color: "#334155", marginTop: 4 }}>
+          build · auto-update-220
+        </div>
       </div>
     );
   }
