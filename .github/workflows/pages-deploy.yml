@@ -1,0 +1,67 @@
+name: GitHub Pages Demo
+
+# 214: UI Demo Mode를 https://1976haru.github.io/autotrade/ 에 배포한다.
+# 백엔드(FastAPI)는 Pages에서 실행되지 않으므로, 빌드 시 VITE_DEMO_MODE=true
+# 를 주입해 BackendOfflineBanner가 친화적인 "🧪 Demo Mode" 배너로 분기되게
+# 한다. 실제 broker / API key / 계좌번호는 어떤 빌드 산출물에도 포함되지 않는다.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/pages-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: |
+          cd frontend
+          npm ci
+      - name: Build (Pages, Demo Mode)
+        env:
+          # /autotrade/ prefix 로 모든 자산을 참조하도록.
+          VITE_BASE_PATH: /autotrade/
+          # 빈 응답일 때 BackendOfflineBanner가 데모 안내로 분기.
+          VITE_DEMO_MODE: 'true'
+        run: |
+          cd frontend
+          npm run build
+      - name: SPA fallback (404 -> index)
+        # GitHub Pages는 client-side routing이 없어 404가 그대로 노출된다.
+        # 현재 SPA는 path routing을 쓰지 않지만, 향후 hash 외 라우터로 바뀌어도
+        # 안전하도록 index.html을 404.html로도 복사 — vite spa 표준 패턴.
+        run: cp frontend/dist/index.html frontend/dist/404.html
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

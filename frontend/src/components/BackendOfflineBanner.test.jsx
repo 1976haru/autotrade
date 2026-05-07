@@ -39,4 +39,19 @@ describe("<BackendOfflineBanner>", () => {
     expect(banner.textContent).toContain("uvicorn app.main:app");
     expect(banner.textContent).toContain("Failed to fetch");
   });
+
+  // 214: VITE_DEMO_MODE=true 빌드(GitHub Pages용)에서는 같은 error 상황이라도
+  // 빨간 "백엔드 연결 실패"가 아니라 시안색 "🧪 Demo Mode" 안내가 떠야 한다.
+  it("renders the Demo Mode banner when VITE_DEMO_MODE='true'", () => {
+    vi.stubEnv("VITE_DEMO_MODE", "true");
+    _set({ error: "Failed to fetch" });
+    const { getByTestId, queryByTestId } = render(<BackendOfflineBanner />);
+    const banner = getByTestId("demo-mode-banner");
+    expect(banner.textContent).toContain("Demo Mode");
+    expect(banner.textContent).toContain("UI 데모");
+    expect(banner.textContent).toContain("mock");
+    // uvicorn 분기는 노출되지 말 것.
+    expect(queryByTestId("backend-offline-banner")).toBeNull();
+    vi.unstubAllEnvs();
+  });
 });
