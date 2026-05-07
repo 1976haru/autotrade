@@ -146,8 +146,10 @@ describe("<SafetyFlagsCard>", () => {
   });
 
   it("renders error state", () => {
+    // 245 (Light-008): friendly copy via friendlyErrorMessage. raw 'boom'은
+    // 의미 있는 메시지로 간주돼 그대로 통과.
     const { getByText } = render(<SafetyFlagsCard error="boom" />);
-    expect(getByText(/조회 실패: boom/)).toBeTruthy();
+    expect(getByText(/boom/)).toBeTruthy();
   });
 
   it("renders fallback message when safety_flags absent (older API)", () => {

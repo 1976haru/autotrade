@@ -209,25 +209,31 @@ export function StatusPin({ icon, label, value, alarm, accent, onClick, testId }
       data-testid={testId}
       style={{
         flex: 1,
-        padding: "8px 10px", borderRadius: 6,
+        padding: "14px 16px", borderRadius: "var(--r-lg)",
         cursor: onClick ? "pointer" : "default",
-        background:  alarm ? `${accent}15` : "#020e1c",
-        border:      `1px solid ${alarm ? `${accent}99` : "#0c2035"}`,
-        color:       alarm ? accent : "#94a3b8",
+        background:  alarm ? `${accent}10` : "var(--c-surface)",
+        border:      `1px solid ${alarm ? `${accent}66` : "var(--c-border)"}`,
+        color:       alarm ? accent : "var(--c-text)",
         fontFamily:  "inherit",
         textAlign:   "left",
         display:     "flex",
         alignItems:  "center",
-        gap:         8,
+        gap:         12,
+        boxShadow:   "var(--sh-1)",
       }}
     >
-      <span style={{ fontSize: 16 }}>{icon}</span>
+      <span style={{ fontSize: 22 }}>{icon}</span>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 9, color: alarm ? accent : "#475569", marginBottom: 1 }}>
+        <div style={{ fontSize: "var(--fs-xs)",
+                       color: alarm ? accent : "var(--c-text-3)",
+                       marginBottom: 2,
+                       textTransform: "uppercase",
+                       letterSpacing: "0.06em",
+                       fontWeight: 600 }}>
           {label}
         </div>
-        <div style={{ fontSize: 11, fontWeight: 700,
-                       color: alarm ? accent : "#64748b",
+        <div style={{ fontSize: "var(--fs-md)", fontWeight: "var(--fw-bold)",
+                       color: alarm ? accent : "var(--c-text)",
                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {value}
         </div>
@@ -569,28 +575,43 @@ export function Dashboard({
         </div>
       )}
 
-      {/* KPI — 3개 카드는 한 줄에 함께 보여야 의미가 있어 PC에서도 span-full */}
-      <div className="dashboard-span-full" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+      {/* KPI — 3개 카드는 한 줄에 함께 보여야 의미가 있어 PC에서도 span-full.
+          245 (Light-008): 큰 숫자 (--fs-2xl) + uppercase 라벨 + 더 넉넉한 padding. */}
+      <div className="dashboard-span-full" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
         <Card>
-          <div style={{ fontSize: 10, color: "#475569", marginBottom: 4 }}>총 자산</div>
-          <div style={{ fontSize: 14, fontWeight: 700 }}>{fmtKRW(Math.round(totalAsset))}원</div>
-          <div style={{ fontSize: 10, color: "#334155", marginTop: 2 }}>현금 {fmtKRW(cash)}원</div>
+          <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)",
+                          marginBottom: 8, textTransform: "uppercase",
+                          letterSpacing: "0.06em", fontWeight: 600 }}>총 자산</div>
+          <div style={{ fontSize: "var(--fs-2xl)", fontWeight: "var(--fw-bold)",
+                          color: "var(--c-text)" }}>
+            {fmtKRW(Math.round(totalAsset))}원
+          </div>
+          <div style={{ fontSize: "var(--fs-sm)", color: "var(--c-text-3)",
+                          marginTop: 6 }}>현금 {fmtKRW(cash)}원</div>
         </Card>
         <Card>
-          <div style={{ fontSize: 10, color: "#475569", marginBottom: 4 }}>평가손익</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: pnlColor(totalPnL) }}>
+          <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)",
+                          marginBottom: 8, textTransform: "uppercase",
+                          letterSpacing: "0.06em", fontWeight: 600 }}>평가손익</div>
+          <div style={{ fontSize: "var(--fs-2xl)", fontWeight: "var(--fw-bold)",
+                          color: pnlColor(totalPnL) }}>
             {totalPnL >= 0 ? "+" : ""}{fmtKRW(Math.round(totalPnL))}원
           </div>
-          <div style={{ fontSize: 10, color: pnlColor(totalPnLPct), marginTop: 2 }}>
+          <div style={{ fontSize: "var(--fs-sm)",
+                          color: pnlColor(totalPnLPct), marginTop: 6 }}>
             {fmtPct(totalPnLPct)}
           </div>
         </Card>
         <Card>
-          <div style={{ fontSize: 10, color: "#475569", marginBottom: 4 }}>봇 누적</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: pnlColor(stats.pnl) }}>
+          <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)",
+                          marginBottom: 8, textTransform: "uppercase",
+                          letterSpacing: "0.06em", fontWeight: 600 }}>봇 누적</div>
+          <div style={{ fontSize: "var(--fs-2xl)", fontWeight: "var(--fw-bold)",
+                          color: pnlColor(stats.pnl) }}>
             {stats.pnl >= 0 ? "+" : ""}{fmtKRW(stats.pnl)}원
           </div>
-          <div style={{ fontSize: 10, color: "#334155", marginTop: 2 }}>승률 {winRate}%</div>
+          <div style={{ fontSize: "var(--fs-sm)", color: "var(--c-text-3)",
+                          marginTop: 6 }}>승률 {winRate}%</div>
         </Card>
       </div>
 
@@ -606,23 +627,29 @@ export function Dashboard({
       {/* 봇 컨트롤 */}
       <Card accentColor={running ? "#22c55e33" : undefined}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{
-              width: 8, height: 8, borderRadius: "50%",
-              background: running ? "#22c55e" : "#334155",
-              boxShadow: running ? "0 0 8px #22c55e" : "none",
+              width: 10, height: 10, borderRadius: "50%",
+              background: running ? "#10b981" : "var(--c-text-4)",
+              boxShadow: running ? "0 0 0 4px #10b98133" : "none",
             }} />
-            <span style={{ fontSize: 12, fontWeight: 700, color: running ? "#22c55e" : "#475569" }}>
+            <span style={{
+              fontSize: "var(--fs-md)", fontWeight: "var(--fw-bold)",
+              color: running ? "#10b981" : "var(--c-text-3)",
+              letterSpacing: "0.04em",
+            }}>
               {running ? "BOT RUNNING" : "BOT STOPPED"}
             </span>
           </div>
           <button
             onClick={running ? stop : start}
             style={{
-              padding: "7px 18px", borderRadius: 4, border: "none",
-              cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12,
-              background: running ? "#ef4444" : "#22c55e",
-              color: "#010a14",
+              padding: "10px 22px", borderRadius: "var(--r-md)", border: "none",
+              cursor: "pointer", fontFamily: "inherit",
+              fontWeight: "var(--fw-bold)", fontSize: "var(--fs-base)",
+              background: running ? "#ef4444" : "#10b981",
+              color: "#fff",
+              boxShadow: "var(--sh-1)",
             }}
           >
             {running ? "⏹ 정지" : "▶ 시작"}
@@ -640,8 +667,9 @@ export function Dashboard({
       <Card>
         <SectionLabel>LIVE POSITIONS</SectionLabel>
         {positions.length === 0 ? (
-          <div style={{ color: "#1e3a5c", textAlign: "center", padding: 16, fontSize: 12 }}>
-            보유 포지션 없음
+          <div style={{ color: "var(--c-text-3)", textAlign: "center",
+                          padding: 24, fontSize: "var(--fs-base)" }}>
+            아직 보유 포지션이 없습니다.
           </div>
         ) : positions.map((p) => {
           const pnl = (p.cur - p.avg) * p.qty;
@@ -649,17 +677,20 @@ export function Dashboard({
           return (
             <div key={p.code} style={{
               display: "flex", justifyContent: "space-between",
-              padding: "7px 0", borderBottom: "1px solid #05121f", fontSize: 12,
+              padding: "12px 0", borderBottom: "1px solid var(--c-border)",
+              fontSize: "var(--fs-base)",
             }}>
               <div>
-                <span style={{ color: "#7dd3fc", fontSize: 11 }}>{p.code}</span>
-                <br /><span>{p.name}</span>
+                <span style={{ color: "var(--c-info)", fontSize: "var(--fs-sm)",
+                                fontWeight: "var(--fw-bold)" }}>{p.code}</span>
+                <br /><span style={{ color: "var(--c-text)" }}>{p.name}</span>
               </div>
               <div style={{ textAlign: "right" }}>
-                <div style={{ color: pnlColor(pnl), fontWeight: 700 }}>
+                <div style={{ color: pnlColor(pnl), fontWeight: "var(--fw-bold)",
+                                fontSize: "var(--fs-md)" }}>
                   {pnl >= 0 ? "+" : ""}{fmtKRW(Math.round(pnl))}원
                 </div>
-                <div style={{ fontSize: 11, color: pnlColor(pp) }}>{fmtPct(pp)}</div>
+                <div style={{ fontSize: "var(--fs-sm)", color: pnlColor(pp) }}>{fmtPct(pp)}</div>
               </div>
             </div>
           );
@@ -668,18 +699,20 @@ export function Dashboard({
 
       {/* 최근 체결 */}
       <Card>
-        <SectionLabel>RECENT TRADES {running && <span style={{ color: "#22c55e" }}>● LIVE</span>}</SectionLabel>
+        <SectionLabel>RECENT TRADES {running && <span style={{ color: "var(--c-success)" }}>● LIVE</span>}</SectionLabel>
         {trades.length === 0 ? (
-          <div style={{ color: "#1e3a5c", textAlign: "center", padding: 16, fontSize: 12 }}>
-            전략 엔진 미연동 (백엔드 체결 스트림 대기)
+          <div style={{ color: "var(--c-text-3)", textAlign: "center",
+                          padding: 24, fontSize: "var(--fs-base)" }}>
+            아직 체결된 거래가 없습니다.
           </div>
         ) : trades.slice(0, 8).map((t) => (
           <div key={t.id} style={{
             display: "flex", justifyContent: "space-between",
-            padding: "5px 0", borderBottom: "1px solid #05121f", fontSize: 11,
+            padding: "10px 0", borderBottom: "1px solid var(--c-border)",
+            fontSize: "var(--fs-sm)",
           }}>
-            <span style={{ color: "#334155" }}>{t.ts}</span>
-            <span style={{ color: "#94a3b8" }}>{t.name}</span>
+            <span style={{ color: "var(--c-text-3)" }}>{t.ts}</span>
+            <span style={{ color: "var(--c-text)" }}>{t.name}</span>
             <span style={{ color: pnlColor(t.pnl), fontWeight: 700 }}>
               {t.pnl >= 0 ? "+" : ""}{fmtKRW(t.pnl)}원
             </span>

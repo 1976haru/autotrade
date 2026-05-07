@@ -478,8 +478,10 @@ describe("<EmergencyStopSummaryCard> (208)", () => {
   });
 
   it("renders error state", () => {
+    // 245 (Light-008): friendly copy. raw error string은 friendlyErrorMessage
+    // 통과 — 의미 있는 메시지로 간주돼 그대로 hint 영역에 노출.
     const { container } = render(<EmergencyStopSummaryCard error="boom" />);
-    expect(container.textContent).toContain("조회 실패: boom");
+    expect(container.textContent).toContain("boom");
   });
 
   it("renders OFF state with totals + reason rows", () => {
