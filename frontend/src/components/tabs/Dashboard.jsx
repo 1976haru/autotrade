@@ -19,6 +19,7 @@ import { AgentLatestTile } from "./AgentLatestTile";
 import { MarketRegimeBadge } from "./MarketRegimeBadge";
 import { OperatorPanel } from "./OperatorPanel";
 import { HeroSummaryCard } from "./HeroSummaryCard";
+import { AgentDecisionHero } from "./AgentDecisionHero";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
 // AuditLog timeline에서도 mode badge로 쓰기 위해 공유. Dashboard는 re-export
@@ -518,6 +519,11 @@ export function Dashboard({
       {/* 225: 현재 장세 배지 — 위험/상태 요약 위에 한 줄로 */}
       <div className="dashboard-span-full">
         <MarketRegimeBadge />
+      </div>
+
+      {/* 232 (UI-004): Agent 판단 hero — 추천/Confidence/Regime/Readiness 한 화면 */}
+      <div className="dashboard-span-full">
+        <AgentDecisionHero />
       </div>
 
       {/* 긴급 정지가 오래 켜져 있을 때 reminder — 위험/상태 요약보다 먼저 노출 */}
