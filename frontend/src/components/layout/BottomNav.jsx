@@ -21,13 +21,14 @@ export function _badgeLabel(count) {
 
 export function BottomNav({ active, onChange, badges = {} }) {
   return (
-    <div style={{
+    // 222: max-width를 .app-bottomnav 클래스로 옮겨 미디어쿼리에서 반응형 처리.
+    // 모바일 520px / PC 1280px. 나머지 위치/색은 인라인 유지.
+    <div className="app-bottomnav" style={{
       position:   "fixed",
       bottom:     0,
       left:       "50%",
       transform:  "translateX(-50%)",
       width:      "100%",
-      maxWidth:   520,
       background: "#020e1c",
       borderTop:  "1px solid #0c2035",
       display:    "flex",

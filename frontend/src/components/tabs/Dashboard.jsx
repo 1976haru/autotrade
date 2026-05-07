@@ -486,34 +486,43 @@ export function Dashboard({
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    // 222: 레이아웃은 .dashboard-body 클래스가 결정. 모바일은 세로 스택,
+    // PC(≥768px)는 auto-fit grid로 카드들이 2~3열로 흐른다. 인라인 style은
+    // class CSS를 이기므로 layout 관련 인라인 속성은 두지 않는다.
+    <div className="dashboard-body">
 
       {/* 긴급 정지가 오래 켜져 있을 때 reminder — 위험/상태 요약보다 먼저 노출 */}
-      <EmergencyStopStuckBanner
-        since={emergencyStopSince}
-        onClick={() => onJumpTab && onJumpTab("strat")}
-      />
+      <div className="dashboard-span-full">
+        <EmergencyStopStuckBanner
+          since={emergencyStopSince}
+          onClick={() => onJumpTab && onJumpTab("strat")}
+        />
+      </div>
 
       {/* 116: 결재 처리 내역에 stale 비율이 25% 이상이면 적체 의심 banner */}
-      <HistoryStaleBanner
-        history={approvals && approvals.history}
-        onClick={() => onJumpTab && onJumpTab("approve")}
-      />
+      <div className="dashboard-span-full">
+        <HistoryStaleBanner
+          history={approvals && approvals.history}
+          onClick={() => onJumpTab && onJumpTab("approve")}
+        />
+      </div>
 
       {/* 위험/상태 요약 */}
-      <StatusSummaryCard
-        emergencyStop={emergencyStop}
-        pendingCount={pendingCount}
-        stalePendingCount={stalePendingCount}
-        running={running}
-        ordersInWindow={_ordersInWindow}
-        idleThresholdLabel={idleThresholdId}
-        onJumpTab={onJumpTab}
-      />
+      <div className="dashboard-span-full">
+        <StatusSummaryCard
+          emergencyStop={emergencyStop}
+          pendingCount={pendingCount}
+          stalePendingCount={stalePendingCount}
+          running={running}
+          ordersInWindow={_ordersInWindow}
+          idleThresholdLabel={idleThresholdId}
+          onJumpTab={onJumpTab}
+        />
+      </div>
 
       {/* 102: 봇 idle 임계 chip — RUNNING일 때만 의미 있어 그때만 노출 */}
       {running && (
-        <div style={{
+        <div className="dashboard-span-full" style={{
           display: "flex", alignItems: "center", gap: 8,
           fontSize: 9, color: "#475569", padding: "0 4px",
         }}>
@@ -525,8 +534,8 @@ export function Dashboard({
         </div>
       )}
 
-      {/* KPI */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+      {/* KPI — 3개 카드는 한 줄에 함께 보여야 의미가 있어 PC에서도 span-full */}
+      <div className="dashboard-span-full" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
         <Card>
           <div style={{ fontSize: 10, color: "#475569", marginBottom: 4 }}>총 자산</div>
           <div style={{ fontSize: 14, fontWeight: 700 }}>{fmtKRW(Math.round(totalAsset))}원</div>
@@ -550,8 +559,10 @@ export function Dashboard({
         </Card>
       </div>
 
-      {/* 24시간 활동 요약 */}
-      <Activity24hCard onJumpTab={onJumpTab} approvals={approvals} />
+      {/* 24시간 활동 요약 — 내부에 여러 row가 있어 PC에서도 한 줄로 펼치는 게 가독적 */}
+      <div className="dashboard-span-full">
+        <Activity24hCard onJumpTab={onJumpTab} approvals={approvals} />
+      </div>
 
       {/* 191: Agent Council 최근 chief 결정 — smartphone 운용 동선에서
           직전 판단 한 줄로 확인 가능. 상세는 AI 탭에서. */}
