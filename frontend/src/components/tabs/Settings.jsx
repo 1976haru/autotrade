@@ -1,5 +1,6 @@
 import { BROKERS } from "../../config/brokers";
 import { Card, SectionLabel, Btn, Inp } from "../common";
+import { PageHeader } from "../common/primitives";
 import { useBackendStatus } from "../../store/useBackendStatus";
 
 
@@ -165,6 +166,10 @@ export function Settings({ settings }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <PageHeader
+        title="설정"
+        subtitle="브로커 / 운용 모드 / 운영자 / 안전 플래그 안내"
+      />
 
       {/* 위험한 mode + flag 조합 경고 — 가장 먼저 노출 */}
       <ModeWarningBanner warning={modeWarning} />

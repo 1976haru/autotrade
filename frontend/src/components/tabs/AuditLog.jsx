@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Btn, Card, Inp, SectionLabel } from "../common";
 import { ChipFilterBar } from "../common/ChipFilterBar";
+import { PageHeader } from "../common/primitives";
 import { fmtKRW, pnlColor } from "../../utils/format";
 import { MODE_DISPLAY, findModeDisplay } from "../../utils/modes";
 import { backendApi } from "../../services/backend/client";
@@ -1743,6 +1744,10 @@ export function AuditLog({ approvals }) {
   const [view, setView] = useState("events");
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <PageHeader
+        title="감사 로그"
+        subtitle="이벤트 타임라인 · AI · 백테스트 · 아카이브"
+      />
       <SubTabBar active={view} onChange={setView} />
       {view === "events"    && <EventTimelineView approvals={approvals} />}
       {view === "ai"        && <AiAuditView />}

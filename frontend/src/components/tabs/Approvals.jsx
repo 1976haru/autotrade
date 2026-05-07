@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Btn, Card, Inp, SectionLabel } from "../common";
 import { ChipFilterBar } from "../common/ChipFilterBar";
 import { DecisionDialog } from "../common/DecisionDialog";
+import { PageHeader } from "../common/primitives";
 import { usePersistedState } from "../../store/usePersistedState";
 import {
   PENDING_STALE_THRESHOLD_MS,
@@ -793,6 +794,10 @@ export function Approvals({ approvals, operatorName = "" }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <PageHeader
+        title="승인 대기"
+        subtitle="결재 큐 · 처리 내역 · 노후화된 항목 일괄 정리"
+      />
       <Card>
         <div style={{ display: "flex", justifyContent: "space-between",
                        alignItems: "center", marginBottom: 8 }}>
