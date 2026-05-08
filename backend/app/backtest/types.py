@@ -1,4 +1,3 @@
-import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -139,72 +138,84 @@ class BacktestResult:
         """비용 반영 손익. 비용 부재 시 gross_pnl과 동일."""
         return sum(t.net_pnl for t in self.trades)
 
+    # ---------- 24: metrics.py 위임 — 단일 진실, 호환성 유지 ----------
+
     @property
     def win_count(self) -> int:
-        return sum(1 for t in self.trades if t.pnl > 0)
+        from app.backtest.metrics import win_count
+        return win_count(self.trades)
 
     @property
     def loss_count(self) -> int:
+        """기존 의미 — pnl <= 0 (flat 포함)."""
         return sum(1 for t in self.trades if t.pnl <= 0)
 
     @property
+    def flat_count(self) -> int:
+        """24: pnl == 0 거래 수."""
+        from app.backtest.metrics import flat_count
+        return flat_count(self.trades)
+
+    @property
     def win_rate(self) -> float:
-        if not self.trades:
-            return 0.0
-        return self.win_count / len(self.trades)
+        from app.backtest.metrics import win_rate
+        return win_rate(self.trades)
 
     @property
     def max_drawdown(self) -> int:
-        """누적 PnL 곡선의 최대 peak-to-trough 낙폭(절대값)."""
-        peak = 0
-        running = 0
-        max_dd = 0
-        for t in self.trades:
-            running += t.pnl
-            if running > peak:
-                peak = running
-            dd = peak - running
-            if dd > max_dd:
-                max_dd = dd
-        return max_dd
+        from app.backtest.metrics import max_drawdown
+        return max_drawdown(self.trades)
 
     @property
     def avg_win(self) -> float:
-        wins = [t.pnl for t in self.trades if t.pnl > 0]
-        return sum(wins) / len(wins) if wins else 0.0
+        from app.backtest.metrics import avg_win
+        return avg_win(self.trades)
 
     @property
     def avg_loss(self) -> float:
-        """음수 또는 0. pnl == 0 도 손실 쪽으로 분류 (win_rate 와 동일한 분류)."""
-        losses = [t.pnl for t in self.trades if t.pnl <= 0]
-        return sum(losses) / len(losses) if losses else 0.0
+        """음수 또는 0. pnl == 0도 손실 쪽으로 분류 (legacy 유지 — loss_count와 동일)."""
+        from app.backtest.metrics import avg_loss_legacy
+        return avg_loss_legacy(self.trades)
 
     @property
     def profit_factor(self) -> float | None:
-        """gross_winnings / |gross_losses|. 손실이 없거나 거래가 없으면 None.
-
-        +inf 대신 None 을 반환해 JSON 직렬화 시 안전하게 처리되도록 한다.
-        """
-        gross_win  = sum(t.pnl for t in self.trades if t.pnl > 0)
-        gross_loss = abs(sum(t.pnl for t in self.trades if t.pnl < 0))
-        if gross_loss == 0:
-            return None
-        return gross_win / gross_loss
+        from app.backtest.metrics import profit_factor
+        return profit_factor(self.trades)
 
     @property
     def sharpe_ratio(self) -> float | None:
-        """체결당(per-trade) 샤프 비 = mean(returns) / stdev(returns).
+        from app.backtest.metrics import sharpe_ratio
+        return sharpe_ratio(self.trades)
 
-        trade return = pnl / (entry_price * quantity) — 명목 자본 대비 비율.
-        봉 간격은 엔진이 알지 못하므로 연환산(annualization)은 하지 않는다.
-        거래 < 2 또는 stdev == 0 은 정의되지 않으므로 None.
-        """
-        if len(self.trades) < 2:
-            return None
-        returns = [t.pnl / (t.entry_price * t.quantity) for t in self.trades]
-        n = len(returns)
-        mean = sum(returns) / n
-        variance = sum((r - mean) ** 2 for r in returns) / (n - 1)
-        if variance == 0:
-            return None
-        return mean / math.sqrt(variance)
+    # ---------- 24: 신규 지표 ----------
+
+    @property
+    def expectancy(self) -> float:
+        """기대값 = win_rate × avg_win + loss_rate × avg_loss (음수 손실 유지)."""
+        from app.backtest.metrics import expectancy
+        return expectancy(self.trades)
+
+    @property
+    def max_consecutive_losses(self) -> int:
+        from app.backtest.metrics import max_consecutive_losses
+        return max_consecutive_losses(self.trades)
+
+    @property
+    def max_consecutive_wins(self) -> int:
+        from app.backtest.metrics import max_consecutive_wins
+        return max_consecutive_wins(self.trades)
+
+    @property
+    def hourly_pnl(self) -> dict[int, int]:
+        """exit_ts의 hour(UTC) 기준 손익 합계. exit_ts 없으면 -1 키."""
+        from app.backtest.metrics import hourly_pnl
+        return hourly_pnl(self.trades)
+
+    @property
+    def equity_curve(self) -> list[dict]:
+        from app.backtest.metrics import equity_curve
+        return equity_curve(self.trades, initial_cash=self.initial_cash)
+
+    def summarize_metrics(self) -> dict:
+        from app.backtest.metrics import summarize_metrics
+        return summarize_metrics(self.trades, initial_cash=self.initial_cash)

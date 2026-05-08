@@ -31,6 +31,7 @@
   - Profit Factor ≥ 1.2.
   - **(137)** Strategy Scoreboard (`/api/strategies/scoreboard`)에서 해당 strategy의 누적 metrics 검토 — `runs ≥ 100`, `total_pnl > 0`, `win_rate ≥ 0.45`.
   - **(131)** Strategy contract metadata(entry / exit / invalidation / required_regime / risk_profile)가 모두 작성됨 — `base.py` default가 그대로 노출되는 strategy는 승격 불가. `docs/strategies.md` 검토.
+  - **승률만으로 승인 금지 (#24)** — `expectancy > 0`, `profit_factor ≥ 1.2`, `max_consecutive_losses ≤ 5`, MDD가 운영 자본의 15% 이내. 시간대별 손익(`hourly_pnl`)에서 손실이 특정 시간대에 집중되면 별도 검토. 자세한 metric 정의: [`backtest_metrics.md`](backtest_metrics.md).
 
 ### 2. Shadow (`LIVE_SHADOW`)
 

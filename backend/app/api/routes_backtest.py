@@ -101,6 +101,12 @@ class BacktestResponse(BaseModel):
     total_taxes:    int = 0
     total_slippage: int = 0
     config:         BacktestConfigPayload | None = None
+    # 24: 신규 지표 — 거래 0건/계산 불가 시 안전 default.
+    expectancy:             float = 0.0
+    flat_count:             int   = 0
+    max_consecutive_wins:   int   = 0
+    max_consecutive_losses: int   = 0
+    hourly_pnl:             dict[int, int] = Field(default_factory=dict)
 
 
 def _trade_to_dict(t) -> dict:
@@ -232,6 +238,11 @@ def _build_response(
         total_taxes=result.total_taxes,
         total_slippage=result.total_slippage,
         config=config,
+        expectancy=result.expectancy,
+        flat_count=result.flat_count,
+        max_consecutive_wins=result.max_consecutive_wins,
+        max_consecutive_losses=result.max_consecutive_losses,
+        hourly_pnl=result.hourly_pnl,
     )
 
 

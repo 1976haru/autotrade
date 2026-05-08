@@ -177,6 +177,7 @@ LIVE 활성화 전 사용자 명시 옵트인이 필요한 영역:
 - [`data_quality_report.md`](data_quality_report.md) — MarketBar 일별 품질 점수(GOOD/WARNING/POOR/EXCLUDE) + CLI + 백테스트 제외 정책 (체크리스트 #21)
 - [`theme_signal_policy.md`](theme_signal_policy.md) — 테마/뉴스/트렌드 후보 필터 + Provider abstraction + ThemeFilter (BUY/SELL 미반환) (체크리스트 #22)
 - [`backtest_policy.md`](backtest_policy.md) — BacktestConfig 4개 체결 모델 + 수수료/세금/슬리피지 + 승격 평가 정책 (체크리스트 #23)
+- [`backtest_metrics.md`](backtest_metrics.md) — metrics.py 독립 모듈 + 기대값/PF/MDD/Sharpe/연속손실/시간대별 손익 + 승률만 승인 금지 (체크리스트 #24)
 
 ## 사후 UI surface 보강 (187-196)
 

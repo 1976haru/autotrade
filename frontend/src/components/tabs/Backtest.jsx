@@ -411,6 +411,62 @@ export function Backtest() {
                 color="#a78bfa"
               />
             </div>
+            {/* 24: 신규 metric 요약 — 거래가 있을 때만 */}
+            {run.trades.length > 0 && (
+              <div data-testid="backtest-metric-summary"
+                   style={{ marginTop: 10, paddingTop: 10,
+                            borderTop: "1px solid #0c2035",
+                            display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr",
+                            textAlign: "center", gap: 8 }}>
+                <StatBox
+                  label="기대값"
+                  value={fmtKRW(Math.round(run.expectancy ?? 0))}
+                  color={(run.expectancy ?? 0) >= 0 ? "#22c55e" : "#ef4444"} />
+                <StatBox
+                  label="최대 연속수익"
+                  value={`${run.max_consecutive_wins ?? 0}회`}
+                  color="#22c55e" />
+                <StatBox
+                  label="최대 연속손실"
+                  value={`${run.max_consecutive_losses ?? 0}회`}
+                  color="#ef4444" />
+                <StatBox
+                  label="Flat"
+                  value={`${run.flat_count ?? 0}회`}
+                  color="#94a3b8" />
+              </div>
+            )}
+
+            {/* 24: 시간대별 손익 — 정규장 시간대(UTC) 기준 mini bar */}
+            {run.hourly_pnl && Object.keys(run.hourly_pnl).length > 0 && (
+              <div data-testid="backtest-hourly-pnl"
+                   style={{ marginTop: 10, paddingTop: 10,
+                            borderTop: "1px solid #0c2035" }}>
+                <div style={{ fontSize: 10, color: "#475569", marginBottom: 6,
+                              textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                  시간대별 손익 (UTC)
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {Object.entries(run.hourly_pnl)
+                    .sort((a, b) => Number(a[0]) - Number(b[0]))
+                    .map(([hour, pnl]) => (
+                    <span key={hour}
+                          data-testid={`hourly-pnl-${hour}`}
+                          title={`${hour}시 — ${fmtKRW(pnl)}`}
+                          style={{
+                            padding: "3px 6px", borderRadius: 3,
+                            background: pnl >= 0 ? "#14532d33" : "#7f1d1d33",
+                            color:      pnl >= 0 ? "#22c55e"   : "#ef4444",
+                            border: `1px solid ${pnl >= 0 ? "#22c55e66" : "#ef444466"}`,
+                            fontSize: 10, fontFamily: "monospace",
+                          }}>
+                      {hour === "-1" ? "?" : `${hour}h`} · {pnl >= 0 ? "+" : ""}{fmtKRW(pnl)}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* 23: 비용 모델 요약 — config가 적용됐을 때만 노출. 미적용 시 모두 0 */}
             {(run.config || run.total_fees > 0 || run.total_taxes > 0 || run.total_slippage > 0) && (
               <div data-testid="backtest-cost-summary"

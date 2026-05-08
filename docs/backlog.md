@@ -58,6 +58,17 @@
 - 156 머지 후 별도 PR `feature/157-ci-recovery`에서 8 errors 모두 해결. `useRef(Date.now())` → null + useEffect lazy init / 의도된 setState-in-effect는 disable comment + 사유 / time-bucket 필터의 Date.now() snapshot은 `eslint-disable-next-line react-hooks/purity`. 833 테스트 회귀 0.
 - 결과: `npm run lint` → 0 errors / 55 warnings.
 
+### 21. Backtest Metrics 후속 (#24 PR 이후)
+- Walk-forward fold별 metric 분포 — 25번 PR.
+- 연속손실 자동 중단 / 사이즈 축소 — LIVE 활성화 PR.
+- 시간대별 손익 chart UI — 운영자 요청 누적 후.
+- 연환산 Sharpe (봉 간격 인자화).
+- Calmar / Sortino / Omega ratio.
+- Strategy Scoreboard에 신규 metric 통합.
+- `BacktestRequest.min_quality_score` (#21 data_quality와 연동).
+- BacktestRun DB에 신규 metric separate 컬럼 (현재는 trades_json에서 재계산).
+- 자세한 정책: `docs/backtest_metrics.md`.
+
 ### 20. Backtest 비용 모델 후속 (#23 PR 이후)
 - 부분 체결 모델 — 운영 데이터에서 필요성 확정 후.
 - Volume-aware 슬리피지 (호가 깊이 추정) — 호가 데이터 통합 후.
