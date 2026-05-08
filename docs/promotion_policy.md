@@ -32,6 +32,7 @@
   - **(137)** Strategy Scoreboard (`/api/strategies/scoreboard`)에서 해당 strategy의 누적 metrics 검토 — `runs ≥ 100`, `total_pnl > 0`, `win_rate ≥ 0.45`.
   - **(131)** Strategy contract metadata(entry / exit / invalidation / required_regime / risk_profile)가 모두 작성됨 — `base.py` default가 그대로 노출되는 strategy는 승격 불가. `docs/strategies.md` 검토.
   - **승률만으로 승인 금지 (#24)** — `expectancy > 0`, `profit_factor ≥ 1.2`, `max_consecutive_losses ≤ 5`, MDD가 운영 자본의 15% 이내. 시간대별 손익(`hourly_pnl`)에서 손실이 특정 시간대에 집중되면 별도 검토. 자세한 metric 정의: [`backtest_metrics.md`](backtest_metrics.md).
+  - **Walk-forward PASS 필요 (#25)** — `POST /api/backtest/walk-forward` 추천이 `PASS`. 한 fold가 전체 양수 수익의 70% 초과 차지 (single_best_fold_pnl_share)하면 '한 번의 대박' 의심으로 승격 보류. holdout 구간 PnL 양수 필수. 자세한 정책: [`walk_forward_policy.md`](walk_forward_policy.md).
 
 ### 2. Shadow (`LIVE_SHADOW`)
 

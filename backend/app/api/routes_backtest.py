@@ -483,3 +483,105 @@ async def compare_backtests(
         bars_processed=len(bars),
         runs=runs,
     )
+
+
+# ---------- walk-forward (#25) ----------
+
+
+class WalkForwardConfigPayload(BaseModel):
+    mode:                       str   = "rolling"
+    train_days:                 int   = 60
+    validation_days:            int   = 20
+    step_days:                  int   = 0
+    holdout_days:               int   = 30
+    min_fold_count:             int   = 3
+    min_positive_fold_ratio:    float = 0.6
+    max_single_fold_pnl_share:  float = 0.7
+    min_holdout_pnl:            int   = 0
+
+
+class WalkForwardRequest(BaseModel):
+    """학습기간/검증기간/holdout으로 나눈 walk-forward 백테스트.
+
+    bars 또는 (symbol, start, end)를 BacktestRequest와 동일하게 받는다 — 한
+    번 fetch한 bars를 fold마다 슬라이싱.
+    """
+    strategy:     str
+    params:       dict = Field(default_factory=dict)
+    initial_cash: int = 10_000_000
+    quantity:     int = 1
+    bars:         list[BarPayload] | None = None
+    symbol:       str | None = None
+    start:        datetime | None = None
+    end:          datetime | None = None
+    interval:     Interval = Interval.DAY_1
+    config:       BacktestConfigPayload | None = None
+    walk_forward: WalkForwardConfigPayload = Field(default_factory=WalkForwardConfigPayload)
+
+
+class WalkForwardResponse(BaseModel):
+    config:                  dict
+    folds:                   list[dict]
+    holdout_metrics:         dict | None = None
+    holdout_window:          dict | None = None
+    summary:                 dict
+    promotion_recommendation: str
+    warnings:                list[str]
+    overfit_flags:           list[str]
+    bars_processed:          int
+
+
+@router.post("/walk-forward", response_model=WalkForwardResponse)
+async def run_walk_forward_endpoint(
+    req: WalkForwardRequest,
+    db: Session = Depends(get_db),
+    upstream: MarketDataAdapter = Depends(get_market_data),
+) -> WalkForwardResponse:
+    if req.initial_cash <= 0 or req.quantity <= 0:
+        raise HTTPException(status_code=400, detail="initial_cash and quantity must be positive")
+
+    try:
+        # 검증 — strategy / params 조합이 valid한지 fold 진입 전에 한 번만.
+        from app.strategies.concrete import build_strategy
+        build_strategy(req.strategy, req.params)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    proxy = BacktestRequest(
+        strategy=req.strategy, params=req.params,
+        initial_cash=req.initial_cash, quantity=req.quantity,
+        bars=req.bars, symbol=req.symbol,
+        start=req.start, end=req.end, interval=req.interval,
+    )
+    bars, _data_source, _ds, _start, _end, _intv = await _resolve_bars(proxy, db, upstream)
+
+    bt_cfg: BacktestConfig | None = None
+    if req.config is not None:
+        try:
+            bt_cfg = BacktestConfig(**req.config.model_dump())
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    from app.backtest.walk_forward_runner import (
+        WalkForwardConfig,
+        make_strategy_factory,
+        run_walk_forward,
+    )
+    try:
+        wf_cfg = WalkForwardConfig(**req.walk_forward.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    factory = make_strategy_factory(req.strategy, req.params)
+    result = run_walk_forward(
+        bars=bars,
+        strategy_factory=factory,
+        walk_forward_config=wf_cfg,
+        backtest_config=bt_cfg,
+        initial_cash=req.initial_cash,
+        quantity=req.quantity,
+    )
+
+    payload = result.to_dict()
+    payload["bars_processed"] = len(bars)
+    return WalkForwardResponse(**payload)
