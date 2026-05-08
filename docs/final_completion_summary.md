@@ -169,6 +169,7 @@ LIVE 활성화 전 사용자 명시 옵트인이 필요한 영역:
 - [`agent_decision_schema.md`](agent_decision_schema.md) — Agent Council schema
 - [`agent_stress_test_report.md`](agent_stress_test_report.md) — Agent 검증
 - [`backlog.md`](backlog.md) — NICE / LIVE 옵트인 항목
+- [`kiwoom_rest_research.md`](kiwoom_rest_research.md) — 2차 브로커(키움 REST) 도입 조사표 (체크리스트 #15)
 
 ## 사후 UI surface 보강 (187-196)
 
