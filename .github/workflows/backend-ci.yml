@@ -34,15 +34,25 @@ jobs:
           ruff check app tests
       - name: Test (fast)
         # pyproject.toml의 addopts = "-m 'not slow'"로 stress 자동 제외.
-        # `--tb=short -rN` surfaces FAILED test names + short traceback to the
-        # step log so failures are visible even without GitHub auth.
-        # GITHUB_STEP_SUMMARY mirrors the FAILED summary into the run page UI.
+        # On failure: surface every FAILED line as a `::error::` workflow
+        # annotation. Annotations appear at the top of the run summary page
+        # and are visible to unauthenticated viewers — unlike the step log
+        # itself which requires GitHub auth.
         run: |
           cd backend
           set -o pipefail
           pytest --tb=short -rN -q 2>&1 | tee /tmp/pytest-out.log
           rc=${PIPESTATUS[0]}
           if [ "$rc" -ne 0 ]; then
+            # Emit annotation per FAILED/ERROR line. Cap at 20 to stay under
+            # GitHub's annotation budget (~50 max per check).
+            grep -E "^(FAILED|ERROR) " /tmp/pytest-out.log | head -20 \
+              | while IFS= read -r line; do
+                  # `::error::` requires the message on one line — sanitize.
+                  msg=$(echo "$line" | tr -d '\r' | head -c 500)
+                  echo "::error::pytest: ${msg}"
+                done
+            # Also dump the failure section to step summary for reference.
             echo "## Backend pytest failed" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             grep -E "^(FAILED|ERROR|=+ FAILURES =+)" /tmp/pytest-out.log \
