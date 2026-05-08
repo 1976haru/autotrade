@@ -56,7 +56,75 @@
 - 일중 진입 신호는 한 번만 — 같은 날 두 번째 cross-up은 발화하지 않는다.
 - 거래량 0 세션은 VWAP 정의 불가 → 안전 측 HOLD.
 
-### 3. `rsi_reversion` — RSI 평균회귀
+### 3. `volume_breakout` — 거래대금 돌파 (#29)
+
+| 필드 | 값 |
+|---|---|
+| 클래스 | `VolumeBreakoutStrategy` |
+| 상태 | ✅ 구현 완료 (#29) |
+| 진입 | 거래대금이 lookback 평균 × N배 이상 + 최근 N봉 종가 고점 돌파 + 세션 VWAP 상단 정렬 |
+| 청산 | TP 4% / SL 2% / trailing 1.5% / 30봉 시간 청산 또는 VWAP 하향 이탈 |
+| 무효화 | stale data, blocked regime, VWAP 격차 과다, 세션 시가 대비 runup 과다 |
+| 시장 체제 | `trending_up` (NEWS_DRIVEN / GAP_DAY 권장) — 차단: `trending_down`, `high_vol`, `blocked` |
+| 권장 리스크 | 자본 4% / -2% 손절 / +4% 익절 / trailing 1.5% / 동시 1종목 |
+| 파라미터 | `min_bars_required=25`, `volume_lookback_bars=20`, `volume_multiplier=2.0`, `breakout_lookback_bars=20`, `max_vwap_distance_pct=3.0`, `max_intraday_runup_pct=8.0`, `open_cooldown_bars=5`, `stale_max_age_seconds=60` |
+
+**구현 노트** (자세한 내역: [`docs/strategies/volume_breakout.md`](strategies/volume_breakout.md)):
+- 거래대금(turnover) = close × volume — 종목 간/시점 간 비교 안정화.
+- lookback window는 *현재 봉 제외* — 자기 자신을 baseline으로 삼지 않음.
+- VWAP은 *세션 누적* — 거래일이 바뀌면 reset (ORB와 동일 정의).
+- 추격 가드 2종 — VWAP 격차 + 세션 시가 대비 runup. 임계의 70% 초과 영역에서는 BUY로 가더라도 `risk_notes`와 sizing 축소가 적용된다.
+- REJECT vs NO_SIGNAL — `SignalAction`에 REJECT enum이 없으므로 `action=NO_SIGNAL` + `indicators.decision_kind="REJECT"`로 표시. 안전 차단(stale/blocked regime/runup/추격)과 단순 무신호를 운영자/감사가 구분 가능.
+- 일중 진입 신호는 한 번만 — 같은 날 두 번째 합성 충족은 `_fired_today`로 차단.
+- broker / risk / permission / execution 어떤 모듈도 import하지 않음 (테스트 `test_strategy_does_not_import_broker_or_risk` 가드).
+
+### 4. `pullback_rebreak` — 눌림목 재돌파 (#30, 2차 전략)
+
+| 필드 | 값 |
+|---|---|
+| 클래스 | `PullbackRebreakStrategy` |
+| 상태 | ✅ 구현 완료 (#30) |
+| 진입 | 1차 상승 impulse + 거래량 fade 눌림 + 현재 봉이 impulse peak를 재돌파 + 재돌파 거래량 증가 |
+| 청산 | pullback_low 이탈 / VWAP 이탈 / TP 4% / SL 동적 (pullback_low 기반) / trailing 1.5% / 30봉 시간 청산 |
+| 무효화 | 깊은 눌림(pullback_max_pct 초과), 거래량 급증 하락, VWAP 이탈, stale data, blocked regime |
+| 시장 체제 | `trending_up` (NEWS_DRIVEN / GAP_DAY 권장) — 차단: `trending_down`, `high_vol`, `blocked` |
+| 권장 리스크 | 자본 5% / -2% baseline 손절(동적) / +4% 익절 / trailing 1.5% / 동시 1종목 |
+| 파라미터 | `min_bars_required=30`, `impulse_lookback_bars=12`, `pullback_lookback_bars=10`, `min_impulse_pct=1.5`, `max_impulse_pct=12.0`, `pullback_min_pct=0.3`, `pullback_max_pct=4.0`, `pullback_volume_fade_ratio=0.85`, `rebreak_volume_min_ratio=1.2`, `max_vwap_distance_pct=4.0`, `max_intraday_runup_pct=12.0`, `open_cooldown_bars=5`, `stop_loss_below_pullback_low_pct=1.0` |
+
+**구현 노트** (자세한 내역: [`docs/strategies/pullback_rebreak.md`](strategies/pullback_rebreak.md)):
+- 구조: `impulse_low → peak → pullback_low → 현재(rebreak)`. 각 인덱스는 현재 봉을 *제외한* lookback 윈도우에서 argmax/argmin으로 결정.
+- 거래량 비교는 `volume`이 아니라 `close × volume`(turnover) — 종목/시점 간 비교 안정화.
+- VWAP은 *세션 누적* — 거래일이 바뀌면 reset.
+- 추격 가드 4종 — `max_impulse_pct` (impulse 강도), `pullback_max_pct` (눌림 깊이), `max_vwap_distance_pct` (VWAP 격차), `max_intraday_runup_pct` (당일 누적 상승). 임계의 70% 초과 영역은 BUY로 가더라도 `risk_notes` + sizing 축소 자동.
+- 손절은 *동적* — `position_context.pullback_low_close + current_close`가 주어지면 pullback_low 기반 stop_price를 산출하고 entry 대비 % 산출. 미제공 시 baseline 사용.
+- 일중 1회 진입은 패턴 검출 *전*에 가드 — 같은 날 새 구조가 형성돼도 무의미한 계산을 피하고 운영자 동선에서 "이미 한 번 발화" 사실을 우선 surface.
+- VolumeBreakoutStrategy(#29)와의 보완 — VB는 1차 첫 돌파, PullbackRebreak는 그 다음 안전한 진입 후보. 동일 종목 중복 신호는 operator UI에서 dedup 권장.
+- broker / risk / permission / execution / governance 어떤 모듈도 import하지 않음 (테스트 `test_strategy_does_not_import_broker_or_risk` 가드).
+
+### 5. `vwap_strategy` — VWAP 회귀/이탈 (#31, 보조 전략)
+
+| 필드 | 값 |
+|---|---|
+| 클래스 | `VWAPStrategy` |
+| 상태 | ✅ 구현 완료 (#31) |
+| 진입 | 직전 봉 ≤ VWAP, 현재 봉 > VWAP (cross-up reclaim) + 거래량 ≥ prior 평균 × 1.2 + 거래량/거래대금 임계 통과 + 괴리율 entry cap 이내 |
+| 청산 | EXIT 신호 (cross-down VWAP 이탈, 보유 중일 때) + TP 2.5% / SL 1.5% / trailing 1% / 20봉 시간 청산 |
+| 무효화 | LOW_LIQUIDITY, blocked regime, stale data, 과도한 VWAP 이격(`overextension_deviation_pct` 초과) |
+| 시장 체제 | `trending_up` / `ranging` 권장 — 차단: `trending_down`, `high_vol`, `blocked` |
+| 권장 리스크 | 자본 3% / -1.5% 손절 / +2.5% 익절 / trailing 1% / 동시 1종목 (보조 전략 보수적) |
+| 파라미터 | `min_bars_required=25`, `rolling_vwap_window=20`, `liquidity_window=20`, `min_avg_volume=100`, `min_avg_turnover=0`, `max_deviation_pct_for_entry=1.5`, `overextension_deviation_pct=3.0`, `reclaim_volume_min_ratio=1.2`, `open_cooldown_bars=5`, `stale_max_age_seconds=60` |
+
+**구현 노트** (자세한 명세: [`docs/strategies/vwap_strategy.md`](strategies/vwap_strategy.md)):
+- VWAP 계산 유틸은 [`backend/app/strategies/vwap.py`](../backend/app/strategies/vwap.py)에 분리 — `typical_price`, `vwap_of`, `extract_session_bars`, `session_vwap`, `rolling_vwap`, `vwap_deviation_pct`, `average_volume`, `average_turnover`, `check_liquidity`. 본 전략 + 향후 다른 전략/Agent가 재사용.
+- session_vwap = 1차 기준선, rolling_vwap(20봉) = 보조 — 둘 다 indicators에 carry.
+- `check_liquidity`로 거래량 적은 종목의 VWAP 왜곡 방어 — `min_avg_volume`/`min_avg_turnover` 임계 미만이면 LOW_LIQUIDITY REJECT.
+- EXIT 신호는 *보유 중일 때만* 발화 — `position_context.has_open_position=True`를 context.extra에 넘겨야 함. 보유 정보 없으면 EXIT 미발화.
+- 추격 가드 2-tier — `max_deviation_pct_for_entry=1.5%` (reclaim 후 BUY 보류 cap), `overextension_deviation_pct=3%` (REJECT cap).
+- 일중 1회 진입 — `_fired_today` invariant.
+- 기존 `OrbVwapStrategy`(orb_vwap.py)는 자체 VWAP 누적을 인라인으로 가지고 있고 본 모듈을 import하지 않음 — 기존 동작 보존이 우선이라 추후 통합 PR에서 정리.
+- broker / risk / permission / execution / governance 어떤 모듈도 import하지 않음 (테스트 가드).
+
+### 6. `rsi_reversion` — RSI 평균회귀
 
 | 필드 | 값 |
 |---|---|

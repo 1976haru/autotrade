@@ -3,17 +3,24 @@ from typing import Any
 
 from app.strategies.base import Strategy
 from app.strategies.concrete.orb_vwap import OrbVwapStrategy
+from app.strategies.concrete.pullback_rebreak import PullbackRebreakStrategy
 from app.strategies.concrete.rsi_reversion import RsiReversionStrategy
 from app.strategies.concrete.sma_crossover import SmaCrossoverStrategy
+from app.strategies.concrete.volume_breakout import VolumeBreakoutStrategy
+from app.strategies.concrete.vwap_strategy import VWAPStrategy
 
 
 # 131: 등록되는 전략은 contract metadata(entry/exit/invalidation/required_regime/
 # risk_profile)를 base.py Strategy 클래스 attrs로 가진다. 142에서 orb_vwap/
-# rsi_reversion의 실제 신호 로직이 구현됐다 (이전엔 HOLD-only stub).
+# rsi_reversion의 실제 신호 로직이 구현됐다 (이전엔 HOLD-only stub). #29에서
+# volume_breakout, #30에서 pullback_rebreak, #31에서 vwap_strategy 추가.
 STRATEGY_REGISTRY: dict[str, type[Strategy]] = {
-    "sma_crossover": SmaCrossoverStrategy,
-    "orb_vwap":      OrbVwapStrategy,
-    "rsi_reversion": RsiReversionStrategy,
+    "sma_crossover":    SmaCrossoverStrategy,
+    "orb_vwap":         OrbVwapStrategy,
+    "rsi_reversion":    RsiReversionStrategy,
+    "volume_breakout":  VolumeBreakoutStrategy,
+    "pullback_rebreak": PullbackRebreakStrategy,
+    "vwap_strategy":    VWAPStrategy,
 }
 
 
@@ -131,6 +138,9 @@ __all__ = [
     "describe_all_strategies",
     "validate_strategy_contract",
     "OrbVwapStrategy",
+    "PullbackRebreakStrategy",
     "RsiReversionStrategy",
     "SmaCrossoverStrategy",
+    "VolumeBreakoutStrategy",
+    "VWAPStrategy",
 ]
