@@ -34,6 +34,19 @@ jobs:
           ruff check app tests
       - name: Test (fast)
         # pyproject.toml의 addopts = "-m 'not slow'"로 stress 자동 제외.
+        # `--tb=short -rN` surfaces FAILED test names + short traceback to the
+        # step log so failures are visible even without GitHub auth.
+        # GITHUB_STEP_SUMMARY mirrors the FAILED summary into the run page UI.
         run: |
           cd backend
-          pytest -q
+          set -o pipefail
+          pytest --tb=short -rN -q 2>&1 | tee /tmp/pytest-out.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            echo "## Backend pytest failed" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            grep -E "^(FAILED|ERROR|=+ FAILURES =+)" /tmp/pytest-out.log \
+              | head -50 >> "$GITHUB_STEP_SUMMARY" || true
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$rc"
