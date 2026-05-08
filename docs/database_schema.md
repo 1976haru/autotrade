@@ -25,7 +25,7 @@
 
 ## 현재 테이블 목록
 
-총 **11개 테이블** (Alembic head=`0015`).
+총 **12개 테이블** (Alembic head=`0016`).
 
 | 테이블 | 모델 | 첫 등장 migration | 목적 (요약) |
 |---|---|---|---|
@@ -40,6 +40,7 @@
 | `agent_decision_log` | `AgentDecisionLog` | 0014 | 10-Agent Council 결정 영구화 |
 | `watchlist` | `Watchlist` | 0015 | 운영자 universe 그룹 (#18) |
 | `watchlist_item` | `WatchlistItem` | 0015 | watchlist 종목 행 (#18) |
+| `theme_signals` | `ThemeSignal` | 0016 | 테마/뉴스/트렌드 후보 필터 (#22) — 주문 신호 아님 |
 
 자세한 컬럼 정의: `backend/app/db/models.py`.
 
@@ -239,6 +240,7 @@
 | 0013 | 2026-05-16 | `futures_order_audit_log` 신규 테이블 (169) |
 | 0014 | 2026-05-17 | `agent_decision_log` 신규 테이블 (185) |
 | 0015 | 2026-05-18 | `watchlist` + `watchlist_item` 신규 테이블 (#18) |
+| 0016 | 2026-05-20 | `theme_signals` 신규 테이블 (#22) — used_for_order invariant |
 
 체인은 단일 linear (병렬 head 없음). `python -c "from alembic.config import Config; from alembic.script import ScriptDirectory; ..."`로 head 검증 — 본 PR 작성 시 `heads=['0014']`.
 

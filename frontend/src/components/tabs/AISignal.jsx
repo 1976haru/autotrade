@@ -8,6 +8,7 @@ import { AgentCouncilCard } from "./AgentCouncilCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
+import { ThemeSignalsCard } from "./ThemeSignalsCard";
 
 export function AISignal({ activeStratIds }) {
   const [ticker,  setTicker]  = useState("");
@@ -41,6 +42,7 @@ export function AISignal({ activeStratIds }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <OperatingLoopCard />
+      <ThemeSignalsCard />
       <AgentCouncilCard />
       <AgentDecisionSummaryCard />
       <AgentStatsCard />

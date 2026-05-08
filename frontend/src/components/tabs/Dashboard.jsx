@@ -21,6 +21,7 @@ import { OperatorPanel } from "./OperatorPanel";
 import { HeroSummaryCard } from "./HeroSummaryCard";
 import { AgentDecisionHero } from "./AgentDecisionHero";
 import { WatchlistSummaryTile } from "./WatchlistSummaryTile";
+import { ThemeSummaryTile } from "./ThemeSummaryTile";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
 // AuditLog timeline에서도 mode badge로 쓰기 위해 공유. Dashboard는 re-export
@@ -627,6 +628,9 @@ export function Dashboard({
 
       {/* 18: 관심종목 universe 요약 — active watchlist 종목 수 + top 5. */}
       <WatchlistSummaryTile onNavigate={onJumpTab ? () => onJumpTab("config") : undefined} />
+
+      {/* 22: 테마 / 뉴스 후보 필터 요약 — 주문 신호 아님 invariant. */}
+      <ThemeSummaryTile onNavigate={onJumpTab ? () => onJumpTab("signal") : undefined} />
 
       {/* 봇 컨트롤 */}
       <Card accentColor={running ? "#22c55e33" : undefined}>

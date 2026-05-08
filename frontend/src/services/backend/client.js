@@ -211,4 +211,17 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify({ csv }),
   }),
+  // 22: Theme signals — 후보 필터 전용 (주문 신호 아님).
+  themeSignals: ({ limit = 50, grade = null, provider = null } = {}) => {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (grade)    qs.set("grade", grade);
+    if (provider) qs.set("provider", provider);
+    return backendFetch(`/api/themes/signals?${qs.toString()}`);
+  },
+  themesSummary: () => backendFetch("/api/themes/summary"),
+  themesScan:    ({ universe = null, limit = 20 } = {}) =>
+    backendFetch("/api/themes/scan", {
+      method: "POST",
+      body: JSON.stringify({ universe, limit }),
+    }),
 };

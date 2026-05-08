@@ -345,6 +345,43 @@ class WatchlistItem(Base):
     note:    Mapped[str | None]     = mapped_column(String(255), nullable=True)
 
 
+class ThemeSignal(Base):
+    """테마/뉴스/트렌드 시그널 (#22).
+
+    구글트렌드/뉴스/공시/수동 입력 데이터를 단일 행으로 보관한다. **주문 신호가
+    아니라 후보 필터** — `used_for_order` 기본 False, ThemeFilter는 BUY/SELL/HOLD를
+    반환하지 않고 candidate symbol 목록만 반환 (CLAUDE.md 절대 원칙).
+
+    실 Google Trends API alpha 접근 권한이 없으면 `provider="mock"`로 채워진다.
+    실제 외부 API 호출은 별도 옵트인 PR이며, 본 PR에서는 import / call 0건.
+    """
+
+    __tablename__ = "theme_signals"
+
+    id:           Mapped[int]      = mapped_column(primary_key=True)
+    created_at:   Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+
+    theme:        Mapped[str]            = mapped_column(String(64),  index=True)
+    keywords:     Mapped[list]           = mapped_column(JSON, default=list)
+    related_symbols: Mapped[list]        = mapped_column(JSON, default=list)
+
+    # 0~100 정수. compute_theme_score로 산출. grade는 STRONG/WATCH/WEAK/IGNORE.
+    score:        Mapped[int]            = mapped_column(Integer, default=0, index=True)
+    grade:        Mapped[str]            = mapped_column(String(16), default="WEAK", index=True)
+    confidence:   Mapped[int]            = mapped_column(Integer, default=0)
+
+    source:       Mapped[str]            = mapped_column(String(32), index=True)
+    # provider 식별자 — mock / google_trends_alpha / news_xxx / disclosure_dart / manual
+    provider:     Mapped[str]            = mapped_column(String(32), index=True)
+
+    summary:      Mapped[str | None]     = mapped_column(Text,    nullable=True)
+    raw:          Mapped[dict | None]    = mapped_column(JSON,    nullable=True)
+
+    # CLAUDE.md 절대 원칙 — 본 시그널은 주문에 직접 사용되지 않는다는 invariant.
+    # True로 바뀌는 경로는 본 PR에서 만들지 않는다 (운영자 명시 옵트인 후 별도 PR).
+    used_for_order: Mapped[bool]         = mapped_column(Boolean, default=False, index=True)
+
+
 class MarketBar(Base):
     """업스트림에서 가져온 OHLCV 봉의 캐시. (symbol, interval, timestamp)가 유일."""
 

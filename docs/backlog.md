@@ -58,6 +58,17 @@
 - 156 머지 후 별도 PR `feature/157-ci-recovery`에서 8 errors 모두 해결. `useRef(Date.now())` → null + useEffect lazy init / 의도된 setState-in-effect는 disable comment + 사유 / time-bucket 필터의 Date.now() snapshot은 `eslint-disable-next-line react-hooks/purity`. 833 테스트 회귀 0.
 - 결과: `npm run lint` → 0 errors / 55 warnings.
 
+### 19. Theme/News/Trend 후속 (#22 PR 이후)
+- 실 Google Trends API alpha 통합 — alpha 권한 + 운영자 옵트인 PR.
+- News API 통합 — rate limit / 약관 검토 후 별도 PR.
+- DART 공시 OpenAPI 통합 — 가입 후 별도 PR.
+- Manual provider UI / CSV import — 운영자 수동 입력.
+- `ThemeSignal` 중복 dedup 정책.
+- Strategy/Agent에 `theme_context` read-only 주입 — LIVE strategy 활성화 PR.
+- Frontend 테마 분포 카드.
+- 테마-단타 성과 상관 분석 리포트.
+- 자세한 정책: `docs/theme_signal_policy.md`.
+
 ### 18. Data Quality 후속 (#21 PR 이후)
 - KRX 휴장일 캘린더 통합 — 정확한 expected_count.
 - `BacktestRequest`에 `min_quality_score` / `min_grade` 옵션 + 결과에 품질 메타 carry — 23번 PR.

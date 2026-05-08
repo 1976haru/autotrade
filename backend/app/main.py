@@ -15,6 +15,7 @@ from app.api.routes_reconciliation import router as reconciliation_router
 from app.api.routes_risk import router as risk_router
 from app.api.routes_futures import router as futures_router
 from app.api.routes_status import router as status_router
+from app.api.routes_themes import router as themes_router
 from app.api.routes_virtual import router as virtual_router
 from app.api.routes_watchlists import router as watchlists_router
 from app.core.config import get_settings
@@ -71,6 +72,7 @@ app.include_router(futures_router, prefix="/api")
 app.include_router(reconciliation_router, prefix="/api")
 app.include_router(agents_router, prefix="/api")
 app.include_router(watchlists_router, prefix="/api")
+app.include_router(themes_router, prefix="/api")
 
 
 @app.get("/")
