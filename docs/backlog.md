@@ -58,6 +58,15 @@
 - 156 머지 후 별도 PR `feature/157-ci-recovery`에서 8 errors 모두 해결. `useRef(Date.now())` → null + useEffect lazy init / 의도된 setState-in-effect는 disable comment + 사유 / time-bucket 필터의 Date.now() snapshot은 `eslint-disable-next-line react-hooks/purity`. 833 테스트 회귀 0.
 - 결과: `npm run lint` → 0 errors / 55 warnings.
 
+### 18. Data Quality 후속 (#21 PR 이후)
+- KRX 휴장일 캘린더 통합 — 정확한 expected_count.
+- `BacktestRequest`에 `min_quality_score` / `min_grade` 옵션 + 결과에 품질 메타 carry — 23번 PR.
+- Walk-forward runner의 fold별 데이터 품질 평가 + EXCLUDE fold 자동 제외.
+- `data_quality_report` DB 테이블 (배치 실행 결과 영구화).
+- Frontend 데이터 품질 카드 (Dashboard 또는 Backtest 탭).
+- Tick / orderbook 품질 검사 — tick 테이블 도입(Phase 2) 후.
+- 자세한 정책: `docs/data_quality_report.md`.
+
 ### 17. Data Freshness 후속 (#20 PR 이후)
 - KIS / Kiwoom WebSocket 실 feed 상태 통합 (`DataFeedState` provider) — Phase 2 KIS WebSocket adapter PR.
 - Redis 기반 feed health 공유 — 다중 worker / 다중 host 운영 시 동기화.

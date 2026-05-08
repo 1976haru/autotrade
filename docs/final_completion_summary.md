@@ -174,6 +174,7 @@ LIVE 활성화 전 사용자 명시 옵트인이 필요한 영역:
 - [`watchlist_policy.md`](watchlist_policy.md) — Watchlist universe 정책 + CRUD/CSV API + 50~200개 한도 (체크리스트 #18)
 - [`market_data_collector.md`](market_data_collector.md) — OHLCV 수집기 + 1m→5m 집계 + 누락률 + freshness 정책 (체크리스트 #19)
 - [`data_freshness_policy.md`](data_freshness_policy.md) — quote/bar/feed 통합 freshness + WebSocket reconnect 정책 + read-only API (체크리스트 #20)
+- [`data_quality_report.md`](data_quality_report.md) — MarketBar 일별 품질 점수(GOOD/WARNING/POOR/EXCLUDE) + CLI + 백테스트 제외 정책 (체크리스트 #21)
 
 ## 사후 UI surface 보강 (187-196)
 

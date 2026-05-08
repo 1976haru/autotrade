@@ -47,4 +47,7 @@ def apply_migrations() -> None:
 
     alembic_ini = Path(__file__).resolve().parents[2] / "alembic.ini"
     cfg = Config(str(alembic_ini))
+    # script_location이 'alembic' (상대경로)이라 cwd가 backend/가 아니면 깨짐.
+    # 본 함수는 backend lifespan + scripts/CLI 양쪽에서 호출되므로 절대경로로 보강.
+    cfg.set_main_option("script_location", str(alembic_ini.parent / "alembic"))
     command.upgrade(cfg, "head")
