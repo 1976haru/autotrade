@@ -25,7 +25,7 @@
 
 ## 현재 테이블 목록
 
-총 **9개 테이블** (Alembic head=`0014`).
+총 **11개 테이블** (Alembic head=`0015`).
 
 | 테이블 | 모델 | 첫 등장 migration | 목적 (요약) |
 |---|---|---|---|
@@ -38,6 +38,8 @@
 | `virtual_order` | `VirtualOrder` | 0009 | 가상 주문 7-state 라이프사이클 |
 | `futures_order_audit_log` | `FuturesOrderAuditLog` | 0013 | 선물 주문 별도 감사 로그 |
 | `agent_decision_log` | `AgentDecisionLog` | 0014 | 10-Agent Council 결정 영구화 |
+| `watchlist` | `Watchlist` | 0015 | 운영자 universe 그룹 (#18) |
+| `watchlist_item` | `WatchlistItem` | 0015 | watchlist 종목 행 (#18) |
 
 자세한 컬럼 정의: `backend/app/db/models.py`.
 
@@ -48,7 +50,7 @@
 | 원문 (#17) | 본 프로젝트 매핑 | 상태 | 비고 |
 |---|---|---|---|
 | `symbols` | (현재 없음) — broker / market / watchlist에서 symbol **문자열**로만 사용 | **미구현 (의도적)** | 종목 마스터 테이블 후보 (`symbol_master`). KRX 전체 마스터는 데이터 갱신 빈도/소유권 결정 후 도입 |
-| `watchlists` | (현재 없음) | **#18에서 별도 진행** | `watchlist` + `watchlist_item` 두 테이블 후보 |
+| `watchlists` | `watchlist` + `watchlist_item` | **구현 완료** (#18, 0015) | 200개 한도 강제 ([`watchlist_policy.md`](watchlist_policy.md)) |
 | `ticks` | (현재 없음) | **Phase 2 후보** | 대량 데이터 — TimescaleDB 또는 파티셔닝 결정 후. MVP는 `MarketBar`(분봉)로 충분 |
 | `candles` | `market_bar` | **구현 완료** | OHLCV + (symbol, interval, timestamp) UNIQUE |
 | `orders` | `order_audit_log` (결정) + `virtual_order` (라이프사이클) | **구현 완료** | 두 축으로 분리 — audit는 평면 기록, virtual_order는 상태 전이 |
@@ -172,6 +174,30 @@
 | 실거래 전 의미 | 가상 자금 단일 진실. LIVE에서도 보존 — 사후 비교 가능 |
 | 향후 보강 | 인덱스 충분 — 추가 불필요 |
 
+### `watchlist` (#18)
+
+| 항목 | 내용 |
+|---|---|
+| 목적 | 운영자가 수동으로 등록한 universe 그룹. Strategy / Agent의 후보군 — 주문 신호 아님 ([`watchlist_policy.md`](watchlist_policy.md)) |
+| 주요 컬럼 | `name`, `description`, `is_active`(전역 1개만 활성) |
+| 인덱스 | `created_at`, `name`, `is_active` |
+| Unique constraint | (없음) |
+| 사용 모듈 | `app/watchlist/service.py`, `app/api/routes_watchlists.py` |
+| 실거래 전 의미 | RiskManager / PermissionGate / OrderExecutor 분기에 영향 없음 — universe 조회만 |
+| 향후 보강 | 다중 운영자 분리 시 `owner_id` FK 검토 |
+
+### `watchlist_item` (#18)
+
+| 항목 | 내용 |
+|---|---|
+| 목적 | watchlist 안의 종목 행 |
+| 주요 컬럼 | `watchlist_id`(FK CASCADE), `symbol`, `name`, `market`, `sector`, `note` |
+| 인덱스 | `created_at`, `watchlist_id`, `symbol` |
+| Unique constraint | `uq_watchlist_item_symbol` (watchlist_id, symbol) — 그룹 내 중복 방지 |
+| 사용 모듈 | 동일 |
+| 실거래 전 의미 | 동일 — universe 후보군. 200개 한도는 코드(`WATCHLIST_MAX_ITEMS`)에서 강제 |
+| 향후 보강 | KRX 종목 마스터(`symbol_master`)와 cross-reference 시 추가 인덱스 검토 |
+
 ## 인덱스 정책
 
 본 프로젝트가 이미 따르는 원칙. **새 테이블/컬럼 추가 시 동일 원칙으로 검증**.
@@ -212,6 +238,7 @@
 | 0012 | 2026-05-15 | `order_audit_log.archived` 인덱스 컬럼 (168) |
 | 0013 | 2026-05-16 | `futures_order_audit_log` 신규 테이블 (169) |
 | 0014 | 2026-05-17 | `agent_decision_log` 신규 테이블 (185) |
+| 0015 | 2026-05-18 | `watchlist` + `watchlist_item` 신규 테이블 (#18) |
 
 체인은 단일 linear (병렬 head 없음). `python -c "from alembic.config import Config; from alembic.script import ScriptDirectory; ..."`로 head 검증 — 본 PR 작성 시 `heads=['0014']`.
 
@@ -261,7 +288,7 @@
 | 후보 테이블 | 목적 | 트리거 | 매핑 |
 |---|---|---|---|
 | `symbol_master` | KRX 종목 마스터 (코드/이름/시장/상장폐지) | 운영자가 watchlist를 종목 마스터 기반으로 운용할 때 | 원문 `symbols` |
-| `watchlist` + `watchlist_item` | 운영자 관심 종목 그룹 | 체크리스트 #18 | 원문 `watchlists` |
+| ~~`watchlist` + `watchlist_item`~~ | 운영자 관심 종목 그룹 | ~~체크리스트 #18~~ — **0015에서 도입 완료** | 원문 `watchlists` |
 | `market_tick` | 틱 데이터 — TimescaleDB hypertable 후보 | 분봉으로 부족한 마이크로 분석 필요 시 | 원문 `ticks` |
 | `position_snapshot` | 일별 마감 포지션 스냅샷 | LIVE 활성화 — broker view vs audit view drift(212) 보강 | 원문 `positions` |
 | `live_strategy_run` | LIVE strategy 실행 메타 (시작/종료/PnL) | LIVE_MANUAL_APPROVAL 운영 데이터 누적 후 | 원문 `strategy_runs` 보강 |
@@ -286,7 +313,7 @@
 
 | 항목 | 트리거 |
 |---|---|
-| `watchlist` + `watchlist_item` 테이블 도입 | 체크리스트 #18 |
+| ~~`watchlist` + `watchlist_item` 테이블 도입~~ | ~~체크리스트 #18~~ — **완료 (0015)** |
 | KRX `symbol_master` 도입 | 운영자가 watchlist를 종목 마스터로 관리하는 시점 |
 | `market_tick` 도입 + TimescaleDB / 파티셔닝 결정 | 분봉 분석으로 부족한 마이크로 신호가 필요해진 시점 |
 | `position_snapshot` 일별 스냅샷 | LIVE 활성화 후 reconciliation drift 누적 분석 |

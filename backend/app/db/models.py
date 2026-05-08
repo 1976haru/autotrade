@@ -303,6 +303,48 @@ class VirtualOrder(Base):
     note:              Mapped[str | None]     = mapped_column(String(500), nullable=True)
 
 
+class Watchlist(Base):
+    """관심종목 그룹. 전략/Agent의 universe 후보군 — 주문 신호 아님 (#18).
+
+    한 운영자가 여러 watchlist를 가질 수 있고 그중 하나를 active로 표시한다.
+    실제 주문/리스크/PermissionGate 흐름과 분리 — RiskManager는 본 테이블을
+    참조하지 않는다. Strategy/Agent가 향후 active watchlist를 universe 필터로
+    사용하더라도 RiskManager → PermissionGate → OrderExecutor 단일 경로는
+    그대로 유지된다 (CLAUDE.md 절대 원칙 5/7).
+    """
+
+    __tablename__ = "watchlist"
+
+    id:         Mapped[int]      = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+    name:        Mapped[str]            = mapped_column(String(64), index=True)
+    description: Mapped[str | None]     = mapped_column(String(255), nullable=True)
+    is_active:   Mapped[bool]           = mapped_column(Boolean, default=False, index=True)
+
+
+class WatchlistItem(Base):
+    """Watchlist에 속하는 종목 한 줄. (watchlist_id, symbol)이 유일."""
+
+    __tablename__ = "watchlist_item"
+    __table_args__ = (
+        UniqueConstraint("watchlist_id", "symbol", name="uq_watchlist_item_symbol"),
+    )
+
+    id:           Mapped[int]      = mapped_column(primary_key=True)
+    created_at:   Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+
+    watchlist_id: Mapped[int]      = mapped_column(
+        Integer, ForeignKey("watchlist.id", ondelete="CASCADE"), index=True
+    )
+    symbol:  Mapped[str]            = mapped_column(String(16), index=True)
+    name:    Mapped[str | None]     = mapped_column(String(64),  nullable=True)
+    market:  Mapped[str | None]     = mapped_column(String(32),  nullable=True)
+    sector:  Mapped[str | None]     = mapped_column(String(64),  nullable=True)
+    note:    Mapped[str | None]     = mapped_column(String(255), nullable=True)
+
+
 class MarketBar(Base):
     """업스트림에서 가져온 OHLCV 봉의 캐시. (symbol, interval, timestamp)가 유일."""
 

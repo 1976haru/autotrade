@@ -3,6 +3,7 @@ import { Card, SectionLabel, Btn, Inp } from "../common";
 import { PageHeader } from "../common/primitives";
 import { friendlyErrorMessage } from "../../utils/errorMessage";
 import { useBackendStatus } from "../../store/useBackendStatus";
+import { WatchlistsCard } from "./WatchlistsCard";
 
 
 // 060 (emergency_stop hard-reject) and 061 (LIVE flag gating the queue)
@@ -281,6 +282,9 @@ export function Settings({ settings }) {
           </div>
         </Card>
       )}
+
+      {/* 18: 관심종목 (universe 후보군) */}
+      <WatchlistsCard />
 
       {/* 운영자명 (감사 로그용) */}
       <Card>

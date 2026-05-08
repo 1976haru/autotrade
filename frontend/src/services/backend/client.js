@@ -35,6 +35,7 @@ export async function backendFetch(path, options = {}) {
     err.detail = detail;
     throw err;
   }
+  if (res.status === 204) return null;
   return res.json();
 }
 
@@ -186,5 +187,28 @@ export const backendApi = {
   signalQuality: (req) => backendFetch("/api/agents/signal-quality", {
     method: "POST",
     body: JSON.stringify(req || {}),
+  }),
+  // 18: Watchlist — universe 후보군 (주문 신호 아님).
+  listWatchlists:    () => backendFetch("/api/watchlists"),
+  watchlistSummary:  () => backendFetch("/api/watchlists/summary"),
+  getWatchlist:      (id) => backendFetch(`/api/watchlists/${id}`),
+  createWatchlist:   (req) => backendFetch("/api/watchlists", {
+    method: "POST",
+    body: JSON.stringify(req),
+  }),
+  patchWatchlist:    (id, req) => backendFetch(`/api/watchlists/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(req),
+  }),
+  deleteWatchlist:   (id) => backendFetch(`/api/watchlists/${id}`, { method: "DELETE" }),
+  addWatchlistItem:  (id, req) => backendFetch(`/api/watchlists/${id}/items`, {
+    method: "POST",
+    body: JSON.stringify(req),
+  }),
+  removeWatchlistItem: (id, itemId) =>
+    backendFetch(`/api/watchlists/${id}/items/${itemId}`, { method: "DELETE" }),
+  importWatchlistCsv: (id, csv) => backendFetch(`/api/watchlists/${id}/import-csv`, {
+    method: "POST",
+    body: JSON.stringify({ csv }),
   }),
 };

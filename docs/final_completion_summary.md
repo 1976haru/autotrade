@@ -171,6 +171,7 @@ LIVE 활성화 전 사용자 명시 옵트인이 필요한 영역:
 - [`backlog.md`](backlog.md) — NICE / LIVE 옵트인 항목
 - [`kiwoom_rest_research.md`](kiwoom_rest_research.md) — 2차 브로커(키움 REST) 도입 조사표 (체크리스트 #15)
 - [`database_schema.md`](database_schema.md) — DB 스키마 점검 + 원문 테이블 매핑 + PG 전환 가이드 (체크리스트 #17)
+- [`watchlist_policy.md`](watchlist_policy.md) — Watchlist universe 정책 + CRUD/CSV API + 50~200개 한도 (체크리스트 #18)
 
 ## 사후 UI surface 보강 (187-196)
 

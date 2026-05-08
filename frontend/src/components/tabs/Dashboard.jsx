@@ -20,6 +20,7 @@ import { MarketRegimeBadge } from "./MarketRegimeBadge";
 import { OperatorPanel } from "./OperatorPanel";
 import { HeroSummaryCard } from "./HeroSummaryCard";
 import { AgentDecisionHero } from "./AgentDecisionHero";
+import { WatchlistSummaryTile } from "./WatchlistSummaryTile";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
 // AuditLog timeline에서도 mode badge로 쓰기 위해 공유. Dashboard는 re-export
@@ -623,6 +624,9 @@ export function Dashboard({
       {/* 191: Agent Council 최근 chief 결정 — smartphone 운용 동선에서
           직전 판단 한 줄로 확인 가능. 상세는 AI 탭에서. */}
       <AgentLatestTile onJumpTab={onJumpTab} />
+
+      {/* 18: 관심종목 universe 요약 — active watchlist 종목 수 + top 5. */}
+      <WatchlistSummaryTile onNavigate={onJumpTab ? () => onJumpTab("config") : undefined} />
 
       {/* 봇 컨트롤 */}
       <Card accentColor={running ? "#22c55e33" : undefined}>
