@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_market_data
 from app.backtest.engine import BacktestEngine
 from app.strategies.concrete import build_strategy
-from app.backtest.types import Bar, BacktestResult, Trade
+from app.backtest.types import Bar, BacktestConfig, BacktestResult, Trade
 from app.db.models import BacktestRun
 from app.db.session import get_db
 from app.market.base import Interval, MarketDataAdapter
@@ -36,6 +36,23 @@ class TradePayload(BaseModel):
     exit_price:  int
     quantity:    int
     pnl:         int
+    # 23: 비용 모델 — config 미제공 시 모두 0/None.
+    entry_signal_price: int | None = None
+    exit_signal_price:  int | None = None
+    fees:               int = 0
+    taxes:              int = 0
+    slippage_cost:      int = 0
+
+
+class BacktestConfigPayload(BaseModel):
+    """클라이언트가 명시적으로 보내는 config (#23). 미제공 시 legacy 동작."""
+    execution_model:           str  = "next_open"
+    execution_delay_bars:      int  = 1
+    allow_same_bar_execution:  bool = False
+    slippage_bps:              int  = 0
+    commission_bps:            int  = 0
+    tax_bps:                   int  = 0
+    exit_on_last_bar:          bool = True
 
 
 class BacktestRequest(BaseModel):
@@ -49,6 +66,8 @@ class BacktestRequest(BaseModel):
     start:        datetime | None = None
     end:          datetime | None = None
     interval:     Interval = Interval.DAY_1
+    # 23: 체결 모델 + 비용 모델. 미제공 시 legacy(same_close, 비용 0).
+    config:       BacktestConfigPayload | None = None
 
 
 class BacktestResponse(BaseModel):
@@ -75,17 +94,29 @@ class BacktestResponse(BaseModel):
     data_end:       datetime | None = None
     data_interval:  str | None = None
     trades:         list[TradePayload]
+    # 23: 비용 모델 — config 미제공 시 0.
+    gross_pnl:      int = 0
+    net_pnl:        int = 0
+    total_fees:     int = 0
+    total_taxes:    int = 0
+    total_slippage: int = 0
+    config:         BacktestConfigPayload | None = None
 
 
 def _trade_to_dict(t) -> dict:
     return {
-        "symbol":      t.symbol,
-        "entry_ts":    t.entry_ts.isoformat(),
-        "entry_price": t.entry_price,
-        "exit_ts":     t.exit_ts.isoformat(),
-        "exit_price":  t.exit_price,
-        "quantity":    t.quantity,
-        "pnl":         t.pnl,
+        "symbol":             t.symbol,
+        "entry_ts":           t.entry_ts.isoformat(),
+        "entry_price":        t.entry_price,
+        "exit_ts":            t.exit_ts.isoformat(),
+        "exit_price":         t.exit_price,
+        "quantity":           t.quantity,
+        "pnl":                t.pnl,
+        "entry_signal_price": t.entry_signal_price,
+        "exit_signal_price":  t.exit_signal_price,
+        "fees":               t.fees,
+        "taxes":              t.taxes,
+        "slippage_cost":      t.slippage_cost,
     }
 
 
@@ -146,13 +177,18 @@ def _result_from_run(run: BacktestRun) -> BacktestResult:
     truth for the formulas, no metric drift between the two endpoints.
     """
     trades = [Trade(
-        symbol      = t["symbol"],
-        entry_ts    = datetime.fromisoformat(t["entry_ts"]),
-        entry_price = t["entry_price"],
-        exit_ts     = datetime.fromisoformat(t["exit_ts"]),
-        exit_price  = t["exit_price"],
-        quantity    = t["quantity"],
-        pnl         = t["pnl"],
+        symbol             = t["symbol"],
+        entry_ts           = datetime.fromisoformat(t["entry_ts"]),
+        entry_price        = t["entry_price"],
+        exit_ts            = datetime.fromisoformat(t["exit_ts"]),
+        exit_price         = t["exit_price"],
+        quantity           = t["quantity"],
+        pnl                = t["pnl"],
+        entry_signal_price = t.get("entry_signal_price"),
+        exit_signal_price  = t.get("exit_signal_price"),
+        fees               = int(t.get("fees", 0) or 0),
+        taxes              = int(t.get("taxes", 0) or 0),
+        slippage_cost      = int(t.get("slippage_cost", 0) or 0),
     ) for t in run.trades_json]
     return BacktestResult(
         trades         = trades,
@@ -162,7 +198,12 @@ def _result_from_run(run: BacktestRun) -> BacktestResult:
     )
 
 
-def _build_response(run: BacktestRun, result: BacktestResult) -> BacktestResponse:
+def _build_response(
+    run: BacktestRun,
+    result: BacktestResult,
+    *,
+    config: BacktestConfigPayload | None = None,
+) -> BacktestResponse:
     return BacktestResponse(
         run_id=run.id,
         strategy=run.strategy,
@@ -185,6 +226,12 @@ def _build_response(run: BacktestRun, result: BacktestResult) -> BacktestRespons
         data_end=_ensure_utc(run.data_end),
         data_interval=run.data_interval,
         trades=[TradePayload(**t) for t in run.trades_json],
+        gross_pnl=result.gross_pnl,
+        net_pnl=result.net_pnl,
+        total_fees=result.total_fees,
+        total_taxes=result.total_taxes,
+        total_slippage=result.total_slippage,
+        config=config,
     )
 
 
@@ -248,7 +295,13 @@ async def run_backtest(
     )
 
     engine = BacktestEngine(initial_cash=req.initial_cash, quantity=req.quantity)
-    result = engine.run(bars, strategy)
+    cfg: BacktestConfig | None = None
+    if req.config is not None:
+        try:
+            cfg = BacktestConfig(**req.config.model_dump())
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    result = engine.run(bars, strategy, config=cfg)
 
     run = BacktestRun(
         strategy=req.strategy,
@@ -272,7 +325,7 @@ async def run_backtest(
     db.commit()
     db.refresh(run)
 
-    return _build_response(run, result)
+    return _build_response(run, result, config=req.config)
 
 
 @router.get("/runs/{run_id}", response_model=BacktestResponse)
@@ -315,6 +368,7 @@ class BacktestCompareRequest(BaseModel):
     start:        datetime | None = None
     end:          datetime | None = None
     interval:     Interval = Interval.DAY_1
+    config:       BacktestConfigPayload | None = None
 
 
 class BacktestCompareResponse(BaseModel):
@@ -377,10 +431,17 @@ async def compare_backtests(
         proxy, db, upstream,
     )
 
+    cfg: BacktestConfig | None = None
+    if req.config is not None:
+        try:
+            cfg = BacktestConfig(**req.config.model_dump())
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
     runs: list[BacktestResponse] = []
     for params, strategy in zip(req.param_sets, strategies):
         engine = BacktestEngine(initial_cash=req.initial_cash, quantity=req.quantity)
-        result = engine.run(bars, strategy)
+        result = engine.run(bars, strategy, config=cfg)
 
         run = BacktestRun(
             strategy=req.strategy,
@@ -403,7 +464,7 @@ async def compare_backtests(
         db.add(run)
         db.commit()
         db.refresh(run)
-        runs.append(_build_response(run, result))
+        runs.append(_build_response(run, result, config=req.config))
 
     runs.sort(key=lambda r: _sort_key(r, req.sort_by))
     return BacktestCompareResponse(

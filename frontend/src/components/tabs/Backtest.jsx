@@ -411,6 +411,25 @@ export function Backtest() {
                 color="#a78bfa"
               />
             </div>
+            {/* 23: 비용 모델 요약 — config가 적용됐을 때만 노출. 미적용 시 모두 0 */}
+            {(run.config || run.total_fees > 0 || run.total_taxes > 0 || run.total_slippage > 0) && (
+              <div data-testid="backtest-cost-summary"
+                   style={{ marginTop: 10, paddingTop: 10,
+                            borderTop: "1px solid #0c2035",
+                            fontSize: 10, color: "#94a3b8",
+                            display: "flex", flexWrap: "wrap", gap: 12 }}>
+                {run.config && (
+                  <span>체결: <b style={{ color: "#cbd5e1" }}>{run.config.execution_model}</b>
+                    {run.config.execution_delay_bars != null
+                      && ` · delay ${run.config.execution_delay_bars}봉`}</span>
+                )}
+                <span>gross {fmtKRW(run.gross_pnl ?? 0)}</span>
+                <span>net <b style={{ color: pnlColor(run.net_pnl ?? 0) }}>{fmtKRW(run.net_pnl ?? 0)}</b></span>
+                <span>수수료 {fmtKRW(run.total_fees ?? 0)}</span>
+                <span>세금 {fmtKRW(run.total_taxes ?? 0)}</span>
+                <span>슬리피지 {fmtKRW(run.total_slippage ?? 0)}</span>
+              </div>
+            )}
             {run.trades.length > 0 && (
               <div style={{ paddingTop: 12, marginTop: 12, borderTop: "1px solid #0c2035" }}>
                 <div style={{ fontSize: 10, color: "#475569", marginBottom: 6,

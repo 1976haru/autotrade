@@ -27,7 +27,7 @@
 - **승격 기준**:
   - 거래 100회 이상.
   - 기대값(평균 손익) 양수.
-  - 수수료·세금·슬리피지 반영.
+  - 수수료·세금·슬리피지 반영 — **`config={execution_model: next_open|conservative, slippage_bps≥5, commission_bps≥5, tax_bps=23}` 명시 필수**. `same_close` 단독 결과는 승인 근거로 사용 금지. 자세한 정책: [`backtest_policy.md`](backtest_policy.md).
   - Profit Factor ≥ 1.2.
   - **(137)** Strategy Scoreboard (`/api/strategies/scoreboard`)에서 해당 strategy의 누적 metrics 검토 — `runs ≥ 100`, `total_pnl > 0`, `win_rate ≥ 0.45`.
   - **(131)** Strategy contract metadata(entry / exit / invalidation / required_regime / risk_profile)가 모두 작성됨 — `base.py` default가 그대로 노출되는 strategy는 승격 불가. `docs/strategies.md` 검토.

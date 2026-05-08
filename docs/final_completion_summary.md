@@ -176,6 +176,7 @@ LIVE 활성화 전 사용자 명시 옵트인이 필요한 영역:
 - [`data_freshness_policy.md`](data_freshness_policy.md) — quote/bar/feed 통합 freshness + WebSocket reconnect 정책 + read-only API (체크리스트 #20)
 - [`data_quality_report.md`](data_quality_report.md) — MarketBar 일별 품질 점수(GOOD/WARNING/POOR/EXCLUDE) + CLI + 백테스트 제외 정책 (체크리스트 #21)
 - [`theme_signal_policy.md`](theme_signal_policy.md) — 테마/뉴스/트렌드 후보 필터 + Provider abstraction + ThemeFilter (BUY/SELL 미반환) (체크리스트 #22)
+- [`backtest_policy.md`](backtest_policy.md) — BacktestConfig 4개 체결 모델 + 수수료/세금/슬리피지 + 승격 평가 정책 (체크리스트 #23)
 
 ## 사후 UI surface 보강 (187-196)
 

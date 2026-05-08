@@ -58,6 +58,17 @@
 - 156 머지 후 별도 PR `feature/157-ci-recovery`에서 8 errors 모두 해결. `useRef(Date.now())` → null + useEffect lazy init / 의도된 setState-in-effect는 disable comment + 사유 / time-bucket 필터의 Date.now() snapshot은 `eslint-disable-next-line react-hooks/purity`. 833 테스트 회귀 0.
 - 결과: `npm run lint` → 0 errors / 55 warnings.
 
+### 20. Backtest 비용 모델 후속 (#23 PR 이후)
+- 부분 체결 모델 — 운영 데이터에서 필요성 확정 후.
+- Volume-aware 슬리피지 (호가 깊이 추정) — 호가 데이터 통합 후.
+- 시장 충격 (market impact) 모델 — 대량 주문 단계.
+- `BacktestRequest.min_quality_score` — data_quality(#21)와 연동, 24번 Metrics PR.
+- Walk-forward fold별 비용 reporting.
+- Paper 결과 vs 백테스트 결과 자동 비교 (실측 slippage 검증).
+- Frontend BacktestConfig 입력 UI (현재는 raw JSON).
+- `BacktestRun` DB에 비용 메타 separate 컬럼.
+- 자세한 정책: `docs/backtest_policy.md`.
+
 ### 19. Theme/News/Trend 후속 (#22 PR 이후)
 - 실 Google Trends API alpha 통합 — alpha 권한 + 운영자 옵트인 PR.
 - News API 통합 — rate limit / 약관 검토 후 별도 PR.
