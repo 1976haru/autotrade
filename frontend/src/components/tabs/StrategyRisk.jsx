@@ -4,6 +4,9 @@ import { STRATEGIES } from "../../config/strategies";
 import { RISK_POLICY_FIELDS } from "../../config/riskPolicy";
 import { Btn, Card, SectionLabel, Toggle, Slider } from "../common";
 import { PageHeader } from "../common/primitives";
+import { AiPermissionCard } from "../common/AiPermissionCard";
+import { KillSwitchPanel } from "../common/KillSwitchPanel";
+import { PaperModeStatusCard } from "../common/PaperModeStatusCard";
 import { friendlyErrorMessage } from "../../utils/errorMessage";
 import { DecisionDialog } from "../common/DecisionDialog";
 import { fmtKRW } from "../../utils/format";
@@ -427,6 +430,17 @@ export function StrategyRisk({ strategyOn, toggle, strategyParams, updateParam, 
         subtitle="백엔드 리스크 정책, 긴급 정지, 포지션 reconciliation"
       />
       <BackendPolicyCard riskPolicy={riskPolicy} operatorName={operatorName} />
+      {/* #42: Paper Trading Mode Status — 현재 mode + paper broker + 안전
+          flag read-only 표시. 주문 / test 버튼 없음 — 상태 표시 전용. */}
+      <PaperModeStatusCard />
+      {/* #39: AI Permission Gate — 현재 mode + flags 기반 AI 권한 level
+          read-only 표시. 권한 행사 / 토글 버튼 없음 (CLAUDE.md 절대 원칙
+          7: 본 게이트는 권한 판정만 한다). */}
+      <AiPermissionCard />
+      {/* #37: 3-Level Kill Switch read-only status panel — 운영자가 현재
+          level + 후보 카운트 + 위험 경고를 한눈에 본다. 자동 청산 / 자동
+          취소 버튼 없음 (CLAUDE.md '손실 방어 우선'). */}
+      <KillSwitchPanel />
       <EmergencyStopSummaryCard
         summary={esSummary.summary}
         loading={esSummary.loading}

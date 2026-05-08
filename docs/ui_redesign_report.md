@@ -168,3 +168,83 @@ npm run dev -- --host 0.0.0.0
 7개 phase 모두 완료. 각 phase는 독립 feature 브랜치 → test/lint/build →
 commit → main merge → 브랜치 삭제까지 진행. main ↔ origin/main 동기화,
 working tree clean. 신규 후보 제안 없이 종료.
+
+---
+
+# 후속: Agent-Centered Operator Experience (UI Redesign 추가 라운드)
+
+> 사용자 추가 피드백: "Dashboard가 에이전트 중심이 아니라 일반 관리자 화면",
+> "PC와 모바일 UI가 같아 모바일에서 핵심만 보기 어려움", "AI가 어떤 전략을
+> 골랐는지 흐름이 약함" — 본 라운드는 이 3가지 pain point에 집중.
+
+## 본 라운드 변경 (이번 세션)
+
+### 1. Agent Strategy Choice Card (PHASE 5 — 신규)
+- `frontend/src/components/common/AgentStrategyChoiceCard.jsx` (신규).
+- 4 전략(Volume Breakout / Pullback Rebreak / VWAP Reclaim / ORB+VWAP)을
+  chip으로 동등하게 나열, 현재 활성 전략을 강조 + 선택 이유/적합 시장 표시.
+- `backendApi.engineStatus()` + `engineRegistry()` 기반 — read-only.
+- 운영자 토글 / 활성화 / 주문 버튼 부재 (테스트 가드 — `agent-strategy-choice-card`
+  내 `activate` / `execute` / `place` testid 부재 검증).
+- Dashboard에서 `AgentDecisionHero` 바로 아래에 mount → "AI 판단 → 어떤
+  전략을 골랐나" 흐름이 자연스럽게 인접.
+
+### 2. Mobile / PC 정보 분기 (PHASE 4)
+- 신규 CSS 클래스 `.dashboard-pc-only` (`frontend/src/index.css`).
+  - `<768px` (모바일): `display: none`.
+  - `≥768px` (PC): `display: block`.
+- 적용 (모바일 기본 숨김, PC 표시):
+  - `Activity24hCard` (24시간 활동 요약)
+  - `AgentLatestTile` (Agent chief 결정 요약 — AgentDecisionHero가 상위에서
+    이미 핵심을 노출)
+  - `WatchlistSummaryTile` (관심종목)
+  - `ThemeSummaryTile` (테마 후보)
+- 모바일 노출 카드 ("3초 안에 핵심 인지" 동선): HeroSummary → OperatorPanel
+  → MarketRegime → AgentDecisionHero → AgentStrategyChoice → StatusSummary →
+  KPI 3-grid → BotControl.
+
+### 3. EmergencyStopStuckBanner 가독성 (PHASE 2/8)
+- 글자 11→13/14px로 키움 (긴급정지 30분 이상 ON 알림).
+- 보조 텍스트 색 회색(#94a3b8) → amber-800(#92400e)로 대비 향상.
+- 중복 `fontSize` 속성 제거.
+
+## 본 라운드 미실행 PHASE (backlog)
+
+| PHASE | 상태 | 사유 |
+|---|---|---|
+| PHASE 1 (Agent-first IA) | 부분 완료 | 카드 순서는 이미 Agent 중심. AgentStrategyChoice 추가로 흐름 보강 |
+| PHASE 2 (디자인 시스템 120점) | backlog | 잔존 legacy 탭(Approvals/AuditLog/BotControl/MarketChart/Backtest) 토큰화 — 탭당 별도 PR 권장 |
+| PHASE 3 (PC 12-column grid) | backlog | 현재 auto-fit grid가 카드 2~3열 자동 배치. 명시 3열은 운영자 피드백 후 |
+| PHASE 4 (Mobile Operator Mode) | 부분 완료 | CSS triage로 핵심만 표시. 별도 페이지/라우팅은 backlog |
+| PHASE 5 (Strategy Selection) | 완료 | AgentStrategyChoiceCard 신규 |
+| PHASE 6 (Error/Empty 상태) | 이미 완료 | 신규 카드 4개(#33/#37/#39/#42) 모두 친화 메시지 적용 |
+| PHASE 7 (Navigation) | backlog | BottomNav 5탭 + 더보기 — 모든 탭 라우팅 동시 변경 필요 |
+
+## 검증 결과 (이번 라운드)
+
+- frontend vitest **1095 passed** (+8 신규 AgentStrategyChoiceCard 테스트).
+  1087 → 1095.
+- frontend lint **0 errors** (66 warnings — 사전 baseline).
+- frontend build **OK** — 478 KB → 131 KB gzipped.
+- Dashboard 단독 회귀 **82 passed**.
+- backend 변경 0건 — pytest 영향 없음.
+
+## 안전 invariant
+
+- broker / RiskManager / PermissionGate / OrderExecutor / route_order /
+  실 주문 로직 변경 **0건**.
+- 실제 broker live order 호출 **0건**.
+- LIVE / AI execution / Futures live flag 변경 **0건**.
+- API Key / App Secret / 계좌번호 / AI Key 변경 **0건**.
+- backend API contract 변경 **0건**.
+- 변경: frontend UI 1개 신규 컴포넌트 + CSS 1 클래스 + Dashboard mount/wrap +
+  banner 글자 키움.
+
+## 후속 권장 PR (단독 분리 권장)
+
+1. **legacy 탭 토큰화** — Approvals / AuditLog / BotControl / Backtest (각각
+   별도 PR, 200+ 테스트 회귀 검증).
+2. **Mobile BottomNav 5탭** — 홈 / 에이전트 / 승인 / 리스크 / 설정 + 더보기.
+3. **PC 명시 3열 grid** — 좌 운영 / 중앙 KPI+Agent / 우 리스크.
+4. **Agent decision history 그래프** — 시간순 변동 시각화.
+5. **`MobileOperatorMode` 별도 페이지** — 운영자 피드백 수렴 후 결정.

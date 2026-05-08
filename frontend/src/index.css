@@ -148,6 +148,24 @@ code {
   gap: 10px;
 }
 
+/* UI redesign — PHASE 4: Mobile Operator Mode.
+ * 모바일(<768px)에서 무거운 운영자 패널(audit log / decision history /
+ * theme / watchlist / activity24h 등)을 기본 숨김 — 사용자가 "오늘 상태 /
+ * AI 판단 / 손익 / 승인 대기 / 긴급중단" 핵심만 3초 안에 볼 수 있게 한다.
+ * PC(≥768px)에서는 .dashboard-body grid가 모든 카드를 보여준다.
+ *
+ * 적용 대상: WatchlistSummaryTile / ThemeSummaryTile / AgentLatestTile /
+ * Activity24h / 상세 KPI 3-grid 등. Dashboard.jsx에서 해당 wrapper에
+ * className="dashboard-pc-only" 추가. */
+.dashboard-pc-only {
+  display: none;
+}
+@media (min-width: 768px) {
+  .dashboard-pc-only {
+    display: block;
+  }
+}
+
 @media (min-width: 768px) {
   .app-shell    { max-width: 1280px; }
   .app-bottomnav { max-width: 1280px; }

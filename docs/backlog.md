@@ -130,6 +130,66 @@
 - SELL 전용 freshness helper — BUY와 다른 정책. 운영 데이터 누적 후.
 - 자세한 정책: `docs/data_freshness_policy.md`.
 
+## Market Regime Filter 후속 (#32 도입 이후)
+
+본 PR(체크리스트 #32)에서 `app/filters/market_regime.py`로 단순 휴리스틱
+기반 필터를 도입. 다음은 향후 정밀화 항목 — 우선순위 순.
+
+- **KOSPI/KOSDAQ 실시간 지수 연동** — 현재는 종목 봉 자체를 proxy로 사용.
+  실제 지수 데이터(예: ^KS11 / ^KQ11) 수집 → `regime_override`로 주입하는
+  파이프라인 도입.
+- **sector breadth** — 섹터별 상승/하락 종목 비율을 RISK_OFF 신호의 보조
+  지표로. 단일 종목 봉으로는 추정 불가.
+- **volatility index** (VKOSPI 등) — HIGH_VOLATILITY 판정의 외부 신호.
+- **regime별 strategy performance** — backtest scoreboard에 regime 컬럼
+  추가 → "VWAPStrategy는 CHOPPY에서 손실, TREND_UP에서 수익" 같은 통계.
+- **regime-aware position sizing** — 현재 REDUCE_SIZE 단일 multiplier만.
+  regime별 다양한 multiplier (예: HIGH_VOLATILITY 0.3, CHOPPY 0.7).
+- **자동 연결 옵트인** — 본 PR은 `LiveStrategyEngine` / `route_order`에 자동
+  적용 X. 운영자가 지속 호출 패턴이 안정되면 별도 옵트인 PR로 자동 연결.
+- **Frontend 시장 국면 카드** — 현재 결정 표시 X. AISignal 또는 Dashboard
+  탭에 regime + decision + reasons + size_multiplier surface.
+  `RegimeDecision.to_dict()`이 이미 직렬화 가능 — read-only API endpoint
+  추가 후 카드 도입.
+- **regime 이력 저장** — 시간별 regime 변화 추적 → 백테스트 시 같은 시각의
+  regime을 사용해 신호 재평가.
+
+## Signal Explainability 후속 (#33 도입 이후)
+
+본 PR(체크리스트 #33)에서 `app/explainability/` 패키지 + `/api/signals/
+{audit_id}/explain` endpoint + `require_explanation_before_order` helper를
+도입. 다음은 향후 통합/정밀화 항목.
+
+- ~~**Frontend Explainability Panel UI**~~ ✅ **2026-05-09 완료**:
+  `frontend/src/components/common/SignalExplainabilityPanel.jsx` 추가, AuditLog
+  탭의 OrderAuditRow에 [판정 근거 보기] 토글로 통합. PASS/WARN/FAIL/BLOCKED/
+  INFO 그룹별 reason 카드 + risk_notes / operator_note 섹션 + "Failed to fetch"
+  원문 노출 금지 친근 문구 처리. vitest 13개 신규.
+- **"설명 없는 주문 금지" 강제 적용** — `route_order` / `permission_gate`에
+  `require_explanation_before_order`를 사전 가드로 통합 시 위험 평가
+  (2026-05-09):
+  - **위험**: 10+ 테스트 파일이 `OrderRequest(...)`을 explanation 없이 직접
+    구성한다 (`test_executor.py` / `test_execution_order_router.py` /
+    `test_permission_gate.py` / `test_brokers_kis_stub.py` 등).
+    force-apply 시 다수 테스트가 즉시 실패. 운영 호출자도
+    `requested_by_ai=False` 흐름은 명시적 reasons를 채우지 않을 수 있다.
+  - **권장 단계**: (1) RiskManager가 만드는 `RiskCheckResult.reasons`/
+    `passed`를 audit row에 적재하고, route_order이 `extract_reasons_from_audit_row`
+    로부터 자동 합성 후 `require_explanation_before_order`를 호출하는 구조.
+    (2) 신규 호출자에 한해 `enforce_explanation=True` 플래그로 점진 적용.
+    (3) 모든 호출자가 enforced 모드로 통과한 뒤 default를 True로 전환.
+  - **현재 상태**: helper + tests + docs로 정책만 명시 (선택적 호출). 강제
+    적용은 별도 옵트인 PR.
+- **Agent Council 통합** — `AgentDecisionLog` row를 SignalExplanation에 직접
+  carry. AgentDecisionLog와 OrderAuditLog 외래키 결합으로 신호별 chain
+  decision 풀 추적.
+- **Strategy hooks** — 모든 concrete 전략의 `generate_signal`이 SignalReason
+  list를 직접 반환하도록 표준화 (현재는 plain string/dict).
+- **PostTradeReviewAgent 학습** — 본 SignalExplanation 데이터를 사후 PnL과
+  cross-tab해 어떤 reason 조합이 결국 어떤 결과를 냈나 분석.
+- **explanation 영구화** — 현재는 `OrderAuditLog.reasons` field를 read-only로
+  합성. 별도 `signal_explanation` 테이블로 영구화 + 시간순 추적 (별도 PR).
+
 ## Won't Do (현 세션에서 제외)
 
 - 실거래 KIS API 통합 — 사용자 명시 옵트인 영역.

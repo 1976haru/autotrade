@@ -5,6 +5,7 @@ import { PageHeader } from "../common/primitives";
 import { fmtKRW, pnlColor } from "../../utils/format";
 import { MODE_DISPLAY, findModeDisplay } from "../../utils/modes";
 import { backendApi } from "../../services/backend/client";
+import { SignalExplainabilityPanel } from "../common/SignalExplainabilityPanel";
 import {
   useAiAudits,
   useBacktestRuns,
@@ -77,6 +78,7 @@ function decisionColor(decision) {
 
 
 export function OrderAuditRow({ r }) {
+  const [explainOpen, setExplainOpen] = useState(false);
   return (
     <div style={{ padding: "8px 0", borderBottom: "1px solid #05121f" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -157,6 +159,31 @@ export function OrderAuditRow({ r }) {
         <div data-testid="ai-decision-meta"
              style={{ fontSize: 9, color: "#a78bfa", marginTop: 2 }}>
           AI: {formatAiDecisionMeta(r.ai_decision_meta)}
+        </div>
+      )}
+      {/* 33: Signal Explainability — 판정 근거 보기 토글. 클릭 시 audit row의
+          전체 reason 사슬을 PASS/WARN/FAIL/BLOCKED/INFO 그룹별 카드로 표시. */}
+      <div style={{ marginTop: 4 }}>
+        <button
+          type="button"
+          data-testid={`order-audit-row-explain-toggle-${r.id}`}
+          onClick={() => setExplainOpen((v) => !v)}
+          aria-expanded={explainOpen}
+          style={{
+            fontSize: 9, fontWeight: 700, letterSpacing: "0.04em",
+            padding: "2px 8px", borderRadius: 3, cursor: "pointer",
+            border: "1px solid #7dd3fc55", background: "#7dd3fc10",
+            color: "#7dd3fc", fontFamily: "inherit",
+          }}>
+          {explainOpen ? "판정 근거 닫기" : "판정 근거 보기"}
+        </button>
+      </div>
+      {explainOpen && (
+        <div
+          data-testid={`order-audit-row-explain-panel-${r.id}`}
+          style={{ marginTop: 8 }}
+        >
+          <SignalExplainabilityPanel auditId={r.id} />
         </div>
       )}
     </div>

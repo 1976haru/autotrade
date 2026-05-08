@@ -298,3 +298,325 @@ RiskManager / PermissionGate / LIVE flag는 어떤 코드도 수정되지 않음
 
 frontend tests **1008 passed**, lint 0 errors, build OK. Live demo:
 <https://1976haru.github.io/autotrade/>.
+
+## 추가 (29) — VolumeBreakoutStrategy
+
+체크리스트 #29 거래대금 돌파 1차 전략 구현. backend pytest 29건 신규
+(`test_volume_breakout_strategy.py`), 전체 backend pytest **1365 passed**
+(SIMULATION 모드 기준).
+
+| 항목 | 위치 |
+|---|---|
+| 전략 코드 | `app/strategies/concrete/volume_breakout.py` |
+| 등록 | `STRATEGY_REGISTRY["volume_breakout"]` |
+| 진입 | 거래대금 ≥ 평균 × 2.0 + 최근 20봉 종가 고점 돌파 + 세션 VWAP 상단 |
+| 청산 | TP 4% / SL 2% / trailing 1.5% / 30봉 시간 청산 (`exit_rule`만 반환) |
+| 추격 가드 | `max_vwap_distance_pct=3%`, `max_intraday_runup_pct=8%`, `open_cooldown_bars=5` |
+| 운영 가드 | stale data, blocked regime(`trending_down`/`high_vol`/`blocked`), 일중 1회 진입 |
+| 직접 주문 금지 | broker/risk/permission/execution import 0건 (테스트 가드), `is_order_intent=False` |
+
+자세한 명세: [`docs/strategies/volume_breakout.md`](strategies/volume_breakout.md).
+LIVE flag / broker 호출 / 기존 가드 분기 변경 0건 — frontend 변경 0건.
+KIS LIVE place_order 활성화는 별도 옵트인 PR.
+
+## 추가 (30) — PullbackRebreakStrategy
+
+체크리스트 #30 눌림목 재돌파 2차 전략 구현. backend pytest 35건 신규
+(`test_pullback_rebreak_strategy.py`).
+
+| 항목 | 위치 |
+|---|---|
+| 전략 코드 | `app/strategies/concrete/pullback_rebreak.py` |
+| 등록 | `STRATEGY_REGISTRY["pullback_rebreak"]` |
+| 진입 | 1차 impulse(1.5~12%) + pullback(0.3~4%, 거래량 fade ≤ 85% of impulse) + peak 재돌파 + 재돌파 turnover ≥ 1.2× pullback 평균 |
+| 청산 | TP 4% / SL 동적(pullback_low 기반) / trailing 1.5% / 30봉 시간 청산 / VWAP 이탈 invalidation |
+| 추격 가드 4종 | `max_impulse_pct=12%`, `pullback_max_pct=4%`, `max_vwap_distance_pct=4%`, `max_intraday_runup_pct=12%`, `open_cooldown_bars=5` |
+| 운영 가드 | stale data, blocked regime(`trending_down`/`high_vol`/`blocked`), 일중 1회 진입(패턴 검출 전 가드) |
+| 과최적화 방지 | 모든 임계 명시 파라미터, impulse/pullback 양방향 hard-cap, 3종 거래량 검증, VWAP+runup 두 축 가드 |
+| 직접 주문 금지 | broker/risk/permission/execution import 0건 (테스트 가드), `is_order_intent=False` |
+
+VolumeBreakoutStrategy(#29)가 1차 첫 돌파를 잡는다면 본 전략은 *그 다음
+안전한 진입 후보*를 노린다 — 추격매수 위험 감소가 설계 목표.
+
+자세한 명세: [`docs/strategies/pullback_rebreak.md`](strategies/pullback_rebreak.md).
+LIVE flag / broker 호출 / 기존 가드 분기 변경 0건 — frontend 변경 0건.
+
+## 추가 (31) — VWAPStrategy + VWAP 유틸
+
+체크리스트 #31 VWAP 회귀/이탈 보조 전략 + VWAP 계산 유틸 모듈 구현. backend
+pytest 44건 신규 (`test_vwap_strategy.py`).
+
+| 항목 | 위치 |
+|---|---|
+| 전략 코드 | `app/strategies/concrete/vwap_strategy.py` |
+| 유틸 모듈 | `app/strategies/vwap.py` (신규) — `typical_price`/`vwap_of`/`extract_session_bars`/`session_vwap`/`rolling_vwap`/`vwap_deviation_pct`/`average_volume`/`average_turnover`/`check_liquidity` |
+| 등록 | `STRATEGY_REGISTRY["vwap_strategy"]` |
+| 진입 (BUY) | VWAP cross-up reclaim + 거래량 ≥ prior 평균 × 1.2 + 거래량/거래대금 임계 통과 + 괴리율 ≤ 1.5% |
+| 청산 (EXIT) | VWAP cross-down + 보유 중(`position_context.has_open_position=True`) — 운영자/Agent surface 신호 |
+| 거래량 부족 가드 | `check_liquidity`로 `avg_volume`/`avg_turnover` 임계 검사 → LOW_LIQUIDITY REJECT (소수 체결로 인한 VWAP 왜곡 방지) |
+| 추격 가드 2-tier | `max_deviation_pct_for_entry=1.5%` (BUY 보류) / `overextension_deviation_pct=3%` (REJECT) |
+| 운영 가드 | open cooldown, stale data, blocked regime, 일중 1회 진입 |
+| 직접 주문 금지 | broker/risk/permission/execution import 0건 — 전략 + 유틸 모듈 모두 테스트 가드 |
+
+자세한 명세: [`docs/strategies/vwap_strategy.md`](strategies/vwap_strategy.md).
+LIVE flag / broker 호출 / 기존 가드 분기 변경 0건 — `OrbVwapStrategy`(orb_vwap.py)
+는 자체 VWAP 누적 그대로 유지 (기존 동작 보존, 향후 통합 PR에서 정리).
+
+## 추가 (32) — MarketRegimeFilter
+
+체크리스트 #32 시장 국면 필터 구현. 지수 급락 / 변동성 확대 / 거래대금 위축
+/ 장 초반 혼란 구간에서 신규 BUY를 제한하거나 차단하는 advisory layer.
+backend pytest 30건 신규 (`test_market_regime_filter.py`).
+
+| 항목 | 위치 |
+|---|---|
+| 필터 모듈 | `app/filters/market_regime.py` (신규 — `app/filters/` 패키지 신규) |
+| 클래스 | `MarketRegimeFilter` + `RegimeDecision` + `MarketRegime`(8 enum) + `RegimeDecisionKind`(4 enum) |
+| Strategy 연결 helper | `apply_regime_filter_to_signal(signal, regime_decision)` |
+| 8 regime | TREND_UP / TREND_DOWN / CHOPPY / HIGH_VOLATILITY / LOW_LIQUIDITY / RISK_OFF / OPENING_CHAOS / UNKNOWN |
+| 4 결정 | ALLOW / REDUCE_SIZE / WATCH_ONLY / BLOCK_NEW_BUY |
+| BUY/SELL 분리 | `RegimeDecision.sell_allowed`는 항상 True — SELL/EXIT은 리스크 축소라 차단하지 않음 |
+| 자동 연결 | 없음 — `LiveStrategyEngine` / `route_order`에 자동 적용 X. 운영자/Agent가 명시적 호출 |
+| 직접 주문 금지 | broker/risk/permission/execution import 0건 — 테스트 가드 |
+| 기존 호환성 | `app/market/regime.py`(135) 삭제/수정 0건 — 본 필터가 내부에서 `classify_regime`을 호출해 매핑만 함 |
+
+자세한 명세: [`docs/market_regime_filter.md`](market_regime_filter.md).
+KOSPI/KOSDAQ 실시간 지수 연동, sector breadth, volatility index, regime별
+performance, regime-aware sizing은 [`docs/backlog.md`](backlog.md)에 추가.
+
+## 추가 (33) — Signal Explainability
+
+체크리스트 #33 신호 판정 근거 패널 — read/write audit 설명 레이어 구현.
+backend pytest 37건 신규 (`test_explainability.py`).
+
+| 항목 | 위치 |
+|---|---|
+| 모듈 | `app/explainability/` (신규 패키지) — `reasons.py` |
+| 모델 | `SignalReason` (category/status/severity/source/code/message/details) + `SignalExplanation` |
+| 카테고리 | STRATEGY / SIGNAL_QUALITY / MARKET_REGIME / RISK_MANAGER / PERMISSION_GATE / DATA_FRESHNESS / AGENT / OPERATOR / OTHER |
+| 상태 | PASS / WARN / FAIL / BLOCKED / INFO + 최종 ExplainStatus (APPROVED/PENDING/REJECTED/WATCH/UNKNOWN) |
+| Helpers | `compose_signal_explanation` (다단계 입력 합성) / `summarize_reasons` (2-3줄) / `classify_final_status` / `require_explanation_before_order` |
+| API | `GET /api/signals/{audit_id}/explain` (read-only — `routes_explainability.py` + main.py 라우터 등록) |
+| Audit 통합 | `extract_reasons_from_audit_row(row)` — OrderAuditLog row → SignalExplanation (read-only, 스키마 변경 0건) |
+| "설명 없는 주문 금지" | `require_explanation_before_order(explanation)` — helper + tests + docs로 정책 명시 (기존 흐름에 자동 적용 X) |
+| 직접 주문 금지 | broker/risk/permission/execution import 0건, `route_order(`/`place_order(` 호출 0건 — 테스트 가드 |
+
+자세한 명세: [`docs/signal_explainability.md`](signal_explainability.md).
+기존 OrderAuditLog / AgentDecisionLog / PendingApproval 스키마 변경 0건.
+
+**2026-05-09 frontend 후속**: `SignalExplainabilityPanel.jsx` 추가, AuditLog 탭
+OrderAuditRow에 [판정 근거 보기] 토글로 통합. PASS/WARN/FAIL/BLOCKED/INFO 그룹
+별 reason 카드 + risk_notes / operator_note 섹션 + "Failed to fetch" 원문 노출
+금지 친근 문구 처리. vitest 13개 신규 (1050 → 1063 frontend tests). lint 0
+errors. build OK. `require_explanation_before_order` force-apply는 위험 평가
+후 backlog로 유지 — 10+ 테스트 파일이 OrderRequest를 explanation 없이 구성하기
+때문에 점진적 enforce_explanation 플래그 도입이 필요.
+
+## 추가 (34) — RiskManager 표준 진입점
+
+체크리스트 #34 RiskManager 표준화 — 모든 주문은 `RiskManager.check_order
+(order, context)`를 통과해야 한다는 invariant를 코드 단에서 강제.
+
+| 항목 | 위치 |
+|---|---|
+| 표준 진입점 | `RiskManager.check_order(order, context)` (`app/risk/risk_manager.py`) |
+| 입력 dataclass | `RiskContext` — mode/balance/positions/latest_price/timestamp/requested_by_ai/market_regime_decision/emergency_stop_override/operator_id/metadata |
+| 출력 보강 | `RiskCheckResult` — decision/reasons/passed + warnings/risk_score/blocked_by/required_action/normalized_order/evaluated_at + status/to_dict |
+| RiskDecision enum | APPROVED / REJECTED / NEEDS_APPROVAL + REDUCED / BLOCKED 추가 (additive) |
+| Market Regime 통합 | `BLOCK_NEW_BUY`/`WATCH_ONLY`이면 BUY를 BLOCKED, SELL은 통과 (#32 filter); `REDUCE_SIZE`는 advisory warning |
+| Backstop 가드 | `OrderExecutor.execute`는 `audit.decision ∈ {APPROVED, NEEDS_APPROVAL}`만 broker.place_order 호출, 그 외는 `UnauthorizedOrderError` |
+| 우회 차단 테스트 | `tests/test_risk_manager_bypass.py` (52 신규 테스트) — check_order 분기 + executor 가드 + import 가드 |
+| 기존 호환성 | `evaluate_order` 시그니처/동작 그대로 유지 — check_order가 내부 위임. 27+ 가드 로직 무변경 |
+| 직접 주문 금지 | 전략/필터/설명/마켓/신호품질 모듈에 `.place_order(` 호출 0건 — 테스트 가드 (15 모듈 paramaterized) |
+
+자세한 명세: [`docs/risk_manager_contract.md`](risk_manager_contract.md).
+backend pytest **1563 passed** (+52 신규). 기존 1511 → 1563. ruff clean.
+
+## 추가 (35) — PositionLimitRule
+
+체크리스트 #35 1회 거래금액 / 종목당 / 총 익스포저 / 최대 보유 종목 수 한도를
+명시적인 rule 객체로 분리. RiskManager.evaluate_order의 inline 로직을 위임으로
+교체. backend pytest 53건 신규 (`test_position_limits.py`).
+
+| 항목 | 위치 |
+|---|---|
+| 모듈 | `app/risk/position_limits.py` (신규) — `PositionLimitRule` + `PositionLimitInput` + `PositionLimitPolicy` + `PositionLimitPreview` + `PositionLimitResult` |
+| 7 한도 | max_order_notional / max_position_size_pct / max_positions / max_symbol_exposure / max_symbol_exposure_pct / max_total_exposure / max_total_exposure_pct |
+| Preview | order_notional + projected_symbol_exposure + projected_total_exposure + projected_position_count + remaining_*_capacity / slots |
+| RiskManager 연계 | `evaluate_order`이 inline 로직 대신 7개 `check_*` 메서드 호출 + 결과 merge — single source of truth |
+| 기존 호환성 | `result.reasons` / `result.passed` 문자열 / 순서 모두 동일 — 기존 26+ 테스트 무수정 통과 |
+| Side-aware | BUY는 노출 증가 검사. SELL/청산은 max_positions / total_exposure / symbol_exposure_pct 우회 |
+| 경계값 테스트 | 한도 미만/같음/초과 boundary 모두 검증 (정확히 한도와 같은 값은 통과 — `>` 비교) |
+| Futures 분리 | 본 rule은 현물 명목금액 기준만; `FuturesRiskPolicy`는 별도 / `app.futures` import 0건 (테스트 가드) |
+| 직접 주문 금지 | broker/permission/execution import 0건, route_order/place_order 호출 0건 — 테스트 가드 |
+
+자세한 명세: [`docs/position_limit_policy.md`](position_limit_policy.md).
+backend pytest **1616 passed** (+53 신규). 1563 → 1616. ruff clean.
+
+## 추가 (36) — Loss Limit Rules
+
+체크리스트 #36 일일 / 주간 / 연속 손실한도를 명시적인 rule 객체로 분리. 손실
+도달 시 신규 BUY 차단, SELL/EXIT은 통과. backend pytest 43건 신규
+(`test_loss_limits.py`).
+
+| 항목 | 위치 |
+|---|---|
+| 모듈 | `app/risk/loss_limits.py` (신규) — `DailyLossLimitRule` + `WeeklyLossLimitRule` + `ConsecutiveLossRule` + `LossLimitDecision` enum + `evaluate_loss_limits` helper |
+| 헬퍼 | `app/risk/daily_pnl.py`에 `compute_weekly_realized_pnl_kst` + `count_consecutive_losing_trades` + `week_start_kst` 추가 (월요일 00:00 KST 시작) |
+| 4단계 결정 | ALLOW / WARN / REDUCE_SIZE / BLOCK_NEW_BUY |
+| Daily soft 단계 | `daily_loss_warn_pct` (e.g., 50%) / `daily_loss_reduce_pct` (e.g., 70%) — 기존 `max_daily_loss` 100% hard reject은 그대로 |
+| Weekly | `weekly_loss_limit` + warn/reduce pct |
+| Consecutive | `consecutive_loss_limit` — trailing closed trades가 연속 손실인 횟수 |
+| BUY/SELL 분리 | BUY는 reasons로 REJECTED, SELL/EXIT은 warnings로만 surface (리스크 축소 보호) |
+| RiskManager 연계 | `evaluate_order`에 `weekly_realized_pnl` / `consecutive_loss_count` keyword-only 인자 추가 (default None — 기존 호출자 호환) |
+| route_order 연계 | 매 평가 직전 `compute_weekly_realized_pnl_kst` + `count_consecutive_losing_trades` 호출해 RiskManager에 주입 (rule 활성 시에만) |
+| REDUCE_SIZE TODO | RiskCheckResult가 사이즈 직접 조정 미지원 — warnings로만 surface, PositionSizingAgent 통합은 backlog |
+| 직접 주문 금지 | broker/permission/execution import 0건, place_order/route_order 호출 0건 |
+
+자세한 명세: [`docs/loss_limit_policy.md`](loss_limit_policy.md).
+backend pytest **1659 passed** (+43 신규). 1616 → 1659. ruff clean.
+
+## 추가 (37) — 3-Level Kill Switch
+
+체크리스트 #37 emergency_stop을 OFF/LEVEL_1/LEVEL_2/LEVEL_3 단계로 분리.
+운영자가 단계적으로 가드를 강화하고, 청산은 *수동 승인*으로 진행 (자동 전량
+청산 절대 금지). backend pytest 35건 신규, frontend vitest 9건 신규.
+
+| 항목 | 위치 |
+|---|---|
+| 모듈 | `app/risk/emergency_stop.py` (신규) — `KillSwitchLevel` enum + `KillSwitchStatus` + candidate dataclasses + helpers |
+| 마이그레이션 | `alembic/versions/20260521_0017_emergency_stop_level.py` — `EmergencyStopEvent.level` 컬럼 추가 (nullable). legacy NULL row는 enabled=True/False에 따라 LEVEL_1/OFF로 정규화 |
+| POST 라우트 확장 | `POST /risk/emergency-stop`이 `level` 필드 수용. 응답에 `level` carry. enabled=True + level 미지정은 LEVEL_1로 매핑 (기존 호환성) |
+| 신규 read-only 라우트 | `GET /risk/emergency-stop/status` (현재 level + 후보 카운트), `/cancel-candidates` (NEEDS_APPROVAL 미체결), `/liquidation-candidates` (보유 포지션 — broker.get_positions read-only) |
+| 자동 청산 금지 | broker.cancel_order / broker.place_order / route_order 호출 **0건** — 테스트 가드 (모듈 + 라우트 grep). LEVEL_3에서도 read-only candidate list만 표시 |
+| Frontend | `frontend/src/components/common/KillSwitchPanel.jsx` (신규) — StrategyRisk 탭에 mount. 3단계 row 시각화 + 후보 카운트 + 위험 경고 문구. 자동 청산 / 자동 취소 버튼 부재 (테스트 가드) |
+| 기존 호환성 | `RiskManager.emergency_stop` boolean 그대로 (LEVEL_1+ 일 때 True). `POST /emergency-stop` 응답에 `level` 필드 추가 (additive). history 응답도 level 필드 추가 |
+
+자세한 명세: [`docs/emergency_stop_policy.md`](emergency_stop_policy.md).
+backend pytest **1694 passed** (+35 신규). 1659 → 1694. frontend vitest **1059
+passed** (+9 신규). 1050 → 1059. ruff/lint clean. build OK.
+
+## 추가 (38) — OrderGuard
+
+체크리스트 #38 중복 주문 / 쿨타임 / 미체결 가드 + 네트워크 재시도 vs 중복
+구분. RiskManager 평가 *전*에 흐름 차원 가드를 적용. backend pytest 31건
+신규 (`test_order_guard.py`).
+
+| 항목 | 위치 |
+|---|---|
+| 모듈 | `app/risk/order_guard.py` (신규) — `OrderGuard` + `OrderGuardConfig` + `OrderGuardResult` + `GuardDecision` enum + `build_order_fingerprint` |
+| Fingerprint | symbol + side + qty + order_type + price_bucket(0.5%) + strategy + mode + agent_chain_id → SHA-256 12-hex prefix. Secret 미포함 |
+| 4 결정 | ALLOW / RETRY_REPLAY / DUPLICATE / COOLDOWN / PENDING_BLOCKED |
+| Idempotency 분기 | 같은 client_order_id → RETRY_REPLAY (안전), 다른 key 같은 fingerprint → DUPLICATE (차단) |
+| 4 cooldown | symbol / (strategy, symbol) / post-exit / AI extra. 모두 default 0 = 비활성 |
+| Pending guard | 같은 symbol + side의 PendingApproval(PENDING) + OrderAuditLog(NEEDS_APPROVAL) drift 시 신규 차단 |
+| RiskPolicy 7 신규 필드 | order_guard_* (모두 default 0/False) — 운영자 명시 활성화 시에만 동작 |
+| route_order 통합 | client_order_id 검사 직후, RiskManager 평가 *전*에 OrderGuard.check 호출. 차단 시 broker 호출 회피 + REJECTED audit row 작성 |
+| 직접 주문 금지 | broker.place_order / cancel_order / OrderExecutor / route_order import 0건 — 테스트 가드 |
+| 기존 호환성 | default policy(모두 0)면 사실상 no-op — 기존 187+ 테스트 무수정 통과 |
+
+자세한 명세: [`docs/order_guard_policy.md`](order_guard_policy.md).
+backend pytest **1725 passed** (+31 신규). 1694 → 1725. ruff clean.
+
+## 추가 (39) — AI Permission Gate
+
+체크리스트 #39 AI 주문 권한을 5단계 × 5행동 매트릭스로 명시 분리. AI API Key
+가 주문 권한 조건이 *아니라는* invariant를 코드 단에서 강제 (모듈 입력에
+api_key / secret 필드 0건 — 테스트 가드). backend pytest 43건 + frontend
+vitest 9건 신규.
+
+| 항목 | 위치 |
+|---|---|
+| 모듈 | `app/risk/ai_permission_gate.py` (신규) — `AiPermissionLevel` (5단계) + `AiAction` (5종) + `AiPermissionFlags` + `evaluate_ai_permission` + `current_ai_level` + `build_status` + `build_permission_matrix` |
+| 5단계 | FULL_STOP / RECOMMEND_ONLY / APPROVAL_REQUIRED / VIRTUAL_EXECUTION / LIMITED_LIVE_EXECUTION |
+| 5행동 | RECOMMEND / SUBMIT_FOR_APPROVAL / VIRTUAL_EXECUTE / LIVE_EXECUTE / FUTURES_LIVE_EXECUTE |
+| Read-only API | `GET /api/risk/ai-permission/status` — 현재 level + allowed/blocked actions + flags + matrix + 안내 문구 |
+| Frontend | `frontend/src/components/common/AiPermissionCard.jsx` (신규) — StrategyRisk 탭에 mount. 권한 행사 / 토글 버튼 부재 (테스트 가드) |
+| API Key 분리 | `AiPermissionFlags`에 api_key/secret/account_no 필드 **0건** — 테스트 `test_module_does_not_take_api_key`로 강제. 모듈에서 `app.brokers` import 0건 |
+| 기존 호환성 | 본 게이트는 기존 `RiskManager.evaluate_order`의 `disable_ai_orders` / `min_ai_confidence` / `enforce_ai_reasoning` / `can_ai_execute` 검사를 *대체하지 않는다* — 명시 표시 + audit_note 생성 layer |
+
+자세한 명세: [`docs/ai_permission_gate.md`](ai_permission_gate.md).
+backend pytest **1768 passed** (+43 신규). 1725 → 1768. frontend vitest **1068
+passed** (+9 신규). 1059 → 1068. ruff/lint clean. build OK.
+
+## 추가 (40) — Order Executor 표준 진입점
+
+체크리스트 #40 OrderExecutor를 표준 주문 실행 계층으로 강화. 단일 진입점
+invariant + source 분류 + 16개 라우트 + 12개 전략/필터/Agent 모듈 직접 broker
+호출 0건 가드. backend pytest 60건 신규 (`test_order_executor.py`).
+
+| 항목 | 위치 |
+|---|---|
+| Alias 모듈 | `app/execution/order_executor.py` (신규) — `OrderExecutor` / `UnauthorizedOrderError` re-export + `OrderSource` enum (5종) + `derive_order_source` helper |
+| DB 컬럼 | `OrderAuditLog.source` (nullable String(32), indexed). 0018 마이그레이션 (`alembic/versions/20260522_0018_order_audit_source.py`). legacy NULL row는 그대로 — frontend 'UNKNOWN' 표시 권장 |
+| Source 분류 | AI (requested_by_ai 최우선) / STRATEGY (strategy 필드) / MANUAL / OPERATOR_OVERRIDE (explicit) / UNKNOWN (legacy) |
+| route_order 통합 | guard_audit + 본 audit 두 곳 모두 `derive_order_source(...)` 결과 채움 |
+| API surface | `OrderAuditOut.source` (optional) — `/api/audit/orders` 응답 carry |
+| 직접 broker 호출 금지 가드 | 16 API routes + 12 strategy/filter/agent/explainability/risk/permission 모듈에 `broker.place_order(` / `BrokerAdapter.place_order(` 호출 **0건** — paramaterized grep 테스트로 강제 |
+| 단일 진입점 가드 | `OrderExecutor.execute`만 `broker.place_order()` 호출 — `permission/gate.py` / `order_router.py` 모두 OrderExecutor 경유 |
+| 기존 호환성 | `from app.execution.executor import OrderExecutor` 그대로 작동. 시그니처 / route_order contract / OrderAuditLog 다른 컬럼 변경 0건 |
+
+자세한 명세: [`docs/order_executor_contract.md`](order_executor_contract.md).
+backend pytest **1828 passed** (+60 신규). 1768 → 1828. ruff clean.
+
+## 추가 (41) — Manual Approval 보강
+
+체크리스트 #41 Manual Approval Queue를 실전 전 안전 게이트로 완성. 기존
+PermissionGate / approve-reject-cancel / RiskManager 재검증 구조는 그대로
+유지하면서 TTL 정책 + ApprovalOut 보강 + request_source 분류 + UI 배지를 추가.
+backend pytest 17건 + frontend vitest 10건 신규.
+
+| 항목 | 위치 |
+|---|---|
+| TTL 정책 wire | `Settings.approval_ttl_seconds` (이미 존재, 0 default)를 `routes_approvals.list_pending` / `list_history` / `get` / `approve_route`에 연결 — `PermissionGate.list_pending(ttl_seconds=...)`이 lazy expire |
+| ApprovalOut 보강 | 신규 8 필드: `expires_at` / `seconds_until_expiry` / `is_expired` / `attempt_count` / `last_attempt_at` / `last_attempt_reasons` / `request_source` / `request_source_label` |
+| request_source 분류 | AI / STRATEGY / MANUAL / LIQUIDATION / RISK_OVERRIDE / UNKNOWN. audit.source(#40) + requested_by_ai + strategy + trade_reason 합산 |
+| Frontend 배지 | `<RequestSourceBadge>` (출처별 색상) + `<ApprovalExpiryBadge>` (TTL 카운트다운, 1m 미만 amber, 만료 red) — `Approvals.jsx` pending row에 mount |
+| Helpers | `_derive_request_source` / `_ttl_fields` / `_attempts_summary` / `_REQUEST_SOURCE_LABELS` |
+| 기존 호환성 | 모든 신규 필드 optional/default — 기존 클라이언트 무시해도 동작. 92개 기존 결재/permission/virtual_flow 테스트 무수정 통과 |
+| 자동 변경 | 0건 — 실제 주문 실행 로직 추가 X, broker / OrderExecutor / RiskManager 변경 X |
+
+자세한 명세: [`docs/manual_approval_policy.md`](manual_approval_policy.md).
+backend pytest **1845 passed** (+17 신규). 1828 → 1845. frontend vitest **1078
+passed** (+10 신규). 1068 → 1078. ruff/lint clean. build OK.
+
+## 추가 (42) — Paper Trading
+
+체크리스트 #42 Paper Trading을 명확화. PaperTrader 계층 추가, MockBroker/
+KIS Paper 선택 가능, paper-safe 가드 + 모의투자 체결 품질 주의 문서화.
+backend pytest 26건 + frontend vitest 9건 신규.
+
+| 항목 | 위치 |
+|---|---|
+| 모듈 | `app/execution/paper_trader.py` (신규) — `PaperTrader` (OrderExecutor wrapper) + `PaperBrokerKind` enum (MOCK/KIS_PAPER) + `is_live_broker` / `is_paper_broker` / `assert_paper_broker` (`NotPaperBrokerError`) + `make_paper_broker` selection + `build_paper_status` |
+| Settings | `Settings.paper_broker_kind` 추가 (default 빈 문자열 — `_default_paper_broker_kind`로 추론) |
+| API | `GET /api/paper/status` (read-only) — mode + broker_kind + 5 안전 flag + 체결 품질 주의 안내 |
+| Frontend | `frontend/src/components/common/PaperModeStatusCard.jsx` (신규) — StrategyRisk 탭에 mount. 4 flag 시각화 + 주문/test 버튼 부재 (테스트 가드) |
+| Live 차단 다층 방어 | (1) `Settings.kis_is_paper=true` 강제, (2) `KisBrokerAdapter.place_order(is_paper=False)` `NotImplementedError`, (3) `assert_paper_broker(broker)` runtime 가드, (4) PaperTrader 인스턴스 단계 + 매 execute 호출 시 재검증, (5) OrderExecutor audit decision 검증 |
+| RiskManager 우회 방지 | `PaperTrader.execute(order, audit)`은 OrderExecutor에 위임만 — RiskManager / route_order 우회 진입점 0건. 테스트로 강제 |
+| 직접 broker 호출 금지 | `paper_trader.py`에 `broker.place_order(` / `BrokerAdapter.place_order(` / `.place_order(` 호출 형태 0건 — 테스트 가드 |
+| 모의투자 체결 품질 주의 | `/api/paper/status` 응답 + Frontend 카드 + docs에 명시: "체결 시간/슬리피지/부분체결 패턴이 실 시장과 다를 수 있다" |
+| KIS Paper rate limit | `docs/paper_trading_policy.md` §6에 EGW00201 + 1.2초 권장 간격 명시 |
+
+자세한 명세: [`docs/paper_trading_policy.md`](paper_trading_policy.md).
+backend pytest **1871 passed** (+26 신규). 1845 → 1871. frontend vitest **1087
+passed** (+9 신규). 1078 → 1087. ruff/lint clean. build OK.
+
+## 추가 (UI Redesign 후속) — Agent-Centered Operator Experience
+
+사용자 추가 피드백에 대응한 frontend UI 라운드. 3가지 pain point (에이전트
+중심성 약함 / PC·모바일 동일 구조 / 전략 선택 흐름 불명확)에 집중. 자세한
+진행: [`docs/ui_redesign_report.md`](ui_redesign_report.md) "후속" 섹션.
+
+| 변경 | 위치 |
+|---|---|
+| `AgentStrategyChoiceCard` (신규) | `frontend/src/components/common/AgentStrategyChoiceCard.jsx` — 4 전략 chip + 활성 강조 + 선택 이유. read-only (토글/주문 버튼 부재 — 테스트 가드) |
+| 모바일/PC 분기 | `frontend/src/index.css` `.dashboard-pc-only` 추가. Activity24h / AgentLatestTile / WatchlistSummaryTile / ThemeSummaryTile 모바일 기본 숨김 |
+| Dashboard mount | AgentDecisionHero → AgentStrategyChoiceCard 인접 배치 (AI 판단 → 전략 선택 흐름 시각화) |
+| EmergencyStopStuckBanner | 글자 11→13/14px, 색 대비 amber-800로 향상 |
+| 테스트 | 8 신규 (AgentStrategyChoiceCard) |
+| backlog | legacy 탭 토큰화, BottomNav 5탭, PC 3열 grid, Agent decision history 그래프 |
+
+frontend vitest **1095 passed** (+8 신규). 1087 → 1095. lint 0 errors. build
+OK 478 KB → 131 KB gzipped. backend 변경 0건 — broker/risk/permission/
+execution/.env/API contract 무수정.

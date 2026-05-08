@@ -75,5 +75,6 @@
 
 - [`architecture.md`](architecture.md) — 가드 체인 + 라우트 surface
 - [`shadow_mode.md`](shadow_mode.md), [`paper_mode.md`](paper_mode.md) — KIS 운영자 가이드
+- [`paper_trading_policy.md`](paper_trading_policy.md) — #42 PaperTrader 구조 + MockBroker/KIS Paper 선택 정책
 - [`promotion_policy.md`](promotion_policy.md) — 단계별 승격 + 환경 플래그
 - [`api_limits.md`](api_limits.md) — 호출 제한 정책

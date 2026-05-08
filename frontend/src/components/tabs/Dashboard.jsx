@@ -20,6 +20,7 @@ import { MarketRegimeBadge } from "./MarketRegimeBadge";
 import { OperatorPanel } from "./OperatorPanel";
 import { HeroSummaryCard } from "./HeroSummaryCard";
 import { AgentDecisionHero } from "./AgentDecisionHero";
+import { AgentStrategyChoiceCard } from "../common/AgentStrategyChoiceCard";
 import { WatchlistSummaryTile } from "./WatchlistSummaryTile";
 import { ThemeSummaryTile } from "./ThemeSummaryTile";
 
@@ -68,15 +69,15 @@ export function EmergencyStopStuckBanner({ since, now = Date.now(), onClick }) {
         color: "#fbbf24",
         textAlign: "left",
         fontFamily: "inherit",
-        fontSize: 11,
         cursor: onClick ? "pointer" : "default",
         width: "100%",
+        fontSize: 13,
       }}
     >
-      <div style={{ fontWeight: 700 }}>
+      <div style={{ fontWeight: 700, fontSize: 14 }}>
         🛑 긴급 정지 {formatPendingAge(since, now)}째 ON
       </div>
-      <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
+      <div style={{ fontSize: 12, color: "#92400e", marginTop: 4 }}>
         모든 신규 주문이 차단됩니다. 의도적이라면 무시하세요.
       </div>
     </button>
@@ -534,6 +535,12 @@ export function Dashboard({
         <AgentDecisionHero />
       </div>
 
+      {/* PHASE 5 (UI redesign): AI Agent가 선택한 4개 핵심 전략 표시.
+          read-only — 선택 / 변경 / 주문 발생 X. */}
+      <div className="dashboard-span-full">
+        <AgentStrategyChoiceCard />
+      </div>
+
       {/* 긴급 정지가 오래 켜져 있을 때 reminder — 위험/상태 요약보다 먼저 노출 */}
       <div className="dashboard-span-full">
         <EmergencyStopStuckBanner
@@ -617,20 +624,30 @@ export function Dashboard({
         </Card>
       </div>
 
-      {/* 24시간 활동 요약 — 내부에 여러 row가 있어 PC에서도 한 줄로 펼치는 게 가독적 */}
-      <div className="dashboard-span-full">
+      {/* 24시간 활동 요약 — 내부에 여러 row가 있어 PC에서도 한 줄로 펼치는 게 가독적.
+          UI redesign PHASE 4: 모바일에서는 핵심 카드 위주로만 보이도록 PC 전용 처리. */}
+      <div className="dashboard-span-full dashboard-pc-only">
         <Activity24hCard onJumpTab={onJumpTab} approvals={approvals} />
       </div>
 
       {/* 191: Agent Council 최근 chief 결정 — smartphone 운용 동선에서
-          직전 판단 한 줄로 확인 가능. 상세는 AI 탭에서. */}
-      <AgentLatestTile onJumpTab={onJumpTab} />
+          직전 판단 한 줄로 확인 가능. 상세는 AI 탭에서.
+          PHASE 4: 모바일 기본 숨김 (AgentDecisionHero가 핵심 판단을 이미 보여줌). */}
+      <div className="dashboard-pc-only">
+        <AgentLatestTile onJumpTab={onJumpTab} />
+      </div>
 
-      {/* 18: 관심종목 universe 요약 — active watchlist 종목 수 + top 5. */}
-      <WatchlistSummaryTile onNavigate={onJumpTab ? () => onJumpTab("config") : undefined} />
+      {/* 18: 관심종목 universe 요약 — active watchlist 종목 수 + top 5.
+          PHASE 4: 모바일에서는 부가 정보 — 기본 숨김. */}
+      <div className="dashboard-pc-only">
+        <WatchlistSummaryTile onNavigate={onJumpTab ? () => onJumpTab("config") : undefined} />
+      </div>
 
-      {/* 22: 테마 / 뉴스 후보 필터 요약 — 주문 신호 아님 invariant. */}
-      <ThemeSummaryTile onNavigate={onJumpTab ? () => onJumpTab("signal") : undefined} />
+      {/* 22: 테마 / 뉴스 후보 필터 요약 — 주문 신호 아님 invariant.
+          PHASE 4: 모바일에서는 부가 정보 — 기본 숨김. */}
+      <div className="dashboard-pc-only">
+        <ThemeSummaryTile onNavigate={onJumpTab ? () => onJumpTab("signal") : undefined} />
+      </div>
 
       {/* 봇 컨트롤 */}
       <Card accentColor={running ? "#22c55e33" : undefined}>

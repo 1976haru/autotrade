@@ -51,6 +51,16 @@ export const backendApi = {
     return backendFetch(`/api/risk/emergency-stop/history?${qs.toString()}`);
   },
   emergencyStopSummary: () => backendFetch("/api/risk/emergency-stop/summary"),
+  // 37: 3-level Kill Switch — read-only status + candidate endpoints.
+  emergencyStopStatus: () => backendFetch("/api/risk/emergency-stop/status"),
+  emergencyStopCancelCandidates: () =>
+    backendFetch("/api/risk/emergency-stop/cancel-candidates"),
+  emergencyStopLiquidationCandidates: () =>
+    backendFetch("/api/risk/emergency-stop/liquidation-candidates"),
+  // 39: AI Permission Gate — read-only status surface.
+  aiPermissionStatus: () => backendFetch("/api/risk/ai-permission/status"),
+  // 42: Paper Trading status — read-only.
+  paperStatus:        () => backendFetch("/api/paper/status"),
   brokerPrice:     (symbol) => backendFetch(`/api/broker/price/${symbol}`),
   brokerBalance:   () => backendFetch("/api/broker/balance"),
   brokerPositions: () => backendFetch("/api/broker/positions"),
@@ -98,6 +108,9 @@ export const backendApi = {
   },
   listAiAudits:    (limit = 50) => backendFetch(`/api/audit/ai?limit=${limit}`),
   listBacktestRuns:(limit = 50) => backendFetch(`/api/audit/backtests?limit=${limit}`),
+  // 33: Signal Explainability — read-only audit row 분석. PASS/WARN/FAIL/BLOCKED/
+  // INFO grouped reasons + summary + final_status를 반환.
+  explainSignal: (auditId) => backendFetch(`/api/signals/${auditId}/explain`),
   engineRegistry:  () => backendFetch("/api/strategies/registry"),
   engineStatus:    () => backendFetch("/api/strategies/status"),
   engineScoreboard: () => backendFetch("/api/strategies/scoreboard"),

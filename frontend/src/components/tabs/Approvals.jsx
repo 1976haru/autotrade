@@ -76,6 +76,67 @@ export function PendingAgeBadge({ createdAt, now }) {
 }
 
 
+// 41: 승인 대기 row의 신호 출처 분류 배지. backend가 derive해 보낸 request_source
+// (AI / STRATEGY / MANUAL / LIQUIDATION / RISK_OVERRIDE / UNKNOWN)를 시각화.
+const _SOURCE_COLORS = {
+  AI:            "#a78bfa",  // violet
+  STRATEGY:      "#67e8f9",  // cyan
+  MANUAL:        "#94a3b8",  // gray
+  LIQUIDATION:   "#fb7185",  // rose
+  RISK_OVERRIDE: "#f59e0b",  // amber
+  UNKNOWN:       "#64748b",  // muted
+};
+
+export function RequestSourceBadge({ approval }) {
+  const src = approval?.request_source;
+  if (!src) return null;
+  const color = _SOURCE_COLORS[src] || _SOURCE_COLORS.UNKNOWN;
+  const label = approval.request_source_label || src;
+  return (
+    <span
+      data-testid={`request-source-badge-${approval.id ?? "x"}`}
+      data-source={src}
+      style={{
+        fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 3,
+        color, border: `1px solid ${color}55`, background: `${color}15`,
+      }}>
+      {label}
+    </span>
+  );
+}
+
+
+// 41: 승인 만료까지 남은 시간 배지. seconds_until_expiry가 채워졌을 때만 표시
+// (settings.approval_ttl_seconds > 0). is_expired=true면 별도 색으로 경고.
+export function ApprovalExpiryBadge({ approval }) {
+  const secs = approval?.seconds_until_expiry;
+  if (approval?.expires_at == null || secs == null) return null;
+  const isExpired = approval.is_expired || secs <= 0;
+  const color = isExpired ? "#ef4444" : (secs < 60 ? "#f59e0b" : "#64748b");
+  let text;
+  if (isExpired) {
+    text = "⏰ 만료됨";
+  } else if (secs < 60) {
+    text = `⏰ ${secs}s 후 만료`;
+  } else if (secs < 3600) {
+    text = `⏰ ${Math.floor(secs / 60)}m 후 만료`;
+  } else {
+    text = `⏰ ${Math.floor(secs / 3600)}h 후 만료`;
+  }
+  return (
+    <span
+      data-testid={`approval-expiry-badge-${approval.id ?? "x"}`}
+      data-expired={isExpired ? "true" : "false"}
+      style={{
+        fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 3,
+        color, border: `1px solid ${color}55`, background: `${color}15`,
+      }}>
+      {text}
+    </span>
+  );
+}
+
+
 // RiskManager 사유 표시 — PENDING/HistoryRow에서 공유. 운영자가 결정 전 컨텍스트
 // (예: "max_order_notional 초과", "manual approval required")를 즉시 본다.
 export function ReasonsLine({ reasons }) {
@@ -888,6 +949,10 @@ export function Approvals({ approvals, operatorName = "" }) {
               <ModeBadge mode={a.mode} />
               <span>·</span>
               <span>{new Date(a.created_at).toLocaleString("ko-KR")}</span>
+              {/* 41: 신호 출처 분류 — AI/전략/수동/청산/리스크 예외 */}
+              <RequestSourceBadge approval={a} />
+              {/* 41: TTL 남은 시간 (settings.approval_ttl_seconds > 0 일 때만) */}
+              <ApprovalExpiryBadge approval={a} />
             </div>
 
             <ReasonsLine reasons={a.reasons} />

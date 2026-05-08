@@ -39,6 +39,22 @@
 
 새 주문 경로를 추가할 때는 반드시 `route_order`를 통과하도록 한다.
 
+**#34 표준 진입점**: `RiskManager.check_order(order, context: RiskContext)`가 모든 호출자의 표준 메서드다. `evaluate_order`는 backwards compat alias로 유지. `OrderExecutor.execute`는 `audit.decision ∈ {APPROVED, NEEDS_APPROVAL}`만 broker.place_order로 진행 — 그 외는 `UnauthorizedOrderError`로 즉시 차단 (마지막 backstop). 자세한 contract: [`docs/risk_manager_contract.md`](docs/risk_manager_contract.md).
+
+**#35 PositionLimitRule**: 1회 주문 / 종목별 / 총 노출 / 보유 종목 수 한도는 `app/risk/position_limits.py`의 `PositionLimitRule`이 단일 진실 — RiskManager가 위임 호출. `build_preview()`로 잔여 capacity 사전 시뮬 가능. 선물은 별도 (`FuturesRiskPolicy`). 자세한 정책: [`docs/position_limit_policy.md`](docs/position_limit_policy.md).
+
+**#37 3-Level Kill Switch**: `emergency_stop`을 `OFF/LEVEL_1/LEVEL_2/LEVEL_3` 단계로 분리 (`app/risk/emergency_stop.py`). LEVEL_2는 미체결 취소 후보 표시, LEVEL_3는 청산 후보 표시 — **자동 청산 / 자동 취소 절대 금지** (read-only candidate list만, 운영자 수동 승인). `POST /risk/emergency-stop`이 `level` 필드 수용 (enabled=True + level 미지정은 LEVEL_1). 자세한 정책: [`docs/emergency_stop_policy.md`](docs/emergency_stop_policy.md).
+
+**#38 OrderGuard**: 중복 주문 / 쿨타임 / 미체결 같은 방향 차단은 `app/risk/order_guard.py`의 `OrderGuard`가 담당 — RiskManager 평가 *전* `route_order`에서 호출되는 pre-trade guard. fingerprint(symbol+side+qty+type+price_bucket+strategy+mode+chain)로 중복 식별. 같은 `client_order_id`는 RETRY_REPLAY(안전), 다른 key 같은 fingerprint는 DUPLICATE(차단). 모든 cooldown / window 필드 default 0 = 비활성. 자세한 정책: [`docs/order_guard_policy.md`](docs/order_guard_policy.md).
+
+**#39 AI Permission Gate**: AI 주문 권한을 5단계(FULL_STOP/RECOMMEND_ONLY/APPROVAL_REQUIRED/VIRTUAL_EXECUTION/LIMITED_LIVE_EXECUTION) × 5행동 매트릭스로 분리 (`app/risk/ai_permission_gate.py`). **AI API Key는 주문 권한이 아니다** — 본 모듈은 api_key/secret 입력을 받지 않으며 (테스트 가드), broker도 import하지 않는다. 권한은 mode + 안전 flag + 운영자 승인으로만 결정. `GET /api/risk/ai-permission/status`로 현재 level + 매트릭스 read-only 조회. 자세한 정책: [`docs/ai_permission_gate.md`](docs/ai_permission_gate.md).
+
+**#40 OrderExecutor 단일 진입점**: `OrderExecutor.execute`만이 `broker.place_order()`를 호출하는 *유일한* 코드. `app/execution/order_executor.py`(신규 alias)에서 `OrderExecutor` + `OrderSource` enum + `derive_order_source` helper를 노출. 16개 API 라우트 + 12개 strategy/filter/agent/explainability/risk/permission 모듈에 `broker.place_order(` 호출 0건 — paramaterized grep 테스트로 강제. 모든 audit row에 `source` (STRATEGY/AI/MANUAL/OPERATOR_OVERRIDE/UNKNOWN) carry. 자세한 contract: [`docs/order_executor_contract.md`](docs/order_executor_contract.md).
+
+**#41 Manual Approval은 초기 LIVE 단계의 필수 게이트**: 처음 실거래는 PendingApproval 큐를 거쳐 *운영자가 명시 승인*해야만 broker로 진행된다. PermissionGate.approve는 broker 호출 *전*에 RiskManager 재검증 — 실패 시 status=PENDING 유지 + attempts에 사유 누적. `Settings.approval_ttl_seconds`로 stale 결재 자동 EXPIRED. ApprovalOut에 expires_at / seconds_until_expiry / attempt_count / last_attempt_reasons / request_source(AI/STRATEGY/MANUAL/LIQUIDATION/RISK_OVERRIDE) 필드 carry. 자세한 정책: [`docs/manual_approval_policy.md`](docs/manual_approval_policy.md).
+
+**#42 PaperTrader는 live broker를 호출하지 않는다**: `app/execution/paper_trader.py`의 `PaperTrader`는 OrderExecutor wrapper로 broker 인스턴스가 paper-safe인지 검증(`assert_paper_broker`) 후 위임 — `is_live_broker(broker)`이면 `NotPaperBrokerError`로 즉시 차단. `PaperBrokerKind`(MOCK/KIS_PAPER) + `Settings.paper_broker_kind`로 운영자 선택. `KIS_PAPER`는 `KIS_IS_PAPER=true` 강제. `GET /api/paper/status`로 paper 상태 + 안전 flag read-only 조회. **모의투자 체결 품질은 실제와 다를 수 있다** — LIVE 활성화 전 reconciliation 필수. 자세한 정책: [`docs/paper_trading_policy.md`](docs/paper_trading_policy.md).
+
 ## 작업 방식
 
 - 큰 기능은 작은 PR 단위로 쪼갠다.
