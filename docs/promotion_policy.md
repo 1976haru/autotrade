@@ -34,6 +34,7 @@
   - **승률만으로 승인 금지 (#24)** — `expectancy > 0`, `profit_factor ≥ 1.2`, `max_consecutive_losses ≤ 5`, MDD가 운영 자본의 15% 이내. 시간대별 손익(`hourly_pnl`)에서 손실이 특정 시간대에 집중되면 별도 검토. 자세한 metric 정의: [`backtest_metrics.md`](backtest_metrics.md).
   - **Walk-forward PASS 필요 (#25)** — `POST /api/backtest/walk-forward` 추천이 `PASS`. 한 fold가 전체 양수 수익의 70% 초과 차지 (single_best_fold_pnl_share)하면 '한 번의 대박' 의심으로 승격 보류. holdout 구간 PnL 양수 필수. 자세한 정책: [`walk_forward_policy.md`](walk_forward_policy.md).
   - **Monte Carlo 리스크 검증 (#26, P2 고도화)** — `POST /api/backtest/monte-carlo`. `risk_of_ruin ≥ 5%` 또는 `worst_5pct_avg_mdd > 운영 자본 × 30%`이면 사이즈 축소 / 전략 보류. Monte Carlo PASS만으로는 승격 금지 — Backtest, Walk-forward, Data Quality, Paper/Shadow와 함께 평가. 자세한 정책: [`monte_carlo_policy.md`](monte_carlo_policy.md).
+  - **Promotion Gate 코드 기준 (#27)** — `POST /api/governance/strategy-promotion/evaluate`. 위 모든 기준 + 운영 데이터(`shadow_days`/`paper_days`/violations/audit 누락) + 사람 승인을 한 번에 평가. `decision`이 `PASS`여야 다음 단계 진입. **AI 추천만으로 승격 불가 · 사람 승인 + 코드 기준 모두 필요**. `LIVE_AI_EXECUTION`은 영구 BLOCKED — 별도 옵트인 PR 필요. 자세한 정책: [`strategy_promotion_gate.md`](strategy_promotion_gate.md).
 
 ### 2. Shadow (`LIVE_SHADOW`)
 

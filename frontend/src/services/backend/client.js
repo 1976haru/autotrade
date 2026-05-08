@@ -216,6 +216,11 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify(req),
   }),
+  // 27: Strategy Promotion Gate — read-only 평가.
+  evaluatePromotion: (req) => backendFetch("/api/governance/strategy-promotion/evaluate", {
+    method: "POST",
+    body: JSON.stringify(req),
+  }),
   // 22: Theme signals — 후보 필터 전용 (주문 신호 아님).
   themeSignals: ({ limit = 50, grade = null, provider = null } = {}) => {
     const qs = new URLSearchParams({ limit: String(limit) });

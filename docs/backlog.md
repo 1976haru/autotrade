@@ -58,6 +58,16 @@
 - 156 머지 후 별도 PR `feature/157-ci-recovery`에서 8 errors 모두 해결. `useRef(Date.now())` → null + useEffect lazy init / 의도된 setState-in-effect는 disable comment + 사유 / time-bucket 필터의 Date.now() snapshot은 `eslint-disable-next-line react-hooks/purity`. 833 테스트 회귀 0.
 - 결과: `npm run lint` → 0 errors / 55 warnings.
 
+### 23. Promotion Gate 후속 (#27 PR 이후)
+- Cooldown rule (최근 FAIL 전략은 N일 재승격 금지) — 운영 데이터 누적 후.
+- Promotion result DB 영구화 (감사 추적).
+- Strategy Scoreboard에 promotion gate 결과 통합.
+- AI 추천 정확도 자동 산출 (agent_decision_log 분석).
+- 임계값(MIN_PROFIT_FACTOR 등) 운영자 UI 조정.
+- Paper/Shadow 일수 자동 산출 (audit_log 기반).
+- frontend가 backtest run에서 자동으로 PromotionInput 생성.
+- 자세한 정책: `docs/strategy_promotion_gate.md`.
+
 ### 22. Monte Carlo 후속 (#26 PR 이후)
 - Regime별 Monte Carlo (시장 체제 분리 후 재추출).
 - Strategy 간 correlation 기반 Monte Carlo.

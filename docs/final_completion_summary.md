@@ -180,6 +180,7 @@ LIVE 활성화 전 사용자 명시 옵트인이 필요한 영역:
 - [`backtest_metrics.md`](backtest_metrics.md) — metrics.py 독립 모듈 + 기대값/PF/MDD/Sharpe/연속손실/시간대별 손익 + 승률만 승인 금지 (체크리스트 #24)
 - [`walk_forward_policy.md`](walk_forward_policy.md) — train/validation/holdout fold 분할 + rolling/anchored + 한 번의 대박 방지 + PASS/CAUTION/FAIL (체크리스트 #25)
 - [`monte_carlo_policy.md`](monte_carlo_policy.md) — shuffle/bootstrap/block_bootstrap + risk_of_ruin / 최악 5% MDD / promotion_risk_flag (체크리스트 #26 P2 고도화)
+- [`strategy_promotion_gate.md`](strategy_promotion_gate.md) — 승격 기준 코드 게이트 + AI 추천 차단 + 사람 승인 필수 + LIVE_AI_EXECUTION 영구 BLOCKED (체크리스트 #27)
 
 ## 사후 UI surface 보강 (187-196)
 

@@ -3,6 +3,7 @@ import { Btn, Card, Inp, SectionLabel, StatBox } from "../common";
 import { fmtKRW, pnlColor } from "../../utils/format";
 import { useBacktest } from "../../store/useBacktest";
 import { backendApi } from "../../services/backend/client";
+import { PromotionGateCard } from "./PromotionGateCard";
 
 const DEFAULT_FORM = {
   symbol:       "005930",
@@ -672,6 +673,8 @@ export function Backtest() {
           </Card>
 
           {run.trades.length > 0 && <MonteCarloCard run={run} />}
+
+          {run.trades.length > 0 && <PromotionGateCard run={run} />}
 
           <Card>
             <SectionLabel>체결 ({run.trades.length}건)</SectionLabel>
