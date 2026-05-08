@@ -58,6 +58,15 @@
 - 156 머지 후 별도 PR `feature/157-ci-recovery`에서 8 errors 모두 해결. `useRef(Date.now())` → null + useEffect lazy init / 의도된 setState-in-effect는 disable comment + 사유 / time-bucket 필터의 Date.now() snapshot은 `eslint-disable-next-line react-hooks/purity`. 833 테스트 회귀 0.
 - 결과: `npm run lint` → 0 errors / 55 warnings.
 
+### 17. Data Freshness 후속 (#20 PR 이후)
+- KIS / Kiwoom WebSocket 실 feed 상태 통합 (`DataFeedState` provider) — Phase 2 KIS WebSocket adapter PR.
+- Redis 기반 feed health 공유 — 다중 worker / 다중 host 운영 시 동기화.
+- frontend freshness status card (Dashboard 또는 StrategyRisk 탭) — UI 요청 시.
+- `OrderAuditLog`에 `rejected_by_freshness` reason carry — LIVE 활성화 PR에서.
+- `route_order` pre-check에 `should_block_buy_*` helper wire — LIVE 활성화 옵트인 PR.
+- SELL 전용 freshness helper — BUY와 다른 정책. 운영 데이터 누적 후.
+- 자세한 정책: `docs/data_freshness_policy.md`.
+
 ## Won't Do (현 세션에서 제외)
 
 - 실거래 KIS API 통합 — 사용자 명시 옵트인 영역.

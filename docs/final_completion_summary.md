@@ -173,6 +173,7 @@ LIVE 활성화 전 사용자 명시 옵트인이 필요한 영역:
 - [`database_schema.md`](database_schema.md) — DB 스키마 점검 + 원문 테이블 매핑 + PG 전환 가이드 (체크리스트 #17)
 - [`watchlist_policy.md`](watchlist_policy.md) — Watchlist universe 정책 + CRUD/CSV API + 50~200개 한도 (체크리스트 #18)
 - [`market_data_collector.md`](market_data_collector.md) — OHLCV 수집기 + 1m→5m 집계 + 누락률 + freshness 정책 (체크리스트 #19)
+- [`data_freshness_policy.md`](data_freshness_policy.md) — quote/bar/feed 통합 freshness + WebSocket reconnect 정책 + read-only API (체크리스트 #20)
 
 ## 사후 UI surface 보강 (187-196)
 
