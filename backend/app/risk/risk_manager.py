@@ -1,9 +1,21 @@
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta, timezone
 from enum import StrEnum
+from typing import Any
 
 from app.brokers.base import Balance, OrderRequest, OrderSide, Position
 from app.core.modes import OperationMode, can_ai_execute, can_place_live_order
+from app.risk.loss_limits import (
+    ConsecutiveLossRule,
+    DailyLossLimitRule,
+    WeeklyLossLimitRule,
+    evaluate_loss_limits,
+)
+from app.risk.position_limits import (
+    PositionLimitInput,
+    PositionLimitRule,
+    policy_from_risk_policy,
+)
 
 
 _KST = timezone(timedelta(hours=9))
@@ -30,6 +42,14 @@ class RiskDecision(StrEnum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
     NEEDS_APPROVAL = "NEEDS_APPROVAL"
+    # #34: 보강 enum 값 — 본 PR에서 evaluate_order는 기존 3개만 사용해 backwards
+    # compat 유지. check_order는 호출 컨텍스트에서 더 풍부한 의미 (REDUCED:
+    # 사이즈 축소 권고, BLOCKED: emergency stop / market regime BLOCK_NEW_BUY
+    # / safety flag로 인한 hard 차단)를 noop이 아닌 별도 enum으로 carry 가능.
+    # 운영자가 audit row에서 decision=BLOCKED를 보면 "REJECTED와 다른 강제
+    # 차단"임을 즉시 인지.
+    REDUCED = "REDUCED"
+    BLOCKED = "BLOCKED"
 
 
 @dataclass
@@ -94,6 +114,34 @@ class RiskPolicy:
     # 시스템 폭주 / 비용 제어. 0이면 비활성 (기본).
     max_orders_per_day: int = 0
 
+    # ------------------------------------------------------------------
+    # #36: Loss Limit Rules
+    # ------------------------------------------------------------------
+    # 일일 / 주간 / 연속손실 임계. 모두 0이면 비활성 (기존 동작 보존).
+    # daily_loss_warn_pct / daily_loss_reduce_pct는 max_daily_loss의 soft
+    # 단계 — 50% / 70% 도달 시 WARN/REDUCE_SIZE 권고. 100%(=max_daily_loss)는
+    # 기존 hard reject "daily loss limit reached"가 그대로 잡는다.
+    weekly_loss_limit:    int   = 0    # 주간 누적 realized PnL 한도 (양수)
+    consecutive_loss_limit: int = 0    # 연속 손실 거래 수 임계
+    daily_loss_warn_pct:    float = 0.0  # max_daily_loss의 X%; 0 = 비활성
+    daily_loss_reduce_pct:  float = 0.0  # max_daily_loss의 Y%; 0 = 비활성
+    weekly_loss_warn_pct:   float = 0.0
+    weekly_loss_reduce_pct: float = 0.0
+
+    # ------------------------------------------------------------------
+    # #38: Order Guard — duplicate / cooldown / pending pre-trade guard.
+    # ------------------------------------------------------------------
+    # 모든 필드 default = 검사 비활성 (기존 호환). 운영자가 명시 활성화 시
+    # route_order이 OrderGuard를 호출해 RiskManager 평가 *전*에 흐름 차원
+    # 가드를 적용한다.
+    order_guard_duplicate_window_seconds:           int   = 0
+    order_guard_symbol_cooldown_seconds:            int   = 0
+    order_guard_strategy_symbol_cooldown_seconds:   int   = 0
+    order_guard_post_exit_cooldown_seconds:         int   = 0
+    order_guard_ai_extra_cooldown_seconds:          int   = 0
+    order_guard_block_when_pending_same_side:       bool  = False
+    order_guard_price_bucket_pct:                   float = 0.5
+
     @classmethod
     def from_settings(cls, settings) -> "RiskPolicy":
         """Build a policy from app.core.config.Settings.
@@ -134,10 +182,74 @@ class RiskCheckResult:
     decision: RiskDecision
     reasons: list[str] = field(default_factory=list)
     passed: list[str] = field(default_factory=list)
+    # #34: 표준 진입점 (`check_order`)이 채우는 보강 필드들. evaluate_order
+    # 호출 경로는 모두 default 값을 두고 — backwards compat 유지.
+    warnings:         list[str]           = field(default_factory=list)
+    risk_score:       int | None          = None
+    blocked_by:       str | None          = None
+    required_action:  str | None          = None
+    normalized_order: OrderRequest | None = None
+    evaluated_at:     datetime            = field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
 
     @property
     def allowed(self) -> bool:
         return self.decision == RiskDecision.APPROVED
+
+    @property
+    def status(self) -> str:
+        """decision의 string mirror — audit/UI/API 직렬화에 사용."""
+        return self.decision.value
+
+    def to_dict(self) -> dict:
+        return {
+            "decision":         self.decision.value,
+            "status":           self.status,
+            "allowed":          self.allowed,
+            "reasons":          list(self.reasons),
+            "passed":           list(self.passed),
+            "warnings":         list(self.warnings),
+            "risk_score":       self.risk_score,
+            "blocked_by":       self.blocked_by,
+            "required_action":  self.required_action,
+            "normalized_order": (
+                self.normalized_order.model_dump()
+                if self.normalized_order is not None else None
+            ),
+            "evaluated_at":     self.evaluated_at.isoformat(),
+        }
+
+
+@dataclass
+class RiskContext:
+    """`check_order`의 표준 입력 컨텍스트 (#34).
+
+    `evaluate_order`가 keyword args를 받는 대신, 본 dataclass에 평가 시점의
+    모든 상태를 담는다. 호출자(route_order)가 broker / DB로부터 수집한
+    스냅샷을 한 객체로 전달 — 추후 stage가 추가되어도 시그니처가 안정적.
+
+    필드:
+    - mode: 운용모드 (SIMULATION / PAPER / LIVE_*)
+    - balance / positions / latest_price / latest_price_timestamp: broker 스냅샷
+    - requested_by_ai: AI 경로 여부
+    - market_regime / market_regime_decision: 32 MarketRegimeFilter 출력
+      (advisory — `BLOCK_NEW_BUY`이면 신규 BUY hard reject)
+    - emergency_stop_override: True면 RiskManager 내부 토글을 무시하고 강제
+      차단. None이면 기본 `risk.emergency_stop` 그대로 사용.
+    - operator_id / metadata: 자유 carry — audit 보강용
+    """
+    mode:                   OperationMode
+    balance:                Balance
+    positions:              list[Position]
+    latest_price:           int
+    latest_price_timestamp: datetime | None = None
+    requested_by_ai:        bool = False
+    market_regime:          str | None = None
+    market_regime_decision: str | None = None  # ALLOW/REDUCE_SIZE/WATCH_ONLY/BLOCK_NEW_BUY
+    emergency_stop_override: bool | None = None
+    operator_id:            str | None = None
+    metadata:               dict[str, Any] | None = None
 
 
 class RiskManager:
@@ -164,6 +276,11 @@ class RiskManager:
         latest_price: int,
         requested_by_ai: bool = False,
         latest_price_timestamp: datetime | None = None,
+        # #36: 호출자(route_order)가 주입할 수 있는 누적 손실 카운터. 미주입
+        # (None)이면 본 rule들은 검사 대상 데이터 부재로 ALLOW. 기존 호출자
+        # 시그니처 호환 — keyword-only + default None.
+        weekly_realized_pnl:    int | None = None,
+        consecutive_loss_count: int | None = None,
     ) -> RiskCheckResult:
         # Hard short-circuit: emergency_stop is the operator's "stop everything"
         # signal. It must REJECT across every mode — including LIVE_MANUAL_APPROVAL
@@ -248,24 +365,26 @@ class RiskManager:
             else:
                 result.passed.append("AI proposal includes reasoning")
 
+        # #35: position-limit 검사들을 PositionLimitRule에 위임 — single source
+        # of truth. evaluate_order의 inline 로직 대신 본 rule이 담당. 기존
+        # reason/passed 문자열은 그대로 유지 (기존 26+ 테스트 호환).
         order_notional = latest_price * order.quantity
-        if order_notional > self.policy.max_order_notional:
-            result.reasons.append("order notional exceeds max_order_notional")
-        else:
-            result.passed.append("order notional within limit")
+        pl_rule = PositionLimitRule(policy_from_risk_policy(self.policy))
+        pl_input = PositionLimitInput(
+            order=order, balance=balance, positions=positions, latest_price=latest_price,
+        )
 
-        # 174: equity 대비 비율 한도 — 자본이 변해도 자동 스케일.
-        pct = self.policy.max_position_size_pct
-        if pct > 0:
-            cap = balance.equity * pct / 100.0
-            if order_notional > cap:
-                result.reasons.append(
-                    f"order notional {order_notional} exceeds "
-                    f"{pct}% of equity ({cap:.0f})"
-                )
-            else:
-                result.passed.append("order notional within equity-relative cap")
+        def _merge(passed_and_reasons):
+            _p, _r = passed_and_reasons
+            result.passed.extend(_p)
+            result.reasons.extend(_r)
 
+        # max_order_notional + max_position_size_pct (1회 주문 한도)
+        _merge(pl_rule.check_order_notional(pl_input))
+        _merge(pl_rule.check_equity_relative_order_size(pl_input))
+
+        # daily loss / cash availability — position-limit이 아니므로 RiskManager
+        # 본체에 그대로 둔다.
         if self.daily_realized_pnl <= -abs(self.policy.max_daily_loss):
             result.reasons.append("daily loss limit reached")
         else:
@@ -276,55 +395,51 @@ class RiskManager:
         else:
             result.passed.append("cash/position availability preliminarily ok")
 
-        current_symbols = {p.symbol for p in positions if p.quantity > 0}
-        if order.side == OrderSide.BUY and order.symbol not in current_symbols and len(current_symbols) >= self.policy.max_positions:
-            result.reasons.append("max positions reached")
-        else:
-            result.passed.append("position count within limit")
+        # #36: Loss Limit Rules — daily / weekly / consecutive. 임계 0이면
+        # rule 인스턴스 자체를 None으로 두어 skip. 기존 max_daily_loss hard
+        # reject은 위에서 이미 처리됨. 본 단계는 *soft 단계 + weekly +
+        # consecutive*를 추가.
+        daily_rule = None
+        if self.policy.max_daily_loss > 0 and (
+            self.policy.daily_loss_warn_pct > 0 or self.policy.daily_loss_reduce_pct > 0
+        ):
+            daily_rule = DailyLossLimitRule(
+                limit=abs(self.policy.max_daily_loss),
+                warn_pct=self.policy.daily_loss_warn_pct,
+                reduce_pct=self.policy.daily_loss_reduce_pct,
+            )
+        weekly_rule = None
+        if self.policy.weekly_loss_limit > 0:
+            weekly_rule = WeeklyLossLimitRule(
+                limit=self.policy.weekly_loss_limit,
+                warn_pct=self.policy.weekly_loss_warn_pct,
+                reduce_pct=self.policy.weekly_loss_reduce_pct,
+            )
+        consecutive_rule = None
+        if self.policy.consecutive_loss_limit > 0:
+            consecutive_rule = ConsecutiveLossRule(limit=self.policy.consecutive_loss_limit)
+        # 호출자가 주입하지 않은 카운터는 0으로 처리 (검사 대상 미달 → ALLOW).
+        loss_merged = evaluate_loss_limits(
+            order=order,
+            daily_rule=daily_rule,
+            weekly_rule=weekly_rule,
+            consecutive_rule=consecutive_rule,
+            daily_pnl=self.daily_realized_pnl,
+            weekly_pnl=weekly_realized_pnl if weekly_realized_pnl is not None else 0,
+            consecutive_loss_count=(
+                consecutive_loss_count if consecutive_loss_count is not None else 0
+            ),
+        )
+        result.passed.extend(loss_merged.passed)
+        result.warnings.extend(loss_merged.warnings)
+        result.reasons.extend(loss_merged.reasons)
 
-        symbol_position = next((p for p in positions if p.symbol == order.symbol), None)
-        current_exposure = symbol_position.quantity * symbol_position.market_price if symbol_position else 0
-        if order.side == OrderSide.BUY and current_exposure + order_notional > self.policy.max_symbol_exposure:
-            result.reasons.append("symbol exposure limit exceeded")
-        else:
-            result.passed.append("symbol exposure within limit")
-
-        # 181: 종목별 자본 대비 % 한도 — max_symbol_exposure(절대값)와 보완.
-        sym_pct = self.policy.max_symbol_exposure_pct
-        if order.side == OrderSide.BUY and sym_pct > 0:
-            cap = balance.equity * sym_pct / 100.0
-            new_sym_exposure = current_exposure + order_notional
-            if new_sym_exposure > cap:
-                result.reasons.append(
-                    f"symbol exposure {new_sym_exposure} exceeds {sym_pct}% of "
-                    f"equity ({cap:.0f}) for {order.symbol}"
-                )
-            else:
-                result.passed.append("symbol exposure within equity-relative limit")
-
-        # 179: 총 노출 한도 (모든 보유 포지션 합 + 신규 BUY 명목). max_symbol_exposure
-        # 가 종목별, 본 가드는 전체 합. 절대값 + 자본 대비 % 둘 다 검사.
-        if order.side == OrderSide.BUY:
-            current_total = sum(p.quantity * p.market_price for p in positions)
-            new_total = current_total + order_notional
-            if self.policy.max_total_exposure > 0 and new_total > self.policy.max_total_exposure:
-                result.reasons.append(
-                    f"total exposure {new_total} exceeds max_total_exposure "
-                    f"{self.policy.max_total_exposure}"
-                )
-            elif self.policy.max_total_exposure > 0:
-                result.passed.append("total exposure within absolute limit")
-
-            tot_pct = self.policy.max_total_exposure_pct
-            if tot_pct > 0:
-                cap = balance.equity * tot_pct / 100.0
-                if new_total > cap:
-                    result.reasons.append(
-                        f"total exposure {new_total} exceeds {tot_pct}% of "
-                        f"equity ({cap:.0f})"
-                    )
-                else:
-                    result.passed.append("total exposure within equity-relative limit")
+        # 보유 종목 수 + 종목별 노출 + 종목별 % + 총 노출 + 총 노출 % (모두 rule 위임)
+        _merge(pl_rule.check_max_positions(pl_input))
+        _merge(pl_rule.check_symbol_exposure(pl_input))
+        _merge(pl_rule.check_symbol_exposure_pct(pl_input))
+        _merge(pl_rule.check_total_exposure(pl_input))
+        _merge(pl_rule.check_total_exposure_pct(pl_input))
 
         if mode == OperationMode.LIVE_SHADOW:
             result.reasons.append("LIVE_SHADOW records signals only; live orders disabled")
@@ -353,4 +468,122 @@ class RiskManager:
 
         if result.reasons:
             result.decision = RiskDecision.REJECTED
+        return result
+
+    # ------------------------------------------------------------------
+    # #34: 표준 진입점 — check_order(order, context)
+    # ------------------------------------------------------------------
+    #
+    # 모든 신규 호출자(route_order, Strategy/Agent/operator)는 본 메서드를
+    # 사용한다. evaluate_order는 backwards compat alias로 유지 — 기존 테스트
+    # / 호출자가 깨지지 않는다. check_order는:
+    #
+    # 1. RiskContext에서 args 추출해 evaluate_order에 위임 (단일 진실)
+    # 2. emergency_stop_override / market_regime BLOCK_NEW_BUY / hard 차단
+    #    조건들을 추가 검증
+    # 3. 결과에 blocked_by / required_action / evaluated_at 등 풍부한 필드를
+    #    채워 audit / UI surface 가능하게 한다
+    #
+    # 직접 주문 우회 방지: 본 메서드는 broker.place_order를 호출하지 않는다.
+    # OrderExecutor가 place_order를 호출하기 전 audit.decision == APPROVED를
+    # 검증 (executor.py 가드).
+
+    def check_order(
+        self,
+        order: OrderRequest,
+        context: RiskContext,
+    ) -> RiskCheckResult:
+        """모든 주문성 요청의 표준 진입점.
+
+        호출 흐름: `route_order` → `RiskManager.check_order` → PermissionGate
+        → OrderExecutor → BrokerAdapter. 어떤 caller도 BrokerAdapter.place_order
+        를 직접 호출해서는 안 된다 (CLAUDE.md 절대 원칙 2).
+        """
+        # 0. emergency_stop_override가 명시되면 즉시 BLOCKED.
+        if context.emergency_stop_override is True:
+            r = RiskCheckResult(
+                decision=RiskDecision.BLOCKED,
+                reasons=["emergency_stop_override is set in context"],
+                blocked_by="emergency_stop_override",
+                required_action="OPERATOR_RESET",
+            )
+            return r
+
+        # 1. evaluate_order에 위임 — 기존 26+ 가드 모두 그대로 동작.
+        result = self.evaluate_order(
+            order=order,
+            mode=context.mode,
+            balance=context.balance,
+            positions=context.positions,
+            latest_price=context.latest_price,
+            requested_by_ai=context.requested_by_ai,
+            latest_price_timestamp=context.latest_price_timestamp,
+        )
+
+        # 2. evaluate_order이 REJECTED면 hard 차단의 의미를 강조하기 위해
+        #    blocked_by를 추정 (첫 reason 키워드 매핑). 의미 분기:
+        #    - emergency stop / disable_ai_orders / stale → BLOCKED (hard)
+        #    - 다른 정책 위반 (notional/positions/exposure) → REJECTED (그대로)
+        if result.decision == RiskDecision.REJECTED:
+            joined = " | ".join(result.reasons).lower()
+            if "emergency stop" in joined:
+                result.decision  = RiskDecision.BLOCKED
+                result.blocked_by = "emergency_stop"
+                result.required_action = "OPERATOR_RESET"
+            elif "ai orders are disabled" in joined:
+                result.decision  = RiskDecision.BLOCKED
+                result.blocked_by = "ai_kill_switch"
+                result.required_action = "OPERATOR_RESET"
+            elif "stale" in joined:
+                result.decision  = RiskDecision.BLOCKED
+                result.blocked_by = "stale_price"
+                result.required_action = "WAIT_FOR_FRESH_DATA"
+            elif "live trading is disabled" in joined:
+                result.decision  = RiskDecision.BLOCKED
+                result.blocked_by = "live_trading_disabled"
+                result.required_action = "ENABLE_LIVE_TRADING_FLAG"
+            elif "ai execution is not allowed" in joined:
+                result.decision  = RiskDecision.BLOCKED
+                result.blocked_by = "ai_execution_disabled"
+                result.required_action = "ENABLE_AI_EXECUTION_FLAG"
+            else:
+                result.blocked_by = result.blocked_by or "policy_violation"
+
+        # 3. 32 MarketRegimeFilter 결정 — 신규 BUY는 BLOCK_NEW_BUY에서 차단.
+        #    SELL은 리스크 축소 목적이라 그대로 통과시킨다 (CLAUDE.md '손실
+        #    방어 우선' 원칙).
+        regime_decision = (context.market_regime_decision or "").upper()
+        if order.side == OrderSide.BUY and regime_decision == "BLOCK_NEW_BUY":
+            if result.decision == RiskDecision.APPROVED:
+                result.decision = RiskDecision.BLOCKED
+            result.reasons.append(
+                f"market regime {context.market_regime or '?'} → "
+                f"BLOCK_NEW_BUY (#32 filter)"
+            )
+            result.blocked_by = result.blocked_by or "market_regime"
+            result.required_action = result.required_action or "WAIT_FOR_REGIME_CHANGE"
+        elif order.side == OrderSide.BUY and regime_decision == "REDUCE_SIZE":
+            # advisory only — 사이즈 축소는 호출자(PositionSizingAgent /
+            # Strategy.calculate_size)의 책임. 본 가드는 warning만 추가.
+            result.warnings.append(
+                f"market regime {context.market_regime or '?'} → "
+                f"REDUCE_SIZE 권고 (#32 filter) — size 축소 권장"
+            )
+        elif order.side == OrderSide.BUY and regime_decision == "WATCH_ONLY":
+            if result.decision == RiskDecision.APPROVED:
+                result.decision = RiskDecision.BLOCKED
+            result.reasons.append(
+                f"market regime {context.market_regime or '?'} → "
+                f"WATCH_ONLY (#32 filter)"
+            )
+            result.blocked_by = result.blocked_by or "market_regime"
+            result.required_action = result.required_action or "OPERATOR_REVIEW"
+
+        # 4. NEEDS_APPROVAL이면 required_action 명시.
+        if result.decision == RiskDecision.NEEDS_APPROVAL and result.required_action is None:
+            result.required_action = "MANUAL_APPROVAL"
+
+        # 5. evaluated_at은 dataclass default로 이미 채워졌지만, evaluate_order
+        #    경로에서 만들어진 객체 유지를 위해 명시 갱신.
+        result.evaluated_at = datetime.now(timezone.utc)
         return result

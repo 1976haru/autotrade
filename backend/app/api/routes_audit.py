@@ -47,6 +47,9 @@ class OrderAuditOut(BaseModel):
     # 198: 168 archival flag — frontend AuditLog에서 archived sub-tab을 만들어
     # cold rows를 분리해서 볼 수 있도록 surface한다.
     archived:         bool = False
+    # #40: 주문 source 분류 — STRATEGY / AI / MANUAL / OPERATOR_OVERRIDE / UNKNOWN.
+    # 0018 이전 row + 호출자 미명시는 NULL → frontend에서 'UNKNOWN' 표시 권장.
+    source:           str | None = None
 
 
 class AiAuditOut(BaseModel):
@@ -117,6 +120,7 @@ def _to_order_out(row: OrderAuditLog) -> OrderAuditOut:
         message=row.message,
         ai_decision_meta=row.ai_decision_meta,
         archived=bool(row.archived),
+        source=getattr(row, "source", None),  # #40
     )
 
 

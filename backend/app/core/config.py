@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     kis_app_secret: str = ""
     kis_account_no: str = ""
     kis_is_paper: bool = True
+
+    # #42: Paper Trading 사용할 broker 종류. "MOCK" 또는 "KIS_PAPER".
+    # default 빈 문자열 — `_default_paper_broker_kind`가 default_mode + kis_is_paper
+    # 로 자동 추론. 운영자가 명시 override 가능.
+    paper_broker_kind: str = ""
     kis_rate_limit_calls:          int   = 5
     kis_rate_limit_window_seconds: float = 1.0
 

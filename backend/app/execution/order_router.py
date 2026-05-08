@@ -10,8 +10,19 @@ from app.brokers.base import BrokerAdapter, OrderRequest, OrderResult
 from app.core.modes import OperationMode
 from app.db.models import OrderAuditLog, PendingApproval
 from app.execution.executor import OrderExecutor
+from app.execution.order_executor import derive_order_source
 from app.permission.gate import PermissionGate
-from app.risk.daily_pnl import compute_today_realized_pnl, count_orders_today_kst
+from app.risk.daily_pnl import (
+    compute_today_realized_pnl,
+    compute_weekly_realized_pnl_kst,
+    count_consecutive_losing_trades,
+    count_orders_today_kst,
+)
+from app.risk.order_guard import (
+    GuardDecision,
+    OrderGuard,
+    OrderGuardConfig,
+)
 from app.risk.risk_manager import RiskDecision, RiskManager
 
 
@@ -72,6 +83,55 @@ async def route_order(
                 f"client_order_id={order.client_order_id} already processed"
             )
 
+    # #38: OrderGuard pre-trade 검사 — duplicate fingerprint / cooldown /
+    # pending. 모든 cooldown / window가 0(default)이면 본 가드는 사실상 no-op
+    # (기존 호환). 하나라도 활성이면 RiskManager 평가 *전*에 차단해 broker
+    # 호출 비용을 들이지 않는다.
+    guard_cfg = OrderGuardConfig(
+        duplicate_window_seconds=risk.policy.order_guard_duplicate_window_seconds,
+        symbol_cooldown_seconds=risk.policy.order_guard_symbol_cooldown_seconds,
+        strategy_symbol_cooldown_seconds=risk.policy.order_guard_strategy_symbol_cooldown_seconds,
+        post_exit_cooldown_seconds=risk.policy.order_guard_post_exit_cooldown_seconds,
+        ai_extra_cooldown_seconds=risk.policy.order_guard_ai_extra_cooldown_seconds,
+        block_when_pending_same_side=risk.policy.order_guard_block_when_pending_same_side,
+        price_bucket_pct=risk.policy.order_guard_price_bucket_pct,
+    )
+    guard_result = OrderGuard(guard_cfg, db).check(
+        order, mode=mode.value, requested_by_ai=requested_by_ai,
+    )
+    # ALLOW 외에는 audit row를 작성한 뒤 즉시 분기. RETRY_REPLAY는 idempotency
+    # 의미 — 호출자가 기존 audit_id를 carry할 수 있도록 result에 명시하지만,
+    # 본 PR에서는 client_order_id 기반 검사가 위에서 먼저 raise하므로 사실상
+    # 도달하지 않는 분기 (방어용).
+    if guard_result.decision != GuardDecision.ALLOW:
+        guard_audit = OrderAuditLog(
+            mode=mode.value,
+            requested_by_ai=requested_by_ai,
+            symbol=order.symbol,
+            side=order.side.value,
+            quantity=order.quantity,
+            order_type=order.order_type.value,
+            limit_price=order.limit_price,
+            latest_price=0,                # broker quote 호출 회피
+            decision=RiskDecision.REJECTED.value,
+            reasons=list(guard_result.reasons),
+            trade_reason=order.trade_reason,
+            strategy=order.strategy,
+            signal_strength=order.signal_strength,
+            signal_confidence=order.signal_confidence,
+            client_order_id=order.client_order_id,
+            ai_decision_meta=order.ai_decision_meta,
+            # #40: 주문 source 분류
+            source=derive_order_source(order, requested_by_ai=requested_by_ai).value,
+        )
+        db.add(guard_audit)
+        db.commit()
+        return OrderRoutingResult(
+            decision=RiskDecision.REJECTED,
+            reasons=list(guard_result.reasons),
+            audit=guard_audit,
+        )
+
     # 161: AI rate limit — flooding 방어. broker/risk 호출 비용 들이기 전에 차단.
     # max_count <= 0이면 검사 비활성. AI 외 경로 주문은 검사 우회.
     ai_rate_violation_count: int | None = None
@@ -113,6 +173,17 @@ async def route_order(
     # 없으면 daily_realized_pnl이 0에 머물러 max_daily_loss 검사가 무효.
     risk.daily_realized_pnl = compute_today_realized_pnl(db)
 
+    # #36: 주간 PnL + 연속 손실 카운트도 매 평가 직전 재계산. 임계 0인 경우
+    # rule이 비활성이라 사실상 no-op이지만, 한도 활성 시 신선한 값이 필요.
+    weekly_pnl = (
+        compute_weekly_realized_pnl_kst(db)
+        if risk.policy.weekly_loss_limit > 0 else 0
+    )
+    consecutive_loss_count = (
+        count_consecutive_losing_trades(db)
+        if risk.policy.consecutive_loss_limit > 0 else 0
+    )
+
     # 143: Quote.timestamp는 ISO 문자열. RiskManager가 stale 검사를 수행하려면
     # datetime이 필요하므로 여기서 파싱한다. 파싱 실패는 broker 계약 위반이지만
     # 안전 측 — None으로 두면 RiskManager가 검사를 건너뛴다 (기존 동작 유지).
@@ -130,7 +201,16 @@ async def route_order(
         latest_price=quote.price,
         requested_by_ai=requested_by_ai,
         latest_price_timestamp=quote_ts,
+        weekly_realized_pnl=weekly_pnl,
+        consecutive_loss_count=consecutive_loss_count,
     )
+
+    # #36: BLOCK_NEW_BUY 조건이 reason으로 누적된 경우 RiskCheckResult를
+    # REJECTED로 명시적으로 덮어쓴다 (BUY only). evaluate_order의 마지막 줄이
+    # `if result.reasons: result.decision = REJECTED` 이라 이미 처리되지만,
+    # SELL 통과 정책을 분명히 하기 위해 본 분기를 유지.
+    # (현재 evaluate_order의 fallthrough가 reasons 누적되면 자동 REJECTED로
+    # 변환하므로 별도 처리 불필요 — 본 주석은 향후 옵트인 변경 시 hint.)
 
     # 161: rate limit 위반은 RiskManager 결과를 REJECTED로 덮어쓴다 — 다른 가드
     # 통과 여부와 무관하게 차단. reason은 누적 (운영자가 다른 위반도 같이 본다).
@@ -182,6 +262,8 @@ async def route_order(
         signal_confidence=order.signal_confidence,
         # 140: idempotency 키. 호출자가 보낸 그대로 audit row에 영구화.
         client_order_id=order.client_order_id,
+        # #40: 주문 source 분류 (STRATEGY / AI / MANUAL / OPERATOR_OVERRIDE / UNKNOWN).
+        source=derive_order_source(order, requested_by_ai=requested_by_ai).value,
         # 152: AI decision metadata도 같은 row에 carry.
         ai_decision_meta=order.ai_decision_meta,
     )

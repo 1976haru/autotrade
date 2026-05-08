@@ -34,6 +34,13 @@ class OrderAuditLog(Base):
     # 'stop_loss', 'manual', 'ai_recommendation' 등. 0005 이전 row는 NULL.
     trade_reason:    Mapped[str | None]     = mapped_column(String(64), nullable=True)
 
+    # #40: 주문 source 분류 (STRATEGY / AI / MANUAL / OPERATOR_OVERRIDE /
+    # UNKNOWN). app.execution.order_executor.OrderSource enum과 1:1.
+    # 0018 마이그레이션 이전 row + 호출자 미명시는 NULL — `OrderSource.UNKNOWN`
+    # 으로 surface (호환). 운영자가 audit에서 어떤 출처의 주문이 가장 많은지
+    # 분석할 수 있다.
+    source:          Mapped[str | None]     = mapped_column(String(32), nullable=True, index=True)
+
     # 138: 어떤 전략이 만든 주문인지. LiveEngine이 자동 채움, 수동 주문은 NULL.
     # 0006 이전 row도 NULL. 향후 Strategy Scoreboard에 LIVE 결과 통합 가능.
     strategy:        Mapped[str | None]     = mapped_column(String(64), nullable=True, index=True)
@@ -173,6 +180,11 @@ class EmergencyStopEvent(Base):
     # 153: 구조화된 사유 코드. enum app.risk.emergency_reasons.EmergencyStopReason.
     # NULL = 0011 이전 row 또는 미명시. 운영 단계에서는 명시 권장.
     reason_code: Mapped[str | None]    = mapped_column(String(32), nullable=True, index=True)
+    # #37: 3단계 Kill Switch level (OFF/LEVEL_1/LEVEL_2/LEVEL_3). NULL =
+    # 0017 이전 row 또는 legacy on/off 토글 — enabled=True + level=NULL은
+    # 기존 의미와 동일한 LEVEL_1로 표시 (app/risk/emergency_stop.py
+    # `normalize_legacy_level` 참고). 운영자가 단계 표시를 원하면 명시 권장.
+    level:       Mapped[str | None]    = mapped_column(String(16), nullable=True)
 
 
 class AgentDecisionLog(Base):

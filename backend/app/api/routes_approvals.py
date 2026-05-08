@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_broker, get_risk_manager
 from app.brokers.base import BrokerAdapter, OrderResult
+from app.core.config import get_settings
 from app.db.models import OrderAuditLog
 from app.db.session import get_db
 from app.permission.gate import (
@@ -53,6 +54,18 @@ class ApprovalOut(BaseModel):
     signal_strength:   int | None  = None
     signal_confidence: int | None  = None
     ai_decision_meta:  dict | None = None
+    # #41: TTL surface — settings.approval_ttl_seconds > 0이면 채워짐.
+    # ttl=0이면 expires_at=None, is_expired=False (만료 비활성).
+    expires_at:            datetime | None = None
+    seconds_until_expiry:  int | None      = None
+    is_expired:            bool            = False
+    # #41: 승인 전 재검증 정보 — attempts 배열 요약.
+    attempt_count:         int             = 0
+    last_attempt_at:       datetime | None = None
+    last_attempt_reasons:  list[str]       = []
+    # #41: 신호 출처 분류 — AI 제안 / 전략 신호 / 수동 주문 / 청산 후보 / 알 수 없음.
+    request_source:        str             = "UNKNOWN"
+    request_source_label:  str             = "알 수 없음"
 
 
 class ApprovalDecision(BaseModel):
@@ -65,8 +78,94 @@ class ApproveResponse(BaseModel):
     result:   OrderResult
 
 
-def _to_out(approval, audit_meta: dict | None = None) -> ApprovalOut:
+# #41: 신호 출처 분류 — audit_meta + approval row 기반.
+_REQUEST_SOURCE_LABELS = {
+    "AI":              "AI 제안",
+    "STRATEGY":        "전략 신호",
+    "MANUAL":          "수동 주문",
+    "LIQUIDATION":     "청산 후보",
+    "RISK_OVERRIDE":   "리스크 예외 요청",
+    "UNKNOWN":         "알 수 없음",
+}
+
+
+def _derive_request_source(audit_meta: dict, approval) -> str:
+    """audit_meta + approval row → request_source 분류.
+
+    우선순위:
+    1. audit row의 source 컬럼(#40)이 있으면 그대로 (AI/STRATEGY/MANUAL/
+       OPERATOR_OVERRIDE/UNKNOWN). LIQUIDATION 분류는 별도.
+    2. requested_by_ai=True → AI.
+    3. strategy 존재 → STRATEGY.
+    4. trade_reason='liquidation' 또는 audit_meta가 청산성을 명시 → LIQUIDATION.
+    5. 그 외 → MANUAL.
+    """
+    source = audit_meta.get("source")
+    if source in ("AI", "STRATEGY", "MANUAL", "OPERATOR_OVERRIDE", "UNKNOWN"):
+        # audit row source가 OPERATOR_OVERRIDE면 RISK_OVERRIDE로 (UI 명시).
+        if source == "OPERATOR_OVERRIDE":
+            return "RISK_OVERRIDE"
+        return source
+    if audit_meta.get("requested_by_ai"):
+        return "AI"
+    if audit_meta.get("strategy"):
+        return "STRATEGY"
+    trade_reason = (audit_meta.get("trade_reason") or "").lower()
+    if "liquidation" in trade_reason or "stop" in trade_reason:
+        return "LIQUIDATION"
+    return "MANUAL"
+
+
+def _ttl_fields(
+    approval, *, ttl_seconds: int, now: datetime | None = None,
+) -> tuple[datetime | None, int | None, bool]:
+    """approval row + ttl_seconds → (expires_at, seconds_until_expiry, is_expired).
+
+    ttl_seconds=0 또는 created_at 없음 → 모두 None / False.
+    """
+    if ttl_seconds <= 0 or approval.created_at is None:
+        return None, None, False
+    created = approval.created_at
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    expires = created + timedelta(seconds=ttl_seconds)
+    cur = now or datetime.now(timezone.utc)
+    delta = (expires - cur).total_seconds()
+    is_expired = delta <= 0 or approval.status == STATUS_EXPIRED
+    seconds_until = int(delta) if delta > 0 else 0
+    return expires, seconds_until, is_expired
+
+
+def _attempts_summary(approval) -> tuple[int, datetime | None, list[str]]:
+    """attempts 배열 요약 → (count, last_at, last_reasons)."""
+    attempts = list(approval.attempts or [])
+    if not attempts:
+        return 0, None, []
+    last = attempts[-1]
+    last_at_raw = last.get("at")
+    last_at: datetime | None = None
+    if isinstance(last_at_raw, str):
+        try:
+            last_at = datetime.fromisoformat(last_at_raw)
+        except ValueError:
+            last_at = None
+    last_reasons = list(last.get("reasons") or [])
+    return len(attempts), last_at, last_reasons
+
+
+def _to_out(
+    approval,
+    audit_meta: dict | None = None,
+    *,
+    ttl_seconds: int = 0,
+    now: datetime | None = None,
+) -> ApprovalOut:
     audit_meta = audit_meta or {}
+    expires_at, secs_until, is_expired = _ttl_fields(
+        approval, ttl_seconds=ttl_seconds, now=now,
+    )
+    attempt_count, last_at, last_reasons = _attempts_summary(approval)
+    source = _derive_request_source(audit_meta, approval)
     return ApprovalOut(
         id=approval.id,
         created_at=approval.created_at,
@@ -89,11 +188,21 @@ def _to_out(approval, audit_meta: dict | None = None) -> ApprovalOut:
         signal_strength=  audit_meta.get("signal_strength"),
         signal_confidence=audit_meta.get("signal_confidence"),
         ai_decision_meta= audit_meta.get("ai_decision_meta"),
+        # #41 신규 필드
+        expires_at=expires_at,
+        seconds_until_expiry=secs_until,
+        is_expired=is_expired,
+        attempt_count=attempt_count,
+        last_attempt_at=last_at,
+        last_attempt_reasons=last_reasons,
+        request_source=source,
+        request_source_label=_REQUEST_SOURCE_LABELS.get(source, source),
     )
 
 
 def _load_audit_meta(db: Session, approvals: list) -> dict[int, dict]:
-    """audit_id → {reasons, requested_by_ai, strategy, signal_*, ai_decision_meta}.
+    """audit_id → {reasons, requested_by_ai, strategy, signal_*, ai_decision_meta,
+    trade_reason, source}.
 
     N+1 회피: 한 번의 IN 쿼리로 결재 목록 전체 audit row의 메타를 조회.
     pending은 보통 적지만 history는 limit 200까지 가므로 join 단일화가 중요.
@@ -110,6 +219,8 @@ def _load_audit_meta(db: Session, approvals: list) -> dict[int, dict]:
             OrderAuditLog.signal_strength,
             OrderAuditLog.signal_confidence,
             OrderAuditLog.ai_decision_meta,
+            OrderAuditLog.trade_reason,
+            OrderAuditLog.source,
         ).where(OrderAuditLog.id.in_(audit_ids))
     ).all()
     return {
@@ -120,6 +231,8 @@ def _load_audit_meta(db: Session, approvals: list) -> dict[int, dict]:
             "signal_strength":   row[4],
             "signal_confidence": row[5],
             "ai_decision_meta":  row[6],
+            "trade_reason":      row[7],
+            "source":            row[8],
         }
         for row in rows
     }
@@ -133,9 +246,15 @@ def _load_reasons(db: Session, approvals: list) -> dict[int, list]:
 
 @router.get("", response_model=list[ApprovalOut])
 def list_pending(db: Session = Depends(get_db)) -> list[ApprovalOut]:
-    approvals = PermissionGate(db).list_pending()
+    """현재 PENDING approvals. #41: settings.approval_ttl_seconds > 0이면
+    호출 시점에 lazy expire (PermissionGate.list_pending이 처리)."""
+    ttl = get_settings().approval_ttl_seconds
+    approvals = PermissionGate(db).list_pending(ttl_seconds=ttl)
     meta_by_audit = _load_audit_meta(db, approvals)
-    return [_to_out(a, meta_by_audit.get(a.audit_id)) for a in approvals]
+    return [
+        _to_out(a, meta_by_audit.get(a.audit_id), ttl_seconds=ttl)
+        for a in approvals
+    ]
 
 
 _DECIDED_STATUSES = {STATUS_APPROVED, STATUS_REJECTED,
@@ -157,9 +276,13 @@ def list_history(
     """
     if status is not None and status not in _DECIDED_STATUSES:
         raise HTTPException(status_code=400, detail=f"unsupported status: {status}")
+    ttl = get_settings().approval_ttl_seconds
     rows = PermissionGate(db).list_decided(limit=limit, offset=offset, status=status)
     meta_by_audit = _load_audit_meta(db, rows)
-    return [_to_out(a, meta_by_audit.get(a.audit_id)) for a in rows]
+    return [
+        _to_out(a, meta_by_audit.get(a.audit_id), ttl_seconds=ttl)
+        for a in rows
+    ]
 
 
 @router.get("/{approval_id}", response_model=ApprovalOut)
@@ -168,8 +291,9 @@ def get_approval(approval_id: int, db: Session = Depends(get_db)) -> ApprovalOut
         approval = PermissionGate(db).get(approval_id)
     except ApprovalNotFoundError:
         raise HTTPException(status_code=404, detail="approval not found")
+    ttl = get_settings().approval_ttl_seconds
     meta = _load_audit_meta(db, [approval]).get(approval.audit_id)
-    return _to_out(approval, meta)
+    return _to_out(approval, meta, ttl_seconds=ttl)
 
 
 @router.post("/{approval_id}/approve", response_model=ApproveResponse)
@@ -198,8 +322,9 @@ async def approve_route(
             "error": "risk_check_failed_at_approve",
             "reasons": e.reasons,
         })
+    ttl = get_settings().approval_ttl_seconds
     meta = _load_audit_meta(db, [approval]).get(approval.audit_id)
-    return ApproveResponse(approval=_to_out(approval, meta), result=result)
+    return ApproveResponse(approval=_to_out(approval, meta, ttl_seconds=ttl), result=result)
 
 
 @router.post("/{approval_id}/reject", response_model=ApprovalOut)

@@ -137,3 +137,160 @@ def compute_today_realized_pnl(
             realized_today += sell_pnl
 
     return realized_today
+
+
+# ----------------------------------------------------------------------
+# #36: Weekly + consecutive loss aggregations
+# ----------------------------------------------------------------------
+#
+# 본 모듈의 일일 PnL 알고리즘과 동일 — symbol별 FIFO BUY queue로 SELL과
+# 매칭. 차이는 "오늘" 필터를 "이번 주" / "마지막 trailing N건" 으로 바꾼다.
+# 본 함수들은 읽기 전용 — DB write 없음, broker 호출 없음.
+#
+# **실시간 손익 계산 주의** (docs/loss_limit_policy.md §6):
+# - realized PnL만 계산 — unrealized(평가손익) 미포함.
+# - virtual / paper / live 분리는 audit row의 mode 컬럼으로 구분 가능하지만
+#   본 함수는 모드 무관 — 호출자가 필요 시 mode 필터를 outer query로 적용.
+# - 수수료 / 세금은 미반영 — 단순 (sell_price - buy_price) × qty. 실제 LIVE에선
+#   broker statement와 reconciliation 필수 (#212 참고).
+
+
+def week_start_kst(today: date | None = None) -> date:
+    """이번 주 월요일 00:00 KST의 date. 운영자/문서 직관과 일치 (한국 거래주 = 월~금)."""
+    if today is None:
+        today = today_kst()
+    # weekday(): Monday=0 ... Sunday=6
+    return today - timedelta(days=today.weekday())
+
+
+def compute_weekly_realized_pnl_kst(
+    db:    Session,
+    *,
+    today: date | None = None,
+) -> int:
+    """이번 주(월요일 00:00 KST 시작) 누적 realized PnL. 손실은 음수.
+
+    `compute_today_realized_pnl`과 동일한 FIFO 매칭, "오늘" 필터를 "이번 주"로
+    교체. SELL이 이번 주(KST date 기준)에 created됐을 때만 합산.
+    """
+    if today is None:
+        today = today_kst()
+    week_start = week_start_kst(today)
+
+    rows = (
+        db.query(OrderAuditLog)
+          .filter(
+              OrderAuditLog.executed.is_(True),
+              OrderAuditLog.avg_fill_price.isnot(None),
+              OrderAuditLog.filled_quantity > 0,
+          )
+          .order_by(OrderAuditLog.id)
+          .all()
+    )
+
+    buy_queue: dict[str, deque[tuple[int, int]]] = defaultdict(deque)
+    realized_week = 0
+
+    for r in rows:
+        qty   = r.filled_quantity
+        price = r.avg_fill_price
+        if r.side == "BUY":
+            buy_queue[r.symbol].append((qty, price))
+            continue
+        if r.side != "SELL":
+            continue
+
+        remaining = qty
+        sell_pnl = 0
+        q = buy_queue[r.symbol]
+        while remaining > 0 and q:
+            buy_qty, buy_price = q[0]
+            take = min(remaining, buy_qty)
+            sell_pnl += (price - buy_price) * take
+            remaining -= take
+            if take == buy_qty:
+                q.popleft()
+            else:
+                q[0] = (buy_qty - take, buy_price)
+
+        ts = r.created_at
+        if ts is None:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        ts_date = ts.astimezone(KST).date()
+        if week_start <= ts_date <= today:
+            realized_week += sell_pnl
+
+    return realized_week
+
+
+def count_consecutive_losing_trades(
+    db:        Session,
+    *,
+    lookback:  int = 50,
+) -> int:
+    """가장 최근의 SELL 매칭(=closed trade)부터 연속해서 손실인 거래 수.
+
+    예: 최근 SELL부터 역순으로 (lose, lose, win, lose, lose) → 2.
+    이익(>=0)이 등장하면 거기서 멈춘다.
+
+    `lookback`이 너무 작으면 의미 있는 카운트가 안 나올 수 있어 default 50.
+    수수료/세금 미반영 — pnl == 0인 break-even은 손실로 분류하지 않음 (>0 not
+    required, exact 0은 win 쪽으로 묶이지 않고 별도, 단순 < 0 검사).
+
+    SELL이 BUY와 매칭되지 않은 naked SELL은 무시 (matched_qty=0이면 skip).
+    부분 매칭(예: SELL 10주 중 7주만 매칭)은 매칭된 부분의 PnL로만 평가.
+    """
+    if lookback <= 0:
+        return 0
+
+    rows = (
+        db.query(OrderAuditLog)
+          .filter(
+              OrderAuditLog.executed.is_(True),
+              OrderAuditLog.avg_fill_price.isnot(None),
+              OrderAuditLog.filled_quantity > 0,
+          )
+          .order_by(OrderAuditLog.id)
+          .all()
+    )
+
+    # 1패스: 모든 closed trade의 PnL을 시간순으로 모은다.
+    buy_queue: dict[str, deque[tuple[int, int]]] = defaultdict(deque)
+    closed_trade_pnls: list[int] = []
+
+    for r in rows:
+        qty   = r.filled_quantity
+        price = r.avg_fill_price
+        if r.side == "BUY":
+            buy_queue[r.symbol].append((qty, price))
+            continue
+        if r.side != "SELL":
+            continue
+        remaining = qty
+        sell_pnl  = 0
+        matched   = 0
+        q = buy_queue[r.symbol]
+        while remaining > 0 and q:
+            buy_qty, buy_price = q[0]
+            take = min(remaining, buy_qty)
+            sell_pnl += (price - buy_price) * take
+            matched  += take
+            remaining -= take
+            if take == buy_qty:
+                q.popleft()
+            else:
+                q[0] = (buy_qty - take, buy_price)
+        if matched > 0:
+            closed_trade_pnls.append(sell_pnl)
+
+    # 2패스: 뒤에서부터 trailing — pnl < 0인 동안 카운트.
+    tail = closed_trade_pnls[-lookback:]
+    count = 0
+    for pnl in reversed(tail):
+        if pnl < 0:
+            count += 1
+        else:
+            break
+    return count

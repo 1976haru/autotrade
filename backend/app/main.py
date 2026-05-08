@@ -9,8 +9,10 @@ from app.api.routes_approvals import router as approvals_router
 from app.api.routes_audit import router as audit_router
 from app.api.routes_backtest import router as backtest_router
 from app.api.routes_broker import router as broker_router
+from app.api.routes_explainability import router as explainability_router
 from app.api.routes_live_engine import router as live_engine_router
 from app.api.routes_market import router as market_router
+from app.api.routes_paper import router as paper_router
 from app.api.routes_reconciliation import router as reconciliation_router
 from app.api.routes_risk import router as risk_router
 from app.api.routes_futures import router as futures_router
@@ -75,6 +77,8 @@ app.include_router(agents_router, prefix="/api")
 app.include_router(watchlists_router, prefix="/api")
 app.include_router(themes_router, prefix="/api")
 app.include_router(governance_router, prefix="/api")
+app.include_router(explainability_router, prefix="/api")
+app.include_router(paper_router, prefix="/api")
 
 
 @app.get("/")

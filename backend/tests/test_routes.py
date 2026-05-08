@@ -59,9 +59,14 @@ def test_risk_policy_returns_defaults(client):
 def test_emergency_stop_toggles_flag(client):
     res = client.post("/api/risk/emergency-stop", json={"enabled": True})
     assert res.status_code == 200
-    assert res.json() == {"emergency_stop": True}
+    body = res.json()
+    assert body["emergency_stop"] is True
+    # #37: 응답에 level 필드도 carry. enabled=True + level 미지정은 LEVEL_1.
+    assert body["level"] == "LEVEL_1"
     res = client.post("/api/risk/emergency-stop", json={"enabled": False})
-    assert res.json() == {"emergency_stop": False}
+    body = res.json()
+    assert body["emergency_stop"] is False
+    assert body["level"] == "OFF"
 
 
 # ---------- emergency-stop audit trail ----------
