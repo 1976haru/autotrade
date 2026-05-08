@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Btn, Card, Inp, SectionLabel, StatBox } from "../common";
 import { fmtKRW, pnlColor } from "../../utils/format";
 import { useBacktest } from "../../store/useBacktest";
+import { backendApi } from "../../services/backend/client";
 
 const DEFAULT_FORM = {
   symbol:       "005930",
@@ -97,6 +98,179 @@ export function EquityCurve({ trades, height = 160 }) {
       </text>
       <text x={width - 4} y={zeroY + 3} textAnchor="end" fontSize="9" fill="#475569">0</text>
     </svg>
+  );
+}
+
+
+/**
+ * Monte Carlo risk simulation 카드 (#26).
+ * "주문 신호 아님 / 전략 리스크 검증" 배지 항상 노출. BUY/SELL 버튼 0건.
+ */
+export function MonteCarloCard({ run }) {
+  const [result, setResult] = useState(null);
+  const [busy,   setBusy]   = useState(false);
+  const [err,    setErr]    = useState("");
+  const [method, setMethod] = useState("shuffle");
+  const [iters,  setIters]  = useState(1000);
+
+  const handleRun = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      const trades = (run.trades || []).map((t) => ({ pnl: t.pnl }));
+      const out = await backendApi.monteCarlo({
+        trades,
+        config: {
+          method, iterations: Number(iters), seed: 42,
+          initial_cash: run.initial_cash,
+          ruin_drawdown_pct: -0.5,
+        },
+      });
+      setResult(out);
+    } catch (e) {
+      setErr(e.message || "Monte Carlo 실행 실패");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const flagColor = ({
+    PASS: "#22c55e", CAUTION: "#fbbf24", FAIL: "#ef4444",
+  })[result?.promotion_risk_flag] || "#94a3b8";
+
+  return (
+    <Card>
+      <div data-testid="monte-carlo-card">
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+          <SectionLabel>🎲 Monte Carlo 리스크 검증</SectionLabel>
+          <span data-testid="mc-not-order-badge"
+                style={{
+                  fontSize: 9, fontWeight: 700, letterSpacing: "0.04em",
+                  padding: "2px 6px", borderRadius: 3,
+                  background: "#7f1d1d33", color: "#fca5a5",
+                  border: "1px solid #ef444466",
+                }}>
+            주문 신호 아님 · 전략 리스크 검증
+          </span>
+        </div>
+
+        <div style={{
+          fontSize: 11, color: "#94a3b8", lineHeight: 1.5, marginBottom: 8,
+          padding: "6px 8px", background: "#0c2035", borderRadius: 3,
+        }}>
+          거래 순서를 섞거나 복원추출해 N회 시뮬. 운 좋게 나온 백테스트인지,
+          최악 5% 시나리오의 MDD / 파산위험을 검증합니다.
+          <b> Monte Carlo 결과만으로 전략 승격 금지</b> — Backtest, Walk-forward,
+          Data Quality, Paper/Shadow와 함께 평가하세요.
+        </div>
+
+        <div style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center" }}>
+          <select value={method} onChange={(e) => setMethod(e.target.value)}
+                  style={{
+                    background: "var(--c-surface)", color: "var(--c-text)",
+                    border: "1px solid var(--c-border-strong)",
+                    borderRadius: 4, padding: "6px 8px", fontSize: 11,
+                  }}>
+            <option value="shuffle">shuffle (순서만)</option>
+            <option value="bootstrap">bootstrap (복원추출)</option>
+            <option value="block_bootstrap">block bootstrap</option>
+          </select>
+          <select value={iters} onChange={(e) => setIters(e.target.value)}
+                  style={{
+                    background: "var(--c-surface)", color: "var(--c-text)",
+                    border: "1px solid var(--c-border-strong)",
+                    borderRadius: 4, padding: "6px 8px", fontSize: 11,
+                  }}>
+            <option value="500">500회</option>
+            <option value="1000">1000회</option>
+            <option value="5000">5000회</option>
+          </select>
+          <Btn small onClick={handleRun} disabled={busy}>
+            {busy ? "실행 중…" : "Monte Carlo 실행"}
+          </Btn>
+        </div>
+
+        {err && (
+          <div style={{ fontSize: 11, color: "#fca5a5", marginBottom: 6 }}>{err}</div>
+        )}
+
+        {!result && !busy && (
+          <div data-testid="mc-empty"
+               style={{
+                 textAlign: "center", padding: "16px 8px",
+                 fontSize: 11, color: "#475569",
+                 background: "#0c2035", borderRadius: 4,
+                 border: "1px dashed #1a3a5c",
+               }}>
+            아직 실행되지 않았습니다. 위에서 method / 횟수를 고른 뒤 실행하세요.
+          </div>
+        )}
+
+        {result && (
+          <div data-testid="mc-result">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr",
+                          textAlign: "center", gap: 8, marginBottom: 10 }}>
+              <StatBox label="파산위험"
+                       value={`${(result.risk_of_ruin * 100).toFixed(1)}%`}
+                       color={result.risk_of_ruin >= 0.05 ? "#ef4444" : "#22c55e"} />
+              <StatBox label="최악 5% MDD"
+                       value={fmtKRW(result.worst_5pct_avg_mdd)}
+                       color="#ef4444" />
+              <StatBox label="p05 PnL"
+                       value={fmtKRW(result.p05_total_pnl)}
+                       color={pnlColor(result.p05_total_pnl)} />
+              <StatBox label="p95 MDD"
+                       value={fmtKRW(result.p95_max_drawdown)}
+                       color="#ef4444" />
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr",
+                          textAlign: "center", gap: 8, marginBottom: 10 }}>
+              <StatBox label="중앙값 자산"
+                       value={fmtKRW(result.median_final_equity)}
+                       color="#7dd3fc" />
+              <StatBox label="최장 연속손실"
+                       value={`${result.longest_losing_streak}회`}
+                       color="#ef4444" />
+              <StatBox label="시뮬"
+                       value={`${result.iterations}회`}
+                       color="#94a3b8" />
+            </div>
+
+            <div style={{ display: "flex", gap: 8, alignItems: "center",
+                          paddingTop: 8, borderTop: "1px solid #0c2035",
+                          flexWrap: "wrap" }}>
+              <span data-testid="mc-promotion-flag"
+                    style={{
+                      fontSize: 11, fontWeight: 700, padding: "3px 8px",
+                      borderRadius: 3, color: flagColor,
+                      background: `${flagColor}22`,
+                      border: `1px solid ${flagColor}66`,
+                    }}>
+                {result.promotion_risk_flag}
+              </span>
+              <span style={{ fontSize: 10, color: "#94a3b8" }}>
+                stability: <b style={{ color: "#cbd5e1" }}>{result.stability_grade}</b>
+              </span>
+              <span style={{ fontSize: 10, color: "#475569" }}>
+                ({result.config.method} · seed {result.config.seed ?? "—"})
+              </span>
+            </div>
+
+            {result.warnings && result.warnings.length > 0 && (
+              <div data-testid="mc-warnings"
+                   style={{ marginTop: 8, paddingTop: 8,
+                            borderTop: "1px solid #0c2035",
+                            fontSize: 11, color: "#fbbf24" }}>
+                {result.warnings.map((w, i) => (
+                  <div key={i} style={{ marginBottom: 2 }}>⚠ {w}</div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Card>
   );
 }
 
@@ -496,6 +670,8 @@ export function Backtest() {
               </div>
             )}
           </Card>
+
+          {run.trades.length > 0 && <MonteCarloCard run={run} />}
 
           <Card>
             <SectionLabel>체결 ({run.trades.length}건)</SectionLabel>

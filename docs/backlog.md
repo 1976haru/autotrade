@@ -58,6 +58,17 @@
 - 156 머지 후 별도 PR `feature/157-ci-recovery`에서 8 errors 모두 해결. `useRef(Date.now())` → null + useEffect lazy init / 의도된 setState-in-effect는 disable comment + 사유 / time-bucket 필터의 Date.now() snapshot은 `eslint-disable-next-line react-hooks/purity`. 833 테스트 회귀 0.
 - 결과: `npm run lint` → 0 errors / 55 warnings.
 
+### 22. Monte Carlo 후속 (#26 PR 이후)
+- Regime별 Monte Carlo (시장 체제 분리 후 재추출).
+- Strategy 간 correlation 기반 Monte Carlo.
+- Portfolio-level Monte Carlo (여러 전략 합산).
+- Intraday path simulation (분/시간 단위 변동) — tick 데이터 통합 후.
+- Orderbook-aware slippage simulation — 호가 데이터 통합 후.
+- Monte Carlo 결과 영구화 (DB 테이블).
+- Equity sample paths chart (frontend).
+- Strategy Scoreboard에 MC 통합.
+- 자세한 정책: `docs/monte_carlo_policy.md`.
+
 ### 21. Backtest Metrics 후속 (#24 PR 이후)
 - Walk-forward fold별 metric 분포 — 25번 PR.
 - 연속손실 자동 중단 / 사이즈 축소 — LIVE 활성화 PR.

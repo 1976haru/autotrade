@@ -211,6 +211,11 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify({ csv }),
   }),
+  // 26: Monte Carlo risk simulation — read-only 분석.
+  monteCarlo: (req) => backendFetch("/api/backtest/monte-carlo", {
+    method: "POST",
+    body: JSON.stringify(req),
+  }),
   // 22: Theme signals — 후보 필터 전용 (주문 신호 아님).
   themeSignals: ({ limit = 50, grade = null, provider = null } = {}) => {
     const qs = new URLSearchParams({ limit: String(limit) });

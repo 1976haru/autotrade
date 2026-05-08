@@ -585,3 +585,91 @@ async def run_walk_forward_endpoint(
     payload = result.to_dict()
     payload["bars_processed"] = len(bars)
     return WalkForwardResponse(**payload)
+
+
+# ---------- Monte Carlo (#26) ----------
+
+
+class MonteCarloConfigPayload(BaseModel):
+    method:            str   = "shuffle"
+    iterations:        int   = 1000
+    seed:              int | None = None
+    initial_cash:      int   = 10_000_000
+    ruin_drawdown_pct: float = -0.5
+    block_size:        int   = 5
+
+
+class MonteCarloTradePayload(BaseModel):
+    """Monte Carlo 입력용 단순 trade — pnl만 필수."""
+    pnl: int
+
+
+class MonteCarloRequest(BaseModel):
+    """trades를 직접 보내거나 backtest_run_id로 저장된 결과 조회.
+
+    둘 중 정확히 하나만. backtest_run_id 경로는 BacktestRun.trades_json에서
+    pnl만 추출해 시뮬레이션. 신규 broker 호출 / 주문 결정 0건.
+    """
+    trades:           list[MonteCarloTradePayload] | None = None
+    backtest_run_id:  int | None = None
+    config:           MonteCarloConfigPayload = Field(default_factory=MonteCarloConfigPayload)
+
+
+class MonteCarloResponse(BaseModel):
+    config:                  dict
+    n_trades:                int
+    iterations:              int
+    p05_total_pnl:           int
+    p50_total_pnl:           int
+    p95_total_pnl:           int
+    median_final_equity:     int
+    p05_max_drawdown:        int
+    p50_max_drawdown:        int
+    p95_max_drawdown:        int
+    worst_5pct_avg_mdd:      int
+    longest_losing_streak:   int
+    ruin_count:              int
+    risk_of_ruin:            float | None
+    promotion_risk_flag:     str
+    stability_grade:         str
+    warnings:                list[str]
+
+
+@router.post("/monte-carlo", response_model=MonteCarloResponse)
+def run_monte_carlo_endpoint(
+    req: MonteCarloRequest,
+    db: Session = Depends(get_db),
+) -> MonteCarloResponse:
+    from app.backtest.monte_carlo import MonteCarloConfig, run_monte_carlo
+
+    has_trades = req.trades is not None
+    has_run_id = req.backtest_run_id is not None
+    if has_trades and has_run_id:
+        raise HTTPException(
+            status_code=400,
+            detail="provide either `trades` or `backtest_run_id`, not both",
+        )
+    if not has_trades and not has_run_id:
+        raise HTTPException(
+            status_code=400,
+            detail="must provide either `trades` or `backtest_run_id`",
+        )
+
+    if has_trades:
+        trade_objs = list(req.trades)
+    else:
+        run = db.execute(
+            select(BacktestRun).where(BacktestRun.id == req.backtest_run_id)
+        ).scalar_one_or_none()
+        if run is None:
+            raise HTTPException(status_code=404, detail="backtest run not found")
+        # trades_json에서 pnl만 추출 — Monte Carlo는 거래 손익만 필요.
+        trade_objs = [{"pnl": int(t.get("pnl", 0) or 0)} for t in (run.trades_json or [])]
+
+    try:
+        cfg = MonteCarloConfig(**req.config.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    result = run_monte_carlo(trade_objs, config=cfg)
+    return MonteCarloResponse(**result.to_dict())
