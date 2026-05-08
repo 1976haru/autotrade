@@ -86,10 +86,14 @@ describe("<VirtualOrderLedgerCard>", () => {
   it("status chips show counts from summary by_status", async () => {
     backendApi.virtualOrdersSummary.mockResolvedValueOnce(_SUMMARY);
     const { findByTestId } = render(<VirtualOrderLedgerCard />);
+    // findByTestId resolves as soon as the chip shell exists — but the count
+    // text "NEW 2" only appears after `setSummary(...)` propagates. On slower
+    // runners (CI Linux) this races. waitFor polls the actual textContent so
+    // the assertion is robust regardless of state propagation timing.
     const newChip = await findByTestId("virtual-filter-NEW");
-    expect(newChip.textContent).toContain("NEW 2");
+    await waitFor(() => expect(newChip.textContent).toContain("NEW 2"));
     const filledChip = await findByTestId("virtual-filter-FILLED");
-    expect(filledChip.textContent).toContain("FILLED 6");
+    await waitFor(() => expect(filledChip.textContent).toContain("FILLED 6"));
   });
 
   it("refresh button re-queries both endpoints", async () => {
