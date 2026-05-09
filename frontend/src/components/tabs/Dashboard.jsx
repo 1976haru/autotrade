@@ -25,6 +25,8 @@ import { WatchlistSummaryTile } from "./WatchlistSummaryTile";
 import { ThemeSummaryTile } from "./ThemeSummaryTile";
 import { ShadowSummaryCard, useShadowSummary } from "./ShadowSummaryCard";
 import { AiAssistSummaryTile, useAiAssistSummary } from "./AiAssistProposalCard";
+import { BackendDataSourceBanner } from "../common/DataSourceBanner";
+import { useBackendStatus } from "../../store/useBackendStatus";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
 // AuditLog timeline에서도 mode badge로 쓰기 위해 공유. Dashboard는 re-export
@@ -512,11 +514,33 @@ export function Dashboard({
   // 클릭 시 onJumpTab("approve")로 결재 탭으로 이동. mount 시 1회 fetch.
   const _aiAssist = useAiAssistSummary();
 
+  // #59 Frontend Integration — Dashboard 상단에 데이터 출처 표시. backend가
+  // unreachable이면 demo / offline mode label 자동 분기, friendlyErrorMessage가
+  // 'Failed to fetch' 원문을 사용자 친화 메시지로 변환.
+  const _backendStatus = useBackendStatus();
+
   return (
     // 222: 레이아웃은 .dashboard-body 클래스가 결정. 모바일은 세로 스택,
     // PC(≥768px)는 auto-fit grid로 카드들이 2~3열로 흐른다. 인라인 style은
     // class CSS를 이기므로 layout 관련 인라인 속성은 두지 않는다.
     <div className="dashboard-body">
+
+      {/* #59: 데이터 출처 banner — backend unreachable 시 demo / offline 자동 분기.
+          (BackendOfflineBanner는 App level full-screen 안내; 본 banner는
+          Dashboard 컨텍스트에서 데이터 출처를 한 줄로 라벨링.) */}
+      {(_backendStatus.error || _backendStatus.loading === false) && (
+        <div className="dashboard-span-full">
+          <BackendDataSourceBanner
+            loading={_backendStatus.loading}
+            error={_backendStatus.error}
+            mode="backend"
+            testId="dashboard-data-source-banner"
+            hint={_backendStatus.error
+              ? "본 카드의 일부 숫자는 mock / virtual 또는 빈 상태일 수 있습니다."
+              : ""}
+          />
+        </div>
+      )}
 
       {/* 230 (UI-002): Hero Summary — 앱명/모드/연결상태/긴급정지/결재대기 한 줄로 */}
       <div className="dashboard-span-full">
