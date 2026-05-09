@@ -124,6 +124,7 @@ CLAUDE.md "기본 비활성화" 원칙. 모두 충족해야 활성화 가능:
 - [`execution_recommender_agent.md`](execution_recommender_agent.md) — Execution Recommender 정책 + ExecutionProposal + precheck/submit (#56)
 - [`daily_report_agent.md`](daily_report_agent.md) — Daily Report Agent 정책 + 투자 조언 아님 invariant (#57)
 - [`daily_report_policy.md`](daily_report_policy.md) — Daily Report 저장 / 보존 / 공유 정책 (#57)
+- [`agent_memory.md`](agent_memory.md) — Agent Memory 학습 저장소 + 민감정보 sanitize 정책
 - [`promotion_policy.md`](promotion_policy.md) — 단계별 승격 + 환경 플래그 매트릭스
 - [`risk_policy.md`](risk_policy.md) — RiskManager AI 가드 단계
 - [`architecture.md`](architecture.md) — 가드 체인 전체 구조

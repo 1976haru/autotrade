@@ -457,6 +457,68 @@ class ShadowTrade(Base):
     ai_decision_meta: Mapped[dict | None]    = mapped_column(JSON, nullable=True)
 
 
+class AgentMemory(Base):
+    """Agent Memory — 과거 운영 사례 / 손실 원인 / 전략 변경 이력 / 운영자 메모를
+    *검색 가능*한 형태로 저장하는 read-only 학습 저장소.
+
+    절대 원칙:
+    - 본 테이블은 *주문 신호*가 아니다. 검색 결과는 BUY/SELL/HOLD 결정을 만들지
+      않으며, RiskManager / PermissionGate / OrderExecutor 우회에 사용 X.
+    - API key / Secret / 계좌번호 / 인증 토큰 / 개인정보를 *저장하지 않는다*
+      (caller인 `app.agents.agent_memory.sanitize_text`가 sanitize 후 INSERT).
+    - 본 row가 `audit_id` 같은 외부 row를 참조해도 *값을 복제*하지 않는다 —
+      caller가 식별자(`source_id`)만 carry하고, 본 테이블은 요약 / lessons /
+      next_action 같은 운영자 친화적 추출본만 보관.
+    """
+
+    __tablename__ = "agent_memory"
+
+    id:           Mapped[int]      = mapped_column(primary_key=True)
+    created_at:   Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+    updated_at:   Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow,
+    )
+
+    # 분류 (검색 필터 대상 — 모두 인덱스)
+    memory_type:  Mapped[str]      = mapped_column(String(32), index=True)
+    # daily_report / risk_incident / strategy_research / backtest_review /
+    # agent_decision / operator_note / loss_post_mortem / lesson_learned
+
+    source_kind:  Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    # daily_report / risk_audit / strategy_research / agent_decision_log /
+    # order_audit / backtest_run / operator (수동 입력)
+
+    source_id:    Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # 원본 row의 PK (참조용 — 값 복제 X)
+
+    # 운영 컨텍스트 (선택, 검색 필터)
+    strategy:     Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    symbol:       Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    mode:         Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+
+    # 평가 (필터)
+    severity:     Mapped[str]      = mapped_column(String(16), default="INFO", index=True)
+    # INFO / WARN / HIGH / CRITICAL
+
+    # 본문 — *민감정보 sanitize 후*에만 저장
+    title:        Mapped[str]      = mapped_column(String(200))
+    summary:      Mapped[str]      = mapped_column(Text)
+    lessons:      Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_action:  Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # 검색용 태그 (JSON list[str])
+    tags:         Mapped[list]     = mapped_column(JSON, default=list)
+
+    # 추가 메타 (JSON; 자유 carry — 단, sanitize 통과해야 함)
+    meta:         Mapped[dict]     = mapped_column(JSON, default=dict)
+
+    # 작성자 (운영자 메모인 경우; agent 자동 생성은 NULL)
+    author:       Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # 운영자가 보관 처리하면 검색에서 default 제외 (수동 toggle)
+    archived:     Mapped[bool]     = mapped_column(Boolean, default=False, index=True)
+
+
 class MarketBar(Base):
     """업스트림에서 가져온 OHLCV 봉의 캐시. (symbol, interval, timestamp)가 유일."""
 
