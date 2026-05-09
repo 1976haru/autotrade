@@ -68,11 +68,14 @@ Agent가 한 번에 *판단·주문*하지 않도록 역할을 분리한다. 단
 
 ### 3.4 StrategyResearcherAgent
 - **목적**: 전략 / 백테스트 메타데이터 분석 + 개선안 제안
-- **입력**: `extra.backtest_summary` (win_rate, profit_factor 등)
-- **출력**: `AgentOutput(decision=REPORT | RECOMMEND)`
-- **금지행동**: broker 호출, 전략 자동 활성화/비활성화 (운영자 수동 결정)
-- **현재 구현**: `backend/app/agents/roles.py::StrategyResearcherAgent`
+- **입력**: `extra.backtest_summary` (win_rate, profit_factor 등) — #51 mock; `extra.researcher_input` (`StrategyResearcherInput`) — #55 deep
+- **출력**: `AgentOutput(decision=REPORT | RECOMMEND)` (#51 mock); `StrategyResearchReport` (markdown + findings + suggestions, `auto_apply_allowed=False`) — #55 deep
+- **금지행동**: broker 호출, 전략 코드 / 파라미터 자동 변경, 자동 활성화/비활성화 (운영자 수동 결정)
+- **현재 구현**:
+  - `backend/app/agents/roles.py::StrategyResearcherAgent` (#51 contract — win_rate / profit_factor 기반 단순 분류)
+  - `backend/app/agents/strategy_researcher.py::StrategyResearcherAgent` (#55 — BacktestRun + walk-forward + Monte Carlo + data quality + promotion gate를 분석해 markdown 리포트 + 구조화된 제안 생성. [`strategy_researcher_agent.md`](strategy_researcher_agent.md))
 - **주문 권한**: ❌
+- **자동 반영 권한**: ❌ (advisory only — `auto_apply_allowed=False` 불변, 모든 제안은 운영자 검토 + 별도 PR + 별도 백테스트 + paper/shadow 절차 필요)
 
 분류 규칙:
 | 조건 | decision |
@@ -217,6 +220,7 @@ RiskManager.evaluate_order  →  PermissionGate.approve  →  OrderExecutor  →
 - [`market_observer_agent.md`](market_observer_agent.md) — Market Observer 정책 + snapshot JSON 구조 (#52)
 - [`news_trend_agent.md`](news_trend_agent.md) — News/Trend Agent 정책 + theme_signals 요약 (#53)
 - [`risk_auditor_agent.md`](risk_auditor_agent.md) — Risk Auditor 정책 + advisory invariant (#54)
+- [`strategy_researcher_agent.md`](strategy_researcher_agent.md) — Strategy Researcher 정책 + 자동 반영 금지 invariant (#55)
 - [`agent_decision_schema.md`](agent_decision_schema.md) — agent decision audit log 스키마 (#187+)
 - [`ai_permission_gate.md`](ai_permission_gate.md) — AI 권한 단계 (#39)
 - [`ai_assisted_trading_policy.md`](ai_assisted_trading_policy.md) — LIVE_AI_ASSIST 흐름 (#44)

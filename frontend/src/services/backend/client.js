@@ -287,6 +287,19 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify(body || {}),
   }),
+  // 55: Strategy Researcher — read-only advisory. 자동 반영 안 됨.
+  strategyResearcherRecent: ({ limit = 20, strategy = null } = {}) => {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (strategy) qs.set("strategy", strategy);
+    return backendFetch(`/api/agents/strategy-researcher/recent?${qs.toString()}`);
+  },
+  strategyResearcherReport: (runId) =>
+    backendFetch(`/api/agents/strategy-researcher/report/${runId}`),
+  strategyResearcherMock: (body) =>
+    backendFetch("/api/agents/strategy-researcher/mock", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
   // 26: Monte Carlo risk simulation — read-only 분석.
   monteCarlo: (req) => backendFetch("/api/backtest/monte-carlo", {
     method: "POST",
