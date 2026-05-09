@@ -211,6 +211,7 @@ RiskManager.evaluate_order  →  PermissionGate.approve  →  OrderExecutor  →
 ## 10. 관련 문서
 
 - [`agent_design.md`](agent_design.md) — Agent 분리 정책 + AI 직접 주문 금지 (#216 등)
+- [`market_observer_agent.md`](market_observer_agent.md) — Market Observer 정책 + snapshot JSON 구조 (#52)
 - [`agent_decision_schema.md`](agent_decision_schema.md) — agent decision audit log 스키마 (#187+)
 - [`ai_permission_gate.md`](ai_permission_gate.md) — AI 권한 단계 (#39)
 - [`ai_assisted_trading_policy.md`](ai_assisted_trading_policy.md) — LIVE_AI_ASSIST 흐름 (#44)
