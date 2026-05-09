@@ -3,6 +3,8 @@
 CLAUDE.md 절대 원칙: **선물 실거래는 영구 비활성**. 본 문서는 가상 환경
 (`FuturesMockBroker` + `FuturesSimulationEngine`)의 산식과 invariant를 정리한다.
 
+> **#46 — 선물 범위는 [`futures_scope.md`](futures_scope.md)에 정의되어 있다.** 1차 범위는 *Simulation Only*이며, 국내선물/옵션 vs 해외선물 비교 + 실거래 진입 전 필수 조건 + AI 선물 권한 정책은 그 문서를 따른다. 본 보고서는 *가상 산식*만 다룬다.
+
 ## 모듈 구성
 
 | 파일 | 역할 |
