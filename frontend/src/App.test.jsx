@@ -1,7 +1,11 @@
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App.jsx";
+import {
+  __resetFeaturesForTest,
+  __setFeatureForTest,
+} from "./config/features.js";
 
 
 // 213: App-level smoke tests. 빈 화면 회귀를 잡기 위한 최소 보호망 — 백엔드가
@@ -105,7 +109,10 @@ vi.mock("./services/backend/client", () => ({
 
 
 describe("<App> smoke", () => {
-  afterEach(() => { cleanup(); });
+  // 50: 본 smoke 테스트는 *모든 탭*이 ErrorBoundary 없이 렌더되는지 검증한다.
+  // futures는 default flag(false)에서 nav에 미노출이라 별도 활성화.
+  beforeEach(() => { __setFeatureForTest("futuresTab", true); });
+  afterEach(() => { cleanup(); __resetFeaturesForTest(); });
 
   it("renders the shell and BottomNav even when every backend call rejects", async () => {
     _activeApi = _offlineApi;

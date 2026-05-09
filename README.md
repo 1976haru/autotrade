@@ -166,6 +166,16 @@ alembic downgrade -1
 | `MARKET_DATA_PROVIDER` | `mock` | 시장 데이터 소스 (`mock` / `yfinance`) |
 | `ANTHROPIC_API_KEY` | (비어있음) | 비어 있으면 AI 라우트는 안내 메시지만 반환 |
 
+### Frontend feature flags (#50)
+
+`frontend/.env` (또는 환경변수)에서 설정. UI 노출 전용 — backend safety flag와 별개.
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `VITE_ENABLE_FUTURES_TAB` | `false` | Futures 탭을 PC TopNav에 노출. 모바일 BottomNav에는 flag=true여도 직접 노출되지 않음 (사용자 혼동 방지). 자세한 정책: [`docs/futures_ui.md`](docs/futures_ui.md) |
+
+**Futures 탭은 기본 비활성**입니다. 실제 선물 주문은 비활성 — 본 UI는 Simulation Only / Read-only 화면입니다.
+
 ## CI
 
 - **Backend CI** (`.github/workflows/backend-ci.yml`) — `backend/` 변경시 ruff + pytest

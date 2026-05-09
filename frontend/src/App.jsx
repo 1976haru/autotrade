@@ -11,7 +11,7 @@ import { Backtest }     from "./components/tabs/Backtest";
 import { AuditLog }     from "./components/tabs/AuditLog";
 import { AISignal }     from "./components/tabs/AISignal";
 import { LiveEngine }   from "./components/tabs/LiveEngine";
-import { Futures }      from "./components/tabs/Futures";
+import { Futures, FuturesDisabledNotice } from "./components/tabs/Futures";
 import { Settings }     from "./components/tabs/Settings";
 import { isPendingStale } from "./utils/format";
 import { emergencyStopOnSince } from "./components/tabs/Dashboard";
@@ -24,6 +24,7 @@ import { useRiskPolicy } from "./store/useRiskPolicy";
 import { useSettings }   from "./store/useSettings";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { BackendOfflineBanner } from "./components/BackendOfflineBanner";
+import { FEATURES } from "./config/features";
 
 export default function App() {
   return (
@@ -69,7 +70,12 @@ function AppShell() {
       case "audit":    return <AuditLog approvals={approvals} />;
       case "signal":   return <AISignal activeStratIds={strategy.activeIds} />;
       case "engine":   return <LiveEngine />;
-      case "futures":  return <Futures />;
+      // 50: Futures 탭은 `FEATURES.futuresTab=false`(기본)이면 navigation에서
+      // 숨겨진다. URL/state 강제 접근 시에는 `<FuturesDisabledNotice />`로
+      // 안전 안내 화면을 보여줘 사용자가 비활성 상태를 명확히 인지하도록 한다.
+      case "futures":  return FEATURES.futuresTab
+        ? <Futures />
+        : <FuturesDisabledNotice />;
       case "config":   return <Settings settings={settings} />;
       default:       return null;
     }
