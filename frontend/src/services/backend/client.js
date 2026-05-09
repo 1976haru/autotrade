@@ -287,6 +287,22 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify(body || {}),
   }),
+  // 56: Execution Recommender — 매수/매도 *제안*만. 직접 주문 X.
+  executionRecommenderRecommend: (body) =>
+    backendFetch("/api/agents/execution-recommender/recommend", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
+  executionRecommenderPrecheck: (proposal) =>
+    backendFetch("/api/agents/execution-recommender/precheck", {
+      method: "POST",
+      body: JSON.stringify({ proposal }),
+    }),
+  executionRecommenderSubmit: (proposal) =>
+    backendFetch("/api/agents/execution-recommender/submit", {
+      method: "POST",
+      body: JSON.stringify({ proposal }),
+    }),
   // 55: Strategy Researcher — read-only advisory. 자동 반영 안 됨.
   strategyResearcherRecent: ({ limit = 20, strategy = null } = {}) => {
     const qs = new URLSearchParams({ limit: String(limit) });

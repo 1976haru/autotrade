@@ -27,7 +27,7 @@ AI는 항상 **운영자 또는 결정론적 코드의 입력 신호**로만 작
 
 | 에이전트 | 역할 | 주문 권한 | 현재 구현 | 위치 |
 |---|---|---|---|---|
-| Execution Recommender | 종목 분석 + 점수 + 진입가/목표가/손절가 제안 | 없음 | ✓ 구현 | `/api/ai/analyze` |
+| Execution Recommender | 종목 분석 + 점수 + 진입가/목표가/손절가 제안 (#56 enhanced: ExecutionProposal + precheck + submit, *직접 주문 X*) | 없음 (advisory only — proposal만 생성, 큐 등록은 ai.assist 위임) | ✓ 구현 (#56) | `app/agents/execution_recommender.py`, [`execution_recommender_agent.md`](execution_recommender_agent.md) |
 | Market Observer | 시장지수 / 거래대금 / 급등락 / 섹터 흐름 / 데이터 freshness / 변동성 감시 | 없음 | ✓ 구현 (#52) | `app/agents/market_observer.py`, [`market_observer_agent.md`](market_observer_agent.md) |
 | News/Trend Agent | 뉴스 / 트렌드 / 공시 키워드 요약 + theme_signals 요약 | 없음 | ✓ 구현 (#53) | `app/agents/news_trend_agent.py`, [`news_trend_agent.md`](news_trend_agent.md) |
 | Strategy Researcher | 전략 후보 + 백테스트 개선안 제안 | 없음 (advisory only, 자동 반영 X) | ✓ 구현 (#55) | `app/agents/strategy_researcher.py`, [`strategy_researcher_agent.md`](strategy_researcher_agent.md) |
@@ -122,6 +122,7 @@ CLAUDE.md "기본 비활성화" 원칙. 모두 충족해야 활성화 가능:
 - [`news_trend_agent.md`](news_trend_agent.md) — News/Trend Agent 정책 + theme_signals 요약 (#53)
 - [`risk_auditor_agent.md`](risk_auditor_agent.md) — Risk Auditor 정책 + advisory invariant (#54)
 - [`strategy_researcher_agent.md`](strategy_researcher_agent.md) — Strategy Researcher 정책 + 자동 반영 금지 invariant (#55)
+- [`execution_recommender_agent.md`](execution_recommender_agent.md) — Execution Recommender 정책 + ExecutionProposal + precheck/submit (#56)
 - [`promotion_policy.md`](promotion_policy.md) — 단계별 승격 + 환경 플래그 매트릭스
 - [`risk_policy.md`](risk_policy.md) — RiskManager AI 가드 단계
 - [`architecture.md`](architecture.md) — 가드 체인 전체 구조
