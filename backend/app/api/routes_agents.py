@@ -28,8 +28,15 @@ from app.agents.market_observer import (
     observe_market,
 )
 from app.agents.market_regime import classify_market_regime
+from app.agents.news_trend_agent import (
+    load_recent_theme_signals,
+    summarize_themes,
+)
 from app.agents.roles import build_default_registry
 from app.agents.signal_quality import evaluate_signal_quality
+from app.db.session import get_db
+from fastapi import Depends, Query
+from sqlalchemy.orm import Session as _Session
 from app.agents.operating_loop import (
     OPERATING_STAGES,
     build_intraday_summary,
@@ -527,3 +534,41 @@ def post_market_observer(req: MarketObserverIn) -> MarketObserverOut:
     )
     snap = observe_market(inp)
     return MarketObserverOut(**snap.to_dict())
+
+
+# ====================================================================
+# #53: News / Trend Agent — context-only (NOT an order signal)
+# ====================================================================
+
+
+class NewsTrendOut(BaseModel):
+    recommended_action:       str
+    summary_lines:            list[str]
+    top_themes:               list[dict]
+    rising_keywords:          list[dict]
+    related_candidates:       list[dict]
+    caution_themes:           list[dict]
+    overheating_warnings:     list[str]
+    used_for_order_warnings:  list[str]
+    total_signal_count:       int
+    window_seconds:           int | None = None
+    is_order_signal:          bool
+    created_at:               str
+
+
+@router.get("/news-trend", response_model=NewsTrendOut)
+def get_news_trend(
+    limit:     int = Query(100, ge=1, le=500),
+    min_score: int | None = Query(None, ge=0, le=100),
+    db:        _Session = Depends(get_db),
+) -> NewsTrendOut:
+    """ThemeSignal 테이블을 read-only로 요약. **broker 호출 0건, audit row
+    0건, INSERT/UPDATE/DELETE 0건, 외부 API 호출 0건.**
+
+    응답의 `is_order_signal`은 항상 False — 본 요약은 *주문 신호가 아님*을
+    명시. caller는 BUY/SELL/HOLD를 추론하지 *말고* 후보 필터 / Agent context
+    로만 사용.
+    """
+    signals = load_recent_theme_signals(db, limit=limit, min_score=min_score)
+    out = summarize_themes(signals)
+    return NewsTrendOut(**out.to_dict())
