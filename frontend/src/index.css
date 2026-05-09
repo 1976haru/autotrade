@@ -183,6 +183,56 @@ code {
   .dashboard-span-full {
     grid-column: 1 / -1;
   }
+
+  /* UI Final Pass: PC 3열 관제 대시보드 helper.
+   * Dashboard wrapper에 .dashboard-3col을 추가하면 좌(운영 제어) / 중(Agent +
+   * KPI) / 우(리스크 + 상태) 명시적 3열 grid로 표시. 자식 카드는 .dashboard-col-
+   * left / center / right 중 하나를 wrapper로 받아 해당 열에 배치된다.
+   *
+   * 모바일에서는 auto-fit / 1열 그대로 (본 클래스는 ≥768px 미디어쿼리 안에서만
+   * 적용). 카드를 직접 row 구조로 강제하지 않고 hint 클래스만 제공해 점진 적용
+   * 가능 — 본 PR에서는 클래스만 추가하고, 운영자가 Dashboard.jsx 카드 배치를
+   * 차후 PR에서 wrap 변경. */
+  .dashboard-3col {
+    display: grid;
+    grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.4fr) minmax(280px, 1fr);
+    gap: 12px;
+    align-items: start;
+  }
+  .dashboard-col-left,
+  .dashboard-col-center,
+  .dashboard-col-right {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+  }
+  /* 화면 폭이 부족할 때(노트북 좁은 화면)는 2열 → 1열로 자연 축소.
+   * 1280px 이하에서는 left/center를 위에, right를 아래로 stack. */
+  @media (max-width: 1100px) {
+    .dashboard-3col {
+      grid-template-columns: 1fr 1.4fr;
+    }
+    .dashboard-col-right {
+      grid-column: 1 / -1;
+    }
+  }
+}
+
+/* UI Final Pass: 모바일에서 .dashboard-3col / .dashboard-col-* 는 grid 효과를
+ * 적용하지 않고 일반 flex column처럼 동작 — 1열 stack. 모바일은 .dashboard-pc-only
+ * 와 함께 핵심 카드만 노출. */
+@media (max-width: 767px) {
+  .dashboard-3col {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .dashboard-col-left,
+  .dashboard-col-center,
+  .dashboard-col-right {
+    display: contents;  /* 자식 카드를 부모 .dashboard-3col flex에 직접 노출 */
+  }
 }
 
 /* ============================================================
