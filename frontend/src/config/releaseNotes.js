@@ -20,6 +20,9 @@ export const RELEASE_NOTES = [
       "Daily Report Agent + Strategy Researcher + Risk Auditor + Execution " +
         "Recommender + Agent Memory 통합",
       "실거래와 AI 자동실행은 *기본 비활성화* — 운영자 별도 옵트인 절차 필요",
+      "배포 / 접속 / 보안 정책 문서화 (Local / LAN / Tailscale / Pages 4 mode)",
+      "베타 배포 + 자동 업데이트 단계 계획 — 1단계 수동 다운로드, 2단계 알림, " +
+        "3단계 자동 (후속 PR)",
     ],
     safetyNotes: [
       "이 버전은 *실거래 자동매매 허가 버전이 아닙니다*.",

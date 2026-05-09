@@ -11,6 +11,7 @@ import {
 } from "../common/VersionBadge";
 import { UserGuideCard } from "../common/UserGuideModal";
 import { FaqCard, HelpFeedbackPanel } from "../common/HelpFeedbackPanel";
+import { DeploymentInfoCard } from "../common/DeploymentInfoCard";
 import { APP_INFO, appVersionLine } from "../../config/appInfo";
 import { latestReleaseNote } from "../../config/releaseNotes";
 
@@ -226,6 +227,9 @@ export function Settings({ settings }) {
 
       {/* 버전 / 공지 — VersionBadge 클릭으로 release notes 재오픈 */}
       <VersionInfoCard />
+
+      {/* 배포 / 접속 안내 — Local / LAN / Tailscale / Pages 자동 감지 + 정책 */}
+      <DeploymentInfoCard />
 
       {/* 사용자 가이드 — A4 1장 초보자 가이드 modal */}
       <UserGuideCard />
