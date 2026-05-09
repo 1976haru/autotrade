@@ -29,7 +29,10 @@ describe("<HeroSummaryCard>", () => {
       expect(getByTestId("hero-summary")).toBeTruthy();
     });
     expect(getByTestId("hero-mode-badge").textContent).toContain("SIMULATION");
-    expect(getByTestId("hero-summary").textContent).toContain("AI 단타 자동매매");
+    // Product branding v1: "에이전트 트레이더 v1" + version line "Agent Trader v1 v1.0.0"
+    expect(getByTestId("hero-summary").textContent).toContain("에이전트 트레이더 v1");
+    expect(getByTestId("hero-app-version-line").textContent)
+      .toMatch(/Agent Trader v1\s+v1\.0\.0/);
   });
 
   it("shows Demo Mode pill when backend is unreachable", () => {

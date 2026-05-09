@@ -5,6 +5,7 @@ import {
   StatusPill,
 } from "../common/primitives";
 import { useBackendStatus } from "../../store/useBackendStatus";
+import { APP_INFO, appVersionLine } from "../../config/appInfo";
 
 // 230 (UI-002): Premium hero card. 사용자가 앱을 열자마자 핵심 5가지를 인지:
 //   1) 앱 이름  2) 운용 모드  3) Demo/Backend 연결  4) 마지막 업데이트  5) 핵심 alert
@@ -69,14 +70,23 @@ export function HeroSummaryCard({
                boxShadow: "var(--sh-2)",
              }}>
       <PageHeader
-        title="AI 단타 자동매매"
-        subtitle="지능형 에이전트가 시장을 분석하고, 나는 핵심만 확인하는 자동매매 대시보드"
+        title={APP_INFO.displayName}
+        subtitle={APP_INFO.tagline}
         right={
           <StatusBadge status={connStatus} testId="hero-mode-badge">
             {modeMeta.label}
           </StatusBadge>
         }
       />
+      <div data-testid="hero-app-version-line"
+           style={{
+             marginTop: 4, fontSize: "var(--fs-xs)",
+             color: "var(--c-text-3)",
+             fontFamily: "monospace",
+             letterSpacing: "0.02em",
+           }}>
+        {appVersionLine()}
+      </div>
 
       <div style={{
         display: "flex", flexWrap: "wrap", gap: "var(--s-2)",
