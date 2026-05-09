@@ -42,7 +42,7 @@ jobs:
         run: |
           cd backend
           set -o pipefail
-          pytest --tb=long -rN 2>&1 | tee pytest-out.log
+          pytest --tb=long -rfE 2>&1 | tee pytest-out.log
           rc=${PIPESTATUS[0]}
           if [ "$rc" -ne 0 ]; then
             # Emit annotation per FAILED/ERROR line. Cap at 20 to stay under
