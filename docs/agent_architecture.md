@@ -92,15 +92,20 @@ Agent가 한 번에 *판단·주문*하지 않도록 역할을 분리한다. 단
 - **주문 권한**: ❌
 
 ### 3.6 ExecutionRecommenderAgent (가장 권한이 높지만 *여전히* 주문 X)
-- **목적**: 매수 / 매도 후보 *제안*만 — approval queue 후보 payload 생성까지
-- **입력**: `market_state`, `recent_signals`, `watchlist`
-- **출력**: `AgentOutput(decision=APPROVAL_CANDIDATE | NO_OP)` + `approval_candidate` payload
+- **목적**: 매수 / 매도 후보 *제안*만 — ExecutionProposal 생성 + precheck + 큐 등록 helper (모두 sanctioned ai.assist 흐름에 위임)
+- **입력**: `market_state`, `recent_signals`, `watchlist` (#51 mock); `RecommendInput.Candidate` (#56 deep)
+- **출력**: `AgentOutput(decision=APPROVAL_CANDIDATE | NO_OP)` + `approval_candidate` payload (#51 mock); `RecommendResult` (`ExecutionProposal` tuple, `auto_apply_allowed=False`, `is_order_signal=False`) — #56 deep
 - **금지행동**:
   - **broker / OrderExecutor / route_order 호출 0건** (정적 grep 가드)
-  - **approval queue *등록* 금지** (caller 책임 — 별도 흐름)
+  - **place_order / cancel_order 호출 0건** (정적 grep 가드 — `broker.place_order(` / `broker.cancel_order(` substring 검사)
+  - **OrderRequest 직접 import / 생성 금지** — ExecutionProposal은 *별도* dataclass (정적 grep 가드)
+  - **approval queue *직접* 등록 금지** — `submit_proposal`은 `app.ai.assist.submit_candidate`에 위임
   - AI key / Secret 사용 금지 — deterministic mock만 (실 LLM 통합은 후속 옵트인)
-- **현재 구현**: `backend/app/agents/roles.py::ExecutionRecommenderAgent`
+- **현재 구현**:
+  - `backend/app/agents/roles.py::ExecutionRecommenderAgent` (#51 contract — 단순 mock approval_candidate payload)
+  - `backend/app/agents/execution_recommender.py::ExecutionRecommenderAgent` (#56 — `ExecutionProposal` + `precheck_proposal` + `submit_proposal` 위임. [`execution_recommender_agent.md`](execution_recommender_agent.md))
 - **주문 권한**: ❌ (`can_execute_order=False` 불변)
+- **자동 큐 등록 권한**: ❌ — `submit_proposal`은 운영자가 *명시적*으로 호출해야 작동, 그 안에서도 ai.assist의 AI Permission Gate(#39) 평가를 통과해야만 PendingApproval 생성
 
 `approval_candidate` payload 구조 (caller가 [`app.ai.assist.submit_candidate`](../backend/app/ai/assist.py)#44 같은 별도 흐름에 전달):
 
@@ -221,6 +226,7 @@ RiskManager.evaluate_order  →  PermissionGate.approve  →  OrderExecutor  →
 - [`news_trend_agent.md`](news_trend_agent.md) — News/Trend Agent 정책 + theme_signals 요약 (#53)
 - [`risk_auditor_agent.md`](risk_auditor_agent.md) — Risk Auditor 정책 + advisory invariant (#54)
 - [`strategy_researcher_agent.md`](strategy_researcher_agent.md) — Strategy Researcher 정책 + 자동 반영 금지 invariant (#55)
+- [`execution_recommender_agent.md`](execution_recommender_agent.md) — Execution Recommender 정책 + ExecutionProposal + precheck/submit (#56)
 - [`agent_decision_schema.md`](agent_decision_schema.md) — agent decision audit log 스키마 (#187+)
 - [`ai_permission_gate.md`](ai_permission_gate.md) — AI 권한 단계 (#39)
 - [`ai_assisted_trading_policy.md`](ai_assisted_trading_policy.md) — LIVE_AI_ASSIST 흐름 (#44)
