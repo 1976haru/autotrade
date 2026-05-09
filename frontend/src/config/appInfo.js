@@ -37,3 +37,13 @@ export const APP_INFO = Object.freeze({
 export function appVersionLine() {
   return `${APP_INFO.displayEn} v${APP_INFO.version}`;
 }
+
+
+// Help / Feedback 창의 mailto 대상. *공개 가능* 운영 메일 주소만 사용.
+// .env.example의 VITE_FEEDBACK_EMAIL 참조 — Secret 아님.
+// 미설정 시 빈 문자열 → UI는 mailto 대신 클립보드 복사만 노출.
+export function feedbackEmail() {
+  if (typeof import.meta === "undefined") return "";
+  const v = import.meta.env?.VITE_FEEDBACK_EMAIL;
+  return typeof v === "string" ? v.trim() : "";
+}

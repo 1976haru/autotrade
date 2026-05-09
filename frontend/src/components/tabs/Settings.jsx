@@ -10,6 +10,7 @@ import {
   VersionBadge,
 } from "../common/VersionBadge";
 import { UserGuideCard } from "../common/UserGuideModal";
+import { FaqCard, HelpFeedbackPanel } from "../common/HelpFeedbackPanel";
 import { APP_INFO, appVersionLine } from "../../config/appInfo";
 import { latestReleaseNote } from "../../config/releaseNotes";
 
@@ -228,6 +229,13 @@ export function Settings({ settings }) {
 
       {/* 사용자 가이드 — A4 1장 초보자 가이드 modal */}
       <UserGuideCard />
+
+      {/* 도움말 / 문의 / 개선 제안 — mailto / 클립보드 복사 */}
+      <HelpFeedbackPanel
+        currentMode={backendStatus?.default_mode || "unknown"} />
+
+      {/* FAQ — 자주 묻는 질문 8건 */}
+      <FaqCard />
 
       {/* 위험한 mode + flag 조합 경고 — 가장 먼저 노출 */}
       <ModeWarningBanner warning={modeWarning} />
