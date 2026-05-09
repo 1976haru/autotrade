@@ -620,3 +620,55 @@ passed** (+9 신규). 1078 → 1087. ruff/lint clean. build OK.
 frontend vitest **1095 passed** (+8 신규). 1087 → 1095. lint 0 errors. build
 OK 478 KB → 131 KB gzipped. backend 변경 0건 — broker/risk/permission/
 execution/.env/API contract 무수정.
+
+---
+
+## 배포 / 접속 / 보안 체크리스트 (deployment-checklist)
+
+운영자 / 베타테스터가 *직접 단계별로 점검*할 수 있는 통합 체크리스트 작성. 본 문서는 코드 변경이 *없으며* 배포 / 접속 / 보안 운영 정책을 0단계부터 12단계까지 표 형식으로 정리한다 (연번 / 항목 / 설명 / 내가 할 일 / 완료 기준 / 주의사항).
+
+### 새로 작성된 문서
+
+| 문서 | 내용 |
+|---|---|
+| `docs/deployment_checklist.md` | **신규** — 0~12단계 연번 체크리스트 + 용어 한 줄 요약 (Tailscale / PWA / Tauri / Electron / 자동 업데이트 / Code signing) + 15개 절대 원칙 요약 |
+| `docs/deployment_strategy.md` | (기존) 전체 배포 정책 — 로컬-우선 / Tailscale / 포트포워딩 금지 |
+| `docs/mobile_access_guide.md` | (기존) LAN / Tailscale 접속 절차 / 긴급중단 위치 |
+| `docs/beta_distribution_plan.md` | (기존) 각자 PC 설치 + Tauri 우선 + Electron 대안 + GitHub Releases 배포 |
+| `docs/auto_update_plan.md` | (기존) Phase 1-2-3 (수동→알림→자동) + 버전 일치 정책 |
+| `docs/local_security_policy.md` | (기존) Secret hygiene / Tailscale / 9종 sanitize / 사고 대응 |
+
+### 12단계 핵심 (요약)
+
+- **0단계**: 운영 형태 (개인 + 베타테스터) / repo private 전환 / LIVE flag default false 확인
+- **1단계**: Local / LAN / Tailscale / Pages-Demo 4 환경 인지 + "본체 vs 리모컨" 모델
+- **2단계**: backend / frontend 실행 / SIMULATION 확인 / 절전 비활성 / Windows Update 활성 시간
+- **3단계**: 같은 Wi-Fi 폰 접속 (`--host 0.0.0.0` + PC IP)
+- **4단계**: 외부 폰 접속 — **Tailscale 권장 / 포트포워딩 금지**
+- **5단계**: 베타테스터 배포 — 운영자 `.env` *미공유* / 각자 KIS 모의 / 압축 → Tauri → Docker 단계
+- **6단계**: Tauri 데스크톱 앱 (1순위) / Electron (대안) / Code signing 후속
+- **7단계**: 자동 업데이트 — Phase 1 수동 → Phase 2 알림 (1차 우선) → Phase 3 자동
+- **8단계**: 인증 — 본 시점 *신뢰 네트워크 가정*. 관리자 비밀번호 / passkey 후속
+- **9단계**: Secret 관리 — `.env` 추적 0건 / `.env.example` placeholder만 / frontend `VITE_*` 공개 가능 값만
+- **10단계**: 네트워크 보안 — 포트포워딩 0건 / Tailscale ACL / Wi-Fi 분리 / Defender / OS 패치
+- **11단계**: 베타 운영 — 명단 ≤ 5명 / 4주+ / feedback 채널 1개 / 자격증명 미공유
+- **12단계**: 실거래 전 최종 — repo private / promotion gate 8개 / 일일 점검 루틴 / *옵트인 PR*
+
+### 15개 절대 원칙 명시
+
+본 체크리스트는 다음 원칙을 모든 단계에서 일관되게 강제:
+
+1. 외부 공개 서버 운영 X / 2. 포트포워딩 X / 3. Tailscale 우선 / 4. PC 켜져 있어야 / 5. 베타테스터는 각자 PC / 6. 운영자 `.env` 공유 X / 7. 실 API 전 repo private / 8. Pages는 UI Demo만 / 9. 실 backend는 local + private server / 10. 자동 업데이트 후속 / 11. Tauri 1순위 / 12. Electron 대안 / 13. PWA는 모바일 관제 / 14. 푸시 알림 보안 검토 후 / 15. **LIVE/AI/FUTURES flag default false**.
+
+### 변경된 코드 / 테스트
+
+코드 변경 0건. README에 배포 체크리스트 링크 섹션 추가만. backend / broker / risk / permission / executor / .env / API contract / 안전 flag 모두 무수정.
+
+### 안전 invariant 재확인
+
+- ✓ 실 broker `place_order`/`cancel_order` 호출 0건
+- ✓ `ENABLE_LIVE_TRADING` / `ENABLE_AI_EXECUTION` / `ENABLE_FUTURES_LIVE_TRADING` 변경 0건 (모두 default false)
+- ✓ API key / Secret / 계좌번호 변경 0건
+- ✓ frontend Secret 저장 0건
+- ✓ docs에 *포트포워딩 금지* / *Tailscale 권장* / *PC 켜져 있어야* / *베타테스터에게 운영자 Secret 공유 금지* 모두 명시
+- ✓ `.env`는 `.gitignore` 등록 + `.env.example`은 placeholder만

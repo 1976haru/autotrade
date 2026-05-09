@@ -27,11 +27,26 @@ npm run dev -- --host 0.0.0.0
 # 접속: http://<PC_IP>:5173 (예: http://192.168.0.49:5173)
 ```
 
+## 배포 / 접속 / 보안 체크리스트
+
+운영자 / 베타테스터가 단계별로 점검할 수 있는 통합 체크리스트:
+
+- 📋 **[`docs/deployment_checklist.md`](docs/deployment_checklist.md)** — 0단계(목표 확정) ~ 12단계(실거래 전 최종 점검) 연번 체크리스트
+- 🌐 [`docs/deployment_strategy.md`](docs/deployment_strategy.md) — 전체 배포 / 운영 정책
+- 📱 [`docs/mobile_access_guide.md`](docs/mobile_access_guide.md) — LAN / Tailscale 접속 절차
+- 📦 [`docs/beta_distribution_plan.md`](docs/beta_distribution_plan.md) — 베타테스터 배포 + Tauri / Electron
+- 🔄 [`docs/auto_update_plan.md`](docs/auto_update_plan.md) — Phase 1-2-3 단계별 업데이트
+- 🔒 [`docs/local_security_policy.md`](docs/local_security_policy.md) — Secret hygiene + Tailscale + 사고 대응
+
+> **15개 절대 원칙 요약** (자세한 내용은 `deployment_checklist.md`):
+> 외부 공개 서버 / 포트포워딩 / 운영자 `.env` 공유 / 공개 SaaS / GitHub Pages에 실 데이터 — *모두 금지*.
+> 외부 접속은 **Tailscale 우선**, 베타테스터는 *각자 자기 PC*, **LIVE / AI / FUTURES flag는 기본 false**.
+
 ## 현재 상태
 
 - `frontend/`: React/Vite 기반 관제 UI. 백엔드 라우트와 실연결.
 - `backend/`: FastAPI + SQLAlchemy + Alembic 기반 엔진.
-- `docs/`: 운용모드, 승격정책, 브로커 선택, 리스크 정책 문서.
+- `docs/`: 운용모드, 승격정책, 브로커 선택, 리스크 정책, **배포 체크리스트** 문서.
 
 ## 핵심 원칙
 
