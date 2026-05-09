@@ -32,7 +32,7 @@ AI는 항상 **운영자 또는 결정론적 코드의 입력 신호**로만 작
 | News/Trend Agent | 뉴스 / 트렌드 / 공시 키워드 요약 + theme_signals 요약 | 없음 | ✓ 구현 (#53) | `app/agents/news_trend_agent.py`, [`news_trend_agent.md`](news_trend_agent.md) |
 | Strategy Researcher | 전략 후보 + 백테스트 개선안 제안 | 없음 (advisory only, 자동 반영 X) | ✓ 구현 (#55) | `app/agents/strategy_researcher.py`, [`strategy_researcher_agent.md`](strategy_researcher_agent.md) |
 | Risk Auditor | 일일 손실 / 중복 주문 / 위험 이벤트 점검 | 없음 (advisory only) | ✓ 구현 (#54) | `app/agents/risk_auditor.py`, [`risk_auditor_agent.md`](risk_auditor_agent.md) |
-| Daily Report Agent | 장 종료 후 성과 리포트 + audit 요약 | 없음 | 🛑 미구현 | (별도 PR) |
+| Daily Report Agent | 장 종료 후 성과 리포트 + audit 요약 (#57: 12-section markdown, 투자 조언 아님) | 없음 (advisory only — 시스템 운영/검증/개선 자료) | ✓ 구현 (#57) | `app/agents/daily_report_agent.py`, [`daily_report_agent.md`](daily_report_agent.md) |
 | Live AI Executor | 제한 조건 하 자동 실행 | 한도 내 가능 | 🛑 미구현 (default OFF) | (별도 PR, 옵트인) |
 
 ## 구현된 흐름: Execution Recommender
@@ -110,7 +110,6 @@ CLAUDE.md "기본 비활성화" 원칙. 모두 충족해야 활성화 가능:
 ## 향후 작업
 
 - **News/Trend Agent**: 외부 뉴스 API + 키워드 추출 → AI 요약. 별도 모듈 `app/agents/news.py`.
-- **Daily Report Agent**: 장 종료 후 audit 집계 + AI 요약. 알림 채널 연동.
 - **AI Assist 자동 후보**: AI 응답을 OrderRequest로 변환해 PermissionGate 큐에 자동 push.
 
 각 항목은 별도 PR로 추가되며, 본 문서를 동시에 갱신한다.
@@ -123,6 +122,8 @@ CLAUDE.md "기본 비활성화" 원칙. 모두 충족해야 활성화 가능:
 - [`risk_auditor_agent.md`](risk_auditor_agent.md) — Risk Auditor 정책 + advisory invariant (#54)
 - [`strategy_researcher_agent.md`](strategy_researcher_agent.md) — Strategy Researcher 정책 + 자동 반영 금지 invariant (#55)
 - [`execution_recommender_agent.md`](execution_recommender_agent.md) — Execution Recommender 정책 + ExecutionProposal + precheck/submit (#56)
+- [`daily_report_agent.md`](daily_report_agent.md) — Daily Report Agent 정책 + 투자 조언 아님 invariant (#57)
+- [`daily_report_policy.md`](daily_report_policy.md) — Daily Report 저장 / 보존 / 공유 정책 (#57)
 - [`promotion_policy.md`](promotion_policy.md) — 단계별 승격 + 환경 플래그 매트릭스
 - [`risk_policy.md`](risk_policy.md) — RiskManager AI 가드 단계
 - [`architecture.md`](architecture.md) — 가드 체인 전체 구조
