@@ -1,4 +1,10 @@
-const TABS = [
+import { FEATURES } from "../../config/features";
+
+// 50: Futures 탭은 *UI 노출 전용 feature flag*(`FEATURES.futuresTab`,
+// 기본 false)로 navigation에서 숨겨진다. 본 flag는 backend의
+// `ENABLE_FUTURES_LIVE_TRADING`와 *무관* — UI 노출 정책일 뿐 broker 흐름
+// (항상 REJECTED + adapter 미존재)에 영향을 주지 않는다.
+const _ALL_TABS = [
   { id: "dash",     icon: "📊", label: "대시보드" },
   { id: "strat",    icon: "🎯", label: "전략·리스크" },
   { id: "bot",      icon: "🤖", label: "자동봇" },
@@ -8,9 +14,54 @@ const TABS = [
   { id: "audit",    icon: "📜", label: "로그" },
   { id: "signal",   icon: "🧠", label: "AI시그널" },
   { id: "engine",   icon: "🚀", label: "엔진" },
-  { id: "futures",  icon: "🪙", label: "선물" },
+  // 50: Futures 탭 — feature flag로만 노출. 모바일에서는 플래그가 켜진 상태
+  // 에서도 *기본 bottom tab에서 직접 노출하지 않는다* — `mobileExclude` flag로
+  // BottomNav 렌더링 단에서 제외된다 (PC TopNav에는 표시).
+  { id: "futures",  icon: "🪙", label: "선물",
+     featureFlag: "futuresTab", mobileExclude: true },
   { id: "config",   icon: "⚙",  label: "설정" },
 ];
+
+// 운영자에게 보여지는 *최종* 탭 목록. feature flag가 꺼진 탭은 제외.
+// 50: 본 함수는 *호출 시점*에 매번 FEATURES를 평가 — 테스트에서
+// `__setFeatureForTest`로 flag를 toggle하면 다음 호출에 즉시 반영된다.
+function _isTabVisible(tab) {
+  if (!tab.featureFlag) return true;
+  return Boolean(FEATURES[tab.featureFlag]);
+}
+
+// PC TopNav가 사용하는 가시 탭 목록. 호출 시점에 평가.
+export function getNavTabs() {
+  return _ALL_TABS.filter(_isTabVisible);
+}
+
+// 모바일 BottomNav 전용 — `mobileExclude=true`인 탭은 추가로 제외된다.
+// 50: Futures는 mobile bottom tab에서 항상 숨김 (flag 켜져 있어도 PC에만 노출).
+export function getMobileNavTabs() {
+  return _ALL_TABS.filter(
+    (t) => _isTabVisible(t) && !t.mobileExclude,
+  );
+}
+
+// 50: tab id가 현재 navigation에서 노출되는지 (PC + mobile 통합).
+export function isTabVisible(tabId) {
+  return _ALL_TABS.some((t) => t.id === tabId && _isTabVisible(t));
+}
+
+// Backwards-compat: 기존 호출자가 `import { TABS }`로 사용. 본 export는
+// Proxy로 매 access마다 `getNavTabs()`를 호출해 최신 결과를 반환한다.
+export const TABS = new Proxy([], {
+  get(_target, key) {
+    const tabs = getNavTabs();
+    if (key === Symbol.iterator) return tabs[Symbol.iterator].bind(tabs);
+    if (key === "length") return tabs.length;
+    const value = tabs[key];
+    return typeof value === "function" ? value.bind(tabs) : value;
+  },
+  has(_target, key) {
+    return key in getNavTabs();
+  },
+});
 
 // 99건 초과는 "99+"로 표시 — 운영자에겐 정확한 큰 수치보다 "큐가 폭주한
 // 상태"라는 사실 자체가 더 중요하고, 작은 배지에 3자리 숫자를 우겨넣으면
@@ -38,7 +89,7 @@ export function BottomNav({ active, onChange, badges = {} }) {
       display:    "flex",
       zIndex:     100,
     }}>
-      {TABS.map((t) => {
+      {getMobileNavTabs().map((t) => {
         const badge = badges[t.id] || 0;
         return (
           <button
@@ -101,4 +152,4 @@ export function BottomNav({ active, onChange, badges = {} }) {
   );
 }
 
-export { TABS };
+// `TABS` is exported above (with feature-flag filtering) — no duplicate export needed.
