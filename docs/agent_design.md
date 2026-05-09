@@ -31,7 +31,7 @@ AI는 항상 **운영자 또는 결정론적 코드의 입력 신호**로만 작
 | Market Observer | 시장지수 / 거래대금 / 급등락 / 섹터 흐름 / 데이터 freshness / 변동성 감시 | 없음 | ✓ 구현 (#52) | `app/agents/market_observer.py`, [`market_observer_agent.md`](market_observer_agent.md) |
 | News/Trend Agent | 뉴스 / 트렌드 / 공시 키워드 요약 + theme_signals 요약 | 없음 | ✓ 구현 (#53) | `app/agents/news_trend_agent.py`, [`news_trend_agent.md`](news_trend_agent.md) |
 | Strategy Researcher | 전략 후보 + 백테스트 개선안 제안 | 없음 | 🛑 미구현 | (별도 PR) |
-| Risk Auditor | 일일 손실 / 중복 주문 / 위험 이벤트 점검 | 없음 | 🛑 미구현 | (별도 PR) |
+| Risk Auditor | 일일 손실 / 중복 주문 / 위험 이벤트 점검 | 없음 (advisory only) | ✓ 구현 (#54) | `app/agents/risk_auditor.py`, [`risk_auditor_agent.md`](risk_auditor_agent.md) |
 | Daily Report Agent | 장 종료 후 성과 리포트 + audit 요약 | 없음 | 🛑 미구현 | (별도 PR) |
 | Live AI Executor | 제한 조건 하 자동 실행 | 한도 내 가능 | 🛑 미구현 (default OFF) | (별도 PR, 옵트인) |
 
@@ -111,7 +111,6 @@ CLAUDE.md "기본 비활성화" 원칙. 모두 충족해야 활성화 가능:
 
 - **News/Trend Agent**: 외부 뉴스 API + 키워드 추출 → AI 요약. 별도 모듈 `app/agents/news.py`.
 - **Strategy Researcher**: BacktestRun audit 분석 → 파라미터 튜닝 제안. AI 응답을 운영자가 새 backtest로 검증.
-- **Risk Auditor**: OrderAuditLog 패턴 분석 → 이상 거래 / 중복 신호 / 한도 초과 임박 알림.
 - **Daily Report Agent**: 장 종료 후 audit 집계 + AI 요약. 알림 채널 연동.
 - **AI Assist 자동 후보**: AI 응답을 OrderRequest로 변환해 PermissionGate 큐에 자동 push.
 
@@ -122,6 +121,7 @@ CLAUDE.md "기본 비활성화" 원칙. 모두 충족해야 활성화 가능:
 - [`agent_architecture.md`](agent_architecture.md) — 6개 표준 Agent 역할 contract (#51) — Observer / Analyst / Risk Auditor / Strategy Researcher / Report Writer / Execution Recommender
 - [`market_observer_agent.md`](market_observer_agent.md) — Market Observer 정책 + snapshot JSON 구조 (#52)
 - [`news_trend_agent.md`](news_trend_agent.md) — News/Trend Agent 정책 + theme_signals 요약 (#53)
+- [`risk_auditor_agent.md`](risk_auditor_agent.md) — Risk Auditor 정책 + advisory invariant (#54)
 - [`promotion_policy.md`](promotion_policy.md) — 단계별 승격 + 환경 플래그 매트릭스
 - [`risk_policy.md`](risk_policy.md) — RiskManager AI 가드 단계
 - [`architecture.md`](architecture.md) — 가드 체인 전체 구조

@@ -48,9 +48,12 @@ Agent가 한 번에 *판단·주문*하지 않도록 역할을 분리한다. 단
 - **목적**: 일일 손실 / 중복 주문 / stale data / risk events 점검
 - **입력**: `risk_state`, `audit_summary`
 - **출력**: `AgentOutput(decision=WARN | REJECT | OBSERVE)` + `risk_flags`
-- **금지행동**: broker 호출 (실제 거부는 `RiskManager`가 결정), 주문 생성
-- **현재 구현**: `backend/app/agents/roles.py::RiskAuditorAgent`
+- **금지행동**: broker 호출 (실제 거부는 `RiskManager`가 결정), 주문 생성, **emergency_stop 직접 토글**
+- **현재 구현**:
+  - `backend/app/agents/roles.py::RiskAuditorAgent` (#51 contract — risk_flags / decision)
+  - `backend/app/agents/risk_auditor.py::RiskAuditorAgent` (#54 — DB 기반 advisory, `RiskAuditorReport` + audit_level + risk_score + PAUSE/EMERGENCY_STOP_RECOMMENDED. [`risk_auditor_agent.md`](risk_auditor_agent.md))
 - **주문 권한**: ❌
+- **긴급정지 토글 권한**: ❌ (advisory only — `emergency_stop_recommended`만 carry, 실제 토글은 운영자가 Kill Switch UI에서 수동 수행)
 
 분류 규칙:
 | 조건 | decision | flag |
@@ -213,6 +216,7 @@ RiskManager.evaluate_order  →  PermissionGate.approve  →  OrderExecutor  →
 - [`agent_design.md`](agent_design.md) — Agent 분리 정책 + AI 직접 주문 금지 (#216 등)
 - [`market_observer_agent.md`](market_observer_agent.md) — Market Observer 정책 + snapshot JSON 구조 (#52)
 - [`news_trend_agent.md`](news_trend_agent.md) — News/Trend Agent 정책 + theme_signals 요약 (#53)
+- [`risk_auditor_agent.md`](risk_auditor_agent.md) — Risk Auditor 정책 + advisory invariant (#54)
 - [`agent_decision_schema.md`](agent_decision_schema.md) — agent decision audit log 스키마 (#187+)
 - [`ai_permission_gate.md`](ai_permission_gate.md) — AI 권한 단계 (#39)
 - [`ai_assisted_trading_policy.md`](ai_assisted_trading_policy.md) — LIVE_AI_ASSIST 흐름 (#44)

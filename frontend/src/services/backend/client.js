@@ -267,6 +267,26 @@ export const backendApi = {
     if (minScore !== null) qs.set("min_score", String(minScore));
     return backendFetch(`/api/agents/news-trend?${qs.toString()}`);
   },
+  // 54: Risk Auditor — 장중 리스크 감사 advisory. 주문 신호 아님,
+  // emergency_stop 직접 토글 X (권고만). broker call 0건, DB write 0건.
+  riskAuditorReport: ({ windowSeconds = 3600, dailyRealizedPnl = 0,
+                          maxDailyLoss = 0,
+                          marginRiskPct = null,
+                          futuresLiquidationPct = null } = {}) => {
+    const qs = new URLSearchParams({
+      window_seconds: String(windowSeconds),
+      daily_realized_pnl: String(dailyRealizedPnl),
+      max_daily_loss: String(maxDailyLoss),
+    });
+    if (marginRiskPct !== null) qs.set("margin_risk_pct", String(marginRiskPct));
+    if (futuresLiquidationPct !== null)
+      qs.set("futures_liquidation_pct", String(futuresLiquidationPct));
+    return backendFetch(`/api/agents/risk-auditor/report?${qs.toString()}`);
+  },
+  riskAuditorMock: (body) => backendFetch("/api/agents/risk-auditor/mock", {
+    method: "POST",
+    body: JSON.stringify(body || {}),
+  }),
   // 26: Monte Carlo risk simulation — read-only 분석.
   monteCarlo: (req) => backendFetch("/api/backtest/monte-carlo", {
     method: "POST",

@@ -32,6 +32,13 @@ from app.agents.news_trend_agent import (
     load_recent_theme_signals,
     summarize_themes,
 )
+from app.agents.risk_auditor import (
+    RiskAuditorInput,
+    audit_risk,
+    load_recent_agent_decisions,
+    load_recent_audit_rows,
+    load_recent_emergency_events,
+)
 from app.agents.roles import build_default_registry
 from app.agents.signal_quality import evaluate_signal_quality
 from app.db.session import get_db
@@ -572,3 +579,155 @@ def get_news_trend(
     signals = load_recent_theme_signals(db, limit=limit, min_score=min_score)
     out = summarize_themes(signals)
     return NewsTrendOut(**out.to_dict())
+
+
+# ====================================================================
+# #54: Risk Auditor — 안전 감독 advisory (NOT order signal)
+# ====================================================================
+
+
+class RiskEventOut(BaseModel):
+    type:               str
+    severity:           str
+    summary:            str
+    evidence:           dict
+    symbol:             str | None = None
+    strategy:           str | None = None
+    recommended_action: str | None = None
+
+
+class RiskAuditorReportOut(BaseModel):
+    audit_level:                       str
+    risk_score:                        int
+    summary_lines:                     list[str]
+    events:                            list[RiskEventOut]
+    pause_trading_recommended:         bool
+    emergency_stop_recommended:        bool
+    recommended_stop_reason:           str | None = None
+    window_seconds:                    int | None = None
+    total_audit_rows_inspected:        int
+    total_emergency_events_inspected:  int
+    is_order_signal:                   bool
+    created_at:                        str
+
+
+@router.get("/risk-auditor/report", response_model=RiskAuditorReportOut)
+def get_risk_auditor_report(
+    window_seconds:     int = Query(3600, ge=60, le=86400),
+    daily_realized_pnl: int = Query(0),
+    max_daily_loss:     int = Query(0, ge=0),
+    margin_risk_pct:    float | None = Query(None, ge=0, le=200),
+    futures_liquidation_pct: float | None = Query(None, ge=0, le=100),
+    db:                 _Session = Depends(get_db),
+) -> RiskAuditorReportOut:
+    """장중 리스크 감사 리포트 (read-only).
+
+    **broker 호출 0건, audit row 0건, DB write 0건, emergency_stop 토글 0건,
+    외부 API 호출 0건.** 응답의 `pause_trading_recommended` /
+    `emergency_stop_recommended`는 *advisory* — 실제 토글은 운영자/Kill Switch
+    UI에서 수동 수행.
+    """
+    from datetime import datetime, timedelta, timezone
+    since = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
+    inp = RiskAuditorInput(
+        audit_rows=load_recent_audit_rows(db, since=since),
+        emergency_events=load_recent_emergency_events(db, since=since),
+        agent_decisions=load_recent_agent_decisions(db, since=since),
+        daily_realized_pnl=daily_realized_pnl,
+        max_daily_loss=max_daily_loss,
+        window_seconds=window_seconds,
+        margin_risk_pct=margin_risk_pct,
+        futures_liquidation_pct=futures_liquidation_pct,
+    )
+    report = audit_risk(inp)
+    return RiskAuditorReportOut(**report.to_dict())
+
+
+class RiskAuditorMockIn(BaseModel):
+    """`/risk-auditor/mock` 입력 — DB 의존 없이 deterministic 시뮬.
+
+    각 카운트 필드는 *fake event 수* — 본 endpoint는 이 카운트만큼 fake row
+    를 만들어 audit_risk()에 주입한다. broker / audit row 변경 0건.
+    """
+    rejected_count:          int   = 0
+    duplicate_rejected_count: int  = 0
+    stale_rejected_count:    int   = 0
+    broker_error_count:      int   = 0
+    ai_high_conf_rejected:   int   = 0
+    ai_low_conf_count:       int   = 0
+    emergency_toggle_count:  int   = 0
+    agent_warn_count:        int   = 0
+    daily_realized_pnl:      int   = 0
+    max_daily_loss:          int   = 0
+    margin_risk_pct:         float | None = None
+    futures_liquidation_pct: float | None = None
+    window_seconds:          int   = 3600
+
+
+@router.post("/risk-auditor/mock", response_model=RiskAuditorReportOut)
+def post_risk_auditor_mock(req: RiskAuditorMockIn) -> RiskAuditorReportOut:
+    """DB 의존 없는 deterministic mock — 운영자가 시나리오를 직접 흘려
+    Risk Auditor 동작을 검증할 수 있다. broker 호출 0건, DB 변경 0건."""
+
+    # In-memory fake row builder — DB row 객체와 attribute 호환만 맞추면 됨.
+    class _Row:
+        def __init__(self, **kw): self.__dict__.update(kw)
+
+    audit_rows = []
+    # rejected baseline
+    for i in range(req.rejected_count):
+        audit_rows.append(_Row(
+            id=i + 1, decision="REJECTED",
+            reasons=["mock rejection"], message="",
+            requested_by_ai=False, signal_confidence=None,
+        ))
+    for i in range(req.duplicate_rejected_count):
+        audit_rows.append(_Row(
+            id=10_000 + i, decision="REJECTED",
+            reasons=["duplicate fingerprint"], message="",
+            requested_by_ai=False, signal_confidence=None,
+        ))
+    for i in range(req.stale_rejected_count):
+        audit_rows.append(_Row(
+            id=20_000 + i, decision="REJECTED",
+            reasons=["stale price (60s+)"], message="",
+            requested_by_ai=False, signal_confidence=None,
+        ))
+    for i in range(req.broker_error_count):
+        audit_rows.append(_Row(
+            id=30_000 + i, decision="REJECTED",
+            reasons=[], message="broker error: timeout",
+            requested_by_ai=False, signal_confidence=None,
+        ))
+    for i in range(req.ai_high_conf_rejected):
+        audit_rows.append(_Row(
+            id=40_000 + i, decision="REJECTED",
+            reasons=["ai overconf"], message="",
+            requested_by_ai=True, signal_confidence=90,
+        ))
+    for i in range(req.ai_low_conf_count):
+        audit_rows.append(_Row(
+            id=50_000 + i, decision="APPROVED",
+            reasons=[], message="",
+            requested_by_ai=True, signal_confidence=20,
+        ))
+    emergency_events = [
+        _Row(id=i, enabled=(i % 2 == 0), reason_code=None, level=None)
+        for i in range(req.emergency_toggle_count)
+    ]
+    agent_decisions = [
+        _Row(id=i, decision="WARN", agent_name="mock", reasons=[], meta=None)
+        for i in range(req.agent_warn_count)
+    ]
+    inp = RiskAuditorInput(
+        audit_rows=audit_rows,
+        emergency_events=emergency_events,
+        agent_decisions=agent_decisions,
+        daily_realized_pnl=req.daily_realized_pnl,
+        max_daily_loss=req.max_daily_loss,
+        window_seconds=req.window_seconds,
+        margin_risk_pct=req.margin_risk_pct,
+        futures_liquidation_pct=req.futures_liquidation_pct,
+    )
+    report = audit_risk(inp)
+    return RiskAuditorReportOut(**report.to_dict())
