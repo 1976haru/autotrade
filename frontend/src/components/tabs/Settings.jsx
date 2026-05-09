@@ -1,9 +1,56 @@
+import { useState } from "react";
 import { BROKERS } from "../../config/brokers";
 import { Card, SectionLabel, Btn, Inp } from "../common";
 import { PageHeader } from "../common/primitives";
 import { friendlyErrorMessage } from "../../utils/errorMessage";
 import { useBackendStatus } from "../../store/useBackendStatus";
 import { WatchlistsCard } from "./WatchlistsCard";
+import {
+  ReleaseNotesModal,
+  VersionBadge,
+} from "../common/VersionBadge";
+import { UserGuideCard } from "../common/UserGuideModal";
+import { FaqCard, HelpFeedbackPanel } from "../common/HelpFeedbackPanel";
+import { APP_INFO, appVersionLine } from "../../config/appInfo";
+import { latestReleaseNote } from "../../config/releaseNotes";
+
+
+// 버전 / 공지 카드 — Settings 탭 상단에 노출. VersionBadge 클릭 시 release
+// notes modal 재오픈.
+export function VersionInfoCard() {
+  const [open, setOpen] = useState(false);
+  const note = latestReleaseNote();
+  return (
+    <Card data-testid="version-info-card">
+      <SectionLabel>📦 버전 / 공지사항</SectionLabel>
+      <div style={{ display: "flex", justifyContent: "space-between",
+                     alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <div style={{ fontWeight: 700, color: "var(--c-text)",
+                         fontSize: "var(--fs-md)" }}>
+            {APP_INFO.displayName}
+          </div>
+          <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)",
+                         fontFamily: "monospace", marginTop: 2 }}>
+            {appVersionLine()}
+          </div>
+          {note && (
+            <div style={{ fontSize: "var(--fs-xs)",
+                           color: "var(--c-text-2)", marginTop: 4 }}>
+              최근 업데이트: <strong>{note.title}</strong>
+              <span style={{ color: "var(--c-text-3)", marginLeft: 6 }}>
+                ({note.date})
+              </span>
+            </div>
+          )}
+        </div>
+        <VersionBadge onClick={() => setOpen(true)}
+                       testId="settings-version-badge" />
+      </div>
+      <ReleaseNotesModal open={open} onClose={() => setOpen(false)} />
+    </Card>
+  );
+}
 
 
 // 060 (emergency_stop hard-reject) and 061 (LIVE flag gating the queue)
@@ -176,6 +223,19 @@ export function Settings({ settings }) {
         title="설정"
         subtitle="브로커 / 운용 모드 / 운영자 / 안전 플래그 안내"
       />
+
+      {/* 버전 / 공지 — VersionBadge 클릭으로 release notes 재오픈 */}
+      <VersionInfoCard />
+
+      {/* 사용자 가이드 — A4 1장 초보자 가이드 modal */}
+      <UserGuideCard />
+
+      {/* 도움말 / 문의 / 개선 제안 — mailto / 클립보드 복사 */}
+      <HelpFeedbackPanel
+        currentMode={backendStatus?.default_mode || "unknown"} />
+
+      {/* FAQ — 자주 묻는 질문 8건 */}
+      <FaqCard />
 
       {/* 위험한 mode + flag 조합 경고 — 가장 먼저 노출 */}
       <ModeWarningBanner warning={modeWarning} />

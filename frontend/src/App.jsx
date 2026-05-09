@@ -25,6 +25,10 @@ import { useSettings }   from "./store/useSettings";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { BackendOfflineBanner } from "./components/BackendOfflineBanner";
 import { FEATURES } from "./config/features";
+import {
+  ReleaseNotesModal,
+  useReleaseNotesAutoPopup,
+} from "./components/common/VersionBadge";
 
 export default function App() {
   return (
@@ -86,6 +90,7 @@ function AppShell() {
       <TopBar brokerId={settings.brokerId} tradeMode={settings.tradeMode} connected={settings.connected} />
       <TopNav active={tab} onChange={setTab} badges={{ approve: approvals.pending.length }} />
       <BackendOfflineBanner />
+      <_ReleaseNotesAutoPopup />
       <div style={{ flex:1, overflowY:"auto", padding:"14px 14px 90px", scrollbarWidth:"thin" }}>
         <ErrorBoundary label="현재 탭">
           {renderTab()}
@@ -102,4 +107,12 @@ function AppShell() {
       `}</style>
     </div>
   );
+}
+
+
+// 새 버전 첫 접속 시 release notes modal 자동 팝업. 사용자가 닫으면 (또는
+// "이번 버전 공지 확인" 버튼 클릭) localStorage에 lastSeenVersion 저장.
+function _ReleaseNotesAutoPopup() {
+  const { open, closeModal } = useReleaseNotesAutoPopup();
+  return <ReleaseNotesModal open={open} onClose={closeModal} />;
 }
