@@ -193,6 +193,7 @@
 
 - [`futures_broker_contract.md`](futures_broker_contract.md) — `FuturesBrokerAdapter` 공식 contract + `FuturesContractSpec` / `FuturesOrder` / 만기·롤오버 helper (#47)
 - [`futures_margin_risk.md`](futures_margin_risk.md) — `FuturesMarginRule` / `LeverageLimitRule` / `LiquidationRiskRule` (3%/7% threshold) + `/api/futures/margin/preview` (#48)
+- [`futures_strategy_contract.md`](futures_strategy_contract.md) — `FuturesStrategyBase` + 양방향 신호 + 계약 sizing + 롤오버 advisory + mock 전략 3종 (#49)
 - [`futures_simulation_report.md`](futures_simulation_report.md) — 가상 산식 + invariant (#151, #169)
 - [`live_activation_blockers.md`](live_activation_blockers.md) — LIVE 활성화 시 변경 매트릭스 (선물 §3 포함)
 - [`promotion_policy.md`](promotion_policy.md) — 단계별 승격 기준
