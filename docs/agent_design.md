@@ -29,7 +29,7 @@ AI는 항상 **운영자 또는 결정론적 코드의 입력 신호**로만 작
 |---|---|---|---|---|
 | Execution Recommender | 종목 분석 + 점수 + 진입가/목표가/손절가 제안 | 없음 | ✓ 구현 | `/api/ai/analyze` |
 | Market Observer | 시장지수 / 거래대금 / 급등락 / 섹터 흐름 / 데이터 freshness / 변동성 감시 | 없음 | ✓ 구현 (#52) | `app/agents/market_observer.py`, [`market_observer_agent.md`](market_observer_agent.md) |
-| News/Trend Agent | 뉴스 / 트렌드 / 공시 키워드 요약 | 없음 | 🛑 미구현 | (별도 PR) |
+| News/Trend Agent | 뉴스 / 트렌드 / 공시 키워드 요약 + theme_signals 요약 | 없음 | ✓ 구현 (#53) | `app/agents/news_trend_agent.py`, [`news_trend_agent.md`](news_trend_agent.md) |
 | Strategy Researcher | 전략 후보 + 백테스트 개선안 제안 | 없음 | 🛑 미구현 | (별도 PR) |
 | Risk Auditor | 일일 손실 / 중복 주문 / 위험 이벤트 점검 | 없음 | 🛑 미구현 | (별도 PR) |
 | Daily Report Agent | 장 종료 후 성과 리포트 + audit 요약 | 없음 | 🛑 미구현 | (별도 PR) |
@@ -121,6 +121,7 @@ CLAUDE.md "기본 비활성화" 원칙. 모두 충족해야 활성화 가능:
 
 - [`agent_architecture.md`](agent_architecture.md) — 6개 표준 Agent 역할 contract (#51) — Observer / Analyst / Risk Auditor / Strategy Researcher / Report Writer / Execution Recommender
 - [`market_observer_agent.md`](market_observer_agent.md) — Market Observer 정책 + snapshot JSON 구조 (#52)
+- [`news_trend_agent.md`](news_trend_agent.md) — News/Trend Agent 정책 + theme_signals 요약 (#53)
 - [`promotion_policy.md`](promotion_policy.md) — 단계별 승격 + 환경 플래그 매트릭스
 - [`risk_policy.md`](risk_policy.md) — RiskManager AI 가드 단계
 - [`architecture.md`](architecture.md) — 가드 체인 전체 구조

@@ -260,6 +260,13 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify(body),
   }),
+  // 53: News / Trend Agent — theme_signals 기반 후보 필터 요약. 주문 신호 아님.
+  // broker call 0건, DB write 0건, 외부 API 호출 0건.
+  newsTrend: ({ limit = 100, minScore = null } = {}) => {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (minScore !== null) qs.set("min_score", String(minScore));
+    return backendFetch(`/api/agents/news-trend?${qs.toString()}`);
+  },
   // 26: Monte Carlo risk simulation — read-only 분석.
   monteCarlo: (req) => backendFetch("/api/backtest/monte-carlo", {
     method: "POST",

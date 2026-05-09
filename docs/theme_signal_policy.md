@@ -117,6 +117,7 @@ LIVE 활성화 단계에 진입하기 전 운영자가 확인해야 하는 것:
 ## 관련 문서
 
 - [`watchlist_policy.md`](watchlist_policy.md) — universe 후보군과의 연계
+- [`news_trend_agent.md`](news_trend_agent.md) — `NewsTrendAgent` 정책 + theme_signals 요약 (#53)
 - [`agent_decision_schema.md`](agent_decision_schema.md) — 10-Agent Council의 NewsTrendAgent
 - [`risk_policy.md`](risk_policy.md), [`risk_guards_matrix.md`](risk_guards_matrix.md) — 우회 금지 가드 체인
 - [`promotion_policy.md`](promotion_policy.md) — 단계별 승격 + 환경 플래그
