@@ -22,6 +22,11 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.agents.base import AgentContext, AgentRole
+from app.agents.market_observer import (
+    IndexQuote,
+    MarketObserverInput,
+    observe_market,
+)
 from app.agents.market_regime import classify_market_regime
 from app.agents.roles import build_default_registry
 from app.agents.signal_quality import evaluate_signal_quality
@@ -433,3 +438,92 @@ def post_agent_mock_run(req: AgentMockRunIn) -> AgentMockRunOut:
         extra=req.extra,
     ))
     return AgentMockRunOut(**output.to_dict())
+
+
+# ====================================================================
+# #52: Market Observer — context-only snapshot (NOT an order signal)
+# ====================================================================
+
+
+class _IndexQuoteIn(BaseModel):
+    name:                 str
+    last_price:           float | None = None
+    change_pct:           float | None = None
+    last_updated_seconds: int   | None = None
+
+
+class MarketObserverIn(BaseModel):
+    """`/api/agents/market-observer` 입력. 모든 필드 optional — 데이터 없으면
+    UNKNOWN / WATCH_ONLY로 friendly fallback (예외 X)."""
+
+    indices:                list[_IndexQuoteIn] | None = None
+    turnover_vs_avg:        float | None = None
+    volatility_pct:         float | None = None
+    leading_sectors:        list[str] | None = None
+    lagging_sectors:        list[str] | None = None
+    leading_themes:         list[str] | None = None
+    surge_count:            int | None = None
+    plunge_count:           int | None = None
+    data_freshness_seconds: int | None = None
+    # 선택 — caller가 market_regime classifier 입력을 함께 보내면 본 endpoint
+    # 가 자동으로 classify해서 carry. 미지정이면 regime carry 안 함.
+    market_regime_input:    dict | None = None
+
+
+class MarketObserverOut(BaseModel):
+    risk_level:         str
+    recommended_stance: str
+    summary_lines:      list[str]
+    turnover_state:     str
+    volatility_state:   str
+    freshness_status:   str
+    leading_sectors:    list[str]
+    lagging_sectors:    list[str]
+    leading_themes:     list[str]
+    surge_count:        int
+    plunge_count:       int
+    indices:            list[dict]
+    market_regime:      dict | None = None
+    reasons:            list[str]
+    is_order_signal:    bool
+    created_at:         str
+
+
+@router.post("/market-observer", response_model=MarketObserverOut)
+def post_market_observer(req: MarketObserverIn) -> MarketObserverOut:
+    """장중 시장 환경 snapshot 생성 (read-only).
+
+    **broker 호출 0건, audit row 0건, DB 변경 0건, 외부 네트워크 호출 0건.**
+    응답의 `is_order_signal`은 항상 False — 본 snapshot은 *주문 신호가 아님*을
+    명시. caller는 BUY/SELL/HOLD를 추론하지 *말고* 다른 Agent / 운영자가 참고할
+    context로만 사용.
+    """
+    # market_regime_input이 주어지면 classify해서 carry. 알 수 없는 키는 무시.
+    regime = None
+    if req.market_regime_input:
+        ri = req.market_regime_input
+        regime = classify_market_regime(
+            trend_strength_pct=float(ri.get("trend_strength_pct") or 0.0),
+            volatility_pct=float(ri.get("volatility_pct") or 0.0),
+            volume_ratio=float(ri.get("volume_ratio") or 1.0),
+            gap_pct=float(ri.get("gap_pct") or 0.0),
+            news_sentiment=int(ri.get("news_sentiment") or 50),
+            is_opening_30min=bool(ri.get("is_opening_30min") or False),
+            is_late_day_30min=bool(ri.get("is_late_day_30min") or False),
+            risk_off_signal=bool(ri.get("risk_off_signal") or False),
+        )
+
+    inp = MarketObserverInput(
+        indices=[IndexQuote(**q.model_dump()) for q in (req.indices or [])],
+        turnover_vs_avg=req.turnover_vs_avg,
+        volatility_pct=req.volatility_pct,
+        leading_sectors=req.leading_sectors,
+        lagging_sectors=req.lagging_sectors,
+        leading_themes=req.leading_themes,
+        surge_count=req.surge_count,
+        plunge_count=req.plunge_count,
+        data_freshness_seconds=req.data_freshness_seconds,
+        market_regime=regime,
+    )
+    snap = observe_market(inp)
+    return MarketObserverOut(**snap.to_dict())

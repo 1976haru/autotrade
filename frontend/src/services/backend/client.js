@@ -254,6 +254,12 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify(body),
   }),
+  // 52: Market Observer — 장중 시장 환경 snapshot. 주문 신호 아님.
+  // broker call 0건, audit row 0건, 외부 네트워크 호출 0건.
+  marketObserver: (body = {}) => backendFetch("/api/agents/market-observer", {
+    method: "POST",
+    body: JSON.stringify(body),
+  }),
   // 26: Monte Carlo risk simulation — read-only 분석.
   monteCarlo: (req) => backendFetch("/api/backtest/monte-carlo", {
     method: "POST",
