@@ -9,6 +9,7 @@ import {
   ReleaseNotesModal,
   VersionBadge,
 } from "../common/VersionBadge";
+import { UserGuideCard } from "../common/UserGuideModal";
 import { APP_INFO, appVersionLine } from "../../config/appInfo";
 import { latestReleaseNote } from "../../config/releaseNotes";
 
@@ -224,6 +225,9 @@ export function Settings({ settings }) {
 
       {/* 버전 / 공지 — VersionBadge 클릭으로 release notes 재오픈 */}
       <VersionInfoCard />
+
+      {/* 사용자 가이드 — A4 1장 초보자 가이드 modal */}
+      <UserGuideCard />
 
       {/* 위험한 mode + flag 조합 경고 — 가장 먼저 노출 */}
       <ModeWarningBanner warning={modeWarning} />
