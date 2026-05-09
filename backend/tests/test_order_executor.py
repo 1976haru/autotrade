@@ -180,6 +180,7 @@ _NO_BROKER_CALL_MODULES = (
     "app.api.routes_agents",
     "app.api.routes_ai",
     "app.api.routes_ai_assist",
+    "app.api.routes_ai_execution",
     "app.api.routes_approvals",
     "app.api.routes_audit",
     "app.api.routes_backtest",
@@ -218,6 +219,7 @@ _NO_BROKER_CALL_MODULES = (
     "app.explainability.reasons",
     # Risk
     "app.risk.risk_manager",
+    "app.risk.ai_execution_gate",
     "app.risk.position_limits",
     "app.risk.loss_limits",
     "app.risk.order_guard",

@@ -242,6 +242,12 @@ export const backendApi = {
   }),
   aiAssistPending: () => backendFetch("/api/ai/assist/pending"),
   aiAssistSummary: () => backendFetch("/api/ai/assist/summary"),
+  // 45: AIExecutionGate read-only surface — 정책 조회만, 토글 / 활성화 X.
+  aiExecutionPolicy:   () => backendFetch("/api/ai-execution/policy"),
+  aiExecutionEvaluate: (body) => backendFetch("/api/ai-execution/evaluate", {
+    method: "POST",
+    body: JSON.stringify(body),
+  }),
   // 26: Monte Carlo risk simulation — read-only 분석.
   monteCarlo: (req) => backendFetch("/api/backtest/monte-carlo", {
     method: "POST",
