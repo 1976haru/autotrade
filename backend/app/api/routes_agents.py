@@ -21,7 +21,9 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from app.agents.base import AgentContext, AgentRole
 from app.agents.market_regime import classify_market_regime
+from app.agents.roles import build_default_registry
 from app.agents.signal_quality import evaluate_signal_quality
 from app.agents.operating_loop import (
     OPERATING_STAGES,
@@ -264,3 +266,170 @@ def post_post_market_review(req: PostMarketReviewIn) -> PostMarketReviewOut:
         next_adjustments=req.next_adjustments,
     )
     return PostMarketReviewOut(**review.__dict__)
+
+
+# ====================================================================
+# #51: Agent architecture introspection + mock-run
+# ====================================================================
+
+
+class AgentArchitectureRoleOut(BaseModel):
+    role:               str
+    decision_label:     str   # 카테고리 라벨 (정의에 가까움)
+    description:        str
+    can_execute_order:  bool
+
+
+class AgentArchitectureOut(BaseModel):
+    """6개 표준 역할 + 절대 invariant 안내. read-only."""
+    roles:              list[AgentArchitectureRoleOut]
+    forbidden_for_all:  list[str]
+    notice:             str
+
+
+_ARCHITECTURE_ROLE_DOC = {
+    "OBSERVER": (
+        "OBSERVE",
+        "시장 / 데이터 / 운영 상태 관찰. 결정 X.",
+    ),
+    "ANALYST": (
+        "ANALYZE",
+        "후보 종목 / 상황 분석 의견 산출.",
+    ),
+    "RISK_AUDITOR": (
+        "WARN | REJECT",
+        "일일 손실 / 중복 / stale data / risk events 점검.",
+    ),
+    "STRATEGY_RESEARCHER": (
+        "REPORT | RECOMMEND",
+        "전략 / 백테스트 개선안 제안.",
+    ),
+    "REPORT_WRITER": (
+        "REPORT",
+        "일일 / 주간 운영 리포트 작성.",
+    ),
+    "EXECUTION_RECOMMENDER": (
+        "APPROVAL_CANDIDATE",
+        "매수/매도 후보 제안. approval queue 후보 payload만 — 직접 주문 0건.",
+    ),
+}
+
+
+@router.get("/architecture", response_model=AgentArchitectureOut)
+def get_agent_architecture() -> AgentArchitectureOut:
+    """6개 표준 Agent 역할 + 절대 invariant 안내 (read-only)."""
+    roles = [
+        AgentArchitectureRoleOut(
+            role=role,
+            decision_label=label,
+            description=desc,
+            can_execute_order=False,
+        )
+        for role, (label, desc) in _ARCHITECTURE_ROLE_DOC.items()
+    ]
+    return AgentArchitectureOut(
+        roles=roles,
+        forbidden_for_all=[
+            "broker / OrderExecutor / route_order 호출 금지",
+            "실제 주문 / approval queue 등록 금지 (caller 책임)",
+            "AI API key / Secret 인자 수용 금지 — deterministic mock만",
+            "CLAUDE.md 절대 원칙 1, 2 준수",
+        ],
+        notice=(
+            "모든 Agent는 분석 / 추천 / 리포트만 한다. ExecutionRecommender도 "
+            "approval queue 후보 payload만 생성하며, 실제 주문은 RiskManager + "
+            "PermissionGate + OrderExecutor 흐름에서만 만들어진다."
+        ),
+    )
+
+
+class AgentCatalogEntryOut(BaseModel):
+    name:               str
+    role:               str
+    description:        str
+    inputs:             list[str]
+    outputs:            list[str]
+    forbidden:          list[str]
+    can_execute_order:  bool
+
+
+@router.get("/catalog", response_model=list[AgentCatalogEntryOut])
+def get_agent_catalog() -> list[AgentCatalogEntryOut]:
+    """등록된 Agent 인스턴스의 metadata 카탈로그 (read-only).
+
+    `build_default_registry()`가 만든 단일 인스턴스의 self-describing
+    metadata를 직렬화 — 어떤 Agent도 broker 호출이 없는 advisory 인터페이스
+    임을 운영자가 한눈에 확인할 수 있다.
+    """
+    registry = build_default_registry()
+    return [
+        AgentCatalogEntryOut(**agent.metadata.to_dict())
+        for agent in registry.values()
+    ]
+
+
+class AgentMockRunIn(BaseModel):
+    """`/agents/mock-run` 입력. broker / API key 필드 0개 — caller가 mock
+    context만 전달."""
+
+    role:           str = "OBSERVER"
+    operator_intent: str | None = None
+    market_state:    dict | None = None
+    watchlist:       list[str] | None = None
+    recent_signals:  list[dict] | None = None
+    audit_summary:   dict | None = None
+    risk_state:      dict | None = None
+    extra:           dict | None = None
+
+
+class AgentMockRunOut(BaseModel):
+    role:               str
+    decision:           str
+    summary:            str
+    reasons:            list[str]
+    confidence:         int | None = None
+    risk_flags:         list[str]
+    approval_candidate: dict | None = None
+    metadata:           dict
+    is_order_intent:    bool
+    can_execute_order:  bool
+    created_at:         str
+
+
+@router.post("/mock-run", response_model=AgentMockRunOut)
+def post_agent_mock_run(req: AgentMockRunIn) -> AgentMockRunOut:
+    """단일 Agent를 mock 모드로 호출.
+
+    **broker 호출 0건, audit row 0건, 실 LLM 호출 0건** — deterministic mock.
+    caller가 `role`을 지정하지 않으면 OBSERVER로 fallback. 알 수 없는 role은
+    400 (Pydantic은 enum 검증을 strict하게 하지 않으므로 아래에서 분기).
+    """
+    try:
+        role = AgentRole(req.role)
+    except ValueError:
+        # 알 수 없는 role 명시 안내.
+        return AgentMockRunOut(
+            role=req.role,
+            decision="NO_OP",
+            summary=f"unknown agent role: {req.role}",
+            reasons=[f"role {req.role!r} is not a registered AgentRole"],
+            confidence=None,
+            risk_flags=[],
+            approval_candidate=None,
+            metadata={"valid_roles": [r.value for r in AgentRole]},
+            is_order_intent=False,
+            can_execute_order=False,
+            created_at="1970-01-01T00:00:00+00:00",
+        )
+    registry = build_default_registry()
+    agent = registry[role]
+    output = agent.run(AgentContext(
+        operator_intent=req.operator_intent,
+        market_state=req.market_state,
+        watchlist=req.watchlist,
+        recent_signals=req.recent_signals,
+        audit_summary=req.audit_summary,
+        risk_state=req.risk_state,
+        extra=req.extra,
+    ))
+    return AgentMockRunOut(**output.to_dict())

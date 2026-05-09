@@ -119,6 +119,7 @@ CLAUDE.md "기본 비활성화" 원칙. 모두 충족해야 활성화 가능:
 
 ## 관련 문서
 
+- [`agent_architecture.md`](agent_architecture.md) — 6개 표준 Agent 역할 contract (#51) — Observer / Analyst / Risk Auditor / Strategy Researcher / Report Writer / Execution Recommender
 - [`promotion_policy.md`](promotion_policy.md) — 단계별 승격 + 환경 플래그 매트릭스
 - [`risk_policy.md`](risk_policy.md) — RiskManager AI 가드 단계
 - [`architecture.md`](architecture.md) — 가드 체인 전체 구조
