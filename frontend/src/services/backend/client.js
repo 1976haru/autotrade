@@ -303,6 +303,24 @@ export const backendApi = {
       method: "POST",
       body: JSON.stringify({ proposal }),
     }),
+  // Agent Memory — 과거 학습 기록. 주문 신호 아님.
+  memorySearch: (params = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== null && v !== undefined && v !== "") qs.set(k, String(v));
+    }
+    return backendFetch(`/api/agents/memory/search?${qs.toString()}`);
+  },
+  memoryGet: (id) => backendFetch(`/api/agents/memory/${id}`),
+  memoryCreate: (body) => backendFetch("/api/agents/memory", {
+    method: "POST",
+    body: JSON.stringify(body || {}),
+  }),
+  memoryArchive: (id, archived) =>
+    backendFetch(`/api/agents/memory/${id}/archive`, {
+      method: "POST",
+      body: JSON.stringify({ archived }),
+    }),
   // 55: Strategy Researcher — read-only advisory. 자동 반영 안 됨.
   strategyResearcherRecent: ({ limit = 20, strategy = null } = {}) => {
     const qs = new URLSearchParams({ limit: String(limit) });
