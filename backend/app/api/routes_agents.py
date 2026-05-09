@@ -16,6 +16,7 @@ RiskManager + PermissionGate + OrderExecutor (CLAUDE.md 절대 원칙).
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter
@@ -39,6 +40,18 @@ from app.agents.risk_auditor import (
     load_recent_audit_rows,
     load_recent_emergency_events,
 )
+from app.agents.strategy_researcher import (
+    BacktestSummary,
+    DataQualitySummary,
+    MonteCarloSummary,
+    PromotionGateSummary,
+    StrategyResearcherInput,
+    WalkForwardSummary,
+    analyze_strategy,
+    load_backtest_run,
+    load_recent_backtest_runs,
+)
+from app.backtest.metrics import summarize_metrics
 from app.agents.roles import build_default_registry
 from app.agents.signal_quality import evaluate_signal_quality
 from app.db.session import get_db
@@ -731,3 +744,326 @@ def post_risk_auditor_mock(req: RiskAuditorMockIn) -> RiskAuditorReportOut:
     )
     report = audit_risk(inp)
     return RiskAuditorReportOut(**report.to_dict())
+
+
+# ====================================================================
+# 55: Strategy Researcher Agent — read-only advisory.
+#
+# 본 라우트는 BacktestRun + 외부 검증 결과를 분석해 markdown 리포트와 구조화된
+# 제안을 *반환*만 한다. **자동 적용 / 자동 코드 수정 / 자동 파라미터 저장 / 자동
+# 주문 0건** — 모든 출력은 운영자가 별도 PR / 별도 백테스트 / paper / shadow를
+# 거쳐야만 실제 변경에 반영된다.
+# ====================================================================
+
+
+class StrategyFindingOut(BaseModel):
+    code:        str
+    severity:    str
+    summary:     str
+    metric_name: str | None = None
+    metric_value: float | None = None
+    threshold:   float | None = None
+    detail:      dict[str, Any] = {}
+
+
+class StrategySuggestionOut(BaseModel):
+    category:            str
+    severity:            str
+    title:               str
+    rationale:           str
+    proposed_change:     str
+    required_validation: list[str] = []
+    references:          list[str] = []
+
+
+class StrategyResearchReportOut(BaseModel):
+    audit_level:         str
+    findings:            list[StrategyFindingOut]
+    suggestions:         list[StrategySuggestionOut]
+    required_next_tests: list[str]
+    markdown_report:     str
+    summary_lines:       list[str]
+    strategy:            str
+    run_id:              int
+    auto_apply_allowed:  bool
+    is_order_signal:     bool
+    created_at:          str
+
+
+class StrategyResearcherRecentItemOut(BaseModel):
+    run_id:        int
+    strategy:      str
+    created_at:    str
+    audit_level:   str
+    findings_count:    int
+    suggestions_count: int
+    summary_line:  str
+
+
+class StrategyResearcherRecentOut(BaseModel):
+    items: list[StrategyResearcherRecentItemOut]
+
+
+class StrategyResearcherWalkForwardIn(BaseModel):
+    recommendation:           str | None = None
+    fold_count:               int = 0
+    positive_fold_ratio:      float | None = None
+    single_best_fold_share:   float | None = None
+    overfit_risk_score:       float | None = None
+    holdout_pnl:              int | None = None
+    warnings:                 list[str] = []
+
+
+class StrategyResearcherMonteCarloIn(BaseModel):
+    method:                   str | None = None
+    iterations:               int = 0
+    risk_of_ruin:             float | None = None
+    p05_total_pnl:            int | None = None
+    p50_total_pnl:            int | None = None
+    p95_total_pnl:            int | None = None
+    worst_5pct_avg_mdd:       int | None = None
+    promotion_risk_flag:      str | None = None
+    stability_grade:          str | None = None
+    warnings:                 list[str] = []
+
+
+class StrategyResearcherDataQualityIn(BaseModel):
+    symbol:        str
+    interval:      str = "1d"
+    score:         float | None = None
+    grade:         str | None = None
+    missing_rate:  float | None = None
+    coverage_score: float | None = None
+    notes:         list[str] = []
+
+
+class StrategyResearcherPromotionIn(BaseModel):
+    current_stage:    str | None = None
+    target_stage:     str | None = None
+    decision:         str | None = None
+    failed_criteria:  list[str] = []
+    cautions:         list[str] = []
+    required_actions: list[str] = []
+
+
+class StrategyResearcherMockIn(BaseModel):
+    """`/strategy-researcher/mock` 입력 — 외부 검증 결과를 운영자가 직접 주입."""
+    backtest_run_id:  int | None = None
+    walk_forward:     StrategyResearcherWalkForwardIn | None = None
+    monte_carlo:      StrategyResearcherMonteCarloIn | None = None
+    data_quality:     list[StrategyResearcherDataQualityIn] = []
+    promotion_gate:   StrategyResearcherPromotionIn | None = None
+    operator_note:    str | None = None
+
+
+def _serialize_strategy_report(report) -> StrategyResearchReportOut:
+    return StrategyResearchReportOut(
+        audit_level=str(report.audit_level),
+        findings=[
+            StrategyFindingOut(
+                code=str(f.code),
+                severity=str(f.severity),
+                summary=f.summary,
+                metric_name=f.metric_name,
+                metric_value=f.metric_value,
+                threshold=f.threshold,
+                detail=f.detail or {},
+            ) for f in report.findings
+        ],
+        suggestions=[
+            StrategySuggestionOut(
+                category=str(s.category),
+                severity=str(s.severity),
+                title=s.title,
+                rationale=s.rationale,
+                proposed_change=s.proposed_change,
+                required_validation=list(s.required_validation),
+                references=list(s.references),
+            ) for s in report.suggestions
+        ],
+        required_next_tests=list(report.required_next_tests),
+        markdown_report=report.markdown_report,
+        summary_lines=list(report.summary_lines),
+        strategy=report.strategy,
+        run_id=report.run_id,
+        auto_apply_allowed=report.auto_apply_allowed,
+        is_order_signal=report.is_order_signal,
+        created_at=report.created_at.isoformat(),
+    )
+
+
+def _build_backtest_summary(run) -> BacktestSummary:
+    """`BacktestRun` row → `BacktestSummary` (metrics #24 호출)."""
+    trades = run.trades_json or []
+    metrics = summarize_metrics(trades, initial_cash=run.initial_cash)
+    return BacktestSummary(
+        run_id=run.id,
+        strategy=run.strategy,
+        created_at=run.created_at,
+        params=run.params or {},
+        initial_cash=run.initial_cash,
+        bars_processed=run.bars_processed,
+        trade_count=metrics.get("trade_count", 0),
+        win_count=metrics.get("win_count", 0),
+        loss_count=metrics.get("loss_count", 0),
+        total_pnl=metrics.get("total_pnl", 0),
+        final_cash=run.final_cash,
+        win_rate=metrics.get("win_rate"),
+        profit_factor=metrics.get("profit_factor"),
+        expectancy=metrics.get("expectancy"),
+        max_drawdown=metrics.get("max_drawdown", 0),
+        max_consecutive_losses=metrics.get("max_consecutive_losses", 0),
+        max_consecutive_wins=metrics.get("max_consecutive_wins", 0),
+        sharpe_ratio=metrics.get("sharpe_ratio"),
+        avg_win=metrics.get("avg_win"),
+        avg_loss=metrics.get("avg_loss"),
+        hourly_pnl=metrics.get("hourly_pnl") or {},
+        data_symbol=run.data_symbol,
+        data_interval=run.data_interval,
+        data_start=run.data_start,
+        data_end=run.data_end,
+    )
+
+
+@router.get(
+    "/strategy-researcher/recent",
+    response_model=StrategyResearcherRecentOut,
+)
+def strategy_researcher_recent(
+    limit:    int = Query(20, ge=1, le=100),
+    strategy: str | None = Query(None),
+    db:       _Session = Depends(get_db),
+) -> StrategyResearcherRecentOut:
+    """최근 BacktestRun 목록 — 각 run에 대해 audit_level 미리보기.
+
+    *advisory* 응답이며, broker 호출 0건 / DB write 0건.
+    """
+    runs = load_recent_backtest_runs(db, strategy=strategy, limit=limit)
+    items: list[StrategyResearcherRecentItemOut] = []
+    for run in runs:
+        bt = _build_backtest_summary(run)
+        report = analyze_strategy(StrategyResearcherInput(backtest=bt))
+        items.append(StrategyResearcherRecentItemOut(
+            run_id=run.id,
+            strategy=run.strategy,
+            created_at=run.created_at.isoformat(),
+            audit_level=str(report.audit_level),
+            findings_count=len(report.findings),
+            suggestions_count=len(report.suggestions),
+            summary_line=report.summary_lines[0] if report.summary_lines else "",
+        ))
+    return StrategyResearcherRecentOut(items=items)
+
+
+@router.get(
+    "/strategy-researcher/report/{run_id}",
+    response_model=StrategyResearchReportOut,
+)
+def strategy_researcher_report(
+    run_id: int,
+    db:     _Session = Depends(get_db),
+) -> StrategyResearchReportOut:
+    """단일 BacktestRun을 분석해 markdown advisory report 반환.
+
+    *advisory*만 — broker 호출 0건, DB write 0건, 코드/파라미터 자동 변경 0건.
+    """
+    run = load_backtest_run(db, run_id)
+    if run is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"BacktestRun {run_id} not found")
+    bt = _build_backtest_summary(run)
+    report = analyze_strategy(StrategyResearcherInput(backtest=bt))
+    return _serialize_strategy_report(report)
+
+
+@router.post(
+    "/strategy-researcher/mock",
+    response_model=StrategyResearchReportOut,
+)
+def strategy_researcher_mock(
+    body: StrategyResearcherMockIn,
+    db:   _Session = Depends(get_db),
+) -> StrategyResearchReportOut:
+    """deterministic mock — backtest_run_id가 있으면 DB에서 BacktestRun을 읽어
+    summary로 변환하고, 운영자가 외부 검증 결과(walk_forward / monte_carlo /
+    data_quality / promotion_gate)를 직접 주입해 advisory 리포트를 받는다.
+
+    *advisory*만 — broker 호출 0건, DB write 0건.
+    """
+    if body.backtest_run_id is None:
+        bt = BacktestSummary(
+            run_id=0, strategy="mock",
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            initial_cash=0, bars_processed=0,
+            trade_count=0, win_count=0, loss_count=0,
+            total_pnl=0, final_cash=0,
+            max_drawdown=0, max_consecutive_losses=0, max_consecutive_wins=0,
+        )
+    else:
+        run = load_backtest_run(db, body.backtest_run_id)
+        if run is None:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=404,
+                detail=f"BacktestRun {body.backtest_run_id} not found",
+            )
+        bt = _build_backtest_summary(run)
+
+    wf = None
+    if body.walk_forward is not None:
+        wf = WalkForwardSummary(
+            recommendation=body.walk_forward.recommendation,
+            fold_count=body.walk_forward.fold_count,
+            positive_fold_ratio=body.walk_forward.positive_fold_ratio,
+            single_best_fold_share=body.walk_forward.single_best_fold_share,
+            overfit_risk_score=body.walk_forward.overfit_risk_score,
+            holdout_pnl=body.walk_forward.holdout_pnl,
+            warnings=tuple(body.walk_forward.warnings),
+        )
+    mc = None
+    if body.monte_carlo is not None:
+        mc = MonteCarloSummary(
+            method=body.monte_carlo.method,
+            iterations=body.monte_carlo.iterations,
+            risk_of_ruin=body.monte_carlo.risk_of_ruin,
+            p05_total_pnl=body.monte_carlo.p05_total_pnl,
+            p50_total_pnl=body.monte_carlo.p50_total_pnl,
+            p95_total_pnl=body.monte_carlo.p95_total_pnl,
+            worst_5pct_avg_mdd=body.monte_carlo.worst_5pct_avg_mdd,
+            promotion_risk_flag=body.monte_carlo.promotion_risk_flag,
+            stability_grade=body.monte_carlo.stability_grade,
+            warnings=tuple(body.monte_carlo.warnings),
+        )
+    quality = tuple(
+        DataQualitySummary(
+            symbol=q.symbol,
+            interval=q.interval,
+            score=q.score,
+            grade=q.grade,
+            missing_rate=q.missing_rate,
+            coverage_score=q.coverage_score,
+            notes=tuple(q.notes),
+        )
+        for q in body.data_quality
+    )
+    pg = None
+    if body.promotion_gate is not None:
+        pg = PromotionGateSummary(
+            current_stage=body.promotion_gate.current_stage,
+            target_stage=body.promotion_gate.target_stage,
+            decision=body.promotion_gate.decision,
+            failed_criteria=tuple(body.promotion_gate.failed_criteria),
+            cautions=tuple(body.promotion_gate.cautions),
+            required_actions=tuple(body.promotion_gate.required_actions),
+        )
+
+    inp = StrategyResearcherInput(
+        backtest=bt,
+        walk_forward=wf,
+        monte_carlo=mc,
+        data_quality=quality,
+        promotion_gate=pg,
+        operator_note=body.operator_note,
+    )
+    report = analyze_strategy(inp)
+    return _serialize_strategy_report(report)
