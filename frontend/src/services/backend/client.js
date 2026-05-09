@@ -248,6 +248,12 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify(body),
   }),
+  // 48: Futures margin / leverage / liquidation read-only preview.
+  // broker call 0건, audit row 0건 — UI 사전 시뮬 전용.
+  futuresMarginPreview: (body) => backendFetch("/api/futures/margin/preview", {
+    method: "POST",
+    body: JSON.stringify(body),
+  }),
   // 26: Monte Carlo risk simulation — read-only 분석.
   monteCarlo: (req) => backendFetch("/api/backtest/monte-carlo", {
     method: "POST",
