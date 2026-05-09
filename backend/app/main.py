@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes_agents import router as agents_router
 from app.api.routes_ai import router as ai_router
+from app.api.routes_ai_assist import router as ai_assist_router
 from app.api.routes_approvals import router as approvals_router
 from app.api.routes_audit import router as audit_router
 from app.api.routes_backtest import router as backtest_router
@@ -16,6 +17,7 @@ from app.api.routes_paper import router as paper_router
 from app.api.routes_reconciliation import router as reconciliation_router
 from app.api.routes_risk import router as risk_router
 from app.api.routes_futures import router as futures_router
+from app.api.routes_shadow import router as shadow_router
 from app.api.routes_status import router as status_router
 from app.api.routes_governance import router as governance_router
 from app.api.routes_themes import router as themes_router
@@ -79,6 +81,8 @@ app.include_router(themes_router, prefix="/api")
 app.include_router(governance_router, prefix="/api")
 app.include_router(explainability_router, prefix="/api")
 app.include_router(paper_router, prefix="/api")
+app.include_router(shadow_router, prefix="/api")
+app.include_router(ai_assist_router, prefix="/api")
 
 
 @app.get("/")

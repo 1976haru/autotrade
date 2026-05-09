@@ -304,6 +304,42 @@ function _OrderSummary({ approval }) {
               : ""}
         </div>
       )}
+      {/* 44: AI Assist 흐름은 supporting_reasons / opposing_reasons /
+          risk_note를 ai_decision_meta에 carry — 결재 카드에서 양면을 함께
+          노출해 운영자가 AI reasoning bias를 점검할 수 있도록. */}
+      {approval.requested_by_ai && approval.ai_decision_meta
+        && approval.ai_decision_meta.source === "AI_ASSIST" && (
+        <div data-testid="approval-ai-assist-meta"
+             style={{ marginTop: 4, padding: "4px 6px",
+                       background: "#0c2035", border: "1px solid #a78bfa33",
+                       borderRadius: 3, fontSize: 10, color: "#94a3b8" }}>
+          {Array.isArray(approval.ai_decision_meta.supporting_reasons)
+            && approval.ai_decision_meta.supporting_reasons.length > 0 && (
+            <div data-testid="approval-ai-supporting"
+                 style={{ marginBottom: 2 }}>
+              <span style={{ color: "#22c55e", fontWeight: 700 }}>+ </span>
+              {approval.ai_decision_meta.supporting_reasons.join(" · ")}
+            </div>
+          )}
+          {Array.isArray(approval.ai_decision_meta.opposing_reasons)
+            && approval.ai_decision_meta.opposing_reasons.length > 0 && (
+            <div data-testid="approval-ai-opposing"
+                 style={{ marginBottom: 2 }}>
+              <span style={{ color: "#ef4444", fontWeight: 700 }}>− </span>
+              {approval.ai_decision_meta.opposing_reasons.join(" · ")}
+            </div>
+          )}
+          {approval.ai_decision_meta.risk_note && (
+            <div data-testid="approval-ai-risk-note"
+                 style={{ color: "#fbbf24" }}>
+              ⚠ {approval.ai_decision_meta.risk_note}
+            </div>
+          )}
+          <div style={{ marginTop: 3, fontSize: 9, color: "#64748b" }}>
+            ※ AI 제안 — 사람 승인 후에만 broker로 진행됩니다.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

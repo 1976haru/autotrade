@@ -8,7 +8,7 @@ from app.ai.rate_limit import check_global_rate_limit, check_rate_limit
 from app.risk.auto_stop import maybe_trigger_auto_stop
 from app.brokers.base import BrokerAdapter, OrderRequest, OrderResult
 from app.core.modes import OperationMode
-from app.db.models import OrderAuditLog, PendingApproval
+from app.db.models import OrderAuditLog, PendingApproval, ShadowTrade
 from app.execution.executor import OrderExecutor
 from app.execution.order_executor import derive_order_source
 from app.permission.gate import PermissionGate
@@ -23,7 +23,21 @@ from app.risk.order_guard import (
     OrderGuard,
     OrderGuardConfig,
 )
-from app.risk.risk_manager import RiskDecision, RiskManager
+from app.risk.risk_manager import (
+    SHADOW_GATE_REASONS,
+    RiskDecision,
+    RiskManager,
+)
+
+
+# #43: LIVE_SHADOW shadow trade 추정 체결가 산출 메서드 식별자. 본 PR은
+# latest_price를 그대로 추정 체결가로 쓰는 가장 단순한 proxy. 향후 orderbook
+# depth / 슬리피지 모델 추가 시 method 문자열을 새로 부여하고 분기.
+_SHADOW_ESTIMATION_METHOD = "latest_price_proxy"
+_SHADOW_CONFIDENCE_NOTE = (
+    "추정치 — 실제 체결과 다를 수 있습니다 "
+    "(orderbook depth / 부분체결 / 호가 공백 / 슬리피지 미반영)."
+)
 
 
 class DuplicateOrderError(Exception):
@@ -270,6 +284,50 @@ async def route_order(
     db.add(audit)
 
     if decision.decision == RiskDecision.REJECTED:
+        # #43: LIVE_SHADOW 추정 기록 — RiskManager가 LIVE_SHADOW 주문을 항상
+        # REJECTED로 변환하므로 OrderAuditLog만 보면 거부 이력만 남는다. 그 위에
+        # would-have 정보(다른 가드 통과 여부 + 추정 체결가)를 영구화해 운영자가
+        # "실 시세에서 다른 가드까지 다 통과한 후보 비율"을 분석할 수 있게 한다.
+        # actual_broker_order_sent는 invariant False — broker.place_order는 LIVE_SHADOW
+        # 에서 절대 호출되지 않으며, OrderExecutor의 _EXECUTABLE_DECISIONS 가드가
+        # 마지막 backstop이다 (REJECTED는 broker로 도달 X).
+        if mode == OperationMode.LIVE_SHADOW:
+            db.flush()  # audit.id 확보 — FK 무결성을 위해 commit 전에 ID 부여.
+            # SHADOW_GATE_REASONS(LIVE_SHADOW 정책 게이트 + ENABLE_LIVE_TRADING
+            # flag)는 *실제 risk rule이 아닌* 운영 게이트라 would-have 분석에서
+            # 제외 — 운영자가 다음 단계로 승격하면 자연스럽게 사라지는 reason들.
+            non_shadow_reasons = [
+                r for r in decision.reasons if r not in SHADOW_GATE_REASONS
+            ]
+            shadow_would_have = (
+                RiskDecision.APPROVED.value
+                if not non_shadow_reasons
+                else RiskDecision.REJECTED.value
+            )
+            shadow = ShadowTrade(
+                audit_id=audit.id,
+                mode=mode.value,
+                requested_by_ai=requested_by_ai,
+                symbol=order.symbol,
+                side=order.side.value,
+                quantity=order.quantity,
+                order_type=order.order_type.value,
+                limit_price=order.limit_price,
+                latest_price=quote.price,
+                would_have_decision=shadow_would_have,
+                would_have_reasons=list(non_shadow_reasons),
+                actual_broker_order_sent=False,
+                estimated_fill_price=quote.price,
+                estimated_slippage_bps=0.0,
+                estimation_method=_SHADOW_ESTIMATION_METHOD,
+                confidence_note=_SHADOW_CONFIDENCE_NOTE,
+                strategy=order.strategy,
+                trade_reason=order.trade_reason,
+                source=derive_order_source(order, requested_by_ai=requested_by_ai).value,
+                client_order_id=order.client_order_id,
+                ai_decision_meta=order.ai_decision_meta,
+            )
+            db.add(shadow)
         db.commit()
         # 182: 연속 REJECTED 누적 임계 도달 시 자동 emergency_stop. 이미 켜져
         # 있거나 임계 0이면 no-op.

@@ -18,6 +18,24 @@ from app.risk.position_limits import (
 )
 
 
+# #43: LIVE_SHADOW 모드에서 RiskManager가 항상 누적하는 reason 문자열. 본 reason
+# *외*에 다른 risk reason이 0건이면 다른 가드는 모두 통과한 후보
+# (would-have-APPROVED) — route_order가 이 상수를 import해
+# ShadowTrade.would_have_decision을 산출한다.
+SHADOW_RECORD_ONLY_REASON = "LIVE_SHADOW records signals only; live orders disabled"
+
+# #43: would-have 분석에서 *제외*해야 하는 정책 게이트 reason들. 본 reason들은
+# 실제 risk rule이 아니라 운영 단계 게이트(모드/환경 flag)로, 운영자가 다음
+# 단계로 승격하면 자연스럽게 사라진다 — would-have-APPROVED 카운트에서 빠진다.
+#  - SHADOW_RECORD_ONLY_REASON: LIVE_SHADOW 모드 자체의 read-only 게이트.
+#  - "live trading is disabled by global safety flag": ENABLE_LIVE_TRADING=False
+#    (기본). LIVE_* 모드가 환경 flag로 차단된 경우.
+SHADOW_GATE_REASONS = frozenset({
+    SHADOW_RECORD_ONLY_REASON,
+    "live trading is disabled by global safety flag",
+})
+
+
 _KST = timezone(timedelta(hours=9))
 # 한국 거래소 정규 거래 시간 (KST). 동시호가 / 시간외 거래는 별도 — MVP는 정규만.
 _MARKET_OPEN_KST  = time(9, 0)
@@ -442,7 +460,7 @@ class RiskManager:
         _merge(pl_rule.check_total_exposure_pct(pl_input))
 
         if mode == OperationMode.LIVE_SHADOW:
-            result.reasons.append("LIVE_SHADOW records signals only; live orders disabled")
+            result.reasons.append(SHADOW_RECORD_ONLY_REASON)
 
         if mode in {OperationMode.LIVE_MANUAL_APPROVAL, OperationMode.LIVE_AI_ASSIST}:
             # 061 hardening: the global ENABLE_LIVE_TRADING flag must gate the

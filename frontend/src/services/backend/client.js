@@ -224,6 +224,24 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify({ csv }),
   }),
+  // 43: Live Shadow trade ledger — 실제 주문 0건, 추정 기록만. broker call 0건.
+  shadowTrades: ({ limit = 50, offset = 0, symbol = null,
+                   strategy = null, would_have_decision = null } = {}) => {
+    const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (symbol)              qs.set("symbol", symbol);
+    if (strategy)            qs.set("strategy", strategy);
+    if (would_have_decision) qs.set("would_have_decision", would_have_decision);
+    return backendFetch(`/api/shadow/trades?${qs.toString()}`);
+  },
+  shadowSummary: () => backendFetch("/api/shadow/summary"),
+  // 44: AI Assist — AI candidate 제출 + 사람 승인 큐 등록. 본 호출은 broker
+  // place_order로 직결되지 않는다 — RiskManager 사전검사 + PendingApproval 큐.
+  aiAssistSubmit: (candidate) => backendFetch("/api/ai/assist/submit", {
+    method: "POST",
+    body: JSON.stringify(candidate),
+  }),
+  aiAssistPending: () => backendFetch("/api/ai/assist/pending"),
+  aiAssistSummary: () => backendFetch("/api/ai/assist/summary"),
   // 26: Monte Carlo risk simulation — read-only 분석.
   monteCarlo: (req) => backendFetch("/api/backtest/monte-carlo", {
     method: "POST",

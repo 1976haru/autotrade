@@ -9,6 +9,7 @@ import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
 import { ThemeSignalsCard } from "./ThemeSignalsCard";
+import { AiAssistProposalCard } from "./AiAssistProposalCard";
 
 export function AISignal({ activeStratIds }) {
   const [ticker,  setTicker]  = useState("");
@@ -46,6 +47,8 @@ export function AISignal({ activeStratIds }) {
       <AgentCouncilCard />
       <AgentDecisionSummaryCard />
       <AgentStatsCard />
+      {/* 44: AI Assist 제안 카드 — AI는 제안만, 사람 승인 후 주문. */}
+      <AiAssistProposalCard defaultSymbol={ticker} />
 
       {/* 입력 */}
       <Card>

@@ -179,6 +179,7 @@ _NO_BROKER_CALL_MODULES = (
     # API routes
     "app.api.routes_agents",
     "app.api.routes_ai",
+    "app.api.routes_ai_assist",
     "app.api.routes_approvals",
     "app.api.routes_audit",
     "app.api.routes_backtest",
@@ -190,6 +191,7 @@ _NO_BROKER_CALL_MODULES = (
     "app.api.routes_market",
     "app.api.routes_reconciliation",
     "app.api.routes_risk",
+    "app.api.routes_shadow",
     "app.api.routes_status",
     "app.api.routes_themes",
     "app.api.routes_virtual",
@@ -208,6 +210,7 @@ _NO_BROKER_CALL_MODULES = (
     "app.strategies.concrete.vwap_strategy",
     # Agents / AI
     "app.ai.virtual_agent",
+    "app.ai.assist",
     # Filters / Market
     "app.filters.market_regime",
     "app.market.regime",

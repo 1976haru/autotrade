@@ -23,6 +23,8 @@ import { AgentDecisionHero } from "./AgentDecisionHero";
 import { AgentStrategyChoiceCard } from "../common/AgentStrategyChoiceCard";
 import { WatchlistSummaryTile } from "./WatchlistSummaryTile";
 import { ThemeSummaryTile } from "./ThemeSummaryTile";
+import { ShadowSummaryCard, useShadowSummary } from "./ShadowSummaryCard";
+import { AiAssistSummaryTile, useAiAssistSummary } from "./AiAssistProposalCard";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
 // AuditLog timeline에서도 mode badge로 쓰기 위해 공유. Dashboard는 re-export
@@ -501,6 +503,15 @@ export function Dashboard({
     _orderAudits.items, _idleThresholdEntry.windowMs,
   );
 
+  // 43: LIVE_SHADOW shadow trade summary — 실 시세 기준 추정 기록.
+  // mount 시 1회 fetch. mode가 LIVE_SHADOW가 아닌 환경에서도 누적 기록을 보여
+  // 줘야 운영자가 과거 shadow run 결과를 회고할 수 있다.
+  const _shadow = useShadowSummary();
+
+  // 44: AI Assist 24h 요약 — AI 제안 + 사람 승인 큐 흐름 카드. 결재 대기 카운트
+  // 클릭 시 onJumpTab("approve")로 결재 탭으로 이동. mount 시 1회 fetch.
+  const _aiAssist = useAiAssistSummary();
+
   return (
     // 222: 레이아웃은 .dashboard-body 클래스가 결정. 모바일은 세로 스택,
     // PC(≥768px)는 auto-fit grid로 카드들이 2~3열로 흐른다. 인라인 style은
@@ -622,6 +633,29 @@ export function Dashboard({
           <div style={{ fontSize: "var(--fs-sm)", color: "var(--c-text-3)",
                           marginTop: 6 }}>승률 {winRate}%</div>
         </Card>
+      </div>
+
+      {/* 43: Shadow trade summary — LIVE_SHADOW 모드에서 실 시세 기준 추정 후보 누적.
+          actual_broker_orders_sent invariant 0 + would-have 카운트 표시. 빈 상태에서도
+          mount 시 1회 호출해 카드 자체로 invariant 0 신호를 노출한다. */}
+      <div className="dashboard-span-full">
+        <ShadowSummaryCard
+          summary={_shadow.summary}
+          loading={_shadow.loading}
+          error={_shadow.error}
+          onRefresh={_shadow.refresh}
+        />
+      </div>
+
+      {/* 44: AI Assist 24h 요약 — AI 제안 + 결재 대기 카운트. AI는 제안만,
+          주문은 사람 승인 후. 결재 대기 카운트 클릭 시 결재 탭으로 점프. */}
+      <div className="dashboard-span-full">
+        <AiAssistSummaryTile
+          summary={_aiAssist.summary}
+          loading={_aiAssist.loading}
+          error={_aiAssist.error}
+          onJumpTab={onJumpTab}
+        />
       </div>
 
       {/* 24시간 활동 요약 — 내부에 여러 row가 있어 PC에서도 한 줄로 펼치는 게 가독적.

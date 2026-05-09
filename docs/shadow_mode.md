@@ -113,6 +113,72 @@ npm ci
 npm run dev    # http://localhost:5173
 ```
 
+## ShadowTrade 추정 기록 (#43)
+
+`LIVE_SHADOW` 모드에서 RiskManager가 모든 주문을 `REJECTED`로 종결하는 것은 변경되지 않습니다. 그 위에 `shadow_trade` 테이블이 *추가*되어 운영자가 “실 시세에서 다른 가드까지 다 통과한 후보였다면”을 사후 분석할 수 있게 합니다.
+
+### 기록되는 필드 (요약)
+
+| 필드 | 의미 |
+|---|---|
+| `audit_id` | 같은 주문의 `OrderAuditLog.id` (cross-reference) |
+| `would_have_decision` | LIVE_SHADOW gate 외 다른 reason이 0건이면 `APPROVED`, 그 외는 `REJECTED` |
+| `would_have_reasons` | 다른 가드(긴급정지/포지션 한도/시세 stale 등)의 reason. LIVE_SHADOW gate reason은 제외 |
+| `latest_price` | 시세 timestamp 검사 통과한 현재가 |
+| `estimated_fill_price` | 추정 체결가 — 본 PR은 `latest_price` 그대로 사용 (`estimation_method=latest_price_proxy`) |
+| `estimated_slippage_bps` | 0.0 (proxy 모델은 슬리피지를 가정하지 않음) |
+| `actual_broker_order_sent` | **invariant False** — broker.place_order는 호출되지 않음. 테스트로 강제 |
+| `confidence_note` | "추정치 — 실 체결과 다를 수 있다 (orderbook depth / 부분체결 / 호가 공백 / 슬리피지 미반영)" |
+
+### 실제 주문과의 차이
+
+`shadow_trade` row는 **주문이 아닙니다**. broker.place_order는 호출되지 않으며, 다음 항목은 추정에 반영되지 않습니다:
+
+- **Orderbook depth** — 호가창 두께 / 1호가 매물 수량
+- **호가 공백** — 호가 단위 사이의 점프
+- **부분체결** — `filled_quantity < quantity`로 끝나는 주문
+- **슬리피지** — 시장 충격, taker fee, time-in-force, IOC 거절 등
+
+따라서 `would_have_decision=APPROVED` + `estimated_fill_price=latest_price` row가 많다고 해서 “실거래에서 동일하게 체결되었을 것”이라고 결론 내리지 마세요. 실 체결 품질은 PAPER 단계 + LIVE_MANUAL_APPROVAL 단계에서 reconciliation으로 별도 측정합니다.
+
+### 조회 API (read-only, broker 호출 0건)
+
+```bash
+# 목록 (created_at desc)
+curl 'http://127.0.0.1:8000/api/shadow/trades?limit=50'
+curl 'http://127.0.0.1:8000/api/shadow/trades?symbol=005930'
+curl 'http://127.0.0.1:8000/api/shadow/trades?would_have_decision=APPROVED'
+
+# 요약 (Dashboard 카드에서 호출)
+curl 'http://127.0.0.1:8000/api/shadow/summary'
+# {
+#   "total": 12,
+#   "would_have_approved_count": 9,
+#   "would_have_rejected_count": 3,
+#   "by_strategy": {"sma": 12},
+#   "avg_estimated_slippage_bps": 0.0,
+#   "actual_broker_orders_sent": 0,            ← invariant: 항상 0
+#   "invariant_note": "LIVE_SHADOW 기록은 실제 주문이 아닙니다…"
+# }
+```
+
+`actual_broker_orders_sent`가 **0이 아니면 즉시 incident**입니다. 본 카운트가 1 이상이면 LIVE_SHADOW 가드 체인이 깨졌다는 의미이므로, backend를 즉시 중단하고 다음을 점검:
+
+1. `app/risk/risk_manager.py` — LIVE_SHADOW 분기에서 `SHADOW_RECORD_ONLY_REASON`을 누적하는지
+2. `app/execution/executor.py` — `OrderExecutor._EXECUTABLE_DECISIONS`에 REJECTED가 포함되어 있지 않은지
+3. `app/brokers/kis.py::place_order` — `is_paper=False`에서 `NotImplementedError`를 던지는지
+
+### Frontend Shadow Summary 카드
+
+Dashboard 상단 (PC/모바일 공통)에 다음 정보를 표시합니다:
+
+- 총 기록 수 / would-have 통과 / 다른 가드 거부 (3개 타일)
+- `actual_broker_orders_sent`: 0이 아니면 붉은색 강조 + “invariant 위반”
+- 평균 추정 슬리피지 (bps)
+- “실제 주문 아님” 배지 + “LIVE_SHADOW: 실제 주문 없이 신호만 기록” disclaimer
+
+자세한 정책: [`live_shadow_trade_policy.md`](live_shadow_trade_policy.md).
+
 ## 알려진 한계
 
 - `cancel_order`, `get_order_status`는 `NotImplementedError` (다음 PR에서 SHADOW 모드용 구현 추가 예정).

@@ -394,6 +394,69 @@ class ThemeSignal(Base):
     used_for_order: Mapped[bool]         = mapped_column(Boolean, default=False, index=True)
 
 
+class ShadowTrade(Base):
+    """LIVE_SHADOW mode signal-only trade record (#43 — Live Shadow finalization).
+
+    실제 주문이 아닌 *추정* 기록이다. CLAUDE.md 절대 원칙 5/7 — `broker.place_order`는
+    절대 호출되지 않으며, `actual_broker_order_sent`는 invariant False. RiskManager가
+    LIVE_SHADOW 주문을 항상 REJECTED로 변환하기 때문에 OrderAuditLog 자체는 reject
+    이력만 남는다 — 본 테이블은 그 위에 *would-have* 정보(다른 가드 통과 여부 +
+    추정 체결가)를 영구화해 운영자가 “실제 시세 기준으로 주문 냈다면 어떻게 됐을까”를
+    사후 분석할 수 있게 한다.
+
+    `estimated_fill_price`는 latest_price proxy로 시작 (`estimation_method=
+    "latest_price_proxy"`). orderbook depth / 호가 공백 / 부분체결 / 슬리피지는
+    반영하지 않으므로 실제 체결 품질과 다를 수 있다 — UI/문서에서 명시한다.
+    """
+
+    __tablename__ = "shadow_trade"
+
+    id:               Mapped[int]            = mapped_column(primary_key=True)
+    created_at:       Mapped[datetime]       = mapped_column(DateTime, default=_utcnow, index=True)
+
+    # OrderAuditLog와의 cross-reference. LIVE_SHADOW 경로는 항상 audit row를
+    # 만들고, 본 row는 그 audit_id를 carry — 두 view를 함께 조회 가능.
+    audit_id:         Mapped[int]            = mapped_column(
+        Integer, ForeignKey("order_audit_log.id"), index=True
+    )
+
+    mode:             Mapped[str]            = mapped_column(String(32), index=True)
+    requested_by_ai:  Mapped[bool]           = mapped_column(Boolean, default=False)
+
+    symbol:           Mapped[str]            = mapped_column(String(16), index=True)
+    side:             Mapped[str]            = mapped_column(String(8))
+    quantity:         Mapped[int]            = mapped_column(Integer)
+    order_type:       Mapped[str]            = mapped_column(String(16))
+    limit_price:      Mapped[int | None]     = mapped_column(Integer, nullable=True)
+    latest_price:     Mapped[int]            = mapped_column(Integer)
+
+    # would-have decision — 실제 audit.decision은 항상 REJECTED. LIVE_SHADOW
+    # 단일 reason만 있으면 다른 가드는 통과한 후보 (APPROVED), 그 외 reason이
+    # 함께 누적되어 있으면 그 reason이 실제 거부 사유 (REJECTED). 운영자가
+    # "실 시세에서 다른 가드까지 다 통과한 후보 비율"을 측정 가능.
+    would_have_decision: Mapped[str]         = mapped_column(String(32), index=True)
+    would_have_reasons:  Mapped[list]        = mapped_column(JSON, default=list)
+
+    # CLAUDE.md 절대 원칙 5/7 — broker.place_order는 절대 호출되지 않는다.
+    # 본 컬럼은 default False이며 모든 코드 경로에서 True로 set되지 않는다 —
+    # 테스트(test_shadow_trade.py)로 invariant 강제.
+    actual_broker_order_sent: Mapped[bool]   = mapped_column(Boolean, default=False)
+
+    # 추정 체결가 — 실 체결과 다를 수 있다. estimation_method:
+    #   "latest_price_proxy" — 본 PR의 기본. latest_price를 그대로 추정 체결가로
+    #   사용, slippage_bps=0. 향후 orderbook 기반 추정 추가 시 method 문자열 갱신.
+    estimated_fill_price:    Mapped[int]     = mapped_column(Integer)
+    estimated_slippage_bps:  Mapped[float]   = mapped_column(Float, default=0.0)
+    estimation_method:       Mapped[str]     = mapped_column(String(32), default="latest_price_proxy")
+    confidence_note:         Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    strategy:         Mapped[str | None]     = mapped_column(String(64), nullable=True, index=True)
+    trade_reason:     Mapped[str | None]     = mapped_column(String(64), nullable=True)
+    source:           Mapped[str | None]     = mapped_column(String(32), nullable=True, index=True)
+    client_order_id:  Mapped[str | None]     = mapped_column(String(64), nullable=True, index=True)
+    ai_decision_meta: Mapped[dict | None]    = mapped_column(JSON, nullable=True)
+
+
 class MarketBar(Base):
     """업스트림에서 가져온 OHLCV 봉의 캐시. (symbol, interval, timestamp)가 유일."""
 
