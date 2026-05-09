@@ -51,6 +51,17 @@ from app.agents.strategy_researcher import (
     load_backtest_run,
     load_recent_backtest_runs,
 )
+from app.agents.daily_report_agent import (
+    DailyReportInput,
+    analyze_daily,
+    load_agent_decisions_for_date,
+    load_audit_rows_for_date,
+    load_backtest_runs_for_date,
+    load_emergency_events_for_date,
+    load_futures_audit_for_date,
+    load_pending_approvals_for_date,
+    load_virtual_orders_for_date,
+)
 from app.backtest.metrics import summarize_metrics
 from app.agents.roles import build_default_registry
 from app.agents.signal_quality import evaluate_signal_quality
@@ -1067,3 +1078,152 @@ def strategy_researcher_mock(
     )
     report = analyze_strategy(inp)
     return _serialize_strategy_report(report)
+
+
+# ====================================================================
+# 57: Daily Report Agent — read-only advisory + optional file write.
+#
+# 본 라우트는 OrderAuditLog / VirtualOrder / FuturesOrderAuditLog /
+# AgentDecisionLog / EmergencyStopEvent / PendingApproval / BacktestRun을
+# read-only로 분석해 markdown 리포트를 생성한다. 본 리포트는 *투자 조언이
+# 아니며*, 종목 추천 / 매수 매도 신호를 포함하지 않는다.
+# ====================================================================
+
+
+from datetime import date as _Date  # noqa: E402
+from pathlib import Path as _Path   # noqa: E402
+
+
+class DailyReportPreviewOut(BaseModel):
+    report_date:        str
+    markdown_report:    str
+    summary_lines:      list[str]
+    findings_count:     int
+    warnings_count:     int
+    action_items_count: int
+    auto_apply_allowed: bool
+    is_order_signal:    bool
+    notice:             str = (
+        "본 리포트는 *투자 조언이 아니라* 시스템 운영 / 검증 / 개선 자료입니다. "
+        "종목 추천 / 매수 매도 신호 없음."
+    )
+
+
+class DailyReportGenerateIn(BaseModel):
+    date:             str | None = None    # YYYY-MM-DD; None이면 오늘 (UTC)
+    output_dir:       str = "reports"
+    include_virtual:  bool = True
+    include_futures:  bool = True
+
+
+class DailyReportGenerateOut(BaseModel):
+    report_date:        str
+    output_path:        str
+    bytes_written:      int
+    findings_count:     int
+    warnings_count:     int
+    action_items_count: int
+    notice:             str = (
+        "본 호출은 reports/ 디렉토리에 markdown 파일을 작성합니다. "
+        "broker / OrderExecutor / route_order 호출 0건. 투자 조언 아님."
+    )
+
+
+def _build_daily_input(db: _Session, report_date: _Date,
+                       include_virtual: bool = True,
+                       include_futures: bool = True) -> DailyReportInput:
+    settings = get_settings()
+    return DailyReportInput(
+        report_date=report_date,
+        operation_mode=settings.default_mode.value,
+        audit_rows=tuple(load_audit_rows_for_date(db, report_date)),
+        virtual_orders=(
+            tuple(load_virtual_orders_for_date(db, report_date))
+            if include_virtual else ()
+        ),
+        futures_audit_rows=(
+            tuple(load_futures_audit_for_date(db, report_date))
+            if include_futures else ()
+        ),
+        agent_decisions=tuple(load_agent_decisions_for_date(db, report_date)),
+        emergency_events=tuple(load_emergency_events_for_date(db, report_date)),
+        pending_approvals=tuple(load_pending_approvals_for_date(db, report_date)),
+        backtest_runs=tuple(load_backtest_runs_for_date(db, report_date)),
+    )
+
+
+def _parse_report_date(s: str | None) -> _Date:
+    if s is None:
+        return datetime.now(timezone.utc).date()
+    return datetime.strptime(s, "%Y-%m-%d").date()
+
+
+@router.get("/daily-report/preview", response_model=DailyReportPreviewOut)
+def daily_report_preview(
+    date:    str | None = Query(None, description="YYYY-MM-DD (KST). 미지정 시 오늘."),
+    include_virtual:  bool = Query(True),
+    include_futures:  bool = Query(True),
+    db:      _Session = Depends(get_db),
+) -> DailyReportPreviewOut:
+    """파일을 *작성하지 않고* markdown 미리보기 반환. broker 호출 0건, DB write 0건."""
+    try:
+        report_date = _parse_report_date(date)
+    except ValueError:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid date format: {date} (expected YYYY-MM-DD)",
+        )
+    inp = _build_daily_input(db, report_date,
+                              include_virtual=include_virtual,
+                              include_futures=include_futures)
+    report = analyze_daily(inp)
+    return DailyReportPreviewOut(
+        report_date=report.report_date.isoformat(),
+        markdown_report=report.markdown_report,
+        summary_lines=list(report.summary_lines),
+        findings_count=len(report.findings),
+        warnings_count=len(report.tomorrow_warnings),
+        action_items_count=len(report.action_items),
+        auto_apply_allowed=report.auto_apply_allowed,
+        is_order_signal=report.is_order_signal,
+    )
+
+
+@router.post("/daily-report/generate", response_model=DailyReportGenerateOut)
+def daily_report_generate(
+    body: DailyReportGenerateIn,
+    db:   _Session = Depends(get_db),
+) -> DailyReportGenerateOut:
+    """`reports/daily_YYYY-MM-DD.md` 파일을 작성. broker 호출 0건, DB write 0건.
+
+    output_dir은 backend/ 기준 상대 경로. 운영자가 명시 path를 줘서 임의의
+    경로에 쓰는 것을 방지하고 싶으면 운영 환경에서 본 endpoint를 비활성화하고
+    CLI(scripts/generate_daily_report.py)를 사용하세요.
+    """
+    try:
+        report_date = _parse_report_date(body.date)
+    except ValueError:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid date format: {body.date} (expected YYYY-MM-DD)",
+        )
+    inp = _build_daily_input(db, report_date,
+                              include_virtual=body.include_virtual,
+                              include_futures=body.include_futures)
+    report = analyze_daily(inp)
+
+    out_dir = _Path(body.output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"daily_{report.report_date.isoformat()}.md"
+    out_path.write_text(report.markdown_report, encoding="utf-8")
+
+    return DailyReportGenerateOut(
+        report_date=report.report_date.isoformat(),
+        output_path=str(out_path),
+        bytes_written=len(report.markdown_report.encode("utf-8")),
+        findings_count=len(report.findings),
+        warnings_count=len(report.tomorrow_warnings),
+        action_items_count=len(report.action_items),
+    )

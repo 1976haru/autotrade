@@ -1,0 +1,5 @@
+# Daily report output directory.
+#
+# 이 디렉토리에 생성되는 reports/daily_YYYY-MM-DD.md는 .gitignore에 의해
+# 커밋되지 않습니다. 운영 로그이며, 본 Agent가 생성하는 자료는 *투자 조언이
+# 아닙니다*. 자세한 내용은 docs/daily_report_policy.md 참조.

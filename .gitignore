@@ -34,5 +34,7 @@ data/
 *.sqlite
 *.db
 
-# local reports
-reports/
+# local reports — daily_report_agent 산출물 (docs/daily_report_policy.md 참조).
+# .gitkeep만 placeholder로 유지, 실제 markdown은 미커밋.
+reports/*
+!reports/.gitkeep
