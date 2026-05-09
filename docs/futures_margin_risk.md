@@ -185,6 +185,7 @@ distance_pct   = abs(mark_price - liq_price) / mark_price * 100
 
 - [`futures_scope.md`](futures_scope.md) — 선물 1차 범위 + 국내/해외선물 비교 (#46)
 - [`futures_broker_contract.md`](futures_broker_contract.md) — `FuturesBrokerAdapter` 공식 contract (#47)
+- [`futures_strategy_contract.md`](futures_strategy_contract.md) — `FuturesStrategyBase` + mock 전략 3종 (#49)
 - [`futures_simulation_report.md`](futures_simulation_report.md) — 가상 산식 + invariant (#151)
 - [`live_activation_blockers.md`](live_activation_blockers.md) — LIVE 활성화 변경 매트릭스 (선물 §3 + §3.1 9-step)
 - [`risk_policy.md`](risk_policy.md) — 주식 RiskManager 평가 매트릭스 (참고용 — 선물은 별도)
