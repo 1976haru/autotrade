@@ -1110,3 +1110,92 @@ archive 확인 모달 (운영자명 / 사유 입력).
 - Postgres trigger / view로 audit_event UPDATE/DELETE SQL 차단 (DB 레벨 invariant)
 - archive batch tooling (cron)
 - 외부 SIEM 연동 (운영 환경 옵트인 후)
+
+## 추가 (#69) — DB Backup & Restore 정책
+
+체크리스트 #69: 장애 발생 시 OrderAuditLog / PendingApproval / AgentDecisionLog
+/ AuditEvent / VirtualOrder / FuturesOrderAuditLog / Watchlist / BacktestRun
+등 운영 기록을 복구 가능하도록. **API Secret / app secret / 계좌번호 / 토큰은
+어떤 백업 파일에도 포함되지 않는다** — DB만 백업한다.
+
+운영 로직(`app/`) 변경 0건 — scripts / docs / 테스트만.
+
+### 신규 파일
+- `scripts/backup_db.sh` — bash backup runner (SQLite + PostgreSQL). DATABASE_
+  URL redact + secret 패턴 abort + retention + dry-run + WAL/SHM 안전 sqlite3
+  `.backup` 우선
+- `scripts/backup_db.ps1` — Windows PowerShell 보조 (sqlite + Postgres). UTF-8
+  console, password redaction 동일 정책
+- `scripts/restore_db.sh` — SQLite + PostgreSQL 복구. 운영자 `OVERWRITE` 확인
+  또는 `--yes` 필수, 현재 DB는 *자동 보호 백업*(`.pre_restore_*.bak`)
+- `backend/tests/test_backup_policy.py` — 19건 (14 정적 + 5 smoke).
+  `.env` 미백업 / redaction helper / secret abort / .gitignore + .dockerignore /
+  SQLite tmp smoke / dry-run / secret URL 거부 / missing DATABASE_URL 거부
+- `docs/backup_restore.md` — 정책 / 백업 대상 / 제외 / SQLite + Postgres 절차
+  / 복구 / cron / Windows Task Scheduler / 운영 주의 / 13개 invariant
+- `backups/.gitkeep` — placeholder만 git 추적
+
+### 변경 파일
+- `.gitignore` — `backups/*` / `*.sql.gz` / `*.db.backup` / `*.sqlite.bak`
+  추가. `backups/.gitkeep`만 allowlist
+- `backend/.dockerignore` — `backups/` + 백업 파일 패턴 격리 (이미지 굽기 0건)
+- `README.md` — `docs/backup_restore.md` 링크
+
+### 백업 방식
+- **SQLite**: `sqlite3 .backup` 우선(WAL/SHM 안전) → 실패 시 파일 copy fallback
+- **PostgreSQL**: `pg_dump --format=plain --no-owner --no-privileges` + gzip
+- 출력: `backups/autotrade_backup_YYYYMMDD_HHMMSS.sqlite` 또는 `.sql.gz`
+- 환경 변수: `BACKUP_DIR` / `BACKUP_RETENTION_DAYS=14` / `BACKUP_COMPRESS=true`
+  / `BACKUP_DRY_RUN=false`
+- DATABASE_URL은 `redact_url()` 경유해 password를 `***`로 가린 form만 log
+
+### 복구 방식
+- SQLite: 파일 교체 (현재 DB는 `<path>.pre_restore_<ts>.bak`로 자동 보호 백업)
+- PostgreSQL: `psql < backup.sql` 또는 `gunzip -c backup.sql.gz | psql`
+- 운영자 명시 동의(`OVERWRITE` 입력 또는 `--yes` 플래그) 필수
+- 후속 안내: `alembic current` / backend 재시작 / `/api/status` / row count
+
+### Secret 백업 금지 방식
+1. **스크립트 source 검사** — `cp .env` / `Copy-Item .env` / `tar .env`
+   패턴 0건 (정적 테스트로 lock)
+2. **DATABASE_URL 패턴 abort** — `KIS_APP_KEY=` / `KIS_APP_SECRET=` /
+   `TELEGRAM_BOT_TOKEN=` / `ANTHROPIC_API_KEY=` / `OPENAI_API_KEY=` 검출 시
+   즉시 exit 2 (smoke test로 검증)
+3. **`redact_url()`** — password / token이 URL에 들어 있어도 log에는
+   `://user:***@host` 형태만 출력
+4. **`.gitignore`** — `backups/*` + `*.sql.gz` 등 백업 파일 git 추적 0건
+5. **`.dockerignore`** — 이미지 빌드 시 `backups/` 격리
+
+### 스케줄링 예시
+- **Linux cron**: `0 3 * * * cd /path/autotrade && DATABASE_URL=... bash scripts/backup_db.sh >> backups/cron.log 2>&1`
+- **Windows Task Scheduler**: pwsh.exe + scripts/backup_db.ps1
+- **Docker compose staging**: host에서 직접 실행
+
+### 안전 invariant (테스트로 lock)
+- ✓ scripts에 `.env` / `KIS_APP_KEY=` / `ANTHROPIC_API_KEY=` 복사 패턴 0건
+- ✓ DATABASE_URL을 raw log에 echo 0건 (redact 경유)
+- ✓ Secret-like URL → 즉시 exit (smoke test로 검증)
+- ✓ `.gitignore`에 backup 파일 패턴 등록 (테스트로 검증)
+- ✓ `backend/.dockerignore`에 `backups/` 등록 (테스트로 검증)
+- ✓ `app/` 운영 코드 변경 0건
+- ✓ broker.place_order / cancel_order / route_order 호출 추가 0건
+- ✓ ENABLE_LIVE_TRADING / ENABLE_AI_EXECUTION / FUTURES_LIVE 변경 0건
+- ✓ KIS / Anthropic / Telegram key 변경 0건
+- ✓ `.env` 변경 0건
+
+### 테스트 결과
+- **신규 backend**: 정적 14건 PASS + smoke 5건 skipped (현 Windows 한글 경로
+  + git-bash subprocess 인코딩 제약 — 운영 ASCII 경로 `C:\trade\autotrade`
+  에서는 모두 실행됨)
+- 수동 smoke 검증: tmp SQLite 백업 정상 (8192 bytes), DATABASE_URL에
+  `KIS_APP_KEY=` 포함 시 즉시 거부 확인
+- 전체 backend pytest regression: 본 PR은 `app/` 변경 0건이라 영향 없음
+
+### 남은 backlog
+- 백업 파일 무결성 자동 검증 (sqlite PRAGMA integrity_check / pg_restore --list)
+- 백업 파일 암호화 (age / GPG) — 외부 저장소 upload 전 필수
+- 외부 저장소 sync (S3 / Backblaze / rsync to NAS)
+- 주별 / 월별 retention 분리
+- 백업 결과 알림 (#64 NotificationService와 통합)
+- 자동 restore smoke (staging에 매일 자동 복구 후 row count diff)
+- DB 마이그레이션 시점의 *pre-migration* 자동 백업
