@@ -96,6 +96,24 @@
 - 실제 주문 코드 작성 전 MockBroker, 테스트, 실패 케이스를 먼저 구현한다.
 - LIVE / 선물 / AI 자동실행 활성화 PR은 운영자 명시 옵트인 후에만 머지.
 
+### P0 모듈 테스트 정책 (#65)
+
+돈이 걸릴 수 있는 자동매매 시스템이므로 다음 4개 모듈은 **테스트 없이 완료
+처리하지 않는다**. P0 매핑/시나리오 매트릭스는 [`docs/unit_test_coverage_map.md`](docs/unit_test_coverage_map.md).
+
+1. **RiskManager** (`app/risk/risk_manager.py`) ↔ `tests/test_risk_manager.py`
+2. **OrderGuard** (`app/risk/order_guard.py`) ↔ `tests/test_order_guard.py`
+3. **StrategyBase** (`app/strategies/base.py`) ↔ `tests/test_strategy_base_contract.py`
+4. **BacktestEngine** (`app/backtest/engine.py`) ↔ `tests/test_backtest_engine.py` + `tests/test_backtest_execution_costs.py`
+
+추가 규칙:
+- 실거래 / LIVE 관련 코드(예: `is_paper=False` 분기, `ENABLE_LIVE_TRADING=true`
+  활성화 경로)는 *테스트 없이 머지 금지*.
+- 외부 API 의존 테스트는 mock / fake / NoOp / dry_run 사용 — 실 KIS /
+  Anthropic / Telegram 호출 0건.
+- stress / slow / network 테스트는 `*-ci-nightly.yml` 등 별도 워크플로로
+  분리해 일반 CI flakiness를 방지.
+
 ## 안전 플래그
 
 env 변수로 모든 위험 동작을 차단한다. 자세한 매트릭스는 [`docs/promotion_policy.md`](docs/promotion_policy.md).

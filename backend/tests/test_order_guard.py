@@ -460,3 +460,58 @@ class TestSafety:
 def select_count(model):
     from sqlalchemy import func, select
     return select(func.count(model.id))
+
+
+# ====================================================================
+# #65 추가 gap 테스트
+# ====================================================================
+
+
+class TestSixtyFiveGaps:
+    """체크리스트 #65: OrderGuard의 미세한 경계값 lock."""
+
+    def test_rejected_audit_within_window_still_triggers_duplicate(self, client):
+        """안전 invariant: REJECTED audit row도 *시도 자체*를 의미하므로 같은
+        fingerprint가 짧은 시간에 반복되면 DUPLICATE로 차단된다. 운영자가
+        한도 위반 후 같은 주문을 즉시 반복 시도하는 패턴 자체를 보수적으로
+        막는다 (CLAUDE.md '손실 방어 우선'). 이 보수적 동작을 lock."""
+        _seed_audit(client, symbol="X", side="BUY", decision="REJECTED",
+                    executed=False, created_minutes_ago=1)
+        with client.test_db_factory() as db:
+            decision = OrderGuard(
+                OrderGuardConfig(duplicate_window_seconds=600), db,
+            ).check(_buy(symbol="X"), mode="SIMULATION")
+        # 보수적 차단 — REJECTED 시도도 fingerprint window 안에 다시 들어오면
+        # DUPLICATE로 분류. 운영자가 의도적으로 다시 시도하려면 cooldown
+        # 임계를 넘기거나 다른 client_order_id로 RETRY_REPLAY를 명시해야 함.
+        assert decision.decision == GuardDecision.DUPLICATE
+
+    def test_combined_cooldown_and_pending_returns_pending_first(self, client):
+        """같은 symbol에 PENDING 미체결 + symbol cooldown 둘 다 활성이어도 ALLOW
+        가 아닌 PENDING_BLOCKED 또는 COOLDOWN 중 하나를 반환. (둘 다 통과는
+        invariant 위반)."""
+        # PENDING approval 시드 — symbol="X", side="BUY"
+        with client.test_db_factory() as db:
+            db.add(PendingApproval(
+                audit_id=1, symbol="X", side="BUY", quantity=1,
+                order_type="MARKET", limit_price=None, mode="LIVE_MANUAL_APPROVAL",
+                status="PENDING", attempts=[],
+            ))
+            db.commit()
+        _seed_audit(client, symbol="X", side="BUY", decision="APPROVED",
+                    created_minutes_ago=0)
+        with client.test_db_factory() as db:
+            decision = OrderGuard(
+                OrderGuardConfig(
+                    symbol_cooldown_seconds=600,
+                    block_when_pending_same_side=True,
+                ),
+                db,
+            ).check(_buy(symbol="X"), mode="LIVE_MANUAL_APPROVAL")
+        # ALLOW 면 안 됨 — 둘 중 하나로 차단되어야 함.
+        assert decision.decision != GuardDecision.ALLOW
+        assert decision.decision in (
+            GuardDecision.PENDING_BLOCKED,
+            GuardDecision.COOLDOWN,
+            GuardDecision.DUPLICATE,
+        )

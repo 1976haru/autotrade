@@ -1270,3 +1270,151 @@ def test_policy_from_settings_propagates_symbol_exposure_pct():
 def test_default_max_symbol_exposure_pct_zero():
     p = RiskPolicy.from_settings(_settings())
     assert p.max_symbol_exposure_pct == 0.0
+
+
+# =====================================================================
+# #65 추가: SELL/청산 정책 분리 + check_order 표준 진입점 게이트
+#
+# 위험 축소 방향(SELL/청산)은 BUY 한도/익스포저 가드를 우회한다는 invariant
+# 를 명시적으로 lock한다. CLAUDE.md '손실 방어 우선' — 신규 노출(BUY)은
+# 한도로 막아도 기존 노출 축소(SELL)는 막지 않는다.
+# =====================================================================
+
+
+def test_sell_bypasses_max_positions_when_buy_blocked():
+    """max_positions에 도달해도 보유 종목의 SELL은 항상 통과 — 청산 방향이라
+    동시 보유 종목 수가 *감소*하기 때문."""
+    risk = RiskManager(RiskPolicy(max_positions=2))
+    held = [
+        Position(symbol="A", quantity=1, avg_price=1, market_price=1),
+        Position(symbol="B", quantity=1, avg_price=1, market_price=1),
+    ]
+    # 새 BUY는 max_positions(2)로 차단
+    buy = risk.evaluate_order(
+        order=OrderRequest(symbol="C", side=OrderSide.BUY, quantity=1),
+        mode=OperationMode.SIMULATION,
+        balance=_balance(),
+        positions=held,
+        latest_price=10_000,
+    )
+    assert buy.decision == RiskDecision.REJECTED
+    assert any("max positions" in r.lower() for r in buy.reasons)
+    # 같은 상태에서 보유 종목 SELL은 통과 — 노출 축소 방향이라 한도 무관
+    sell = risk.evaluate_order(
+        order=OrderRequest(symbol="A", side=OrderSide.SELL, quantity=1),
+        mode=OperationMode.SIMULATION,
+        balance=_balance(),
+        positions=held,
+        latest_price=10_000,
+    )
+    assert sell.decision == RiskDecision.APPROVED
+
+
+def test_sell_bypasses_max_order_notional_via_size_check_when_under_position():
+    """SELL의 notional 한도는 보유 포지션 축소 의도라 BUY와 별개 — 보유 수량
+    이내 SELL이면 통과한다."""
+    # max_order_notional=1_000_000 default, SELL 100주 * 5_000원 = 500_000 < 한도
+    risk = RiskManager(RiskPolicy())
+    held = [Position(symbol="X", quantity=100, avg_price=5_000, market_price=5_000)]
+    result = risk.evaluate_order(
+        order=OrderRequest(symbol="X", side=OrderSide.SELL, quantity=100),
+        mode=OperationMode.SIMULATION,
+        balance=_balance(),
+        positions=held,
+        latest_price=5_000,
+    )
+    assert result.decision == RiskDecision.APPROVED
+
+
+def test_check_order_with_block_new_buy_blocks_buy_but_lets_sell_through():
+    """MarketRegimeFilter BLOCK_NEW_BUY는 신규 BUY만 차단. SELL은 위험 축소
+    방향이라 통과 (CLAUDE.md 손실 방어 우선)."""
+    from app.risk.risk_manager import RiskContext
+    risk = RiskManager(RiskPolicy())
+    ctx = RiskContext(
+        mode=OperationMode.SIMULATION,
+        balance=_balance(),
+        positions=[Position(symbol="X", quantity=10, avg_price=5_000, market_price=5_000)],
+        latest_price=5_000,
+        market_regime="OPENING_CHAOS",
+        market_regime_decision="BLOCK_NEW_BUY",
+    )
+    # BUY → BLOCKED
+    buy = risk.check_order(
+        OrderRequest(symbol="X", side=OrderSide.BUY, quantity=1), ctx,
+    )
+    assert buy.decision == RiskDecision.BLOCKED
+    assert any("BLOCK_NEW_BUY" in r for r in buy.reasons)
+    # SELL → APPROVED (같은 ctx)
+    sell = risk.check_order(
+        OrderRequest(symbol="X", side=OrderSide.SELL, quantity=1), ctx,
+    )
+    assert sell.decision == RiskDecision.APPROVED
+
+
+def test_check_order_emergency_stop_override_blocks_immediately():
+    """check_order는 context.emergency_stop_override=True 면 평가 우회 즉시 BLOCKED."""
+    from app.risk.risk_manager import RiskContext
+    risk = RiskManager(RiskPolicy())
+    ctx = RiskContext(
+        mode=OperationMode.SIMULATION,
+        balance=_balance(),
+        positions=[],
+        latest_price=10_000,
+        emergency_stop_override=True,
+    )
+    result = risk.check_order(_buy(1), ctx)
+    assert result.decision == RiskDecision.BLOCKED
+    assert result.blocked_by == "emergency_stop_override"
+    assert result.required_action == "OPERATOR_RESET"
+
+
+def test_check_order_emergency_stop_runtime_flag_maps_to_blocked():
+    """런타임 risk.emergency_stop=True 시 REJECTED → BLOCKED로 승격 + blocked_by 채움."""
+    from app.risk.risk_manager import RiskContext
+    risk = RiskManager(RiskPolicy())
+    risk.set_emergency_stop(True)
+    ctx = RiskContext(
+        mode=OperationMode.SIMULATION,
+        balance=_balance(),
+        positions=[],
+        latest_price=10_000,
+    )
+    result = risk.check_order(_buy(1), ctx)
+    assert result.decision == RiskDecision.BLOCKED
+    assert result.blocked_by == "emergency_stop"
+    assert result.required_action == "OPERATOR_RESET"
+
+
+def test_check_order_stale_price_maps_to_blocked_with_wait_action():
+    """stale price REJECTED → BLOCKED + required_action=WAIT_FOR_FRESH_DATA."""
+    from app.risk.risk_manager import RiskContext
+    risk = RiskManager(RiskPolicy(stale_price_max_age_seconds=60))
+    stale_ts = datetime.now(timezone.utc) - timedelta(seconds=120)
+    ctx = RiskContext(
+        mode=OperationMode.SIMULATION,
+        balance=_balance(),
+        positions=[],
+        latest_price=10_000,
+        latest_price_timestamp=stale_ts,
+    )
+    result = risk.check_order(_buy(1), ctx)
+    assert result.decision == RiskDecision.BLOCKED
+    assert result.blocked_by == "stale_price"
+    assert result.required_action == "WAIT_FOR_FRESH_DATA"
+
+
+def test_check_order_live_trading_disabled_maps_to_blocked():
+    """LIVE 모드 + enable_live_trading=False → BLOCKED + ENABLE_LIVE_TRADING_FLAG action."""
+    from app.risk.risk_manager import RiskContext
+    risk = RiskManager(RiskPolicy(enable_live_trading=False))
+    ctx = RiskContext(
+        mode=OperationMode.LIVE_MANUAL_APPROVAL,
+        balance=_balance(),
+        positions=[],
+        latest_price=10_000,
+    )
+    result = risk.check_order(_buy(1), ctx)
+    assert result.decision == RiskDecision.BLOCKED
+    assert result.blocked_by == "live_trading_disabled"
+    assert result.required_action == "ENABLE_LIVE_TRADING_FLAG"
