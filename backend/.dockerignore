@@ -21,8 +21,14 @@ tests/
 data/
 *.sqlite
 *.db
+*.sql.gz
+*.db.backup
+*.sqlite.bak
 logs/
 reports/
+# #69: DB backup 파일은 이미지에 *절대* 굽지 않는다. 운영 데이터 / 감사
+# 로그가 포함될 수 있어 컨테이너 escape 시 사고 가능.
+backups/
 htmlcov/
 .coverage
 

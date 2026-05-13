@@ -39,3 +39,12 @@ data/
 # .gitkeep만 placeholder로 유지, 실제 markdown은 미커밋.
 reports/*
 !reports/.gitkeep
+
+# #69: DB backups — scripts/backup_db.sh 산출물. 운영 데이터(주문 / 감사 로그
+# / 가상 거래 등)가 포함될 수 있으므로 git 추적 0건. backups/ 디렉터리는
+# .gitkeep placeholder만 추적되도록.
+backups/*
+!backups/.gitkeep
+*.sql.gz
+*.db.backup
+*.sqlite.bak
