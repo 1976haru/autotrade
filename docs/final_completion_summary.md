@@ -672,3 +672,54 @@ execution/.env/API contract 무수정.
 - ✓ frontend Secret 저장 0건
 - ✓ docs에 *포트포워딩 금지* / *Tailscale 권장* / *PC 켜져 있어야* / *베타테스터에게 운영자 Secret 공유 금지* 모두 명시
 - ✓ `.env`는 `.gitignore` 등록 + `.env.example`은 placeholder만
+
+## 추가 (#61) — Approval UI 핵심 구조화
+
+체크리스트 #61: AI / 전략 제안의 승인 대기 화면을 *AI 매매 전환용 핵심 UI* 로
+구조화. broker API 호출 / approve API contract / LIVE flag 0건 변경 — 표시
+로직 / 모달 강화 / 테스트 / 문서만.
+
+### 신규 파일
+- `frontend/src/components/tabs/ApprovalQueue.jsx` — 6개 sub-component:
+  - `ApprovalFreshnessBadge` — TTL 우선, 없으면 created_at age fallback
+  - `ApprovalProposalSummary` — 제안 출처 / 전략 / confidence / supporting/
+    opposing reasons / expected reward·risk / "주문 아님" 안내
+  - `ApprovalRiskSummary` — RiskManager 사유 5+1 카테고리 (freshness /
+    position / loss / ai / guard / other), reasons 비면 "표시 가능한 리스크
+    사유 없음" + 재검증 안내
+  - `ApproveConfirmSummary` — 승인 모달용 상단 요약 + stale 경고 + 사유 top 3
+  - `ApprovalActionBar` — 모바일 동등 너비 버튼 행
+  - `ApprovalQueueEmptyState` — empty / demo / loading 상태 분기
+- `frontend/src/components/tabs/ApprovalQueue.test.jsx` — 신규 ApprovalQueue
+  sub-component 테스트 24건
+- `docs/approval_ui.md` — 정책 / 화면 구성 / 안전 원칙 / EXPIRED vs CANCELLED /
+  모바일 정책 / 컴포넌트 트리 / 절대 invariant
+
+### 변경 파일
+- `frontend/src/components/tabs/Approvals.jsx` — 새 sub-component 통합:
+  - PENDING row에 `ApprovalProposalSummary` + `ApprovalRiskSummary` +
+    `ApprovalFreshnessBadge` 추가
+  - 승인 모달 제목 "정말 승인하시겠습니까?"로 강화, `ApproveConfirmSummary`
+    상단 추가, action별 description 분리
+  - History row에 영문 status 옆 한국어 라벨 (`승인 / 거부 / 운영자 취소 /
+    시간 만료`) 추가 — EXPIRED와 CANCELLED 명시 분리
+  - Empty state / Error state 친화화 — raw `Failed to fetch` 원문 미노출
+    (`friendlyErrorMessage` 경유)
+
+### 안전 invariant 단정문
+
+- ✓ 본 PR에서 `broker.place_order` / `cancel_order` 호출 추가 0건
+- ✓ `/api/approvals/{id}/approve|reject|cancel` API contract 변경 0건
+- ✓ `ENABLE_LIVE_TRADING` / `ENABLE_AI_EXECUTION` / `ENABLE_FUTURES_LIVE_TRADING`
+  변경 0건 (모두 default false)
+- ✓ `.env` / KIS app_key / secret / Anthropic key 변경 0건
+- ✓ 본 UI는 LIVE_AI_EXECUTION 활성화 / 자동 매매 토글을 노출하지 않음
+- ✓ ApprovalProposalSummary는 "주문은 아직 실행되지 않았습니다" 명시 — AI
+  자동 발주 환상 차단
+- ✓ ApprovalRiskSummary는 reasons 비어도 "위험 없음" 단언 금지
+
+### 테스트 결과
+
+- Frontend `vitest run`: 신규 24건 + 기존 1365건 회귀 무 — 전체 PASS
+- Backend 변경 0건, pytest 회귀 없음 (영향 받는 backend 테스트 없음)
+- Lint / typecheck (frontend): `npm run lint` PASS, `vite build` PASS

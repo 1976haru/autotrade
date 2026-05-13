@@ -9,6 +9,15 @@ import {
   PENDING_STALE_THRESHOLD_MS,
   fmtKRW, formatPendingAge, isPendingStale,
 } from "../../utils/format";
+import { friendlyErrorMessage } from "../../utils/errorMessage";
+// 체크리스트 #61: ApprovalQueue 구조화 sub-components. broker 호출 / approve
+// API 직접 호출 0건 — display only.
+import {
+  ApprovalFreshnessBadge,
+  ApprovalProposalSummary,
+  ApprovalRiskSummary,
+  ApproveConfirmSummary,
+} from "./ApprovalQueue";
 // 113: 108의 ModeBadge를 PENDING/HistoryRow에서도 재사용 — 092 mode chip이
 // 처리 내역 위에 있고, 108이 timeline에서 같은 팔레트로 바뀌었지만 정작
 // 결재 행 자체엔 plain "LIVE_MANUAL_APPROVAL ·" 텍스트가 남아 있었다.
@@ -44,12 +53,40 @@ const STATUS_COLOR = {
   EXPIRED:   "#facc15",
 };
 
+// #61: EXPIRED와 CANCELLED는 둘 다 broker로 진행되지 않은 행이지만 의미가
+// 다르다 — EXPIRED는 TTL 만료(시스템), CANCELLED는 운영자가 의도적으로 폐기.
+// 운영자가 사후 분석 시 두 사유를 구분해야 하므로 영문 status 옆에 한국어
+// 라벨도 함께 표시한다.
+const STATUS_KOREAN_LABEL = {
+  APPROVED:  "승인",
+  REJECTED:  "거부",
+  CANCELLED: "운영자 취소",
+  EXPIRED:   "시간 만료",
+};
+
 
 // 결재 액션별 라벨/색상. 모달과 dispatch 분기에서 함께 쓴다.
+// #61: approve는 *직접 broker로 가는* 액션이라 모달 제목을 "정말 승인하시겠
+// 습니까?"로 강화 — reject/cancel은 폐기 동작이라 단정적 라벨 유지.
 const ACTION_META = {
-  approve: { label: "주문 승인", confirmLabel: "✓ 승인", color: "#22c55e" },
-  reject:  { label: "주문 거부", confirmLabel: "✗ 거부", color: "#ef4444" },
-  cancel:  { label: "주문 취소", confirmLabel: "⊘ 취소", color: "#94a3b8" },
+  approve: {
+    label: "정말 승인하시겠습니까?",
+    confirmLabel: "✓ 승인",
+    color: "#22c55e",
+    description: "승인 후에도 백엔드가 가격/잔고/리스크를 다시 검증합니다. 재검증에서 거부되면 결재는 PENDING 상태로 남아 운영자가 다시 시도할 수 있습니다.",
+  },
+  reject:  {
+    label: "주문 거부",
+    confirmLabel: "✗ 거부",
+    color: "#ef4444",
+    description: "거부(REJECTED)는 \"이 주문은 안 된다\"는 능동적 판단입니다. 처리 내역에 REJECTED로 기록되고 broker로 진행되지 않습니다.",
+  },
+  cancel:  {
+    label: "주문 취소",
+    confirmLabel: "⊘ 취소",
+    color: "#94a3b8",
+    description: "취소(CANCELLED)는 \"신호가 오래됐거나 더 이상 의미 없다\"는 중립적 폐기입니다. 거부와 별도로 처리 내역에서 구분됩니다.",
+  },
 };
 
 
@@ -219,13 +256,25 @@ export function HistoryRow({ a, focused = false, expanded = false, onClick }) {
             {a.limit_price ? ` · ${fmtKRW(a.limit_price)}원` : ""}
           </span>
         </div>
-        <span style={{
-          fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
-          color, padding: "1px 6px", borderRadius: 3,
-          border: `1px solid ${color}55`, background: `${color}15`,
-        }}>
-          {a.status}
-        </span>
+        <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <span style={{
+            fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
+            color, padding: "1px 6px", borderRadius: 3,
+            border: `1px solid ${color}55`, background: `${color}15`,
+          }}>
+            {a.status}
+          </span>
+          {/* #61: EXPIRED vs CANCELLED 분리 표시 — "운영자 취소" / "시간 만료".
+              영문 status 배지 옆에 별도 sibling으로 한국어 라벨을 둠으로써
+              기존 `getByText("APPROVED").style.color` 검사 호환을 유지. */}
+          {STATUS_KOREAN_LABEL[a.status] && (
+            <span
+              data-testid={`history-status-korean-${a.id}`}
+              style={{ fontSize: 9, fontWeight: 500, color, opacity: 0.85 }}>
+              · {STATUS_KOREAN_LABEL[a.status]}
+            </span>
+          )}
+        </div>
       </div>
       <div style={{ fontSize: 9, color: "#475569",
                      display: "flex", alignItems: "center",
@@ -349,14 +398,28 @@ export function ApprovalDecisionModal({
   action, approval, busy, defaultDecidedBy = "", onConfirm, onCancel,
 }) {
   const meta = ACTION_META[action];
+  // #61: approve일 때만 stale 경고를 surface — 폐기 액션(reject/cancel)은
+  // 신호 노후 자체가 정당한 사유라 별도 경고가 잡음이 됨.
+  // ApproveConfirmSummary는 _OrderSummary보다 더 강하게 종목/side/qty/strategy/
+  // mode + stale warning + risk reasons 요약을 한 패널에 묶는다.
+  const summary = action === "approve"
+    ? (
+      <>
+        <ApproveConfirmSummary approval={approval} action={action} />
+        <_OrderSummary approval={approval} />
+      </>
+    )
+    : <_OrderSummary approval={approval} />;
+  const description = `${meta.description} 감사 추적을 위해 운영자명과 사유를 남겨주세요 — 기록된 값은 영구 저장되어 사고 분석 시 사용됩니다.`;
   return (
     <DecisionDialog
       title={meta.label}
+      ariaLabel={ACTION_META[action].label.includes("승인") ? "주문 승인" : meta.label}
       accent={meta.color}
       cancelLabel="닫기"
       confirmLabel={meta.confirmLabel}
-      summary={<_OrderSummary approval={approval} />}
-      description="감사 추적을 위해 운영자명과 사유를 남겨주세요. 둘 다 선택 사항이지만, 기록된 값은 영구 저장되어 사고 분석 시 사용됩니다."
+      summary={summary}
+      description={description}
       notePlaceholder="예: 신호 노후, 잔고 부족"
       busy={busy}
       defaultDecidedBy={defaultDecidedBy}
@@ -912,7 +975,14 @@ export function Approvals({ approvals, operatorName = "" }) {
         </div>
 
         {error && (
-          <div style={{ color: "#f87171", fontSize: 11, marginBottom: 8 }}>{error}</div>
+          <div
+            data-testid="approvals-error"
+            style={{ color: "#f87171", fontSize: 11, marginBottom: 8,
+                     padding: "6px 8px", background: "#7f1d1d22",
+                     border: "1px solid #ef444466", borderRadius: 4,
+                     lineHeight: 1.5 }}>
+            {friendlyErrorMessage(error) || "승인 큐를 불러올 수 없어요."}
+          </div>
         )}
 
         {pending.length > 0 && (
@@ -925,12 +995,22 @@ export function Approvals({ approvals, operatorName = "" }) {
         )}
 
         {loading ? (
-          <div style={{ color: "#475569", fontSize: 12, textAlign: "center", padding: 16 }}>
-            로딩 중…
+          <div
+            data-testid="approvals-loading"
+            style={{ color: "#475569", fontSize: 12,
+                     textAlign: "center", padding: 16 }}>
+            승인 큐를 불러오는 중…
           </div>
         ) : pending.length === 0 ? (
-          <div style={{ color: "#1e3a5c", fontSize: 12, textAlign: "center", padding: 16 }}>
-            승인 대기 중인 주문 없음
+          <div
+            data-testid="approvals-empty"
+            style={{ color: "#1e3a5c", fontSize: 12,
+                     textAlign: "center", padding: 16, lineHeight: 1.5 }}>
+            승인 대기 항목이 없습니다.
+            <br />
+            <span style={{ fontSize: 10, color: "#475569" }}>
+              AI 제안 / 전략 신호가 NEEDS_APPROVAL로 분류되면 여기에 나타납니다.
+            </span>
           </div>
         ) : pending.map((a, idx) => {
           const hasAttempts = a.attempts && a.attempts.length > 0;
@@ -987,9 +1067,20 @@ export function Approvals({ approvals, operatorName = "" }) {
               <span>{new Date(a.created_at).toLocaleString("ko-KR")}</span>
               {/* 41: 신호 출처 분류 — AI/전략/수동/청산/리스크 예외 */}
               <RequestSourceBadge approval={a} />
-              {/* 41: TTL 남은 시간 (settings.approval_ttl_seconds > 0 일 때만) */}
+              {/* #61: TTL 우선, 없으면 created_at 기반 age stale 통합 표시 */}
+              <ApprovalFreshnessBadge approval={a} />
+              {/* 41: 기존 TTL 배지 호환 — TTL이 있으면 ApprovalFreshnessBadge가
+                  같은 정보를 더 명확히 보여주지만, 외부 테스트가 이 배지의
+                  testid를 검사해 호환을 위해 유지. */}
               <ApprovalExpiryBadge approval={a} />
             </div>
+
+            {/* #61: 제안 근거 패널 — AI / 전략 / 수동 source + reasons +
+                expected reward/risk. "주문 아님" 명시 — proposal 임을 강조. */}
+            <ApprovalProposalSummary approval={a} />
+            {/* #61: 리스크 사유 카테고리화 — freshness/position/loss/AI/guard.
+                데이터 없으면 "표시 가능한 리스크 사유 없음" + 재검증 안내. */}
+            <ApprovalRiskSummary approval={a} />
 
             <ReasonsLine reasons={a.reasons} />
             <ApproveAttemptFailureBadge attempts={a.attempts} />
