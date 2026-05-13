@@ -1,0 +1,41 @@
+# 체크리스트 #67: Secret / 빌드 부산물 격리.
+# 이미지에 *절대* 포함되면 안 되는 항목.
+
+# Secret / env
+.env
+.env.*
+!.env.example
+
+# Python venv / cache
+.venv*/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Tests / 운영 데이터 / 로컬 산출물 — staging 이미지에 굽지 않음
+tests/
+data/
+*.sqlite
+*.db
+logs/
+reports/
+htmlcov/
+.coverage
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Git
+.git/
+.gitignore
+
+# Docs / CI는 backend 이미지에 불필요
+Dockerfile
+.dockerignore

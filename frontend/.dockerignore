@@ -1,0 +1,28 @@
+# 체크리스트 #67: frontend 이미지 격리.
+
+# Secret / env
+.env
+.env.*
+!.env.example
+
+# 빌드 부산물 — multi-stage builder 안에서 다시 생성
+dist/
+node_modules/
+.vite/
+
+# Test cache
+coverage/
+.vitest/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# Docs
+Dockerfile
+.dockerignore

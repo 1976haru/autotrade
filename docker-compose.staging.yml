@@ -1,0 +1,156 @@
+# 체크리스트 #67: Staging 환경 docker-compose.
+#
+# 목적:
+#   - 운영 서버와 *별개*의 staging 환경. 실거래 코드 검증 / 신규 기능 smoke
+#     테스트 / 모의 페이퍼/Shadow 흐름 확인만 가능.
+#   - 본 compose는 *실 broker / 실 KIS / 실 Anthropic / 실 Telegram에 연결
+#     하지 않는다*. Secret 자리는 빈 문자열 default이며, 운영자가 실수로 채워도
+#     LIVE flag가 false라 broker 라우팅이 일어나지 않는다 (다중 안전).
+#
+# 절대 원칙 (CLAUDE.md):
+#   - ENABLE_LIVE_TRADING / ENABLE_AI_EXECUTION / ENABLE_FUTURES_LIVE_TRADING
+#     모두 false로 *하드코딩*. compose에서 override 권장 X.
+#   - DEFAULT_MODE=SIMULATION 또는 PAPER (KIS_IS_PAPER=true).
+#   - 실 API Key / Secret / 계좌번호는 본 파일에 *직접 적지 않는다*. .env.staging
+#     (gitignore됨)에서 주입. .env.staging.example은 빈 placeholder만.
+#   - 포트는 운영 default(8000 / 5173)와 다른 *staging 전용*(18000 / 15173).
+#
+# 실행:
+#   1. `cp .env.staging.example .env.staging` 후 placeholder만 채움 (실 키 금지)
+#   2. `docker compose -f docker-compose.staging.yml up --build -d`
+#   3. `python scripts/check_staging_smoke.py` 로 health check
+#   4. 종료: `docker compose -f docker-compose.staging.yml down`
+#
+# 자세한 절차: `docs/staging_environment.md`.
+
+services:
+
+  # ----------------------------------------------------------------
+  # Postgres (staging) — 운영 sqlite를 PG로 미리 검증.
+  # 운영 DB와 *완전히 별개* — staging 데이터는 언제든 reset 가능.
+  # ----------------------------------------------------------------
+  postgres-staging:
+    image: postgres:16-alpine
+    container_name: autotrader-staging-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       ${STAGING_PG_DB:-autotrader_staging}
+      POSTGRES_USER:     ${STAGING_PG_USER:-autotrader}
+      POSTGRES_PASSWORD: ${STAGING_PG_PASSWORD:-staging_only_placeholder}
+    ports:
+      - "15432:5432"
+    volumes:
+      - staging_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${STAGING_PG_USER:-autotrader} -d ${STAGING_PG_DB:-autotrader_staging}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [staging-net]
+
+  # ----------------------------------------------------------------
+  # Redis (staging) — 향후 rate-limit / dedupe / pubsub 후속을 위한
+  # 인프라 자리. 본 PR에서는 backend가 적극 사용하지 않지만 staging
+  # 토폴로지를 운영과 유사하게 두기 위해 포함.
+  # ----------------------------------------------------------------
+  redis-staging:
+    image: redis:7-alpine
+    container_name: autotrader-staging-redis
+    restart: unless-stopped
+    ports:
+      - "16379:6379"
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "PING"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [staging-net]
+
+  # ----------------------------------------------------------------
+  # Backend (staging) — FastAPI uvicorn. LIVE flag 강제 false.
+  # Secret은 .env.staging에서만 주입 (실 키 금지).
+  # ----------------------------------------------------------------
+  backend-staging:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: autotrader-staging-backend
+    restart: unless-stopped
+    depends_on:
+      postgres-staging:
+        condition: service_healthy
+      redis-staging:
+        condition: service_healthy
+    environment:
+      APP_ENV: staging
+      APP_NAME: auto-trader-staging
+      # ---- 안전 invariant (override 금지) ----
+      DEFAULT_MODE: ${STAGING_DEFAULT_MODE:-SIMULATION}
+      ENABLE_LIVE_TRADING:        "false"
+      ENABLE_AI_EXECUTION:        "false"
+      ENABLE_FUTURES_LIVE_TRADING: "false"
+      KIS_IS_PAPER:               "true"
+      # ---- 인프라 ----
+      DATABASE_URL: postgresql+psycopg2://${STAGING_PG_USER:-autotrader}:${STAGING_PG_PASSWORD:-staging_only_placeholder}@postgres-staging:5432/${STAGING_PG_DB:-autotrader_staging}
+      REDIS_URL:    redis://redis-staging:6379/0
+      # ---- 외부 노출 frontend는 host의 15173. CORS 허용. ----
+      CORS_ORIGINS: "http://localhost:15173,http://127.0.0.1:15173"
+      # ---- 운영자 placeholder — .env.staging에서 빈 값 주입 권장 ----
+      KIS_APP_KEY:        ${STAGING_KIS_APP_KEY:-}
+      KIS_APP_SECRET:     ${STAGING_KIS_APP_SECRET:-}
+      KIS_ACCOUNT_NO:     ${STAGING_KIS_ACCOUNT_NO:-}
+      ANTHROPIC_API_KEY:  ${STAGING_ANTHROPIC_API_KEY:-}
+      TELEGRAM_BOT_TOKEN: ${STAGING_TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID:   ${STAGING_TELEGRAM_CHAT_ID:-}
+      NOTIFICATIONS_ENABLED: "false"
+      MARKET_DATA_PROVIDER:  "mock"
+    ports:
+      - "18000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/status"]
+      interval: 15s
+      timeout: 3s
+      retries: 6
+      start_period: 25s
+    networks: [staging-net]
+
+  # ----------------------------------------------------------------
+  # Frontend (staging) — vite preview. backend는 host의 18000.
+  # ----------------------------------------------------------------
+  frontend-staging:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # 빌드 시점 frontend 환경. 본 값은 *공개 가능*해야 함 (Secret 금지).
+        VITE_BACKEND_URL: ${STAGING_FRONTEND_BACKEND_URL:-http://localhost:18000}
+        VITE_BASE_PATH:   "/"
+        VITE_DEMO_MODE:   "false"
+        VITE_ENABLE_FUTURES_TAB: "false"
+        VITE_FEEDBACK_EMAIL: ""
+    container_name: autotrader-staging-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend-staging
+    ports:
+      - "15173:5173"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:5173/"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    networks: [staging-net]
+
+
+volumes:
+  staging_pg_data:
+    name: autotrader_staging_pg_data
+
+
+networks:
+  staging-net:
+    name: autotrader-staging-net
+    driver: bridge
