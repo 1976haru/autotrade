@@ -24,6 +24,8 @@ import { useRiskPolicy } from "./store/useRiskPolicy";
 import { useSettings }   from "./store/useSettings";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { BackendOfflineBanner } from "./components/BackendOfflineBanner";
+import { OfflineBanner }    from "./components/common/OfflineBanner";
+import { PwaInstallHint }   from "./components/common/PwaInstallHint";
 import { FEATURES } from "./config/features";
 import {
   ReleaseNotesModal,
@@ -89,7 +91,12 @@ function AppShell() {
     <div className="app-shell" style={{ minHeight:"100vh", background:"var(--c-bg)", color:"var(--c-text)", fontFamily:"'Inter', system-ui, -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif", display:"flex", flexDirection:"column" }}>
       <TopBar brokerId={settings.brokerId} tradeMode={settings.tradeMode} connected={settings.connected} />
       <TopNav active={tab} onChange={setTab} badges={{ approve: approvals.pending.length }} />
+      {/* #63: 네트워크 단절 알림 — BackendOfflineBanner(backend off)와 의미가
+          다름. navigator.onLine 감시. */}
+      <OfflineBanner />
       <BackendOfflineBanner />
+      {/* #63: 홈화면 설치 안내 — standalone 또는 dismiss된 세션에선 노출 X. */}
+      <PwaInstallHint />
       <_ReleaseNotesAutoPopup />
       <div style={{ flex:1, overflowY:"auto", padding:"14px 14px 90px", scrollbarWidth:"thin" }}>
         <ErrorBoundary label="현재 탭">
