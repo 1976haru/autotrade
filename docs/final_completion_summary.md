@@ -723,3 +723,78 @@ execution/.env/API contract 무수정.
 - Frontend `vitest run`: 신규 24건 + 기존 1365건 회귀 무 — 전체 PASS
 - Backend 변경 0건, pytest 회귀 없음 (영향 받는 backend 테스트 없음)
 - Lint / typecheck (frontend): `npm run lint` PASS, `vite build` PASS
+
+## 추가 (#64) — Notifications (Telegram 1차 채널)
+
+체크리스트 #64: 장중 위험 이벤트를 운영자에게 즉시 알리는 인프라. 1차 채널은
+Telegram (BotFather + sendMessage). **위험 알림(CRITICAL/WARN) 우선**, 주문
+성공 알림은 기본 미구현. 알림 실패가 주문 / 리스크 판단을 깨뜨리지 않도록
+모든 송신 경로가 raise하지 않게 설계.
+
+### 신규 파일
+- `backend/app/notifications/__init__.py` — 패키지 export
+- `backend/app/notifications/types.py` — NotificationEvent / Severity /
+  NotificationKind / SendResult / NotificationChannel ABC. 이벤트 message에
+  Secret 패턴(kis_app_key / anthropic_api_key / telegram_bot_token / bearer /
+  sk-) 포함 시 ValueError로 fail-closed
+- `backend/app/notifications/channels.py` — NoOpChannel / TelegramChannel.
+  stdlib urllib만 사용 (외부 의존성 0). timeout 5s + retry 1회 기본.
+  send는 raise하지 않음
+- `backend/app/notifications/service.py` — NotificationService. enabled +
+  min_severity + dedupe(in-memory) + always_send_critical 게이트
+- `backend/app/notifications/templates.py` — 8개 builder
+  (emergency_stop / data_stale / approval_pending / daily_loss_warning /
+   broker_error / repeated_rejection / margin_risk / risk_auditor_warn)
+- `backend/app/api/routes_notifications.py` — GET /status, POST /test,
+  POST /mock-event. Token / chat_id 응답 노출 0건
+- `backend/tests/test_notifications.py` — 26건
+- `backend/tests/test_notifications_routes.py` — 14건
+- `frontend/src/components/common/NotificationStatusCard.jsx` — 활성/채널/
+  Telegram 구성/min severity/dedupe 표시 + "Token은 backend/.env에만"
+  안내 + 🧪 테스트 버튼. Token 입력 input 0개
+- `frontend/src/components/common/NotificationStatusCard.test.jsx` — 10건
+- `docs/notification_policy.md` — 정책 / Telegram 설정 / 우선순위 / Secret
+  관리 / 운영 주의 / 후속 과제
+
+### 변경 파일
+- `backend/app/core/config.py` — Settings에 NOTIFICATIONS_*, TELEGRAM_* 추가
+- `backend/.env.example` — placeholder 추가 (빈 값)
+- `backend/app/api/routes_risk.py` — emergency-stop POST에 try/except 알림
+  hook (실패해도 응답 영향 0)
+- `backend/app/main.py` — notifications_router 등록
+- `frontend/src/services/backend/client.js` — 3개 신규 API 메서드
+- `frontend/src/components/tabs/StrategyRisk.jsx` — NotificationStatusCard 마운트
+- `README.md` — docs/notification_policy.md 링크
+
+### Telegram 설정 (요약)
+- BotFather → `/newbot` → token 발급
+- chat_id 확인 (`getUpdates` JSON)
+- `backend/.env` 에 `NOTIFICATIONS_ENABLED=true`, `TELEGRAM_BOT_TOKEN=`,
+  `TELEGRAM_CHAT_ID=` 입력
+- `POST /api/notifications/test` 또는 frontend 카드의 "🧪 테스트 알림 보내기"
+- 자세한 절차: `docs/notification_policy.md` §3
+
+### 안전 invariant
+- ✓ `NotificationService.notify` raise 0건 (테스트로 lock)
+- ✓ `TelegramChannel.send` raise 0건 — 모든 예외 SendResult.error로 carry
+- ✓ emergency-stop API의 알림 hook은 try/except로 감싸 200 응답 유지
+  (`test_emergency_stop_toggle_does_not_raise_even_if_notification_path_fails`)
+- ✓ NotificationEvent는 message에 Secret 패턴 발견 시 ValueError
+- ✓ `service.status()` / `/api/notifications/status` 응답에 token / chat_id
+  값 0건 (테스트로 lock — JSON 직렬화 검사)
+- ✓ frontend에 token / chat_id 입력 input / textarea / select 0개
+- ✓ broker.place_order / cancel_order / route_order 호출 추가 0건
+- ✓ ENABLE_LIVE_TRADING / ENABLE_AI_EXECUTION / FUTURES_LIVE 변경 0건
+- ✓ KIS / Anthropic key 변경 0건
+- ✓ Telegram timeout 5s + retry 1회 → 합산 ≤ 10s 보장
+
+### 테스트 결과
+- Backend pytest 신규: **43 / 43 PASS** (`test_notifications.py` 26 +
+  `test_notifications_routes.py` 14 + 추가 3건)
+- Frontend vitest 신규: **10 / 10 PASS** (`NotificationStatusCard.test.jsx`)
+- 전체 frontend regression: 1448 중 1447 PASS — 1건은 pre-existing
+  Approvals.stress.test 타이밍 flake (격리 실행 시 PASS, 본 PR과 무관)
+- Frontend `npm run build`: 성공 (141ms)
+- Backend regression: `test_routes.py::test_status_exposes_safety_flags`만
+  실패 — pre-existing 환경 이슈 (.env `DEFAULT_MODE=PAPER` vs 테스트 기대값
+  `SIMULATION`). 본 PR과 무관

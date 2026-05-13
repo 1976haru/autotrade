@@ -108,6 +108,17 @@ class Settings(BaseSettings):
     anthropic_max_retries:    int   = 2
     anthropic_timeout_seconds: float = 30.0
 
+    # #64: Notifications. *Secret 보관 위치는 본 settings + backend .env 만*.
+    # frontend / docs / git에 token 또는 chat_id를 저장하지 않는다.
+    notifications_enabled:                  bool  = False
+    notifications_min_severity:             str   = "INFO"   # DEBUG/INFO/WARN/CRITICAL
+    notifications_dedupe_window_seconds:    int   = 60
+    notifications_always_send_critical:     bool  = True
+    telegram_bot_token:        str = ""      # backend/.env only — never log
+    telegram_chat_id:          str = ""
+    telegram_timeout_seconds:  float = 5.0
+    telegram_max_retries:      int   = 1
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
