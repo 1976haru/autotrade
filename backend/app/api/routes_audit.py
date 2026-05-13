@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import AiAnalysisLog, BacktestRun, OrderAuditLog
+from app.db.models import AiAnalysisLog, AuditEvent, BacktestRun, OrderAuditLog
 from app.db.session import get_db
 
 
@@ -204,3 +204,194 @@ def list_backtest_runs(
         .limit(limit).offset(offset)
     ).scalars().all()
     return [_to_backtest_out(r) for r in rows]
+
+
+# ====================================================================
+# #68: 통합 audit_event timeline — read-only + archive only.
+# DELETE 엔드포인트는 *의도적으로 추가하지 않는다*. archive PATCH만.
+# ====================================================================
+
+
+from fastapi import HTTPException, Body  # noqa: E402 — 라우트 블록 안 import
+from pydantic import Field               # noqa: E402
+
+from app.audit.events import (           # noqa: E402
+    AuditEventNotFoundError,
+    SecretLeakError,
+    archive_event,
+    log_audit_event,
+)
+
+
+class AuditEventOut(BaseModel):
+    id:           int
+    created_at:   datetime
+    event_type:   str
+    severity:     str
+    source:       str
+    actor:        str | None = None
+    symbol:       str | None = None
+    strategy:     str | None = None
+    mode:         str | None = None
+    target_kind:  str | None = None
+    target_id:    int | None = None
+    summary:      str
+    reason:       str | None = None
+    details:      dict | None = None
+    archived:     bool       = False
+    archived_at:  datetime | None = None
+    archived_by:  str | None = None
+    archive_note: str | None = None
+
+
+def _to_event_out(row: AuditEvent) -> AuditEventOut:
+    return AuditEventOut(
+        id=row.id,
+        created_at=_ensure_utc(row.created_at),
+        event_type=row.event_type,
+        severity=row.severity,
+        source=row.source,
+        actor=row.actor,
+        symbol=row.symbol,
+        strategy=row.strategy,
+        mode=row.mode,
+        target_kind=row.target_kind,
+        target_id=row.target_id,
+        summary=row.summary,
+        reason=row.reason,
+        details=row.details,
+        archived=bool(row.archived),
+        archived_at=_ensure_utc(row.archived_at) if row.archived_at else None,
+        archived_by=row.archived_by,
+        archive_note=row.archive_note,
+    )
+
+
+@router.get("/events", response_model=list[AuditEventOut])
+def list_audit_events(
+    limit:       int  = Query(50, ge=1, le=200),
+    offset:      int  = Query(0, ge=0),
+    event_type:  str | None = Query(None, description="event_type filter"),
+    severity:    str | None = Query(None, description="severity filter"),
+    source:      str | None = Query(None, description="source filter"),
+    symbol:      str | None = Query(None, description="symbol filter"),
+    strategy:    str | None = Query(None, description="strategy filter"),
+    actor:       str | None = Query(None, description="actor filter"),
+    include_archived: bool = Query(False, description="archived row 포함"),
+    db: Session = Depends(get_db),
+) -> list[AuditEventOut]:
+    """#68: 통합 감사 이벤트 timeline (read-only).
+
+    기존 OrderAuditLog / PendingApproval / AgentDecisionLog / EmergencyStopEvent
+    / VirtualOrder / FuturesOrderAuditLog는 그대로 보존되며, 본 timeline은 그
+    위의 cross-cutting view. 새 hook이 INSERT한 audit_event만 본 endpoint에서
+    조회된다.
+
+    **DELETE 엔드포인트는 의도적으로 없다** — audit row 삭제 = 감사 추적 손실.
+    """
+    stmt = select(AuditEvent).order_by(AuditEvent.id.desc())
+    if not include_archived:
+        stmt = stmt.where(AuditEvent.archived.is_(False))
+    if event_type:
+        stmt = stmt.where(AuditEvent.event_type == event_type)
+    if severity:
+        stmt = stmt.where(AuditEvent.severity == severity)
+    if source:
+        stmt = stmt.where(AuditEvent.source == source)
+    if symbol:
+        stmt = stmt.where(AuditEvent.symbol == symbol)
+    if strategy:
+        stmt = stmt.where(AuditEvent.strategy == strategy)
+    if actor:
+        stmt = stmt.where(AuditEvent.actor == actor)
+    stmt = stmt.limit(limit).offset(offset)
+    rows = db.execute(stmt).scalars().all()
+    return [_to_event_out(r) for r in rows]
+
+
+@router.get("/events/{event_id}", response_model=AuditEventOut)
+def get_audit_event(event_id: int, db: Session = Depends(get_db)) -> AuditEventOut:
+    """단건 상세."""
+    row = db.execute(
+        select(AuditEvent).where(AuditEvent.id == event_id)
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="audit_event not found")
+    return _to_event_out(row)
+
+
+class OperatorNoteIn(BaseModel):
+    """수동 OPERATOR_NOTE 이벤트 — 운영자가 운영 메모 / incident 기록 등 추가.
+
+    실 broker 주문 / risk 결정 / AI 제안은 본 endpoint로 만들지 *않는다* —
+    그것들은 각 라우트의 hook으로만 추가됨.
+    """
+    summary:     str  = Field(..., min_length=1, max_length=255)
+    reason:      str | None = Field(default=None, max_length=255)
+    symbol:      str | None = Field(default=None, max_length=16)
+    strategy:    str | None = Field(default=None, max_length=64)
+    actor:       str | None = Field(default=None, max_length=64)
+    details:     dict | None = None
+
+
+@router.post("/events", response_model=AuditEventOut, status_code=201)
+def post_operator_note(
+    body: OperatorNoteIn,
+    db:   Session = Depends(get_db),
+) -> AuditEventOut:
+    """OPERATOR_NOTE 한 건 추가. event_type / severity / source는 *고정* —
+    OPERATOR_NOTE / INFO / OPERATOR.
+
+    Secret 패턴이 summary / reason / details 어디에 있으면 SecretLeakError
+    → 400. *redaction 아닌 거부* 정책.
+    """
+    try:
+        row = log_audit_event(
+            db,
+            event_type="OPERATOR_NOTE",
+            severity="INFO",
+            source="OPERATOR",
+            actor=body.actor,
+            symbol=body.symbol,
+            strategy=body.strategy,
+            summary=body.summary,
+            reason=body.reason,
+            details=body.details,
+        )
+    except SecretLeakError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error":   "secret_leak_blocked",
+                "message": str(exc),
+            },
+        ) from exc
+    return _to_event_out(row)
+
+
+class ArchiveIn(BaseModel):
+    archived_by: str | None = Field(default=None, max_length=64)
+    note:        str | None = Field(default=None, max_length=255)
+
+
+@router.patch("/events/{event_id}/archive", response_model=AuditEventOut)
+def patch_archive_event(
+    event_id: int,
+    body: ArchiveIn | None = Body(default=None),
+    db: Session = Depends(get_db),
+) -> AuditEventOut:
+    """archive flag set — delete *대체*. row는 그대로 보존.
+
+    **본 endpoint는 row를 삭제하지 않는다.** 운영자가 노이즈를 분리하거나 cold
+    storage로 옮기고 싶을 때 archived=True로 표시만 한다. 멱등 — 이미 archived
+    인 row에 다시 호출해도 archived_by/note는 *덮어쓰지 않음*.
+    """
+    payload = body or ArchiveIn()
+    try:
+        row = archive_event(
+            db, event_id,
+            archived_by=payload.archived_by, note=payload.note,
+        )
+    except AuditEventNotFoundError:
+        raise HTTPException(status_code=404, detail="audit_event not found") from None
+    return _to_event_out(row)

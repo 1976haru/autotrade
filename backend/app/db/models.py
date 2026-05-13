@@ -535,3 +535,67 @@ class MarketBar(Base):
     close:      Mapped[int]      = mapped_column(Integer)
     volume:     Mapped[int]      = mapped_column(Integer)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class AuditEvent(Base):
+    """체크리스트 #68: 통합 감사 이벤트 (append-only).
+
+    기존 도메인별 테이블(OrderAuditLog / PendingApproval / AgentDecisionLog /
+    EmergencyStopEvent / VirtualOrder / FuturesOrderAuditLog)을 *대체하지 않고*,
+    그 위에 cross-cutting timeline view를 제공한다.
+
+    절대 원칙:
+    - **append-only**: 본 ORM은 update / delete 메서드를 *호출자에게 노출하지
+      않는다*. `archived` flag만 운영자가 토글 가능 (삭제 대신 archive).
+    - **DELETE 금지**: 본 PR은 audit_event를 *delete*하는 코드 경로를 추가하지
+      않는다. routes / utility / migration 모두 INSERT + archived UPDATE만.
+    - **Secret redaction**: 호출자(`app.audit.events.log_audit_event`)가 details
+      / summary에 Secret 패턴 발견 시 `SecretLeakError`로 raise(fail-closed)
+      후 INSERT 거부. redaction이 아닌 거부 — invariant lock.
+    - **누가/무엇을/왜**: actor / source / event_type / target_kind / target_id /
+      symbol / strategy / severity / reason / details(JSON) 필드로 trace 가능.
+
+    필드 의미:
+    - event_type: SIGNAL / ORDER_REQUEST / APPROVAL_DECISION / RISK_BLOCK /
+      AI_PROPOSAL / EMERGENCY_STOP / VIRTUAL_ORDER / FUTURES_RISK / NOTIFICATION
+      / OPERATOR_NOTE 등 자유 카테고리 (StrEnum, app.audit.events.EventType).
+    - severity: INFO / WARN / CRITICAL / SECURITY.
+    - source: STRATEGY / AI / MANUAL / SYSTEM / OPERATOR / SCHEDULER.
+    - target_kind / target_id: 연관 도메인 row (예: ('OrderAuditLog', 42)).
+    - actor: 운영자명 / agent 이름 / 시스템 ('system'). NULL은 익명.
+    - reason: 사람-가독 사유. 짧은 한 줄.
+    - details: 자유 JSON. AI 이벤트는 model / confidence / supporting_reasons /
+      opposing_reasons / risk_note 등을 carry.
+    - archived: cold storage / 노이즈 분리용. delete를 *대체*.
+    """
+
+    __tablename__ = "audit_event"
+
+    id:           Mapped[int]            = mapped_column(primary_key=True)
+    created_at:   Mapped[datetime]       = mapped_column(
+        DateTime, default=_utcnow, index=True,
+    )
+
+    event_type:   Mapped[str]            = mapped_column(String(32), index=True)
+    severity:     Mapped[str]            = mapped_column(String(16), index=True, default="INFO")
+    source:       Mapped[str]            = mapped_column(String(16), index=True, default="SYSTEM")
+
+    actor:        Mapped[str | None]     = mapped_column(String(64), nullable=True, index=True)
+    symbol:       Mapped[str | None]     = mapped_column(String(16), nullable=True, index=True)
+    strategy:     Mapped[str | None]     = mapped_column(String(64), nullable=True, index=True)
+    mode:         Mapped[str | None]     = mapped_column(String(32), nullable=True)
+
+    # 연관 도메인 row pointer — 기존 테이블을 *수정하지 않고* 참조만.
+    target_kind:  Mapped[str | None]     = mapped_column(String(32), nullable=True, index=True)
+    target_id:    Mapped[int | None]     = mapped_column(Integer, nullable=True, index=True)
+
+    summary:      Mapped[str]            = mapped_column(String(255))
+    reason:       Mapped[str | None]     = mapped_column(String(255), nullable=True)
+    # 자유 형식 JSON — AI 이벤트는 confidence / reasons / model 등.
+    details:      Mapped[dict | None]    = mapped_column(JSON, nullable=True)
+
+    # archive — delete를 *대체*. 본 PR에는 row delete 경로 0개.
+    archived:     Mapped[bool]           = mapped_column(Boolean, default=False, index=True)
+    archived_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    archived_by:  Mapped[str | None]     = mapped_column(String(64), nullable=True)
+    archive_note: Mapped[str | None]     = mapped_column(String(255), nullable=True)
