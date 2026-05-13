@@ -197,6 +197,17 @@
 - 선물 라이브 evaluate 로직 활성화 — 동일.
 - 외부 모니터링 (Datadog / Sentry) 통합 — MVP 범위 외.
 
+## #77 Alpha Decay Monitor — 후속 (advisory only, 자동 비활성 절대 금지)
+
+- regime-aware alpha decay — regime별 baseline / recent 분리 비교
+- portfolio-level decay — 여러 전략의 상관관계 / 분산 효과 통합 분석
+- 자동 collector — `BacktestRun` / `OrderAuditLog` 에서 baseline / recent 자동 추출
+- decay history 추적 — 시계열 알파 감쇠 추세 (현재는 single point)
+- Strategy Researcher Agent(#55) 연계 — kind별 권장 조치 자동 매핑
+- Notification 연계 — DISABLE_CANDIDATE 진입 시 운영자 알림
+- Bayesian 신뢰 구간 — score에 신뢰 구간 부여
+- 시장 regime 자동 분류 — operator note → regime 매핑 자동화
+
 ## 관련 문서
 
 - [`docs/final_checklist_report.md`](final_checklist_report.md)

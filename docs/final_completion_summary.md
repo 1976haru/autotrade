@@ -1848,3 +1848,110 @@ live_activation_blockers / promotion_policy / CLAUDE / README / final_completion
 - 증거금 reconciliation 가상 산식 vs broker API 차이 측정
 - 강제청산 시나리오 드릴 (운영자 수동 검증)
 - (영구 BLOCKED — 진행 안 함) FUTURES_AI_EXECUTION 게이트 구현
+
+---
+
+## #77 Alpha Decay Monitor (전략 알파 감쇠 read-only 분석)
+
+> 전략별 알파 감쇠를 추적하는 read-only 모니터. **자동 비활성/삭제 절대 금지**.
+> 결과는 운영자 / Strategy Researcher Agent(#55) / Promotion Gate(#27) 참고용.
+
+### 생성 / 수정 파일
+- `backend/app/governance/alpha_decay.py` (신규) —
+  `AlphaDecayInput` / `AlphaDecayResult` / `AlphaDecayStatus` / `AlphaDecayKind` /
+  `AlphaDecayThresholds` / `StrategyMetricsSnapshot` + `evaluate_alpha_decay()` +
+  `compute_alpha_decay_score()`
+- `backend/app/api/routes_governance.py` (수정) — `POST /governance/alpha-decay/evaluate`
+- `backend/tests/test_alpha_decay.py` (신규, **29 PASS**)
+- `frontend/src/services/backend/client.js` (수정) — 1 helper
+- `frontend/src/components/tabs/AlphaDecayCard.jsx` (신규)
+- `frontend/src/components/tabs/AlphaDecayCard.test.jsx` (신규, **10 PASS**)
+- `docs/alpha_decay_monitor.md` (신규)
+- `docs/backlog.md` (수정) — #77 후속 backlog 추가
+- `CLAUDE.md` / `README.md` / `docs/final_completion_summary.md` (수정)
+
+### alpha_decay_score 기준 (0~100, 감점 누적)
+| 신호 | 가중치 default |
+|---|---|
+| expectancy_drop (비율 기반) | 25 |
+| expectancy_flip_to_negative (양수→음수) | +25 추가 |
+| pf_drop (비율 기반) | 20 |
+| pf_below_min (PF<1.2) | +15 추가 |
+| winrate_drop | 10 |
+| mdd_worsen (baseline 1.5배 이상) | 15 |
+| consec_losses_increase (2배 이상) | 10 |
+| data_quality_issue (<75) | 15 |
+| regime_change | 5 |
+
+### Status 매핑
+| Score | Status |
+|---|---|
+| −1 (표본 부족) | `INSUFFICIENT_DATA` |
+| 0~24 | `HEALTHY` |
+| 25~49 | `WATCH` |
+| 50~74 | `DECAY_WARNING` |
+| 75~100 | `DISABLE_CANDIDATE` |
+
+### 단기 부진 vs 구조적 성능저하 구분 방식
+6종 `AlphaDecayKind` 분류 (우선순위 순):
+1. **INSUFFICIENT_DATA** — recent trade_count < 20
+2. **DATA_QUALITY_ISSUE** — recent_data_quality_score < 60
+3. **REGIME_MISMATCH** — regime 변경 + 핵심 지표 악화 ≤ 1개 (단기 부진 가능성)
+4. **STRUCTURAL_DECAY** — 핵심 지표 **≥3개** 동시 악화 (구조적 감쇠 의심)
+5. **SHORT_TERM_DRAWDOWN** — 핵심 지표 1~2개만 악화 (단기 부진)
+6. **NONE** — 악화 신호 0건 (HEALTHY)
+
+핵심 지표는 `regime_change` / `data_quality_issue` 를 *제외*한 나머지 (성과 지표).
+
+### UI / API 변경
+- 신규 API: `POST /api/governance/alpha-decay/evaluate`
+- 신규 UI: `AlphaDecayCard` — status badge + "비활성 후보 (자동 비활성 아님)" 보조 배지 + score / kind / 메트릭 Δ 비교 + 악화 신호 chip + 권장 조치 + cautions
+- "전략 비활성화" / "전략 삭제" / "Disable Strategy" / "Apply Parameters" / "파라미터 적용" / "promotion 변경" / "AI 자동매매 활성화" / "Place Order" 라벨 버튼 0개
+
+### 안전 invariant (테스트로 lock)
+- ✓ broker / OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client` / `anthropic` / `openai` / `httpx` / `requests` import 0건
+- ✓ `broker.place_order(` / `route_order(` / `OrderExecutor(` / `submit_candidate(` / `AiClient(` 호출 0건
+- ✓ DB write 0건
+- ✓ `settings.enable_*_trading =` mutate 0건
+- ✓ `from app.core.config import` / `get_settings(` 호출 0건
+- ✓ `.save_params(` / `.apply_params(` / `strategy.enabled = False` / `PromotionGate(` / `evaluate_promotion(` / `.set_emergency_stop(` 호출 0건 (전략 / promotion 상태 mutate 시도 0건)
+- ✓ `AlphaDecayResult.is_order_signal=True` 생성 불가 (ValueError)
+- ✓ `AlphaDecayResult.auto_disable=True` 생성 불가
+- ✓ `AlphaDecayResult.auto_apply_allowed=True` 생성 불가
+- ✓ UI 카드의 전략 비활성/삭제/파라미터 적용/promotion 변경 라벨 버튼 0개
+- ✓ UI / 응답에 BUY/SELL/HOLD / Secret 패턴 0건
+
+### 테스트 결과
+- **신규 backend**: 29 PASS (DTO invariant 4 + happy/expectancy/pf/mdd/winrate/consec/data_quality/regime 등 15 + kind 분류 4 + score clamp 1 + threshold override 1 + recommendation 1 + API 3 + 정적 grep 6 — 실제 합)
+- **신규 frontend**: 10 PASS (HEALTHY 배지 / DISABLE_CANDIDATE 보조 배지 / INSUFFICIENT_DATA / 고지 영구 / 활성화 버튼 0개 / BUY-SELL 0건 / Secret 비노출 / signals + recommendation + cautions / 평가 버튼 라벨 / 메트릭 Δ 비교)
+- Regression: alpha_decay + ai_execution + ai_assist + live_manual + paper + monitoring 합산 무회귀
+- Ruff 신규 파일: clean
+
+### 실거래 / AI 자동매매 / 전략 변경 금지 invariant — 본 PR 미변경
+- ✓ `ENABLE_LIVE_TRADING=false`, `ENABLE_AI_EXECUTION=false`, `ENABLE_FUTURES_LIVE_TRADING=false`, `KIS_IS_PAPER=true`
+- ✓ `app/core/config.py` 변경 0건
+- ✓ `app/strategies/*` 변경 0건 (전략 base / 구체 전략 / live engine 모두 그대로)
+- ✓ `app/governance/strategy_promotion.py` 변경 0건 (Promotion Gate 그대로)
+- ✓ `.env` / Secret / API Key / 계좌번호 변경 0건
+- ✓ 실제 broker / KIS / Anthropic / OpenAI 호출 0건
+- ✓ 절대 원칙 1~6 모두 유지
+
+### DISABLE_CANDIDATE = 자동 비활성 아님 (강조)
+DISABLE_CANDIDATE verdict 는 *비활성 후보 표시*일 뿐. 실제 전략 변경 절차:
+1. Strategy Researcher Agent(#55) 분석 실행 (별도 PR 검토용 자료)
+2. backtest 재검증 (#27 PromotionGate 단계 재진입 검토)
+3. 별도 PR로 전략 코드 / 설정 변경
+4. 운영자 명시 승인 (PR review)
+5. Paper Gate(#72) / Live Manual Gate(#73) / AI Assist Gate(#74) 단계 재통과
+
+모두 본 모듈 *밖*의 절차.
+
+### 남은 Alpha Decay backlog
+- regime-aware alpha decay (regime별 baseline / recent 분리)
+- portfolio-level decay (전략간 상관관계 / 분산)
+- 자동 collector (BacktestRun + OrderAuditLog → input)
+- decay history 추적 (시계열)
+- Strategy Researcher #55 자동 매핑
+- Notification 연계 (DISABLE_CANDIDATE 진입 시 알림)
+- Bayesian 신뢰 구간
+- 시장 regime 자동 분류

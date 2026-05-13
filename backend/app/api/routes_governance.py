@@ -599,3 +599,90 @@ def evaluate_ai_execution_gate_endpoint(
 def get_ai_execution_gate_policy() -> dict:
     """기본 제한 + required gates + futures_allowed=false 정보 (read-only)."""
     return get_policy_summary()
+
+
+# ---------- #77 Alpha Decay Monitor ----------
+
+from app.governance.alpha_decay import (
+    AlphaDecayInput,
+    AlphaDecayResult,
+    StrategyMetricsSnapshot,
+    evaluate_alpha_decay,
+)
+
+
+class _SnapshotPayload(BaseModel):
+    trade_count:            int   = 0
+    expectancy:             float = 0.0
+    profit_factor:          float | None = None
+    win_rate:               float = 0.0
+    max_drawdown:           int   = 0
+    max_consecutive_losses: int   = 0
+
+
+class AlphaDecayInputPayload(BaseModel):
+    """Alpha Decay 평가 입력 (read-only).
+
+    baseline = 검증 단계 통과 시점의 성과, recent = 최근 운용 통계.
+    """
+    strategy_name:             str = Field(..., min_length=1, max_length=64)
+    baseline:                  _SnapshotPayload
+    recent:                    _SnapshotPayload
+    baseline_regime:           str | None = None
+    recent_regime:             str | None = None
+    recent_data_quality_score: float | None = None
+    operator_note:             str | None = Field(default=None, max_length=500)
+
+
+class AlphaDecayResultPayload(BaseModel):
+    strategy_name:           str
+    score:                   int
+    status:                  str
+    kind:                    str
+    degraded_signals:        list[str]
+    cautions:                list[str]
+    recommended_action:      str
+    metrics:                 dict
+    thresholds:              dict
+    is_order_signal:         bool = Field(False, description="invariant — 항상 false")
+    auto_disable:            bool = Field(False, description="invariant — 자동 비활성 절대 금지")
+    auto_apply_allowed:      bool = Field(False, description="invariant — advisory only")
+    live_flag_changed:       bool = Field(False)
+    mode_changed:            bool = Field(False)
+    generated_at:            datetime
+
+
+@router.post("/alpha-decay/evaluate", response_model=AlphaDecayResultPayload)
+def evaluate_alpha_decay_endpoint(
+    payload: AlphaDecayInputPayload,
+) -> AlphaDecayResultPayload:
+    """Alpha Decay 평가. read-only — DB write / broker 호출 / 전략 비활성화 0건.
+
+    DISABLE_CANDIDATE 라벨은 *비활성 후보 표시*일 뿐 자동 비활성/삭제가 아니다.
+    전략 변경은 운영자 수동 결정 + 별도 PR 절차 필요.
+    """
+    def _snap(p: _SnapshotPayload) -> StrategyMetricsSnapshot:
+        return StrategyMetricsSnapshot(
+            trade_count=p.trade_count,
+            expectancy=p.expectancy,
+            profit_factor=p.profit_factor,
+            win_rate=p.win_rate,
+            max_drawdown=p.max_drawdown,
+            max_consecutive_losses=p.max_consecutive_losses,
+        )
+
+    try:
+        inp = AlphaDecayInput(
+            strategy_name=payload.strategy_name,
+            baseline=_snap(payload.baseline),
+            recent=_snap(payload.recent),
+            baseline_regime=payload.baseline_regime,
+            recent_regime=payload.recent_regime,
+            recent_data_quality_score=payload.recent_data_quality_score,
+            operator_note=payload.operator_note,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"invalid alpha decay input: {e}")
+
+    result: AlphaDecayResult = evaluate_alpha_decay(inp)
+    return AlphaDecayResultPayload(**result.to_dict())
