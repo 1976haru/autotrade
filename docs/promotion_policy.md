@@ -101,6 +101,16 @@
   - 모든 주문이 인간 승인을 거침.
   - 거부/취소 시나리오 모두 검증.
   - 위 invariant 모두 audit log 표본 검사로 통과.
+- **#73 Live Manual Gate readiness 평가**: 본 단계로 *진입하기 전*에 코드 단으로
+  전제 조건(Paper Gate PASS + Promotion Gate PASS + user explicit opt-in +
+  approval_required=True + AI execution disabled + futures live disabled) +
+  극소액 정책(주문 ≤ 5만 / 일일 손실 ≤ 1만 / 보유 ≤ 3개) + 시스템 안정성
+  (system_errors=0 / audit_missing=0 / approval_bypass_attempts=0)을 평가하는
+  `app/governance/live_manual_gate.py::evaluate_live_manual_gate()` 추가.
+  API: `POST /api/governance/live-manual-gate/evaluate` +
+  `GET /api/governance/live-manual-gate/period-summary`. UI:
+  `LiveManualGateCard`. **PASS는 진입 *검토 가능*을 의미하며 실거래 자동
+  허가가 *아니다***. 자세한 정책: [`live_manual_gate.md`](live_manual_gate.md).
 
 ### 5. AI Assist (`LIVE_AI_ASSIST`)
 

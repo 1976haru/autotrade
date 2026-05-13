@@ -411,4 +411,18 @@ export const backendApi = {
   monitoringHealth:  () => backendFetch("/api/monitoring/health"),
   monitoringMetrics: () => backendFetch("/api/monitoring/metrics"),
   monitoringAlerts:  () => backendFetch("/api/monitoring/alerts"),
+  // 73: Live Manual Gate — readiness 평가 + 운영 기간 요약. *실거래 활성화
+  // 호출은 본 client에 추가하지 않는다* (CLAUDE.md 절대 원칙).
+  liveManualGateEvaluate: (body) =>
+    backendFetch("/api/governance/live-manual-gate/evaluate", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
+  liveManualPeriodSummary: ({ periodStart = null, periodEnd = null } = {}) => {
+    const qs = new URLSearchParams();
+    if (periodStart) qs.set("period_start", periodStart);
+    if (periodEnd)   qs.set("period_end",   periodEnd);
+    const q = qs.toString();
+    return backendFetch(`/api/governance/live-manual-gate/period-summary${q ? "?" + q : ""}`);
+  },
 };

@@ -211,6 +211,24 @@ route_order / paper_trader / 외부 HTTP / AI SDK import 0건, DB는 read-only
 SELECT만 (INSERT/UPDATE/DELETE 0건, 정적 grep 가드). 자세한 정책:
 [`docs/paper_gate_policy.md`](docs/paper_gate_policy.md).
 
+**#73 Live Manual Gate**: `LIVE_MANUAL_APPROVAL` 모드 진입 readiness를 코드 단으로
+평가 — `app/governance/live_manual_gate.py::evaluate_live_manual_gate`. PASS 기준:
+Paper Gate PASS + Promotion Gate PASS + user explicit opt-in + approval_required=True
++ AI execution disabled + FUTURES live disabled + 1회 주문 ≤ 5만원 + 일일 손실 ≤ 1만원
++ 보유 ≤ 3개 + system_errors=0 + audit_missing=0 + approval_bypass_attempts=0.
+API: `POST /api/governance/live-manual-gate/evaluate` +
+`GET /api/governance/live-manual-gate/period-summary` (운영 로그 요약 helper
+`summarize_live_manual_period`). UI: `LiveManualGateCard`. **PASS는 진입 *검토 가능*을
+의미하며 실거래 자동 허가가 *아니다*** —
+`LiveManualGateResult.is_live_authorization=False` 불변 (dataclass `__post_init__`
+ValueError 가드), "실거래 활성화" / "Place Order" 같은 enabling 버튼 0개 (frontend
+테스트로 lock). 본 모듈은 broker / OrderExecutor / route_order / paper_trader /
+외부 HTTP / AI SDK / `app.core.config.get_settings` import 0건 (evaluator는 안전
+플래그 *현재값*을 입력 DTO로 받음 — 직접 settings를 읽지 않아 운영자 입력 ↔ 실제값
+혼선 방지), DB는 read-only SELECT만, `settings.enable_*_trading =` mutate 0건
+(정적 grep 가드). LIVE 활성화 자체는 별도 옵트인 PR + 사용자 명시 승인 필요.
+자세한 정책: [`docs/live_manual_gate.md`](docs/live_manual_gate.md).
+
 ## 변경 시 동기화
 
 다음 변경은 본 문서도 같이 업데이트해야 한다 (PR 리뷰에서 요구):

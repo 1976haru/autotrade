@@ -124,6 +124,8 @@ LIVE 활성화 전 운영자가 확인해야 할 것:
 - [ ] emergency_stop 토글 테스트 — KST 시장 시간 외에서 ON / OFF 한 번씩.
 - [ ] `/api/reconciliation/status` (212) IN SYNC 확인 — broker 인식 포지션 vs audit 산출 포지션 drift 0건. SHADOW / PAPER 단계에서 며칠 단위 모니터링.
 - [ ] AI 자동매매 활성화는 LIVE_MANUAL_APPROVAL 단계 1개월 이상 무사고 후만.
+- [ ] **#72 Paper Gate** PASS — `scripts/evaluate_paper_gate.py` 또는 `POST /api/governance/paper-gate/evaluate` 통과.
+- [ ] **#73 Live Manual Gate** PASS (또는 의도된 CAUTION) — `POST /api/governance/live-manual-gate/evaluate` 통과. 극소액 정책(주문 ≤ 5만 / 일일 손실 ≤ 1만 / 보유 ≤ 3개) + Approval API 강제 + AI/FUTURES live disabled 검증. 자세한 정책: [`live_manual_gate.md`](live_manual_gate.md).
 
 ## 9. 본 세션이 "절대 안 한 것" 단정문
 
