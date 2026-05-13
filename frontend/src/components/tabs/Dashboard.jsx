@@ -28,6 +28,8 @@ import { ShadowSummaryCard, useShadowSummary } from "./ShadowSummaryCard";
 import { AiAssistSummaryTile, useAiAssistSummary } from "./AiAssistProposalCard";
 import { BackendDataSourceBanner } from "../common/DataSourceBanner";
 import { useBackendStatus } from "../../store/useBackendStatus";
+// 70: Monitoring Dashboard Card — 시스템 안정성 read-only 집계.
+import { MonitoringCard } from "./MonitoringCard";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
 // AuditLog timeline에서도 mode badge로 쓰기 위해 공유. Dashboard는 re-export
@@ -564,6 +566,13 @@ export function Dashboard({
       {/* 225: 현재 장세 배지 — 위험/상태 요약 위에 한 줄로 */}
       <div className="dashboard-span-full">
         <MarketRegimeBadge />
+      </div>
+
+      {/* #70: Monitoring Card — 시스템 안정성 (server / DB / API 오류율 /
+          데이터 지연 / 주문 실패율 / 승인 대기 / 리스크 이벤트 / 알림).
+          수익률 카드보다 위에 노출하여 운영자가 장애 신호를 우선 보게 한다. */}
+      <div className="dashboard-span-full">
+        <MonitoringCard />
       </div>
 
       {/* 232 (UI-004): Agent 판단 hero — 추천/Confidence/Regime/Readiness 한 화면 */}

@@ -1199,3 +1199,76 @@ archive 확인 모달 (운영자명 / 사유 입력).
 - 백업 결과 알림 (#64 NotificationService와 통합)
 - 자동 restore smoke (staging에 매일 자동 복구 후 row count diff)
 - DB 마이그레이션 시점의 *pre-migration* 자동 백업
+
+---
+
+## #70 Monitoring (read-only 안정성 집계)
+
+> 본 체크리스트는 *시스템 안정성* 모니터링 — 수익률이 아니라 장애 조기 발견용.
+
+### 생성 / 수정 파일
+- `backend/app/monitoring/__init__.py` (신규)
+- `backend/app/monitoring/types.py` (신규) — MetricStatus / Metric / AlertCandidate / MonitoringSnapshot
+- `backend/app/monitoring/api_metrics.py` (신규) — `ApiMetricsRegistry` in-memory ring
+- `backend/app/monitoring/middleware.py` (신규) — `ApiMetricsMiddleware` ASGI
+- `backend/app/monitoring/service.py` (신규) — `MonitoringService` + `notify_alerts` helper
+- `backend/app/api/routes_monitoring.py` (신규) — `/api/monitoring/{health,metrics,alerts}`
+- `backend/app/main.py` (수정) — middleware + router 등록
+- `backend/tests/test_monitoring.py` (신규, 37 PASS)
+- `frontend/src/services/backend/client.js` (수정) — monitoring helper 3개 추가
+- `frontend/src/store/useMonitoring.js` (신규)
+- `frontend/src/components/tabs/MonitoringCard.jsx` (신규)
+- `frontend/src/components/tabs/MonitoringCard.test.jsx` (신규, 10 PASS)
+- `frontend/src/components/tabs/Dashboard.jsx` (수정) — MonitoringCard 노출
+- `docs/monitoring_policy.md` (신규)
+- `README.md` (수정) — 정책 링크 추가
+
+### Health endpoint
+- `GET /api/monitoring/health`  — overall + metrics_summary + alert_count (가벼운 liveness)
+- `GET /api/monitoring/metrics` — 전체 `MonitoringSnapshot` JSON
+- `GET /api/monitoring/alerts`  — WARN/CRITICAL 후보 *조회 only* (송신 X)
+
+### 수집 메트릭 (8개)
+- `server` — uptime / pid / started_at
+- `database` — `SELECT 1` ping
+- `api_error_rate` — ring buffer 5분 윈도우 (WARN ≥ 5%, CRITICAL ≥ 20%)
+- `order_failure_rate` — `OrderAuditLog` REJECTED 24h (WARN ≥ 30%, CRITICAL ≥ 60%, 최소 5건)
+- `approval_queue` — `PendingApproval` oldest age (WARN ≥ 10분, CRITICAL ≥ 30분)
+- `risk_events` — `EmergencyStopEvent` 60분 카운트 (WARN ≥ 3, CRITICAL ≥ 8)
+- `data_freshness` — `freshness` 모듈 sample carry
+- `notification` — `NotificationService.status()` carry
+
+### 알림 후보 기준
+- WARN / CRITICAL 메트릭에서 한 건씩 `AlertCandidate` 생성 (OK / UNKNOWN 제외)
+- `notify_alerts(service, alerts)` helper가 `NotificationService.notify()` 위임
+- helper는 raise 금지 — 채널 실패해도 시스템 중단 X (시스템 안정성 우선)
+- 본 endpoint는 *후보 표시만* — 실제 송신은 backend / scheduler가 결정
+
+### UI 변경
+- Dashboard 상단 `MarketRegimeBadge` 아래에 `MonitoringCard` 노출
+- 모바일 요약: 3개 카드 (시스템 / 데이터 / 주문&리스크) — 그룹별 worst status
+- 데스크탑: 8개 메트릭 행 + 알림 후보 목록 + "수익률 아님" 안내 banner
+- BUY/SELL/HOLD/긴급정지 토글/LIVE 활성화 버튼 0개 (테스트로 lock)
+
+### 안전 invariant (테스트로 lock)
+- ✓ `app/monitoring/*` + `routes_monitoring.py`에 broker / OrderExecutor / route_order import 0건
+- ✓ DB write (INSERT/UPDATE/DELETE/db.add/db.commit/db.flush) 0건 — SELECT만
+- ✓ ENABLE_LIVE_TRADING / ENABLE_AI_EXECUTION / FUTURES_LIVE 변경 0건
+- ✓ emergency_stop 토글 0건
+- ✓ 응답 본문에 Secret / API Key / Telegram Bot Token / 계좌번호 패턴 0건
+- ✓ frontend에 send / 토글 / 적용 버튼 0개 (read-only)
+- ✓ `notify_alerts()`는 service None / channel raise 모두 graceful
+
+### 테스트 결과
+- **신규 backend**: 37 PASS (DTO 3 + ApiMetrics 5 + collectors 14 + snapshot 3 + routes 4 + notify_alerts 3 + 정적 grep 4)
+- **신규 frontend**: 10 PASS (badge / 메트릭 행 / 알림 / 모바일 요약 / invariant)
+- Regression: Dashboard 82 PASS, client 6 PASS, 다른 backend 모듈 무회귀
+
+### 남은 monitoring backlog
+- 임계치 환경변수 override (`MONITORING_API_ERROR_WARN` 등)
+- 백그라운드 scheduler에서 주기적 `notify_alerts` 자동 호출
+- Prometheus / Grafana exporter 통합 (`/api/monitoring/metrics` JSON → metrics endpoint)
+- WebSocket feed freshness 자동 수집 (현재는 sample carry only)
+- 모니터링 카드 클릭 시 메트릭별 drill-down (예: order_failure_rate → AuditLog REJECTED 필터)
+- 알림 *진압* / *해제* 운영자 토글 (현재는 dedupe만)
+- staging vs production 임계치 분리 프로파일

@@ -405,4 +405,10 @@ export const backendApi = {
       method: "POST",
       body: JSON.stringify({ universe, limit }),
     }),
+  // 70: Monitoring — 서버/API/데이터/주문 안정성 read-only 집계.
+  // 본 client는 어떤 monitoring write endpoint도 호출하지 않는다 (alerts는
+  // 후보 *조회*만, 송신은 backend / NotificationService가 결정).
+  monitoringHealth:  () => backendFetch("/api/monitoring/health"),
+  monitoringMetrics: () => backendFetch("/api/monitoring/metrics"),
+  monitoringAlerts:  () => backendFetch("/api/monitoring/alerts"),
 };
