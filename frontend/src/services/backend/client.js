@@ -61,6 +61,20 @@ export const backendApi = {
   aiPermissionStatus: () => backendFetch("/api/risk/ai-permission/status"),
   // 42: Paper Trading status — read-only.
   paperStatus:        () => backendFetch("/api/paper/status"),
+  // 60: AI Agent 모의매매 — read-only status / portfolio / decisions + run-once + emergency.
+  autoTraderStatus:    () => backendFetch("/api/auto-trader/status"),
+  autoTraderPortfolio: () => backendFetch("/api/auto-trader/portfolio"),
+  autoTraderDecisions: (limit = 20) =>
+    backendFetch(`/api/auto-trader/decisions?limit=${limit}`),
+  autoTraderRunOnce:   (payload) => backendFetch("/api/auto-trader/run-once", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  }),
+  autoTraderEmergencyStop: (enabled, note) =>
+    backendFetch("/api/auto-trader/emergency-stop", {
+      method: "POST",
+      body: JSON.stringify({ enabled, ...(note ? { note } : {}) }),
+    }),
   brokerPrice:     (symbol) => backendFetch(`/api/broker/price/${symbol}`),
   brokerBalance:   () => backendFetch("/api/broker/balance"),
   brokerPositions: () => backendFetch("/api/broker/positions"),

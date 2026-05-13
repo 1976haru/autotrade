@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes_agents import router as agents_router
+from app.api.routes_auto_trader import router as auto_trader_router
 from app.api.routes_ai import router as ai_router
 from app.api.routes_ai_assist import router as ai_assist_router
 from app.api.routes_ai_execution import router as ai_execution_router
@@ -89,6 +90,7 @@ app.include_router(ai_assist_router, prefix="/api")
 app.include_router(ai_execution_router, prefix="/api")
 app.include_router(execution_recommender_router, prefix="/api")
 app.include_router(agent_memory_router, prefix="/api")
+app.include_router(auto_trader_router, prefix="/api")
 
 
 @app.get("/")

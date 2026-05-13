@@ -16,6 +16,7 @@ import {
 } from "./AuditLog";
 import { HistoryStaleBanner } from "./Approvals";
 import { AgentLatestTile } from "./AgentLatestTile";
+import { AutoTraderCard } from "./AutoTraderCard";
 import { MarketRegimeBadge } from "./MarketRegimeBadge";
 import { OperatorPanel } from "./OperatorPanel";
 import { HeroSummaryCard } from "./HeroSummaryCard";
@@ -694,6 +695,10 @@ export function Dashboard({
       <div className="dashboard-pc-only">
         <AgentLatestTile onJumpTab={onJumpTab} />
       </div>
+
+      {/* 60: AI Agent 모의매매 카드 — 마지막 결정/포지션/리스크 체크/Emergency Stop.
+          본 카드는 LIVE 발주 버튼을 노출하지 않는다 (test로 lock). */}
+      <AutoTraderCard />
 
       {/* 18: 관심종목 universe 요약 — active watchlist 종목 수 + top 5.
           PHASE 4: 모바일에서는 부가 정보 — 기본 숨김. */}
