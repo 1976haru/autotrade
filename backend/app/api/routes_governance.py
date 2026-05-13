@@ -346,3 +346,108 @@ def live_manual_period_summary(
     start = period_start or (end - timedelta(days=30))
     summary = summarize_live_manual_period(db, start_date=start, end_date=end)
     return LiveManualPeriodSummaryPayload(**summary)
+
+
+# ---------- #74 AI Assist Gate ----------
+
+from app.governance.ai_assist_gate import (
+    AIAssistGateInput,
+    AIAssistGateResult,
+    evaluate_ai_assist_gate,
+)
+
+
+class AIAssistGateInputPayload(BaseModel):
+    """AI Assist Gate 평가 입력.
+
+    수익 메트릭 (approved_expectancy / winning_pnl_sum / losing_pnl_sum /
+    win_count / loss_count)은 *별도 trade ledger* 또는 운영자 입력으로 명시.
+    confidence_calibration 도 운영자 또는 collector 산출 carry.
+    """
+    strategy_name:                 str  = Field(..., min_length=1, max_length=64)
+    period_start:                  datetime | None = None
+    period_end:                    datetime | None = None
+
+    proposal_count:                int   = 0
+    approved_proposals:            int   = 0
+    risk_rejected_proposals:       int   = 0
+    operator_rejected_proposals:   int   = 0
+    expired_or_cancelled:          int   = 0
+
+    approved_expectancy:           float = 0.0
+    approved_winning_pnl_sum:      int   = 0
+    approved_losing_pnl_sum:       int   = 0
+    approved_win_count:            int   = 0
+    approved_loss_count:           int   = 0
+
+    confidence_calibration:        float = 0.0
+    avg_confidence:                float | None = None
+    rejected_but_would_have_won:   int   = 0
+
+    ai_decision_audit_drift:       int   = 0
+    emergency_stops_in_period:     int   = 0
+    active_days:                   int   = 0
+
+    failure_reason_counts:         dict[str, int] = Field(default_factory=dict)
+
+
+class AIAssistGateResultPayload(BaseModel):
+    strategy_name:           str
+    period_start:            datetime
+    period_end:              datetime
+    verdict:                 str
+    passed_criteria:         list[str]
+    failed_criteria:         list[str]
+    cautions:                list[str]
+    failure_reason_tags:     dict[str, int]
+    metrics:                 dict
+    thresholds:              dict
+    next_step:               str
+    is_live_authorization:   bool = Field(False, description="invariant — 항상 false (PASS != LIVE_AI_EXECUTION 허가)")
+    is_order_signal:         bool = Field(False, description="invariant — Gate는 BUY/SELL/HOLD 신호 아님")
+    is_investment_advice:    bool = Field(False, description="invariant — 시스템 검증 자료 (투자 조언 아님)")
+    live_flag_changed:       bool = Field(False, description="invariant — LIVE flag 미변경")
+    mode_changed:            bool = Field(False, description="invariant — 모드 미변경")
+    generated_at:            datetime
+
+
+@router.post("/ai-assist-gate/evaluate", response_model=AIAssistGateResultPayload)
+def evaluate_ai_assist_gate_endpoint(
+    payload: AIAssistGateInputPayload,
+) -> AIAssistGateResultPayload:
+    """AI Assist Gate 평가. read-only — broker / DB write / LIVE flag 변경 0건.
+
+    **PASS는 `LIVE_AI_EXECUTION` 자동 허가가 아니다** — AI 자동매매 활성화는
+    `AIExecutionGate`(#45) + 별도 옵트인 PR + 사용자 명시 승인 필요.
+    """
+    end   = payload.period_end   or datetime.now(timezone.utc)
+    start = payload.period_start or (end - timedelta(days=28))
+
+    try:
+        inp = AIAssistGateInput(
+            strategy_name=payload.strategy_name,
+            period_start=start,
+            period_end=end,
+            proposal_count=payload.proposal_count,
+            approved_proposals=payload.approved_proposals,
+            risk_rejected_proposals=payload.risk_rejected_proposals,
+            operator_rejected_proposals=payload.operator_rejected_proposals,
+            expired_or_cancelled=payload.expired_or_cancelled,
+            approved_expectancy=payload.approved_expectancy,
+            approved_winning_pnl_sum=payload.approved_winning_pnl_sum,
+            approved_losing_pnl_sum=payload.approved_losing_pnl_sum,
+            approved_win_count=payload.approved_win_count,
+            approved_loss_count=payload.approved_loss_count,
+            confidence_calibration=payload.confidence_calibration,
+            avg_confidence=payload.avg_confidence,
+            rejected_but_would_have_won=payload.rejected_but_would_have_won,
+            ai_decision_audit_drift=payload.ai_decision_audit_drift,
+            emergency_stops_in_period=payload.emergency_stops_in_period,
+            active_days=payload.active_days,
+            failure_reason_counts=payload.failure_reason_counts,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"invalid ai assist gate input: {e}")
+
+    result: AIAssistGateResult = evaluate_ai_assist_gate(inp)
+    return AIAssistGateResultPayload(**result.to_dict())

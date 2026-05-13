@@ -425,4 +425,11 @@ export const backendApi = {
     const q = qs.toString();
     return backendFetch(`/api/governance/live-manual-gate/period-summary${q ? "?" + q : ""}`);
   },
+  // 74: AI Assist Gate — AI 제안 품질 검증 (시스템 검증 자료).
+  // 본 client는 LIVE_AI_EXECUTION 활성화 / AI 자동매매 호출을 제공하지 않는다.
+  aiAssistGateEvaluate: (body) =>
+    backendFetch("/api/governance/ai-assist-gate/evaluate", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
 };

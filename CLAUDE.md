@@ -229,6 +229,29 @@ ValueError 가드), "실거래 활성화" / "Place Order" 같은 enabling 버튼
 (정적 grep 가드). LIVE 활성화 자체는 별도 옵트인 PR + 사용자 명시 승인 필요.
 자세한 정책: [`docs/live_manual_gate.md`](docs/live_manual_gate.md).
 
+**#74 AI Assist Gate**: `LIVE_AI_ASSIST` 모드의 AI 제안 품질을 *read-only*로
+검증 — `app/governance/ai_assist_gate.py::evaluate_ai_assist_gate`. PASS 기준:
+≥100 제안 + ≥28일 + expectancy > 0 + 손실율 ≤ 55% + Risk 거절율 ≤ 60% +
+운영자 거절율 ≤ 50% + confidence calibration ≥ 0.5 + audit drift = 0 +
+긴급정지 ≤ 2회. 12개 failure reason 태그(low_confidence / data_stale /
+price_gap / liquidity / risk_limit / operator_rejected / approval_expired /
+emergency_stop / regime_mismatch / news_or_theme_overheated /
+duplicate_or_cooldown / uncategorized — BUY/SELL/HOLD 0개) 분포 carry.
+API: `POST /api/governance/ai-assist-gate/evaluate`, CLI:
+`scripts/evaluate_ai_assist_gate.py`, UI: `AIAssistGateCard`. **본 리포트는
+*투자 조언이 아니라 시스템 검증 자료*** —
+`AIAssistGateResult.is_investment_advice=False` 불변 (dataclass `__post_init__`
+ValueError 가드). **PASS는 `LIVE_AI_EXECUTION` 자동 허가가 *아니다*** —
+`is_live_authorization=False` / `is_order_signal=False` 불변, AI 자동매매
+활성화는 `AIExecutionGate`(#45) + 별도 옵트인 PR + 사용자 명시 승인 필요.
+본 모듈은 broker / OrderExecutor / route_order / paper_trader /
+`app.ai.assist` / `app.ai.client` / `anthropic` / `openai` / `httpx` /
+`requests` / `app.core.config.get_settings` import 0건 (evaluator는 입력 DTO만 사용),
+DB는 read-only SELECT만, `settings.enable_*_trading =` mutate 0건 (정적 grep
+가드), UI에 "AI 자동매매 활성화" / "LIVE_AI_EXECUTION 활성화" /
+"ENABLE_AI_EXECUTION" / "AI 자동 실행" / "Place Order" 버튼 0개 (frontend
+테스트로 lock). 자세한 정책: [`docs/ai_assist_gate.md`](docs/ai_assist_gate.md).
+
 ## 변경 시 동기화
 
 다음 변경은 본 문서도 같이 업데이트해야 한다 (PR 리뷰에서 요구):
