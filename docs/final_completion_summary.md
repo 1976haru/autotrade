@@ -1272,3 +1272,59 @@ archive 확인 모달 (운영자명 / 사유 입력).
 - 모니터링 카드 클릭 시 메트릭별 drill-down (예: order_failure_rate → AuditLog REJECTED 필터)
 - 알림 *진압* / *해제* 운영자 토글 (현재는 dedupe만)
 - staging vs production 임계치 분리 프로파일
+
+---
+
+## #71 MVP Completion Gate (문서 / 점검 전용)
+
+> 본 체크리스트는 *판정 문서*와 *자동 요약 스크립트*만 추가한다.
+> `app/` 운영 코드 / `.env` / safety flag / live order 코드 변경 0건.
+
+### 생성 / 수정 파일
+- `docs/mvp_completion.md` (신규) — MVP 판정 + P0 43개 상태표 + Paper/Shadow 진입 조건
+- `scripts/summarize_mvp_status.py` (신규) — read-only 자동 요약 CLI (markdown / json + secret check)
+- `backend/tests/test_mvp_completion_doc.py` (신규) — 판정 문서 / 스크립트 정적 가드 + smoke 실행
+- `README.md` (수정) — MVP Completion 섹션 + 정책 링크
+- `docs/final_completion_summary.md` (수정) — 본 항목
+
+### MVP 판정
+- **`MVP_READY_FOR_PAPER_SHADOW`**
+- P0 DONE: **43**, PARTIAL: 0, BLOCKED: 0
+- live flag default 모두 false (`enable_live_trading`, `enable_ai_execution`,
+  `enable_futures_live_trading`) — 스크립트가 `app/core/config.py` *문자열*
+  파싱으로 자동 검증
+- Secret 의심 패턴: 0건 (`--check-secrets` 통과)
+
+### 자동 요약 스크립트
+- `python scripts/summarize_mvp_status.py --format markdown` (운영자 콘솔)
+- `python scripts/summarize_mvp_status.py --format json` (CI / 외부 통합)
+- `--check-secrets` 옵션으로 docs / README에 Secret 패턴이 있으면 exit 1
+- 본 스크립트는 *읽기만* 함 — KIS / Anthropic / Telegram / DB / broker
+  호출 0건, `.env` 접근 0건 (테스트로 lock)
+
+### 실거래 금지 invariant — 본 PR 유지
+- ✓ `ENABLE_LIVE_TRADING=false` 유지
+- ✓ `ENABLE_AI_EXECUTION=false` 유지
+- ✓ `ENABLE_FUTURES_LIVE_TRADING=false` 유지
+- ✓ `KIS_IS_PAPER=true` 유지
+- ✓ `app/` 코드 변경 0건
+- ✓ 절대 원칙 1~6 모두 변경 없음
+
+### 테스트 결과
+- `test_mvp_completion_doc.py`: 14 PASS (문서 존재 / verdict / live flag 언급 /
+  스크립트 invariant / smoke 실행 / Secret 검사 / cross-link)
+- Backend regression: 본 PR은 `app/` 변경 0건이라 영향 없음
+
+### 다음 권장 단계
+- KIS Paper 주문 검증 (`KIS_IS_PAPER=true`)
+- LIVE_SHADOW 운영 (실 시세 read-only, ShadowTrade *would-have*)
+- Paper / Shadow 2~4주 검증 — 일별 손익 / 거부율 / freshness / API 오류율 추이
+- 운영자 피드백으로 UI / 모바일 / 알림 / 모니터링 보강
+- LIVE 실거래는 *별도 옵트인 PR + 사용자 명시 승인* 후에만
+
+### 남은 backlog (Paper/Shadow 단계에서 보강)
+- Monitoring 임계치 env override + 자동 알림 송신 scheduler
+- Backup 무결성 자동 검증 + 외부 저장소 sync (Secret 암호화)
+- Reconciliation drift 알림
+- AI Token 사용량 상세 추적
+- Strategy promotion 자동화

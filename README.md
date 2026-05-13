@@ -40,6 +40,7 @@ npm run dev -- --host 0.0.0.0
 - 📜 [`docs/audit_log_policy.md`](docs/audit_log_policy.md) — 통합 감사 이벤트 facade + append-only 정책 + Secret 거부 + archive (#68)
 - 💾 [`docs/backup_restore.md`](docs/backup_restore.md) — DB 백업 + 복구 절차 + Secret 백업 금지 + 일별 retention (#69)
 - 📈 [`docs/monitoring_policy.md`](docs/monitoring_policy.md) — 서버 / API / 데이터 / 주문 안정성 모니터링 + 알림 후보 + read-only invariants (#70)
+- 🏁 [`docs/mvp_completion.md`](docs/mvp_completion.md) — MVP 완료 판정 + P0 상태표 + Paper/Shadow 진입 조건 (#71)
 - 📦 [`docs/beta_distribution_plan.md`](docs/beta_distribution_plan.md) — 베타테스터 배포 + Tauri / Electron
 - 🔄 [`docs/auto_update_plan.md`](docs/auto_update_plan.md) — Phase 1-2-3 단계별 업데이트
 - 🔒 [`docs/local_security_policy.md`](docs/local_security_policy.md) — Secret hygiene + Tailscale + 사고 대응
@@ -53,6 +54,18 @@ npm run dev -- --host 0.0.0.0
 - `frontend/`: React/Vite 기반 관제 UI. 백엔드 라우트와 실연결.
 - `backend/`: FastAPI + SQLAlchemy + Alembic 기반 엔진.
 - `docs/`: 운용모드, 승격정책, 브로커 선택, 리스크 정책, **배포 체크리스트** 문서.
+
+## MVP Completion (#71)
+
+- 현재 MVP 판정 문서: [`docs/mvp_completion.md`](docs/mvp_completion.md)
+- **MVP 완료는 *실거래 허가가 아닙니다*** — Mock / Paper / Shadow 검증
+  단계로 진입할 수 있다는 의미입니다.
+- 실거래 전에는 반드시 [`docs/promotion_policy.md`](docs/promotion_policy.md)
+  와 [`docs/live_activation_blockers.md`](docs/live_activation_blockers.md)
+  의 추가 옵트인 PR / 명시 승인이 필요합니다.
+- 현재 판정 자동 요약은
+  `python scripts/summarize_mvp_status.py --format markdown` 명령으로
+  확인할 수 있습니다 (read-only, .env / API 호출 0건).
 
 ## 핵심 원칙
 
