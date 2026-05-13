@@ -1328,3 +1328,95 @@ archive 확인 모달 (운영자명 / 사유 입력).
 - Reconciliation drift 알림
 - AI Token 사용량 상세 추적
 - Strategy promotion 자동화
+
+---
+
+## #72 Paper Gate (실시간 운용 평가 게이트)
+
+> Paper 모드 4주 이상 운용 결과를 promotion_policy 기준으로 평가하는 코드
+> 단 게이트 + CLI + 선택 API. **PASS는 Live Manual Approval *검토 가능*
+> 을 의미하며 실거래 자동 허가가 *아니다*.**
+
+### 생성 / 수정 파일
+- `backend/app/governance/paper_gate.py` (신규) — `PaperGateInput` /
+  `PaperGateResult` / `PaperGateVerdict` / `PaperGateThresholds` +
+  `evaluate_paper_gate()` + `render_markdown_report()`
+- `backend/app/governance/paper_gate_collector.py` (신규) — read-only DB →
+  PaperGateInput 빌더 (OrderAuditLog SELECT only)
+- `backend/app/api/routes_governance.py` (수정) — `POST /governance/paper-gate/evaluate`
+- `scripts/evaluate_paper_gate.py` (신규) — CLI (markdown / json, dry-run 지원)
+- `backend/tests/test_paper_gate.py` (신규, 36 PASS)
+- `docs/paper_gate_policy.md` (신규)
+- `docs/promotion_policy.md` (수정) — Paper 단계에 게이트 링크 추가
+- `README.md` (수정) — 정책 링크 추가
+
+### Paper Gate 기준 (PASS = 모두 충족)
+1. 운영 기간 ≥ 28일
+2. 매매 신호 ≥ 100건
+3. expectancy > 0
+4. Profit Factor ≥ 1.2
+5. MDD ≤ 15% (초기 자본)
+6. 손실한도 위반 = 0
+7. OrderAuditLog 누락 = 0
+8. stale / duplicate 위반 = 0
+9. FillPolling 정합성 OK
+10. client_order_id idempotency OK
+
+CAUTION 사유: 하루 의존도 > 50%, rejection > 30%, 시간대 손실 집중 > 60%,
+Paper vs Backtest PF 괴리 > 50%.
+
+### 리포트 생성 방식
+- **markdown**: `python scripts/evaluate_paper_gate.py --strategy X --format markdown --output reports/...`
+- **JSON**:    `python scripts/evaluate_paper_gate.py --strategy X --format json`
+- **API**:     `POST /api/governance/paper-gate/evaluate`
+- exit code: PASS/CAUTION/UNKNOWN=0, FAIL=1, 실행 오류=2
+
+### 안전 invariant (테스트로 lock)
+- ✓ broker / OrderExecutor / route_order / paper_trader / 외부 HTTP / AI SDK import 0건
+- ✓ `broker.place_order(` / `route_order(` / `OrderExecutor(` 호출 0건
+- ✓ `submit_candidate(` 호출 0건
+- ✓ DB write (INSERT/UPDATE/DELETE/.add/.commit/.flush) 0건
+- ✓ `settings.enable_*_trading =` / `os.environ["ENABLE_*"]` mutate 0건
+- ✓ `PaperGateResult.is_live_authorization=True` 생성 불가 (ValueError)
+- ✓ `PaperGateResult.is_order_signal=True` 생성 불가 (ValueError)
+- ✓ 리포트 / 응답에 BUY/SELL/HOLD 신호 문구 0건
+- ✓ 응답에 Secret 패턴 0건
+
+### 테스트 결과
+- **신규 backend**: 36 PASS (DTO invariant 3 + happy path 1 + PF 변형 3 +
+  FAIL paths 10 + CAUTION 4 + threshold override 1 + markdown 2 +
+  collector 3 + API 3 + 정적 grep 4 + CLI smoke 2)
+- Regression: paper_gate + monitoring + mvp + strategy_promotion 합쳐
+  130 PASS, 0 fail
+
+### CLI/API 사용법
+```bash
+# CLI (dry-run, DB 없이도 사용 가능)
+python scripts/evaluate_paper_gate.py --dry-run \
+  --strategy sma_cross \
+  --trade-count 120 --active-days 22 --expectancy 350 \
+  --pf-numerator 200000 --pf-denominator 150000 \
+  --max-drawdown-value 800000
+
+# CLI (운영 DB + 자동 28일 윈도우)
+python scripts/evaluate_paper_gate.py --strategy sma_cross --format json
+
+# API
+POST /api/governance/paper-gate/evaluate
+{ "strategy_name": "sma_cross", "trade_count": 120, ... }
+```
+
+### 실거래 금지 invariant — 본 PR 미변경
+- ✓ `ENABLE_LIVE_TRADING=false`, `ENABLE_AI_EXECUTION=false`, `ENABLE_FUTURES_LIVE_TRADING=false`, `KIS_IS_PAPER=true`
+- ✓ `app/core/config.py` 변경 0건
+- ✓ `.env` / Secret / 계좌번호 변경 0건
+- ✓ 절대 원칙 1~6 모두 유지
+
+### 남은 Paper Gate backlog
+- env override (`PAPER_GATE_MIN_PROFIT_FACTOR` 등)
+- 자동 backtest ↔ paper PF drift 계산 (현재 운영자 수동 입력)
+- 시간대 손실 집중 자동 계산
+- 일별 손익 자동 산출 (체결 ledger 통합)
+- LIVE_SHADOW 사전 통과 검증 연동 (#43 ShadowTrade row)
+- 운영자 승인 / reject 이력 carry (signed by + note)
+- PASS / FAIL → NotificationService 알림 연계

@@ -41,6 +41,7 @@ npm run dev -- --host 0.0.0.0
 - 💾 [`docs/backup_restore.md`](docs/backup_restore.md) — DB 백업 + 복구 절차 + Secret 백업 금지 + 일별 retention (#69)
 - 📈 [`docs/monitoring_policy.md`](docs/monitoring_policy.md) — 서버 / API / 데이터 / 주문 안정성 모니터링 + 알림 후보 + read-only invariants (#70)
 - 🏁 [`docs/mvp_completion.md`](docs/mvp_completion.md) — MVP 완료 판정 + P0 상태표 + Paper/Shadow 진입 조건 (#71)
+- 🧾 [`docs/paper_gate_policy.md`](docs/paper_gate_policy.md) — Paper 4주 운용 평가 게이트 + PASS=Live Manual Approval 검토 가능 (실거래 허가 아님) (#72)
 - 📦 [`docs/beta_distribution_plan.md`](docs/beta_distribution_plan.md) — 베타테스터 배포 + Tauri / Electron
 - 🔄 [`docs/auto_update_plan.md`](docs/auto_update_plan.md) — Phase 1-2-3 단계별 업데이트
 - 🔒 [`docs/local_security_policy.md`](docs/local_security_policy.md) — Secret hygiene + Tailscale + 사고 대응
