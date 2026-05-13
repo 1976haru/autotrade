@@ -208,6 +208,16 @@
 - Bayesian 신뢰 구간 — score에 신뢰 구간 부여
 - 시장 regime 자동 분류 — operator note → regime 매핑 자동화
 
+## #78 Correlation Guard — 후속 (advisory pre-trade, BUY 집중도 제한)
+
+- sector master — 일관된 sector 분류 (KOSPI200 GICS / FICS 등)
+- theme exposure dashboard — 전 종목 sector / theme 노출 시각화
+- correlation matrix — pairwise 상관계수 매트릭스 + heatmap
+- portfolio risk heatmap — 포트폴리오 단위 risk 시각화
+- regime-aware correlation — bull / bear / range 시장 별도 lookback
+- 자동 collector — symbol → sector / themes 매핑 자동화 (WatchlistItem / ThemeSignal join)
+- RiskManager 통합 — `RiskManager.evaluate_order`에서 본 가드 자동 호출
+
 ## 관련 문서
 
 - [`docs/final_checklist_report.md`](final_checklist_report.md)

@@ -315,6 +315,28 @@ mutate 0건 (정적 grep 가드), UI에 "전략 비활성화" / "전략 삭제" 
 적용" / "promotion 변경" / "Place Order" 라벨 버튼 0개 (frontend 테스트로 lock).
 자세한 정책: [`docs/alpha_decay_monitor.md`](docs/alpha_decay_monitor.md).
 
+**#78 Correlation Guard**: sector / theme 익스포저 사전 검사 —
+`app/risk/correlation_guard.py::CorrelationGuardRule`. **신규 BUY 집중도만
+제한** — SELL/EXIT 은 *리스크 축소* 목적이므로 본 가드가 차단하지 않는다
+(`SKIP_NON_BUY` invariant, 테스트로 lock). 4 verdict (`PASS` / `WARN` /
+`REJECT` / `SKIP_NON_BUY`). 임계: `max_symbols_per_sector` /
+`max_sector_exposure` (KRW + equity %) / `max_symbols_per_theme` /
+`max_theme_exposure` (KRW + equity %) — 0/빈값은 비활성. `warn_ratio` 기본
+0.8 — REJECT 임계의 80% 이상이면 WARN. 같은 심볼 재매수는 종목 수 카운트
+증가 X (노출은 누적). `compute_return_correlation` / `returns_from_closes`
+helper로 후속 PR에서 MarketBar 기반 수익률 상관계수 확장 가능 — 표본 부족 시
+None 반환 → 검사 skip (데이터 부족을 보수적으로 차단하지 않음).
+API: `POST /api/risk/correlation-guard/preview` (read-only). UI:
+`CorrelationGuardCard`. **RiskManager의 *하위 pre-trade guard*로만 동작** —
+broker / OrderExecutor / route_order 우회 0건, RiskManager / PermissionGate
+흐름 대체 X. 본 모듈은 broker / OrderExecutor / route_order / paper_trader /
+`app.ai.assist` / `app.ai.client` / `anthropic` / `openai` / `httpx` /
+`requests` / `app.core.config.get_settings` import 0건, DB write 0건,
+settings mutate 0건 (정적 grep 가드). `CorrelationGuardResult.is_order_signal=False` /
+`auto_apply_allowed=False` 불변 (dataclass `__post_init__` ValueError 가드),
+UI에 "주문 실행" / "정책 적용" / "ENABLE_*" 라벨 버튼 0개 (frontend 테스트로
+lock). 자세한 정책: [`docs/correlation_guard_policy.md`](docs/correlation_guard_policy.md).
+
 ## 변경 시 동기화
 
 다음 변경은 본 문서도 같이 업데이트해야 한다 (PR 리뷰에서 요구):
