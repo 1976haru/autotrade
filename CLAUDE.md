@@ -337,6 +337,28 @@ settings mutate 0건 (정적 grep 가드). `CorrelationGuardResult.is_order_sign
 UI에 "주문 실행" / "정책 적용" / "ENABLE_*" 라벨 버튼 0개 (frontend 테스트로
 lock). 자세한 정책: [`docs/correlation_guard_policy.md`](docs/correlation_guard_policy.md).
 
+**#80 Pre-market Checklist**: 장 시작 전 자동 점검 —
+`app/governance/pre_market_check.py::evaluate_pre_market_check`. 11 카테고리
+(api / db / broker / data / watchlist / strategy / risk / kill_switch /
+agent / notification / governance) 점검 + 모드별 required check. PASS /
+WARN / FAIL / SKIP / UNKNOWN 상태. `start_allowed=False` 는 required FAIL 1건
+이상 — **manual_ack=True 라도 우회 불가** (정책 + 테스트 lock). 3 verdict
+(READY_TO_START / WARN_BUT_START_ALLOWED / DO_NOT_START). `strict=True` 모드는
+UNKNOWN(required) 도 FAIL 취급. API: `GET/POST /api/governance/pre-market-check`,
+CLI: `scripts/pre_market_check.py` (exit 0=allowed / 1=blocked / 2=error). UI:
+`PreMarketCheckCard` — 모바일 헤드라인 (오늘 자동운용 가능 / 주의 필요 / 시작
+금지) + "다시 점검" + "확인했습니다" 두 버튼만, **자동매매 시작 / mode 변경 /
+flag 토글 / Place Order 라벨 버튼 0개** (frontend 테스트로 lock). 본 모듈은
+broker / OrderExecutor / route_order / paper_trader / `app.ai.assist` /
+`app.ai.client` / `anthropic` / `openai` / `httpx` / `requests` /
+`app.core.config.get_settings` import 0건, DB write 0건,
+`settings.enable_*_trading =` mutate 0건 (정적 grep 가드).
+`PreMarketCheckResult.is_order_signal=False` / `live_flag_changed=False` /
+`mode_changed=False` 불변 (dataclass `__post_init__` ValueError 가드). 본
+게이트는 자동매매 시작 / mode 변경 / flag 토글을 *수행하지 않는다* — 결과만
+반환하고 실제 시작은 BotControl 흐름에서 본 결과를 참조해 결정. 자세한 정책:
+[`docs/pre_market_check_policy.md`](docs/pre_market_check_policy.md).
+
 **#79 Loss Tagging**: 손실 거래 *추정* 원인 자동 태깅 —
 `app/analytics/loss_tagging.py::estimate_loss_reasons` + `LossReasonLog` 테이블
 (alembic 0022). **태그는 *추정값*이며 확정 원인이 아니다** —

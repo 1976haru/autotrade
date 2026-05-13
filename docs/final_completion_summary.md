@@ -2162,3 +2162,118 @@ risk > data > market > execution > strategy > agent > unknown
 - AgentMemory(#56) 통합 — review_note 있는 row → Memory 저장
 - DailyReportAgent / StrategyResearcherAgent / RiskAuditorAgent 자동 호출
 - multi-tag confidence weighting (tag 수가 아니라 강도 가중치)
+
+---
+
+## #80 Pre-market Checklist (장 시작 전 자동 점검)
+
+> 자동매매 시작 *전* 안전 점검. **required FAIL 1건이라도 있으면
+> `start_allowed=False`** — manual ack 도 우회 불가. 본 게이트는 자동매매를
+> *실행하지 않으며* 안전 플래그를 *변경하지 않는다*.
+
+### 생성 / 수정 파일
+- `backend/app/governance/pre_market_check.py` (신규) — `CheckItem` /
+  `CheckCategory` / `CheckStatus` / `PreMarketVerdict` /
+  `PreMarketCheckInput` / `PreMarketCheckResult` +
+  `evaluate_pre_market_check()` + `render_markdown_report()` + mode-aware
+  `_required_for_mode()` 매트릭스
+- `backend/app/api/routes_governance.py` (수정) — `GET/POST
+  /governance/pre-market-check`
+- `scripts/pre_market_check.py` (신규) — CLI
+- `backend/tests/test_pre_market_check.py` (신규, **41 PASS**)
+- `frontend/src/services/backend/client.js` (수정) — 2 helper
+- `frontend/src/components/tabs/PreMarketCheckCard.jsx` (신규)
+- `frontend/src/components/tabs/PreMarketCheckCard.test.jsx` (신규, **10 PASS**)
+- `docs/pre_market_check_policy.md` (신규)
+- `CLAUDE.md` / `README.md` / `docs/final_completion_summary.md` /
+  `docs/backlog.md` (수정)
+
+### 점검 항목 (11 카테고리)
+| 카테고리 | 항목 |
+|---|---|
+| api / db | API 서버 / DB ping |
+| broker | broker_ready / kis_is_paper / kis_credentials_present |
+| data | data_freshness_ok / stale_symbol_count |
+| watchlist | watchlist_item_count |
+| strategy | active_strategy_count |
+| risk | risk_policy / position_limits / daily_loss_limit + daily_loss_used_ratio |
+| kill_switch | emergency_stop / level |
+| agent | ai_permission_gate / live_trading_flag / ai_execution_flag / futures_live_flag |
+| notification | (optional) |
+| governance | paper_gate / live_manual_gate / ai_assist_gate / ai_execution_gate |
+
+### Mode 별 required check 매트릭스
+| Check | SIM | PAPER | LIVE_SHADOW | LIVE_MANUAL | LIVE_AI_ASSIST | LIVE_AI_EXEC |
+|---|---|---|---|---|---|---|
+| api / db / watchlist / risk_policy / kill_switch | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| broker_paper | — | ✓ | — | — | — | — |
+| broker_live_readonly | — | — | ✓ | ✓ | ✓ | ✓ |
+| data_freshness / daily_loss_limit | — | ✓ | ✓ | ✓ | ✓ | ✓ |
+| paper_gate / live_manual_gate | — | — | — | ✓ | ✓ | ✓ |
+| ai_permission_gate / ai_assist_gate | — | — | — | — | ✓ | ✓ |
+| ai_execution_gate / ai_execution_flag | — | — | — | — | — | ✓ |
+| live_trading_flag | — | — | — | ✓ | ✓ | ✓ |
+| futures_live_flag | (true 시 모든 모드 BLOCK — 본 게이트는 선물 LIVE 미허용) |
+| notification | optional (WARN only) |
+
+### CLI / API 사용법
+```bash
+# SIMULATION dry-run.
+python scripts/pre_market_check.py --mode SIMULATION
+
+# PAPER + 운영자 입력.
+python scripts/pre_market_check.py --mode PAPER \
+  --broker-ready --kis-is-paper --kis-credentials-present \
+  --data-freshness-ok --watchlist 5 --strategies 2 \
+  --daily-loss-limit-configured --format json
+```
+```http
+GET /api/governance/pre-market-check?mode=PAPER&strict=true
+POST /api/governance/pre-market-check  { ... 입력 ... }
+```
+CLI exit code: 0=start_allowed=True / 1=False / 2=실행 오류.
+
+### UI 변경
+- 신규 UI: `PreMarketCheckCard` — 모바일 헤드라인 ("오늘 자동운용 가능" /
+  "주의 필요" / "시작 금지") + start_allowed 명시 + 실패/경고/조치 + 세부
+  항목 펼치기 + "다시 점검" / "확인했습니다" 두 버튼만.
+- "자동매매 시작" / "Start Bot" / "mode 변경" / "활성화 토글" / "ENABLE_*" /
+  "Place Order" / "실거래 활성화" 라벨 버튼 **0개** (테스트로 lock).
+
+### 테스트 결과
+- **신규 backend**: 41 PASS (DTO invariant 4 + happy/SIM/PAPER 5 + kill switch +
+  daily loss limit 2 + LIVE_MANUAL 4 + LIVE_AI_* 3 + futures flag 1 + manual
+  ack non-bypass 2 + strict 2 + warnings 2 + markdown 2 + API 4 + CLI smoke 2 +
+  정적 grep 6)
+- **신규 frontend**: 10 PASS (READY / DO_NOT_START / WARN 헤드라인 / disclaimer
+  영구 / ack 비우회 / 시작 버튼 0개 / BUY-SELL 0건 / Secret 비노출 / 세부
+  토글 / 버튼 라벨)
+- Ruff 신규 파일: clean
+
+### 안전 invariant (테스트로 lock)
+- ✓ broker / OrderExecutor / route_order / paper_trader / 외부 HTTP / AI SDK import 0건
+- ✓ `broker.place_order(` / `route_order(` / `OrderExecutor(` / `submit_candidate(` / `AiClient(` 호출 0건
+- ✓ `from app.core.config import` / `get_settings(` 호출 0건 (evaluator는 입력 DTO만)
+- ✓ `settings.enable_*_trading =` / `os.environ["ENABLE_*"]` mutate 0건
+- ✓ DB write 0건
+- ✓ `PreMarketCheckResult.is_order_signal=True` / `live_flag_changed=True` / `mode_changed=True` 생성 불가 (ValueError)
+- ✓ manual_ack=True 라도 required FAIL 우회 불가 (`start_allowed=False` 유지)
+- ✓ futures_live_flag=true 면 모든 모드에서 BLOCK
+- ✓ UI에 "자동매매 시작" / "Start Bot" / "Start Trading" / "mode 변경" / "활성화 토글" / "ENABLE_*" / "Place Order" / "실거래 활성화" 라벨 버튼 0개
+- ✓ UI / 응답에 BUY/SELL/HOLD / Secret 패턴 0건
+
+### 실거래 / 자동매매 시작 / 자동 모드 변경 금지 invariant — 본 PR 미변경
+- ✓ `ENABLE_LIVE_TRADING=false`, `ENABLE_AI_EXECUTION=false`, `ENABLE_FUTURES_LIVE_TRADING=false`
+- ✓ `app/core/config.py` 변경 0건
+- ✓ `app/risk/*` / `app/execution/*` 변경 0건
+- ✓ `.env` / Secret / API Key / 계좌번호 변경 0건
+- ✓ 실제 broker / KIS / Anthropic / OpenAI 호출 0건
+- ✓ 절대 원칙 1~6 모두 유지
+
+### 남은 Pre-market backlog
+- 자동 collector (api/health + risk/policy + monitoring → PreMarketCheckInput 자동 매핑)
+- 시간 윈도우 검증 (장 시작 직전 자동 cron 실행)
+- 결과 영구화 (PreMarketCheckLog 테이블, 현재는 ephemeral)
+- Notification 연계 (DO_NOT_START 시 자동 알림)
+- BotControl 통합 (시작 버튼이 본 게이트 결과를 *직접* 참조하도록)
+- Strategy Researcher 연계 (반복 FAIL 패턴을 학습 자료로)

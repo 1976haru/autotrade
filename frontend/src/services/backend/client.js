@@ -461,6 +461,17 @@ export const backendApi = {
       method: "POST",
       body: JSON.stringify(body || {}),
     }),
+  // 80: Pre-market Checklist — 장 시작 전 자동 점검 (read-only).
+  // 본 client는 어떤 자동매매 시작 / mode 변경 호출도 제공하지 않는다.
+  preMarketCheckGet: ({ mode = "SIMULATION", strict = false } = {}) => {
+    const qs = new URLSearchParams({ mode, strict: String(strict) });
+    return backendFetch(`/api/governance/pre-market-check?${qs.toString()}`);
+  },
+  preMarketCheckPost: (body) =>
+    backendFetch("/api/governance/pre-market-check", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
   lossTagsSummary: ({ days = 7, strategy = null } = {}) => {
     const qs = new URLSearchParams({ days: String(days) });
     if (strategy) qs.set("strategy", strategy);

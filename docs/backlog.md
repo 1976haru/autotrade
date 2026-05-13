@@ -228,6 +228,16 @@
 - DailyReportAgent / StrategyResearcherAgent / RiskAuditorAgent 자동 호출
 - multi-tag confidence weighting — tag 수가 아니라 강도 가중치
 
+## #80 Pre-market Checklist — 후속 (read-only, manual ack 비우회)
+
+- 자동 collector — `/api/status` + `/api/monitoring/health` + `/api/risk/policy`
+  결과를 자동으로 PreMarketCheckInput 으로 매핑
+- 시간 윈도우 cron — 장 시작 직전 (09:00~09:30 KST) 자동 실행
+- 결과 영구화 — PreMarketCheckLog 테이블 (현재는 ephemeral)
+- Notification 연계 — DO_NOT_START 시 운영자 자동 알림
+- BotControl 통합 — 시작 버튼이 본 게이트 결과를 *직접* 참조하도록
+- Strategy Researcher 연계 — 반복 FAIL 패턴 학습 자료로
+
 ## 관련 문서
 
 - [`docs/final_checklist_report.md`](final_checklist_report.md)
