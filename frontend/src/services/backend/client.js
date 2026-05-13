@@ -72,6 +72,29 @@ export const backendApi = {
     backendFetch("/api/notifications/mock-event", {
       method: "POST", body: JSON.stringify(payload || {}),
     }),
+  // 68: 통합 audit_event timeline. DELETE 엔드포인트 호출 0건 — archive만.
+  auditEventsList: (params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.limit  != null) qs.set("limit",  String(params.limit));
+    if (params.offset != null) qs.set("offset", String(params.offset));
+    if (params.eventType)      qs.set("event_type", params.eventType);
+    if (params.severity)       qs.set("severity",  params.severity);
+    if (params.source)         qs.set("source",    params.source);
+    if (params.symbol)         qs.set("symbol",    params.symbol);
+    if (params.strategy)       qs.set("strategy",  params.strategy);
+    if (params.actor)          qs.set("actor",     params.actor);
+    if (params.includeArchived) qs.set("include_archived", "true");
+    const suffix = qs.toString();
+    return backendFetch(`/api/audit/events${suffix ? `?${suffix}` : ""}`);
+  },
+  auditEventGet:  (id) => backendFetch(`/api/audit/events/${id}`),
+  auditEventNote: (payload) => backendFetch("/api/audit/events", {
+    method: "POST", body: JSON.stringify(payload || {}),
+  }),
+  auditEventArchive: (id, payload) =>
+    backendFetch(`/api/audit/events/${id}/archive`, {
+      method: "PATCH", body: JSON.stringify(payload || {}),
+    }),
   // 60: AI Agent 모의매매 — read-only status / portfolio / decisions + run-once + emergency.
   autoTraderStatus:    () => backendFetch("/api/auto-trader/status"),
   autoTraderPortfolio: () => backendFetch("/api/auto-trader/portfolio"),

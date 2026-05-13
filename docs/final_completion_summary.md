@@ -997,3 +997,116 @@ docker compose -f docker-compose.staging.yml down         # 종료
 - Postgres → 운영 DB 마이그레이션 tooling
 - 컨테이너 image registry push (Harbor / GHCR)
 - 로그 집계 (Loki / OpenTelemetry)
+
+## 추가 (#68) — Audit Log facade (append-only / Secret 거부)
+
+체크리스트 #68: 모든 신호 / 주문 요청 / 승인 / 거절 / AI 제안 / 리스크 차단 /
+긴급정지를 통합 감사 이벤트 timeline에 영구화. 기존 도메인 테이블(OrderAuditLog
+/ PendingApproval / AgentDecisionLog / EmergencyStopEvent / VirtualOrder /
+FuturesOrderAuditLog)을 *대체하지 않고* 그 위에 cross-cutting facade를 추가.
+
+### 신규 파일
+- `backend/app/audit/events.py` — AuditEvent dataclass + EventType / Severity /
+  SourceKind enum + `log_audit_event()` + `archive_event()` + 5개 builder
+  helpers + Secret 패턴 fail-closed 거부
+- `backend/app/db/models.py` — `AuditEvent` ORM 모델 추가
+- `backend/alembic/versions/20260525_0021_audit_event.py` — 신규 테이블
+  migration (DELETE/UPDATE 안전)
+- `backend/tests/test_audit_events.py` — 21건 (Secret 거부 + archive 멱등 +
+  builder + delete 함수 0개 invariant + broker import 0건 invariant)
+- `backend/tests/test_audit_events_routes.py` — 14건 (list / get / POST
+  OPERATOR_NOTE / PATCH archive / DELETE 엔드포인트 0개 OpenAPI 검증 +
+  emergency-stop hook 자동 INSERT + audit hook 실패 격리)
+- `frontend/src/components/common/AuditEventTimelineCard.jsx` — read-only
+  timeline + archive 확인 모달 + 삭제/수정 버튼 0개
+- `frontend/src/components/common/AuditEventTimelineCard.test.jsx` — 10건
+  (append-only banner + 삭제 버튼 0개 invariant + archive 확인 모달 + filter
+  chip)
+- `docs/audit_log_policy.md` — 정책 / 감사 대상 / Secret 거부 / 삭제 방지 /
+  AI 상세 로그 기준 / API / UI / 13개 invariant
+
+### 변경 파일
+- `backend/app/audit/__init__.py` — events 모듈 export
+- `backend/app/api/routes_audit.py` — `/events` GET/POST/PATCH + AuditEventOut
+  schema (DELETE 엔드포인트 *없음*)
+- `backend/app/api/routes_risk.py` — emergency-stop POST에 try/except로
+  `log_audit_event` hook 추가
+- `frontend/src/services/backend/client.js` — auditEventsList / Get / Note /
+  Archive 메서드 (DELETE 메서드 *없음*)
+- `frontend/src/components/tabs/AuditLog.jsx` — `events` sub-tab에
+  `AuditEventTimelineCard` 마운트 (기존 EventTimelineView와 공존)
+- `README.md` + `docs/final_completion_summary.md` — #68 결과
+
+### 통합 AuditEvent 구조
+`audit_event` 테이블 (alembic 0021):
+- id / created_at
+- event_type (SIGNAL / ORDER_REQUEST / APPROVAL_DECISION / RISK_BLOCK /
+  AI_PROPOSAL / EMERGENCY_STOP / VIRTUAL_ORDER / FUTURES_RISK / NOTIFICATION /
+  OPERATOR_NOTE / STRATEGY_CHANGE / DATA_QUALITY / SYSTEM)
+- severity (INFO / WARN / CRITICAL / SECURITY)
+- source (STRATEGY / AI / MANUAL / SYSTEM / OPERATOR / SCHEDULER)
+- actor / symbol / strategy / mode
+- target_kind / target_id — 기존 도메인 row 참조
+- summary / reason / details (JSON)
+- archived / archived_at / archived_by / archive_note
+
+### log_audit_event 유틸
+```python
+log_audit_event(
+    db,
+    event_type=EventType.RISK_BLOCK,
+    summary="risk manager blocked BUY 005930",
+    severity=Severity.WARN,
+    source=SourceKind.STRATEGY,
+    actor="agent-1",
+    symbol="005930",
+    target_kind="OrderAuditLog", target_id=audit_row.id,
+    details={"reasons": [...], "requested_by_ai": False},
+)
+# Secret 패턴 감지 시 SecretLeakError raise — fail-closed (redaction 아님)
+```
+
+### AI 상세 로그 기준
+AI 이벤트(`AI_PROPOSAL`, `RISK_BLOCK` with `requested_by_ai=true`)는 details에
+`model` / `confidence` / `supporting_reasons` / `opposing_reasons` /
+`risk_note` / `is_order_intent=false` (#56 invariant) / `analysis_log_id`
+(원본 ai_analysis_log row 참조)를 carry. `target_kind="OrderAuditLog"` /
+`target_id=<audit row>`로 주문과 연결.
+
+### 삭제 / 수정 방지
+- Python 모듈에 `delete*` / `remove*` / `drop*` public 함수 0개 (테스트로 lock)
+- HTTP `DELETE /api/audit/events/*` 엔드포인트 0개 (OpenAPI 검증 테스트로 lock)
+- frontend 삭제 / 수정 버튼 0개 (button textContent regex로 lock)
+- archive는 *멱등* — 이미 archived인 row에 다시 호출해도 archived_by / note
+  덮어쓰지 않음 (첫 archive 정보 보존)
+- archive는 *삭제의 대체* — row 영구 보존, `include_archived=true`로 다시 조회
+
+### UI 변경
+`AuditLog` 탭의 `events` sub-tab에 `AuditEventTimelineCard` 마운트. 기존
+`EventTimelineView`와 공존. severity / source chip 필터 + archived 토글 +
+archive 확인 모달 (운영자명 / 사유 입력).
+
+### 안전 invariant
+- ✓ `app/audit/events` 모듈에 broker / OrderExecutor / route_order import 0건
+  (정적 grep 테스트로 lock)
+- ✓ row delete 함수 / API / 버튼 모두 0건
+- ✓ Secret 패턴 fail-closed 거부 (redaction 아님) — caller가 sanitize 후 재시도
+- ✓ audit hook 실패가 emergency-stop API 응답을 깨지 않음 (try/except로 lock,
+  테스트로 검증)
+- ✓ 기존 audit 테이블 schema 변경 0건 — 본 PR은 *새 테이블 1건*만 추가
+- ✓ broker / order / LIVE flag / Secret 변경 0건
+
+### 테스트 결과
+- **신규 backend**: 21 + 14 = **35 / 35 PASS** (`test_audit_events.py` +
+  `test_audit_events_routes.py`)
+- **신규 frontend**: **10 / 10 PASS** (`AuditEventTimelineCard.test.jsx`)
+- AuditLog 회귀: 358건 통합 PASS (#68 UI mount 후)
+- backend regression: 기존 `test_status_exposes_safety_flags`만 실패 — pre-
+  existing 환경 이슈 (#60부터)
+
+### 남은 backlog
+- route_order / approve / cancel / AI assist / VirtualOrder / FuturesRisk /
+  NotificationService 점진적 hook 추가 (각각 별도 PR)
+- Postgres trigger / view로 audit_event UPDATE/DELETE SQL 차단 (DB 레벨 invariant)
+- archive batch tooling (cron)
+- 외부 SIEM 연동 (운영 환경 옵트인 후)

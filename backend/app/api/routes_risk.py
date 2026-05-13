@@ -145,6 +145,35 @@ def set_emergency_stop(
         except Exception:  # noqa: BLE001 — notification must never affect response
             pass
 
+        # #68: 통합 audit_event 추가. 본 hook은 *반드시* try/except로 감싸
+        # 감사 facade 실패가 emergency_stop 응답을 깨지 않게 한다 (절대 원칙 #7).
+        # SecretLeakError는 payload(note/reason_code)에 Secret 패턴이 우연히
+        # 끼었을 때만 발생 — fail-closed로 catch.
+        try:
+            from app.audit.events import (
+                build_emergency_stop_event as build_emergency_audit_event,
+                log_audit_event,
+            )
+            audit_input = build_emergency_audit_event(
+                enabled=(target_level != KillSwitchLevel.OFF),
+                level=target_level.value,
+                reason_code=payload.reason_code,
+                decided_by=payload.decided_by,
+                note=payload.note,
+            )
+            log_audit_event(
+                db,
+                event_type=audit_input.event_type,
+                summary=audit_input.summary,
+                severity=audit_input.severity,
+                source=audit_input.source,
+                actor=audit_input.actor,
+                reason=audit_input.reason,
+                details=audit_input.details,
+            )
+        except Exception:  # noqa: BLE001 — audit hook must never affect response
+            pass
+
     return {
         "emergency_stop": risk.emergency_stop,
         "level":          target_level.value,
