@@ -39,6 +39,7 @@ npm run dev -- --host 0.0.0.0
 - 🧪 [`docs/staging_environment.md`](docs/staging_environment.md) — docker-compose.staging 실행 가이드 + LIVE flag 금지 정책 + smoke script (#67)
 - 📜 [`docs/audit_log_policy.md`](docs/audit_log_policy.md) — 통합 감사 이벤트 facade + append-only 정책 + Secret 거부 + archive (#68)
 - 💾 [`docs/backup_restore.md`](docs/backup_restore.md) — DB 백업 + 복구 절차 + Secret 백업 금지 + 일별 retention (#69)
+- 📈 [`docs/monitoring_policy.md`](docs/monitoring_policy.md) — 서버 / API / 데이터 / 주문 안정성 모니터링 + 알림 후보 + read-only invariants (#70)
 - 📦 [`docs/beta_distribution_plan.md`](docs/beta_distribution_plan.md) — 베타테스터 배포 + Tauri / Electron
 - 🔄 [`docs/auto_update_plan.md`](docs/auto_update_plan.md) — Phase 1-2-3 단계별 업데이트
 - 🔒 [`docs/local_security_policy.md`](docs/local_security_policy.md) — Secret hygiene + Tailscale + 사고 대응

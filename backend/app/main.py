@@ -18,6 +18,7 @@ from app.api.routes_broker import router as broker_router
 from app.api.routes_explainability import router as explainability_router
 from app.api.routes_live_engine import router as live_engine_router
 from app.api.routes_market import router as market_router
+from app.api.routes_monitoring import router as monitoring_router
 from app.api.routes_paper import router as paper_router
 from app.api.routes_reconciliation import router as reconciliation_router
 from app.api.routes_risk import router as risk_router
@@ -31,6 +32,7 @@ from app.api.routes_watchlists import router as watchlists_router
 from app.core.config import get_settings
 from app.db.session import apply_migrations
 from app.execution.fill_poller import FillPoller
+from app.monitoring.middleware import ApiMetricsMiddleware
 
 settings = get_settings()
 
@@ -68,6 +70,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 체크리스트 #70: 모든 요청을 ApiMetricsRegistry에 ring-buffer 기록.
+# 핸들러 응답을 변형하지 않으며 실패는 fail-open (모니터링이 운영을 막지 않음).
+app.add_middleware(ApiMetricsMiddleware)
+
 app.include_router(status_router, prefix="/api")
 app.include_router(risk_router, prefix="/api")
 app.include_router(broker_router, prefix="/api")
@@ -93,6 +99,7 @@ app.include_router(execution_recommender_router, prefix="/api")
 app.include_router(agent_memory_router, prefix="/api")
 app.include_router(auto_trader_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
+app.include_router(monitoring_router, prefix="/api")
 
 
 @app.get("/")
