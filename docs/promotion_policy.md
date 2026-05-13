@@ -151,6 +151,22 @@
   - `LIVE_AI_ASSIST` 단계에서 AI 추천 정확도 검증 완료.
   - 한도(`max_order_notional`, `max_daily_loss`, `max_positions`) 매우 보수적으로 설정.
   - 별도 운영자 옵트인 + 모니터링 대시보드.
+- **#75 AI Execution Activation Gate**: 위 활성화 조건을 *코드 단으로 강제*
+  검사하는 최종 게이트 — `app/governance/ai_execution_gate.py::evaluate_ai_execution_gate()`.
+  API: `POST /api/governance/ai-execution-gate/evaluate` +
+  `GET /api/governance/ai-execution-gate/policy`. UI: `AIExecutionGateCard`.
+  READY_FOR_REVIEW 조건: Paper Gate + Promotion Gate + AI Assist Gate + Live
+  Manual Gate 모두 PASS + 운영자 explicit opt-in + Live Manual 운영 ≥28일 +
+  AI Assist 운영 ≥28일 + RiskManager / OrderGuard / AI Permission Gate /
+  AuditLog / KillSwitch / Circuit Breaker 모두 활성 + 1회 주문 ≤ 3만원 +
+  일일 손실 ≤ 5천원 + 일일 주문 ≤ 10건 + 동시 보유 ≤ 2개 + 종목 whitelist
+  1~5개 + 거래 시간 (KST 09:30~14:30) 명시 + AI confidence ≥75 + signal
+  quality ≥70 + system_errors=0 + audit_missing=0 + approval_bypass_attempts=0.
+  **READY_FOR_REVIEW는 *실제 활성화가 아니다*** — 활성화는 별도 옵트인 PR +
+  사용자 명시 승인 + `ENABLE_AI_EXECUTION=true` 전환 + 초소액 canary + 즉시
+  kill switch 가능 모두 필요. **선물 AI Execution은 본 게이트가 *영구* 허용
+  하지 않는다** (`futures_allowed=false` 불변). 자세한 정책:
+  [`ai_execution_gate.md`](ai_execution_gate.md).
 
 ## 금지 기준
 

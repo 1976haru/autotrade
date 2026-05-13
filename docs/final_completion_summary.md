@@ -1640,3 +1640,129 @@ PASS verdict는 *AI Assist 품질이 다음 검증 단계로 진입 가능* 만 
 - AI vs 비-AI 주문 결과 비교 (선택성 검증)
 - Notification 연계 — 주간 자동 평가 + 운영자 알림
 - AgentDecisionLog chain_id 통합 — 의사결정 사슬 trace
+
+---
+
+## #75 AI Execution Activation Gate (LIVE_AI_EXECUTION 최종 readiness)
+
+> AI 자동매매 활성화 *최종* 안전 게이트. **본 PR로 LIVE_AI_EXECUTION 활성화 0건**.
+> **선물 AI Execution은 본 게이트가 *영구* 허용하지 않는다** (`futures_allowed=false` 불변).
+
+### 생성 / 수정 파일
+- `backend/app/governance/ai_execution_gate.py` (신규) —
+  `AIExecutionGateInput` / `AIExecutionActivationGateResult` / `AIExecutionGateVerdict` /
+  `AIExecutionGateThresholds` + `evaluate_ai_execution_gate()` + `render_markdown_report()`
+  + `get_policy_summary()`
+- `backend/app/api/routes_governance.py` (수정) —
+  `POST /governance/ai-execution-gate/evaluate` + `GET /governance/ai-execution-gate/policy`
+- `backend/tests/test_ai_execution_gate_activation.py` (신규, **49 PASS**)
+- `frontend/src/services/backend/client.js` (수정) — 2 helper 추가
+- `frontend/src/components/tabs/AIExecutionGateCard.jsx` (신규)
+- `frontend/src/components/tabs/AIExecutionGateCard.test.jsx` (신규, **9 PASS**)
+- `docs/ai_execution_gate.md` (신규)
+- `docs/promotion_policy.md` / `docs/live_activation_blockers.md` /
+  `CLAUDE.md` / `README.md` / `docs/final_completion_summary.md` (수정)
+
+### AI Execution Gate 기준 (READY_FOR_REVIEW = 모두 충족)
+
+**전제 게이트 (5)**
+1. Promotion Gate(#27) PASS
+2. Paper Gate(#72) PASS
+3. AI Assist Gate(#74) PASS
+4. Live Manual Gate(#73) PASS
+5. 운영자 explicit opt-in
+
+**안전 인프라 (6)**
+6. RiskManager 활성
+7. OrderGuard 활성
+8. AI Permission Gate 활성
+9. AuditLog 완전 (누락 0)
+10. KillSwitch 준비 (3-Level drill 완료)
+11. Circuit Breaker 설정
+
+**운영 기간 (2)**
+12. Live Manual 운영 ≥ 28일
+13. AI Assist 운영 ≥ 28일
+
+**극소액 정책 (7)**
+14. 1회 주문 ≤ **30,000원**
+15. 일일 손실 ≤ **5,000원**
+16. 일일 주문 ≤ **10건**
+17. 동시 보유 ≤ **2개**
+18. 종목 whitelist **1~5개**
+19. 거래 시간 (KST) **09:30~14:30** 명시
+20. AI confidence ≥ **75** / signal quality ≥ **70**
+
+**시스템 안정성 (3)**
+21. `system_errors = 0`
+22. `audit_missing_count = 0`
+23. `approval_bypass_attempts = 0`
+
+### BLOCKED 조건
+- 위 23개 항목 중 하나 이상 미달
+- `futures_target=True` 또는 `enable_futures_live_trading=True` → 즉시 BLOCKED
+- 모든 한도 미설정 (0값) → 즉시 BLOCKED
+
+### 선물 AI Execution 지연 정책 (영구 차단)
+- `AIExecutionActivationGateResult.futures_allowed=False` 불변
+- `__post_init__`이 `futures_allowed=True` 생성 시 ValueError
+- `GET /policy` 가 `"futures_allowed": false` *항상* 반환
+- 선물 AI Execution은 [`live_activation_blockers.md`](live_activation_blockers.md) §3.1
+  9단계 blocker + 별도 게이트 + 별도 PR 필요 — 본 게이트로는 *어떤 시나리오로도*
+  활성화 검토 대상이 아님
+
+### UI / API 변경
+- 신규 API: `POST /api/governance/ai-execution-gate/evaluate` + `GET /policy`
+- 신규 UI: `AIExecutionGateCard` — 활성화 평가 banner + 선물 영구 차단 banner +
+  "활성화 검토 평가" 버튼만 (활성화 / 토글 / 주문 시작 버튼 0개)
+
+### 안전 invariant (테스트로 lock)
+- ✓ broker / OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client` / `anthropic` / `openai` / `httpx` / `requests` import 0건
+- ✓ `broker.place_order(` / `route_order(` / `OrderExecutor(` / `submit_candidate(` / `AiClient(` 호출 0건
+- ✓ DB write 0건
+- ✓ `from app.core.config import` / `get_settings(` 호출 0건 (evaluator는 입력 DTO만 사용)
+- ✓ `settings.enable_*_trading =` / `os.environ["ENABLE_*"]` mutate 0건
+- ✓ `is_live_authorization=True` 생성 불가 (ValueError)
+- ✓ `is_order_signal=True` 생성 불가
+- ✓ `is_investment_advice=True` 생성 불가
+- ✓ `futures_allowed=True` 생성 *영구* 불가
+- ✓ UI에 "AI 자동매매 켜기" / "AI 자동매매 시작" / "AI 자동매매 활성화" / "LIVE_AI_EXECUTION 활성화" / "ENABLE_AI_EXECUTION" / "주문 시작" / "Place Order" / "실거래 활성화" / "활성화 토글" 라벨 버튼 0개
+- ✓ UI에 BUY/SELL/HOLD/긴급정지 토글 문구 0건
+- ✓ 응답 / 리포트에 Secret 패턴 0건
+
+### 테스트 결과
+- **신규 backend**: 49 PASS (DTO invariant 5 + happy 1 + BLOCKED paramaterized 11 +
+  추가 BLOCKED 13 + futures forbidden 2 + CAUTION 3 + threshold override 1 +
+  markdown 2 + policy summary 1 + API 4 + Secret 비노출 1 + 정적 grep 5)
+- **신규 frontend**: 9 PASS (READY 배지 / BLOCKED 차단 사유 + actions / 활성화
+  고지 영구 / 선물 영구 차단 banner / 활성화 버튼 0개 / BUY-SELL 0건 / Secret
+  비노출 / 평가 버튼 라벨 / 극소액 정책 표시)
+- Regression: ai_execution + ai_assist + live_manual + paper + monitoring 합쳐
+  189 PASS, 0 fail
+- Ruff 신규 파일: clean
+
+### 실거래 / AI 자동매매 / 선물 LIVE 금지 invariant — 본 PR 미변경
+- ✓ `ENABLE_LIVE_TRADING=false`, `ENABLE_AI_EXECUTION=false`, `ENABLE_FUTURES_LIVE_TRADING=false`, `KIS_IS_PAPER=true`
+- ✓ `app/core/config.py` 변경 0건
+- ✓ `.env` / Secret / API Key / 계좌번호 변경 0건
+- ✓ 실제 broker / KIS / Anthropic / OpenAI / httpx / requests 호출 0건
+- ✓ 절대 원칙 1~6 모두 유지
+
+### READY_FOR_REVIEW = 실제 활성화 아님 (강조)
+READY_FOR_REVIEW verdict는 *활성화 검토 가능* 만 의미. 실제 활성화는:
+1. 별도 옵트인 PR
+2. 사용자 명시 승인
+3. `ENABLE_AI_EXECUTION=true` 전환 + KIS AI 라우팅 활성화 코드
+4. 초소액 canary (최소 1주, 1일 1주 정도)
+5. KillSwitch drill — 활성화 첫날 LEVEL_1 / LEVEL_2 / LEVEL_3 토글 확인
+6. 즉시 kill switch 가능 + 비정상 손실 시 즉시 false로 되돌림
+
+모두 별도 절차로 분리.
+
+### 남은 AI Execution Gate backlog
+- env override (`AI_EXECUTION_MAX_ORDER_NOTIONAL` 등)
+- 자동 collector — 다른 게이트들의 verdict를 자동 가져와 입력 채움
+- KillSwitch drill 자동 검증 (최근 N일 토글 이력)
+- 실시간 monitoring 메트릭 연동
+- 별도 PR로 활성화 runbook (`live_ai_execution_activation_runbook.md`)
+- #45 order-time AIExecutionGate와 본 #75 activation gate 결합 평가 페이지

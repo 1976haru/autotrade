@@ -127,6 +127,7 @@ LIVE 활성화 전 운영자가 확인해야 할 것:
 - [ ] **#72 Paper Gate** PASS — `scripts/evaluate_paper_gate.py` 또는 `POST /api/governance/paper-gate/evaluate` 통과.
 - [ ] **#73 Live Manual Gate** PASS (또는 의도된 CAUTION) — `POST /api/governance/live-manual-gate/evaluate` 통과. 극소액 정책(주문 ≤ 5만 / 일일 손실 ≤ 1만 / 보유 ≤ 3개) + Approval API 강제 + AI/FUTURES live disabled 검증. 자세한 정책: [`live_manual_gate.md`](live_manual_gate.md).
 - [ ] **#74 AI Assist Gate** PASS — `POST /api/governance/ai-assist-gate/evaluate` 통과. AI 제안 ≥100건 + ≥28일 + expectancy > 0 + 손실율 ≤ 55% + Risk 거절율 ≤ 60% + 운영자 거절율 ≤ 50% + confidence calibration ≥ 0.5 + audit drift = 0. **PASS는 `LIVE_AI_EXECUTION` 자동 허가가 아니다** — AI 자동매매 활성화는 `AIExecutionGate`(#45) + 별도 옵트인 PR 필요. 자세한 정책: [`ai_assist_gate.md`](ai_assist_gate.md).
+- [ ] **#75 AI Execution Activation Gate** READY_FOR_REVIEW — `POST /api/governance/ai-execution-gate/evaluate` 통과. Paper/AI Assist/Live Manual/Promotion 4개 게이트 모두 PASS + 운영자 explicit opt-in + RiskManager/OrderGuard/AI Permission Gate/AuditLog/KillSwitch/Circuit Breaker 모두 활성 + 극소액 정책(주문 ≤ 3만 / 일일 손실 ≤ 5천 / 일일 주문 ≤ 10건 / 보유 ≤ 2개 / 종목 1~5개 / 시간 09:30~14:30 KST) + AI confidence ≥75 + signal quality ≥70 + system_errors=0. **READY_FOR_REVIEW는 *실제 활성화가 아니다*** — 활성화는 별도 옵트인 PR + 초소액 canary + 즉시 kill switch 가능 모두 필요. **선물 AI Execution은 본 게이트가 *영구* 허용하지 않는다** (`futures_allowed=false` 불변). 자세한 정책: [`ai_execution_gate.md`](ai_execution_gate.md).
 
 ## 9. 본 세션이 "절대 안 한 것" 단정문
 
