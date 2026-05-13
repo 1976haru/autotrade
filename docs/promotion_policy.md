@@ -68,6 +68,11 @@
   - **(133)** Stress 테스트 모든 시나리오 PASS (skip 제외) — 대량/비정상 입력 invariant 검증.
   - **(140)** Idempotency: 같은 `client_order_id`로 두 번째 주문이 들어와도 audit row가 정확히 1건 — frontend가 client_order_id를 매 주문마다 발급하는지 확인.
   - **(138, 139)** PAPER 단계 audit row 표본 검사 — `strategy`, `signal_strength`, `signal_confidence`가 `LiveStrategyEngine` 발신 주문에서 모두 채워지는지.
+- **#72 Paper Gate 평가**: 위 승격 기준을 코드 단에서 일관 평가하는 게이트가
+  추가됨 — `app/governance/paper_gate.py::evaluate_paper_gate()`. CLI는
+  `scripts/evaluate_paper_gate.py`, API는 `POST /api/governance/paper-gate/evaluate`.
+  자세한 정책 + PASS/CAUTION/FAIL 임계: [`paper_gate_policy.md`](paper_gate_policy.md).
+  **PASS는 Live Manual Approval *검토 가능*을 의미하며 실거래 자동 허가가 *아니다*.**
 
 ### 4. Live Manual (`LIVE_MANUAL_APPROVAL`)
 

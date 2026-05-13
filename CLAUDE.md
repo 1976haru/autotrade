@@ -199,6 +199,18 @@ docs/
 
 자세한 단계 정의는 [`docs/promotion_policy.md`](docs/promotion_policy.md).
 
+**#72 Paper Gate**: Paper 모드 4주 운용 결과를 promotion_policy 기준으로
+평가하는 코드 단 게이트 — `app/governance/paper_gate.py::evaluate_paper_gate`.
+PASS 기준: ≥28일 + ≥100건 + expectancy > 0 + PF ≥ 1.2 + MDD ≤ 15% + 손실한도
+위반 0 + audit 누락 0 + stale/duplicate 위반 0. CLI는
+`scripts/evaluate_paper_gate.py`, API는 `POST /api/governance/paper-gate/evaluate`.
+**PASS는 Live Manual Approval *검토 가능*을 의미하며 실거래 자동 허가가
+*아니다*** — `PaperGateResult.is_live_authorization=False` 불변 (dataclass
+`__post_init__` ValueError 가드). 본 모듈은 broker / OrderExecutor /
+route_order / paper_trader / 외부 HTTP / AI SDK import 0건, DB는 read-only
+SELECT만 (INSERT/UPDATE/DELETE 0건, 정적 grep 가드). 자세한 정책:
+[`docs/paper_gate_policy.md`](docs/paper_gate_policy.md).
+
 ## 변경 시 동기화
 
 다음 변경은 본 문서도 같이 업데이트해야 한다 (PR 리뷰에서 요구):
