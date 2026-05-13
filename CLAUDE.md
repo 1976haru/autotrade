@@ -292,6 +292,29 @@ import 0건 (evaluator는 안전 플래그를 *입력 DTO*로만 받음), DB wri
 default false 유지, `FuturesRiskManager.evaluate_order` LIVE 분기 항상 REJECTED,
 실제 선물 broker adapter 코드 0개.
 
+**#77 Alpha Decay Monitor**: 전략별 알파 감쇠 read-only 분석 —
+`app/governance/alpha_decay.py::evaluate_alpha_decay`. baseline (검증 단계
+통과 시점) vs recent (최근 운용) 의 6개 핵심 지표(`expectancy` / `profit_factor` /
+`win_rate` / `max_drawdown` / `max_consecutive_losses` / `data_quality_score`)와
+market regime 변경을 가중치 누적해 0~100 score 산정 + 4단계 status
+(`HEALTHY` / `WATCH` / `DECAY_WARNING` / `DISABLE_CANDIDATE`) + `INSUFFICIENT_DATA`
+별도. 6종 `AlphaDecayKind` 로 *단기 부진* (SHORT_TERM_DRAWDOWN, REGIME_MISMATCH)
+과 *구조적 성능저하* (STRUCTURAL_DECAY ≥3 지표 동시 악화) 를 구분.
+API: `POST /api/governance/alpha-decay/evaluate`. UI: `AlphaDecayCard`.
+**전략 자동 비활성 / 삭제 / promotion 변경 절대 금지** —
+`AlphaDecayResult.auto_disable=False` / `auto_apply_allowed=False` /
+`is_order_signal=False` 불변 (dataclass `__post_init__` ValueError 가드).
+DISABLE_CANDIDATE 라벨은 *비활성 후보 표시*일 뿐, 실제 전략 변경은 운영자
+수동 승인 + 별도 PR 필요 (Strategy Researcher #55 분석 + Promotion Gate #27
+재진입). 본 모듈은 broker / OrderExecutor / route_order / paper_trader /
+`app.ai.assist` / `app.ai.client` / `anthropic` / `openai` / `httpx` /
+`requests` / `app.core.config.get_settings` import 0건, DB write 0건,
+`.save_params(` / `.apply_params(` / `strategy.enabled = False` /
+`PromotionGate(` / `evaluate_promotion(` 호출 0건, `settings.enable_*_trading =`
+mutate 0건 (정적 grep 가드), UI에 "전략 비활성화" / "전략 삭제" / "파라미터
+적용" / "promotion 변경" / "Place Order" 라벨 버튼 0개 (frontend 테스트로 lock).
+자세한 정책: [`docs/alpha_decay_monitor.md`](docs/alpha_decay_monitor.md).
+
 ## 변경 시 동기화
 
 다음 변경은 본 문서도 같이 업데이트해야 한다 (PR 리뷰에서 요구):

@@ -441,4 +441,10 @@ export const backendApi = {
     }),
   aiExecutionGatePolicy: () =>
     backendFetch("/api/governance/ai-execution-gate/policy"),
+  // 77: Alpha Decay Monitor — 전략 알파 감쇠 read-only 분석 (자동 비활성 없음).
+  alphaDecayEvaluate: (body) =>
+    backendFetch("/api/governance/alpha-decay/evaluate", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
 };
