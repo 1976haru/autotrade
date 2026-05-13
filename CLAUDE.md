@@ -114,6 +114,17 @@
 - stress / slow / network 테스트는 `*-ci-nightly.yml` 등 별도 워크플로로
   분리해 일반 CI flakiness를 방지.
 
+### Staging 환경 정책 (#67)
+
+- staging은 *운영과 별개* 환경으로, 신규 기능 smoke 테스트 + mock/paper/
+  shadow 검증만 가능하다.
+- staging에서 `ENABLE_LIVE_TRADING` / `ENABLE_AI_EXECUTION` /
+  `ENABLE_FUTURES_LIVE_TRADING` 을 **true로 설정 금지** —
+  `docker-compose.staging.yml`에 "false" 문자열로 하드코딩, 실행 가이드는
+  [`docs/staging_environment.md`](docs/staging_environment.md).
+- 실 API key / Secret / 계좌번호를 `docker-compose.staging.yml` / `.env.
+  staging.example`에 입력 금지. `.env.staging`(gitignore)에서만 주입.
+
 ## 안전 플래그
 
 env 변수로 모든 위험 동작을 차단한다. 자세한 매트릭스는 [`docs/promotion_policy.md`](docs/promotion_policy.md).

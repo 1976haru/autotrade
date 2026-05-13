@@ -916,3 +916,84 @@ broker까지 어떻게 흘러가나"를 한 파일에서 읽을 수 있도록 14
   이슈 (#60부터 알려진 `.env DEFAULT_MODE=PAPER` vs SIMULATION + 실 KIS 키
   + Windows subprocess CWD). 본 PR과 무관
 - 외부 네트워크 호출 0건 (테스트로 lock)
+
+## 추가 (#67) — Staging Environment (docker-compose + LIVE flag 격리)
+
+체크리스트 #67: 운영 서버와 *완전히 별개*의 staging 환경. 실거래 코드가
+머지 직후 운영에 가지 않도록 docker-compose 기반 격리 stack을 만들고,
+**LIVE flag를 staging에서 강제 비활성화**.
+
+운영 로직(`app/`) 변경 0건 — Docker 빌드 자산 / compose / smoke script /
+문서만 추가.
+
+### 신규 파일
+- `docker-compose.staging.yml` — 4 서비스 (backend / frontend / postgres /
+  redis), 포트 18000/15173/15432/16379, LIVE flag "false" 하드코딩
+- `backend/Dockerfile` + `backend/.dockerignore` — Python 3.13 multi-stage,
+  non-root user(uid 10001), healthcheck, LIVE flag default false, `.env*`
+  격리
+- `frontend/Dockerfile` + `frontend/.dockerignore` — Node 20 multi-stage,
+  vite preview, build-time VITE_* args만 사용 (Secret 입력 0개), non-root
+- `.env.staging.example` — placeholder만, 실 키 0건
+- `scripts/check_staging_smoke.py` — backend/frontend/안전 flag/Secret 누출
+  점검 stdlib 전용 smoke runner
+- `docs/staging_environment.md` — 정책 / 서비스 / 실행 가이드 / mode 매트릭스
+  / 검증 시나리오 / 문제 해결 / 12개 invariant / 후속 backlog
+
+### 변경 파일
+- `.gitignore` — `!.env.staging.example` allowlist 추가
+- `README.md` — staging 문서 링크
+- `CLAUDE.md` — "Staging 환경 정책 (#67)" 섹션 추가 (3 라인: LIVE flag 금지
+  + Secret 격리)
+
+### 서비스 / 포트
+| 서비스 | host 포트 | 컨테이너 포트 |
+|---|---|---|
+| backend-staging | **18000** | 8000 |
+| frontend-staging | **15173** | 5173 |
+| postgres-staging | **15432** | 5432 |
+| redis-staging | **16379** | 6379 |
+
+운영 default(8000 / 5173)와 *반드시* 다른 1xxxx 대역 — 운영자가 포트로
+환경을 즉시 식별.
+
+### 안전 invariant
+- ✓ `docker-compose.staging.yml`에 `ENABLE_LIVE_TRADING="false"` /
+  `ENABLE_AI_EXECUTION="false"` / `ENABLE_FUTURES_LIVE_TRADING="false"` /
+  `KIS_IS_PAPER="true"` 하드코딩
+- ✓ backend Dockerfile에도 ENV로 default false — 컨테이너만 떠도 LIVE 금지
+- ✓ `.env.staging.example`은 빈 placeholder만 — 실 키 0건 (grep으로 lock)
+- ✓ `.env.staging`은 `.gitignore`에 의해 git 추적 0건
+- ✓ `.dockerignore`로 `.env*`를 이미지에서 격리 — 이미지에 Secret 0건
+- ✓ frontend `VITE_*` build args는 *공개 가능 값*만 (Token / 계좌번호 입력 X)
+- ✓ smoke script는 staging 컨테이너만 호출. 실 broker / 외부 API 호출 0건
+- ✓ smoke script가 `/api/status` 응답에 token / chat_id / app_secret 패턴
+  없음 확인
+- ✓ `app/` 운영 코드 변경 0건 — 본 PR은 Docker / compose / 문서만
+
+### 실행 가이드 (요약)
+```bash
+cp .env.staging.example .env.staging                      # placeholder 유지
+docker compose -f docker-compose.staging.yml --env-file .env.staging up --build -d
+python scripts/check_staging_smoke.py                     # PASS 확인
+docker compose -f docker-compose.staging.yml down         # 종료
+```
+
+자세한 절차 / 문제 해결: [`docs/staging_environment.md`](staging_environment.md)
+
+### 테스트 결과
+- `app/` 변경 0건 → backend pytest / frontend vitest 회귀 불필요 (테스트 추가
+  + 운영 코드 미변경)
+- YAML 문법: docker-compose.staging.yml은 표준 compose v3 형식, build /
+  environment / depends_on / healthcheck / network / volume 모두 키 검증
+  통과
+- Secret 누출 grep: 모든 신규 파일에서 실 token / KIS key / chat_id 패턴
+  검출 0건
+
+### 남은 backlog (out-of-scope for #67)
+- CI/CD 자동 배포 (PR 머지 → staging build → 자동 smoke) — 별도 워크플로 PR
+- nginx / Caddy reverse proxy + TLS
+- 운영용 docker-compose (별도 LIVE flag opt-in PR — staging과 *완전히 분리*)
+- Postgres → 운영 DB 마이그레이션 tooling
+- 컨테이너 image registry push (Harbor / GHCR)
+- 로그 집계 (Loki / OpenTelemetry)
