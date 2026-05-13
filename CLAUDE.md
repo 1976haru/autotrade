@@ -279,6 +279,19 @@ import 0건 (evaluator는 안전 플래그를 *입력 DTO*로만 받음), DB wri
 라벨 버튼 0개 (frontend 테스트로 lock). 자세한 정책:
 [`docs/ai_execution_gate.md`](docs/ai_execution_gate.md).
 
+**#76 Futures Promotion Policy**: 선물 기능은 자동매매 전체에서 *가장 마지막* 단계 —
+7단계 승격 정책(`FUTURES_DISABLED` → `SIMULATION` → `SHADOW` → `PAPER` →
+`MANUAL_APPROVAL` → `AI_ASSIST` → `AI_EXECUTION_BLOCKED`)을
+[`docs/futures_promotion_policy.md`](docs/futures_promotion_policy.md)에 정의.
+주식 MVP / Paper / Shadow / Live Manual / AI Assist가 안정화되기 *전*에는 선물
+실거래 진행 금지. 선물은 레버리지 + 강제청산 + 만기 + 24시간 거래로 위험 한 등급
+높음. **`FUTURES_AI_EXECUTION`은 본 프로젝트가 *영구 BLOCKED*** —
+`AIExecutionActivationGateResult.futures_allowed=False` 불변 (#75)으로 코드 단
+강제. `FuturesRolloverPlan`은 advisory 객체일 뿐 broker 호출 트리거 0건 (#49),
+만기일 근처 AI 자동매매는 *어떤 단계에서도 금지*. 본 PR 시점에 `ENABLE_FUTURES_LIVE_TRADING`
+default false 유지, `FuturesRiskManager.evaluate_order` LIVE 분기 항상 REJECTED,
+실제 선물 broker adapter 코드 0개.
+
 ## 변경 시 동기화
 
 다음 변경은 본 문서도 같이 업데이트해야 한다 (PR 리뷰에서 요구):

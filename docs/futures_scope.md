@@ -196,8 +196,9 @@
 - [`futures_strategy_contract.md`](futures_strategy_contract.md) — `FuturesStrategyBase` + 양방향 신호 + 계약 sizing + 롤오버 advisory + mock 전략 3종 (#49)
 - [`futures_ui.md`](futures_ui.md) — Futures 탭 UI 노출 정책 + `VITE_ENABLE_FUTURES_TAB` feature flag (#50)
 - [`futures_simulation_report.md`](futures_simulation_report.md) — 가상 산식 + invariant (#151, #169)
+- [`futures_promotion_policy.md`](futures_promotion_policy.md) — **선물 7단계 승격 정책 + FUTURES_AI_EXECUTION 영구 BLOCKED (#76)**
 - [`live_activation_blockers.md`](live_activation_blockers.md) — LIVE 활성화 시 변경 매트릭스 (선물 §3 포함)
-- [`promotion_policy.md`](promotion_policy.md) — 단계별 승격 기준
+- [`promotion_policy.md`](promotion_policy.md) — 주식 단계별 승격 기준 (선물은 [`futures_promotion_policy.md`](futures_promotion_policy.md) 별도)
 - [`risk_policy.md`](risk_policy.md) — RiskManager 평가 매트릭스 (주식)
 - [`ai_permission_gate.md`](ai_permission_gate.md) — AI 권한 단계 (#39)
 - [`ai_execution_policy.md`](ai_execution_policy.md) — AI 자동 실행 게이트 (#45)

@@ -45,6 +45,7 @@ npm run dev -- --host 0.0.0.0
 - 🪪 [`docs/live_manual_gate.md`](docs/live_manual_gate.md) — Live Manual Approval 진입 readiness 게이트 + 극소액 정책 + Approval API 강제 (실거래 허가 아님) (#73)
 - 🤖 [`docs/ai_assist_gate.md`](docs/ai_assist_gate.md) — AI Assist 품질 검증 게이트 + failure reason 태깅 + PASS≠LIVE_AI_EXECUTION 허가 (시스템 검증 자료, 투자 조언 아님) (#74)
 - 🤖🔒 [`docs/ai_execution_gate.md`](docs/ai_execution_gate.md) — AI Execution 활성화 readiness 게이트 + 극소액·whitelist·시간 정책 + 선물 영구 차단 + READY_FOR_REVIEW≠실제 활성화 (#75)
+- 📉🔒 [`docs/futures_promotion_policy.md`](docs/futures_promotion_policy.md) — 선물 7단계 승격 정책 (Simulation → Paper → Manual → AI Assist) + FUTURES_AI_EXECUTION 영구 BLOCKED + 자동 롤오버 금지 (#76)
 - 📦 [`docs/beta_distribution_plan.md`](docs/beta_distribution_plan.md) — 베타테스터 배포 + Tauri / Electron
 - 🔄 [`docs/auto_update_plan.md`](docs/auto_update_plan.md) — Phase 1-2-3 단계별 업데이트
 - 🔒 [`docs/local_security_policy.md`](docs/local_security_policy.md) — Secret hygiene + Tailscale + 사고 대응
