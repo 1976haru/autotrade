@@ -1,20 +1,30 @@
-"""Governance routes (#27, #72).
+"""Governance routes (#27, #72, #73).
 
 CLAUDE.md 절대 원칙 — 본 라우트는 *판단 결과*만 반환한다. 실제 모드 변경,
 broker 호출, LIVE flag 변경 0건. DB write 0건.
 
-#72: Paper Gate evaluator endpoint 추가 — `/governance/paper-gate/evaluate`.
-PASS 라벨은 *Live Manual Approval 검토 가능* 을 의미하며 **실거래 자동 허가가
-아니다**. 본 endpoint도 안전 플래그 변경 0건.
+#72 Paper Gate         : `/governance/paper-gate/evaluate`
+#73 Live Manual Gate   : `/governance/live-manual-gate/evaluate`
+                         `/governance/live-manual-gate/period-summary`
+
+PASS 라벨은 *진입 검토 가능* 을 의미하며 **실거래 자동 허가가 아니다**.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
+from app.db.session import get_db
+from app.governance.live_manual_gate import (
+    LiveManualGateInput,
+    LiveManualGateResult,
+    evaluate_live_manual_gate,
+)
+from app.governance.live_manual_gate_collector import summarize_live_manual_period
 from app.governance.paper_gate import (
     PaperGateInput,
     PaperGateResult,
@@ -199,3 +209,140 @@ def evaluate_paper_gate_endpoint(
 
     result: PaperGateResult = evaluate_paper_gate(inp)
     return PaperGateResultPayload(**result.to_dict())
+
+
+# ---------- #73 Live Manual Gate ----------
+
+
+class LiveManualGateInputPayload(BaseModel):
+    """Live Manual Gate 평가 입력.
+
+    안전 플래그 / opt-in / 한도 / 운영 로그를 *입력으로 받아*만 사용. 본
+    endpoint는 어떤 설정값도 *변경하지 않는다* — 운영자가 입력으로 *현재값* 만
+    전달.
+    """
+    strategy_name:                 str  = Field(..., min_length=1, max_length=64)
+    period_start:                  datetime | None = None
+    period_end:                    datetime | None = None
+
+    paper_gate_passed:             bool = False
+    promotion_gate_passed:         bool = False
+    user_explicit_opt_in:          bool = False
+    approval_required:             bool = False
+    ai_execution_enabled:          bool = False
+    futures_live_enabled:          bool = False
+    enable_live_trading:           bool = False
+
+    current_max_order_notional_krw: int = 0
+    current_max_daily_loss_krw:     int = 0
+    current_max_open_positions:     int = 0
+    allowed_symbols:                list[str] = Field(default_factory=list)
+
+    operating_days:                 int = 0
+    total_live_manual_orders:       int = 0
+    approved_orders:                int = 0
+    rejected_orders:                int = 0
+    expired_or_cancelled_orders:    int = 0
+    approval_bypass_attempts:       int = 0
+    audit_missing_count:            int = 0
+    system_errors:                  int = 0
+    emergency_stops_in_period:      int = 0
+
+
+class LiveManualGateResultPayload(BaseModel):
+    strategy_name:           str
+    period_start:            datetime
+    period_end:              datetime
+    verdict:                 str
+    passed_criteria:         list[str]
+    blocked_criteria:        list[str]
+    cautions:                list[str]
+    required_actions:        list[str]
+    metrics:                 dict
+    thresholds:              dict
+    next_step:               str
+    is_live_authorization:   bool = Field(False, description="invariant — 항상 false (PASS != 실거래 허가)")
+    is_order_signal:         bool = Field(False, description="invariant — Live Manual Gate는 BUY/SELL/HOLD 신호 아님")
+    live_flag_changed:       bool = Field(False, description="invariant — 안전 플래그 미변경")
+    mode_changed:            bool = Field(False, description="invariant — 모드 미변경")
+    generated_at:            datetime
+
+
+@router.post("/live-manual-gate/evaluate", response_model=LiveManualGateResultPayload)
+def evaluate_live_manual_gate_endpoint(
+    payload: LiveManualGateInputPayload,
+) -> LiveManualGateResultPayload:
+    """Live Manual Gate readiness 평가. read-only — 안전 플래그 / 모드 변경 0건.
+
+    PASS는 LIVE_MANUAL_APPROVAL 모드 진입 *검토 가능* 상태를 의미하며 실거래
+    자동 허가가 아니다. 실제 LIVE 활성화는 별도 옵트인 PR + 사용자 명시 승인
+    필요.
+    """
+    end   = payload.period_end   or datetime.now(timezone.utc)
+    start = payload.period_start or (end - timedelta(days=30))
+
+    try:
+        inp = LiveManualGateInput(
+            strategy_name=payload.strategy_name,
+            period_start=start,
+            period_end=end,
+            paper_gate_passed=payload.paper_gate_passed,
+            promotion_gate_passed=payload.promotion_gate_passed,
+            user_explicit_opt_in=payload.user_explicit_opt_in,
+            approval_required=payload.approval_required,
+            ai_execution_enabled=payload.ai_execution_enabled,
+            futures_live_enabled=payload.futures_live_enabled,
+            enable_live_trading=payload.enable_live_trading,
+            current_max_order_notional_krw=payload.current_max_order_notional_krw,
+            current_max_daily_loss_krw=payload.current_max_daily_loss_krw,
+            current_max_open_positions=payload.current_max_open_positions,
+            allowed_symbols=tuple(payload.allowed_symbols),
+            operating_days=payload.operating_days,
+            total_live_manual_orders=payload.total_live_manual_orders,
+            approved_orders=payload.approved_orders,
+            rejected_orders=payload.rejected_orders,
+            expired_or_cancelled_orders=payload.expired_or_cancelled_orders,
+            approval_bypass_attempts=payload.approval_bypass_attempts,
+            audit_missing_count=payload.audit_missing_count,
+            system_errors=payload.system_errors,
+            emergency_stops_in_period=payload.emergency_stops_in_period,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"invalid live manual gate input: {e}")
+
+    result: LiveManualGateResult = evaluate_live_manual_gate(inp)
+    return LiveManualGateResultPayload(**result.to_dict())
+
+
+class LiveManualPeriodSummaryPayload(BaseModel):
+    period_start:              datetime
+    period_end:                datetime
+    total_live_manual_orders:  int
+    approved_orders:           int
+    needs_approval_orders:     int
+    rejected_orders:           int
+    pending_approval_rows:     int
+    approved_via_queue:        int
+    expired_or_cancelled:      int
+    approval_bypass_attempts:  int
+    emergency_stops_in_period: int
+    operating_days:            int
+
+
+@router.get(
+    "/live-manual-gate/period-summary",
+    response_model=LiveManualPeriodSummaryPayload,
+)
+def live_manual_period_summary(
+    period_start: datetime | None = Query(default=None),
+    period_end:   datetime | None = Query(default=None),
+    db:           Session = Depends(get_db),
+) -> LiveManualPeriodSummaryPayload:
+    """LIVE_MANUAL_APPROVAL 운영 로그 read-only 요약.
+
+    `period_start` 미지정 시 backend 가 last 30 days 자동 적용.
+    """
+    end   = period_end   or datetime.now(timezone.utc)
+    start = period_start or (end - timedelta(days=30))
+    summary = summarize_live_manual_period(db, start_date=start, end_date=end)
+    return LiveManualPeriodSummaryPayload(**summary)

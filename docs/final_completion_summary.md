@@ -1420,3 +1420,121 @@ POST /api/governance/paper-gate/evaluate
 - LIVE_SHADOW 사전 통과 검증 연동 (#43 ShadowTrade row)
 - 운영자 승인 / reject 이력 carry (signed by + note)
 - PASS / FAIL → NotificationService 알림 연계
+
+---
+
+## #73 Live Manual Gate (초소액 LIVE_MANUAL_APPROVAL 진입 readiness)
+
+> 본 체크리스트는 *진입 readiness 평가*만 추가한다. **본 PR로 어떤 LIVE
+> 플래그도 활성화되지 않으며**, 실거래는 별도 옵트인 PR + 사용자 명시 승인
+> 후에만 가능.
+
+### 생성 / 수정 파일
+- `backend/app/governance/live_manual_gate.py` (신규) —
+  `LiveManualGateInput` / `LiveManualGateResult` / `LiveManualGateVerdict` /
+  `LiveManualGateThresholds` + `evaluate_live_manual_gate()` + `render_markdown_report()`
+- `backend/app/governance/live_manual_gate_collector.py` (신규) —
+  `summarize_live_manual_period(db, start, end)` read-only 집계
+- `backend/app/api/routes_governance.py` (수정) — 두 endpoint 추가
+- `backend/tests/test_live_manual_gate.py` (신규, **33 PASS**)
+- `frontend/src/services/backend/client.js` (수정) — 2개 helper 추가
+- `frontend/src/components/tabs/LiveManualGateCard.jsx` (신규)
+- `frontend/src/components/tabs/LiveManualGateCard.test.jsx` (신규, **8 PASS**)
+- `docs/live_manual_gate.md` (신규)
+- `docs/promotion_policy.md` (수정) — Live Manual 단계 게이트 링크
+- `docs/live_activation_blockers.md` (수정) — 8번 체크리스트에 #72/#73 게이트 항목 추가
+- `CLAUDE.md` (수정) — #73 invariant 명시
+- `README.md` (수정) — 정책 링크
+- `docs/final_completion_summary.md` (수정) — 본 항목
+
+### Live Manual Gate 기준
+- **PASS** (모두 충족 시):
+  1. Paper Gate PASS
+  2. Promotion Gate PASS
+  3. 운영자 explicit opt-in
+  4. `approval_required=True`
+  5. `ENABLE_AI_EXECUTION=false`
+  6. `ENABLE_FUTURES_LIVE_TRADING=false`
+  7. 1회 주문 ≤ 50,000원
+  8. 일일 손실한도 ≤ 10,000원
+  9. 동시 보유 종목 ≤ 3개
+  10. `system_errors=0`
+  11. `audit_missing_count=0`
+  12. `approval_bypass_attempts=0`
+- **CAUTION**: 운영 기간 < 30일 / `ENABLE_LIVE_TRADING` 이미 true / allowed_symbols 미지정
+- **BLOCKED**: 위 PASS 항목 중 하나 이상 미달
+- **UNKNOWN**: 데이터 부족
+
+### Approval API 강제 방식
+- 모든 `LIVE_MANUAL_APPROVAL` 모드 주문 → `route_order` → RiskManager →
+  `NEEDS_APPROVAL` → `PendingApproval` 큐 → 운영자 `POST /api/approvals/{id}/approve`
+  → `PermissionGate.approve` (broker 호출 전 RiskManager 재검증 #070) →
+  `OrderExecutor.execute` (유일한 broker 호출 지점 #40).
+- 우회 시도 탐지: `OrderAuditLog.executed=True` 인데 `PendingApproval` 큐
+  row 없음 → `approval_bypass_attempts`로 카운트 → BLOCKED.
+
+### 운영 로그 요약 (`summarize_live_manual_period`)
+read-only SELECT only, broker 호출 0건, DB write 0건:
+- `total_live_manual_orders` / `approved_orders` / `needs_approval_orders` / `rejected_orders`
+- `pending_approval_rows` / `approved_via_queue` / `expired_or_cancelled`
+- `approval_bypass_attempts` / `emergency_stops_in_period` / `operating_days`
+
+### CLI/API 사용법
+```http
+POST /api/governance/live-manual-gate/evaluate
+{
+  "strategy_name": "sma_cross",
+  "paper_gate_passed": true,
+  "promotion_gate_passed": true,
+  "user_explicit_opt_in": true,
+  "approval_required": true,
+  "current_max_order_notional_krw": 30000,
+  "current_max_daily_loss_krw": 8000,
+  "current_max_open_positions": 2,
+  "allowed_symbols": ["005930"],
+  "operating_days": 30
+}
+
+GET /api/governance/live-manual-gate/period-summary?period_start=...&period_end=...
+```
+
+### 안전 invariant (테스트로 lock)
+- ✓ broker / OrderExecutor / route_order / paper_trader / 외부 HTTP / AI SDK import 0건
+- ✓ `broker.place_order(` / `route_order(` / `OrderExecutor(` / `submit_candidate(` 호출 0건
+- ✓ DB write (INSERT/UPDATE/DELETE/.add/.commit/.flush) 0건 (evaluator + collector)
+- ✓ `from app.core.config import` / `get_settings(` 호출 0건 (evaluator는 입력 DTO만 사용)
+- ✓ `settings.enable_*_trading =` / `os.environ["ENABLE_*"]` mutate 0건
+- ✓ `LiveManualGateResult.is_live_authorization=True` 생성 불가 (ValueError)
+- ✓ `LiveManualGateResult.is_order_signal=True` 생성 불가 (ValueError)
+- ✓ UI 카드에 "실거래 활성화" / "실거래 시작" / "LIVE 켜기" / "Place Order" / "주문 실행" / "ENABLE_LIVE_TRADING" 라벨 버튼 0개
+- ✓ UI 화면에 BUY / SELL / HOLD / 긴급정지 토글 문구 0건
+- ✓ 응답 / 화면에 Secret 패턴 0건
+- ✓ 위험 문구 "PASS는 실거래 자동 허가가 아니라, 초소액 수동승인 검토 가능 상태입니다." UI에 *항상* 노출
+
+### 테스트 결과
+- **신규 backend**: 33 PASS (DTO invariant 3 + happy 1 + BLOCKED paths 11 +
+  CAUTION 2 + threshold override 1 + markdown 2 + collector 3 + API 4 +
+  정적 grep 5 + Secret 비노출 1)
+- **신규 frontend**: 8 PASS (PASS 배지 / BLOCKED 차단 사유 / 위험 문구 영구
+  노출 / 활성화 버튼 0개 / BUY-SELL 0건 / Secret 비노출 / 한도 표시 / 평가
+  버튼 라벨)
+- Regression: paper_gate + monitoring + mvp + strategy_promotion + 본 신규 합산 무회귀
+
+### 실거래 금지 invariant — 본 PR 미변경
+- ✓ `ENABLE_LIVE_TRADING=false`, `ENABLE_AI_EXECUTION=false`, `ENABLE_FUTURES_LIVE_TRADING=false`, `KIS_IS_PAPER=true`
+- ✓ `app/core/config.py` 변경 0건
+- ✓ `.env` / Secret / API Key / 계좌번호 변경 0건
+- ✓ 절대 원칙 1~6 모두 유지
+
+### PASS = 실거래 허가가 아님 (강조)
+PASS verdict는 *LIVE_MANUAL_APPROVAL 모드 진입 검토 가능* + *초소액* + *모든
+주문 수동승인* 상태를 의미할 뿐. 실거래 진입에는 별도 옵트인 PR + 사용자 명시
+승인 + `ENABLE_LIVE_TRADING=true` + KIS 실주문 라우팅 활성화 PR 모두 필요.
+
+### 남은 Live Manual Gate backlog
+- env override (`LIVE_MANUAL_MAX_ORDER_NOTIONAL` 등)
+- KIS Paper 운영에서 자동 metrics carry (현재는 운영자 입력)
+- Promotion Gate 자동 통합 (PaperGate + LiveManualGate 단일 evaluate)
+- Notification 연계 — verdict 변동 시 운영자 알림
+- Frontend Settings 탭에 `user_explicit_opt_in` 토글 (현재는 입력으로만)
+- `live_activation_blockers.md` 의 9단계 checklist 자동 검증
