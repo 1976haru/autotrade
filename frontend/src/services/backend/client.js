@@ -454,4 +454,27 @@ export const backendApi = {
       method: "POST",
       body: JSON.stringify(body || {}),
     }),
+  // 79: Loss Tagging — 손실 거래 *추정* 원인 분석 (read-only + review only,
+  // DELETE 미제공). 본 client는 어떤 LossReasonLog row 도 직접 삭제하지 않는다.
+  lossTagsEstimate: (body) =>
+    backendFetch("/api/analytics/loss-tags/estimate", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
+  lossTagsSummary: ({ days = 7, strategy = null } = {}) => {
+    const qs = new URLSearchParams({ days: String(days) });
+    if (strategy) qs.set("strategy", strategy);
+    return backendFetch(`/api/analytics/loss-tags/summary?${qs.toString()}`);
+  },
+  lossTagsRecent: ({ limit = 50, strategy = null, symbol = null } = {}) => {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (strategy) qs.set("strategy", strategy);
+    if (symbol)   qs.set("symbol", symbol);
+    return backendFetch(`/api/analytics/loss-tags/recent?${qs.toString()}`);
+  },
+  lossTagsReview: (id, payload) =>
+    backendFetch(`/api/analytics/loss-tags/${id}/review`, {
+      method: "PATCH",
+      body: JSON.stringify(payload || {}),
+    }),
 };

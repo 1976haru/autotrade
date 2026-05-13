@@ -218,6 +218,16 @@
 - 자동 collector — symbol → sector / themes 매핑 자동화 (WatchlistItem / ThemeSignal join)
 - RiskManager 통합 — `RiskManager.evaluate_order`에서 본 가드 자동 호출
 
+## #79 Loss Tagging — 후속 (advisory only, append + review only)
+
+- ML 기반 분류 (현재는 룰베이스 휴리스틱)
+- operator feedback loop — review_status 통계 → 추정 룰 가중치 조정
+- strategy별 loss pattern dashboard 시각화
+- 자동 collector — OrderAuditLog 청산 row → 자동 estimate + append
+- AgentMemory(#56) 통합 — review_note 있는 row → Memory 저장
+- DailyReportAgent / StrategyResearcherAgent / RiskAuditorAgent 자동 호출
+- multi-tag confidence weighting — tag 수가 아니라 강도 가중치
+
 ## 관련 문서
 
 - [`docs/final_checklist_report.md`](final_checklist_report.md)

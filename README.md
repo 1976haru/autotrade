@@ -48,6 +48,7 @@ npm run dev -- --host 0.0.0.0
 - 📉🔒 [`docs/futures_promotion_policy.md`](docs/futures_promotion_policy.md) — 선물 7단계 승격 정책 (Simulation → Paper → Manual → AI Assist) + FUTURES_AI_EXECUTION 영구 BLOCKED + 자동 롤오버 금지 (#76)
 - 📊 [`docs/alpha_decay_monitor.md`](docs/alpha_decay_monitor.md) — 전략 알파 감쇠 read-only 모니터 + 단기 부진 vs 구조적 저하 분류 + 자동 비활성 절대 금지 (#77)
 - 🔗 [`docs/correlation_guard_policy.md`](docs/correlation_guard_policy.md) — sector/theme 익스포저 사전 검사 + 신규 BUY 집중도 제한 + SELL/EXIT 우회 (#78)
+- 🏷️ [`docs/loss_tagging_policy.md`](docs/loss_tagging_policy.md) — 손실 거래 *추정 원인* 자동 태깅 + 7카테고리 25태그 + append+review only (확정 원인 아님) (#79)
 - 📦 [`docs/beta_distribution_plan.md`](docs/beta_distribution_plan.md) — 베타테스터 배포 + Tauri / Electron
 - 🔄 [`docs/auto_update_plan.md`](docs/auto_update_plan.md) — Phase 1-2-3 단계별 업데이트
 - 🔒 [`docs/local_security_policy.md`](docs/local_security_policy.md) — Secret hygiene + Tailscale + 사고 대응

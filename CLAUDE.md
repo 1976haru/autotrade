@@ -337,6 +337,28 @@ settings mutate 0건 (정적 grep 가드). `CorrelationGuardResult.is_order_sign
 UI에 "주문 실행" / "정책 적용" / "ENABLE_*" 라벨 버튼 0개 (frontend 테스트로
 lock). 자세한 정책: [`docs/correlation_guard_policy.md`](docs/correlation_guard_policy.md).
 
+**#79 Loss Tagging**: 손실 거래 *추정* 원인 자동 태깅 —
+`app/analytics/loss_tagging.py::estimate_loss_reasons` + `LossReasonLog` 테이블
+(alembic 0022). **태그는 *추정값*이며 확정 원인이 아니다** —
+`LossEstimateResult.is_estimated=True` / `is_order_signal=False` /
+`is_investment_advice=False` 불변 (dataclass `__post_init__` ValueError 가드).
+25 tag 7 카테고리(`strategy` / `market` / `execution` / `risk` / `data` /
+`agent` / `unknown`) — primary 우선순위 risk > data > market > execution >
+strategy > agent > unknown. API: `POST /api/analytics/loss-tags/estimate` /
+`GET /summary` / `GET /recent` / `PATCH /{id}/review` — **DELETE 엔드포인트
+0건** (정적 grep 가드), append + review only. 운영자 review 는 `review_*`
+컬럼만 update — *원본 추정 데이터 변경 0건*. helper 3종(`summarize_for_daily_report`
+/ `summarize_for_strategy_researcher` / `summarize_loss_reasons`) 가 DailyReport
+/ StrategyResearcher / RiskAuditor / AgentMemory 에서 read-only carry 가능.
+UI(`LossReasonCard`)는 "추정 원인 · 확정 원인 아님" 영구 배지 + "확정 원인이
+아닙니다" disclaimer 영구 노출. **태그를 *주문 차단 / 실행 트리거*로 사용 금지** —
+UI에 "강제 적용" / "자동 비활성" / "전략 비활성화" / "삭제" / "확정 원인" /
+"주문 차단 적용" / "ENABLE_*" / "Place Order" 라벨 버튼 0개. 본 모듈은 broker /
+OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client` /
+`anthropic` / `openai` / `httpx` / `requests` import 0건, evaluator 는 DB write
+0건, storage 는 `db.delete(` / `DELETE FROM` 0건. 자세한 정책:
+[`docs/loss_tagging_policy.md`](docs/loss_tagging_policy.md).
+
 ## 변경 시 동기화
 
 다음 변경은 본 문서도 같이 업데이트해야 한다 (PR 리뷰에서 요구):

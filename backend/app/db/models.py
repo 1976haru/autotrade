@@ -599,3 +599,48 @@ class AuditEvent(Base):
     archived_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     archived_by:  Mapped[str | None]     = mapped_column(String(64), nullable=True)
     archive_note: Mapped[str | None]     = mapped_column(String(255), nullable=True)
+
+
+class LossReasonLog(Base):
+    """#79: 손실 거래 *추정* 원인 태그 영구 저장.
+
+    절대 원칙:
+    - 본 row 는 *추정값*이며 확정 원인이 아니다 (`is_estimated`=True 영구).
+      운영자 검토 시 `review_*` 컬럼만 갱신 — 원본 row 삭제/수정 금지.
+    - DELETE 경로 0건 — append + review only.
+    - 본 row 의 태그는 *주문 차단 / 실행 트리거*로 사용 금지 (advisory only).
+    """
+
+    __tablename__ = "loss_reason_log"
+
+    id:           Mapped[int]            = mapped_column(primary_key=True)
+    created_at:   Mapped[datetime]       = mapped_column(DateTime, default=_utcnow, index=True)
+
+    # 출처.
+    source_table: Mapped[str]            = mapped_column(String(32), index=True)
+    source_id:    Mapped[int | None]     = mapped_column(Integer, nullable=True, index=True)
+
+    # 거래 기본.
+    symbol:       Mapped[str]            = mapped_column(String(16), index=True)
+    strategy:     Mapped[str | None]     = mapped_column(String(64), nullable=True, index=True)
+    mode:         Mapped[str | None]     = mapped_column(String(32), nullable=True, index=True)
+
+    # 손익.
+    trade_pnl:    Mapped[int]            = mapped_column(Integer)
+    is_loss:      Mapped[bool]           = mapped_column(Boolean, index=True)
+
+    # 추정 결과.
+    primary_tag:      Mapped[str | None] = mapped_column(String(48), nullable=True, index=True)
+    primary_category: Mapped[str | None] = mapped_column(String(16), nullable=True, index=True)
+    tags:         Mapped[list]           = mapped_column(JSON, default=list)
+    rationale:    Mapped[list]           = mapped_column(JSON, default=list)
+    confidence:   Mapped[int]            = mapped_column(Integer, default=0)
+
+    # 추정 invariant — 항상 True. UI / API surface 시 명시.
+    is_estimated: Mapped[bool]           = mapped_column(Boolean, default=True)
+
+    # 운영자 review (원본 row 갱신 X — 본 컬럼만 update).
+    review_status: Mapped[str | None]    = mapped_column(String(16), nullable=True)
+    reviewed_by:   Mapped[str | None]    = mapped_column(String(64), nullable=True)
+    review_note:   Mapped[str | None]    = mapped_column(String(500), nullable=True)
+    reviewed_at:   Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
