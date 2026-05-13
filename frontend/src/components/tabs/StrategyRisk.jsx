@@ -6,6 +6,9 @@ import { Btn, Card, SectionLabel, Toggle, Slider } from "../common";
 import { PageHeader } from "../common/primitives";
 import { AiPermissionCard } from "../common/AiPermissionCard";
 import { KillSwitchPanel } from "../common/KillSwitchPanel";
+// #64: 알림 설정 상태 — Telegram 구성 여부 / 테스트 알림 / 보안 안내.
+// Secret 입력 UI 없음 — 모든 token은 backend/.env에만.
+import { NotificationStatusCard } from "../common/NotificationStatusCard";
 import { PaperModeStatusCard } from "../common/PaperModeStatusCard";
 import { friendlyErrorMessage } from "../../utils/errorMessage";
 import { DecisionDialog } from "../common/DecisionDialog";
@@ -441,6 +444,9 @@ export function StrategyRisk({ strategyOn, toggle, strategyParams, updateParam, 
           level + 후보 카운트 + 위험 경고를 한눈에 본다. 자동 청산 / 자동
           취소 버튼 없음 (CLAUDE.md '손실 방어 우선'). */}
       <KillSwitchPanel />
+      {/* #64: Notification status — Telegram 구성 여부 / 테스트 알림 / 보안
+          안내. Token 입력 UI 없음 (모든 Secret은 backend/.env에만). */}
+      <NotificationStatusCard />
       <EmergencyStopSummaryCard
         summary={esSummary.summary}
         loading={esSummary.loading}

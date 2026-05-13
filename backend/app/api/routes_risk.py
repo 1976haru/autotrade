@@ -126,6 +126,25 @@ def set_emergency_stop(
             level=target_level.value,         # #37
         ))
         db.commit()
+
+        # #64: state 변경 시 알림 발송. 본 hook은 *반드시* try/except 로 감싸서
+        # 알림 실패가 emergency_stop 응답을 망가뜨리지 않게 한다 (절대 원칙 #7).
+        # send도 raise하지 않지만 방어용 한 겹 더.
+        try:
+            from app.notifications import build_emergency_stop_event
+            from app.notifications.service import build_service_from_settings
+            service = build_service_from_settings(get_settings())
+            event = build_emergency_stop_event(
+                enabled=(target_level != KillSwitchLevel.OFF),
+                level=target_level.value,
+                reason_code=payload.reason_code,
+                decided_by=payload.decided_by,
+                note=payload.note,
+            )
+            service.notify(event)
+        except Exception:  # noqa: BLE001 — notification must never affect response
+            pass
+
     return {
         "emergency_stop": risk.emergency_stop,
         "level":          target_level.value,

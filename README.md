@@ -35,6 +35,7 @@ npm run dev -- --host 0.0.0.0
 - 🌐 [`docs/deployment_strategy.md`](docs/deployment_strategy.md) — 전체 배포 / 운영 정책
 - 📱 [`docs/mobile_access_guide.md`](docs/mobile_access_guide.md) — LAN / Tailscale 접속 절차
 - 📲 [`docs/pwa_installation.md`](docs/pwa_installation.md) — 스마트폰 홈화면 PWA 설치 + Service Worker 캐시 정책 + 오프라인 제한 (#63)
+- 🔔 [`docs/notification_policy.md`](docs/notification_policy.md) — Telegram 알림 설정 + 우선순위 + Secret 관리 + 알림 종류 (#64)
 - 📦 [`docs/beta_distribution_plan.md`](docs/beta_distribution_plan.md) — 베타테스터 배포 + Tauri / Electron
 - 🔄 [`docs/auto_update_plan.md`](docs/auto_update_plan.md) — Phase 1-2-3 단계별 업데이트
 - 🔒 [`docs/local_security_policy.md`](docs/local_security_policy.md) — Secret hygiene + Tailscale + 사고 대응

@@ -61,6 +61,17 @@ export const backendApi = {
   aiPermissionStatus: () => backendFetch("/api/risk/ai-permission/status"),
   // 42: Paper Trading status — read-only.
   paperStatus:        () => backendFetch("/api/paper/status"),
+  // 64: Notifications — read-only status + test/mock-event endpoints.
+  // 본 client는 *Token / chat_id를 절대 보내지 않는다* — 모든 Secret은 backend
+  // .env에만 존재한다.
+  notificationsStatus: () => backendFetch("/api/notifications/status"),
+  notificationsTest:   () => backendFetch("/api/notifications/test", {
+    method: "POST", body: JSON.stringify({}),
+  }),
+  notificationsMockEvent: (payload) =>
+    backendFetch("/api/notifications/mock-event", {
+      method: "POST", body: JSON.stringify(payload || {}),
+    }),
   // 60: AI Agent 모의매매 — read-only status / portfolio / decisions + run-once + emergency.
   autoTraderStatus:    () => backendFetch("/api/auto-trader/status"),
   autoTraderPortfolio: () => backendFetch("/api/auto-trader/portfolio"),
