@@ -209,3 +209,51 @@ def test_sharpe_uses_per_trade_returns_not_dollar_pnl():
     # Mean = 0.075, stdev (sample) = sqrt(((0.10-0.075)^2 + (0.05-0.075)^2) / 1) = 0.025*sqrt(2)
     # Sharpe = 0.075 / (0.025*sqrt(2)) = 3 / sqrt(2) ≈ 2.121
     assert abs(r.sharpe_ratio - (0.075 / (0.025 * (2 ** 0.5)))) < 1e-9
+
+
+# =====================================================================
+# #65 추가: 입력 검증 + summarize_metrics + 빈 입력
+# =====================================================================
+
+
+def test_engine_rejects_non_positive_initial_cash():
+    """initial_cash가 0 또는 음수면 즉시 ValueError — 운영자가 잘못된 백테스트
+    을 모르고 돌리는 사고 방지."""
+    import pytest
+    with pytest.raises(ValueError, match="initial_cash must be positive"):
+        BacktestEngine(initial_cash=0)
+    with pytest.raises(ValueError, match="initial_cash must be positive"):
+        BacktestEngine(initial_cash=-1)
+
+
+def test_engine_rejects_non_positive_quantity():
+    """quantity=0 또는 음수는 ValueError. 의미 있는 백테스트가 아님."""
+    import pytest
+    with pytest.raises(ValueError, match="quantity must be positive"):
+        BacktestEngine(initial_cash=1_000_000, quantity=0)
+
+
+def test_empty_bars_yields_zero_trades_and_full_cash():
+    """빈 봉 list — 신호 평가 안 되어 trades=[], final_cash=initial_cash."""
+    engine = BacktestEngine(initial_cash=1_000_000)
+    result = engine.run([], _FixedSignals([]))
+    assert result.trades == []
+    assert result.final_cash == 1_000_000
+    assert result.bars_processed == 0
+    assert result.total_pnl == 0
+
+
+def test_summarize_metrics_smoke():
+    """BacktestResult.summarize_metrics()가 모든 핵심 지표를 dict로 노출."""
+    r = BacktestResult(
+        trades=[_trade(50), _trade(-20), _trade(30)],
+        initial_cash=1_000_000, final_cash=1_000_060,
+    )
+    m = r.summarize_metrics()
+    # 핵심 필드 존재 검증 — 정확값은 다른 테스트가 lock
+    for key in ("trade_count", "win_count", "loss_count",
+                "total_pnl", "win_rate", "profit_factor",
+                "max_drawdown", "expectancy",
+                "max_consecutive_losses", "max_consecutive_wins"):
+        assert key in m, f"summarize_metrics missing key: {key}"
+    assert m["trade_count"] == 3

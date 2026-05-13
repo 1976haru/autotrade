@@ -798,3 +798,63 @@ Telegram (BotFather + sendMessage). **위험 알림(CRITICAL/WARN) 우선**, 주
 - Backend regression: `test_routes.py::test_status_exposes_safety_flags`만
   실패 — pre-existing 환경 이슈 (.env `DEFAULT_MODE=PAPER` vs 테스트 기대값
   `SIMULATION`). 본 PR과 무관
+
+## 추가 (#65) — Unit Test Coverage (P0 모듈)
+
+체크리스트 #65: 돈이 걸릴 수 있는 자동매매 시스템에서 **테스트 없이는 P0
+모듈을 완료로 보지 않는다**는 정책을 문서화하고, RiskManager / OrderGuard /
+StrategyBase / BacktestEngine 4개 핵심 모듈의 boundary 테스트 gap을 보강.
+
+### 신규 파일
+- `docs/unit_test_coverage_map.md` — P0 모듈 매핑 / 정책 / 시나리오 매트릭스
+  / 미완료 backlog / 절대 invariant
+
+### 변경 파일 (테스트만 추가, 운영 로직 변경 0건)
+- `backend/tests/test_risk_manager.py` (+7 tests, **84 → 91**):
+  - `test_sell_bypasses_max_positions_when_buy_blocked` — SELL은 한도 무관
+  - `test_sell_bypasses_max_order_notional_via_size_check_when_under_position`
+  - `test_check_order_with_block_new_buy_blocks_buy_but_lets_sell_through` —
+    MarketRegimeFilter BLOCK_NEW_BUY 게이트 (BUY만 차단)
+  - `test_check_order_emergency_stop_override_blocks_immediately`
+  - `test_check_order_emergency_stop_runtime_flag_maps_to_blocked`
+  - `test_check_order_stale_price_maps_to_blocked_with_wait_action`
+  - `test_check_order_live_trading_disabled_maps_to_blocked`
+- `backend/tests/test_order_guard.py` (+2 tests, **31 → 33**):
+  - `test_rejected_audit_within_window_still_triggers_duplicate` — 안전한
+    보수적 분류 invariant lock
+  - `test_combined_cooldown_and_pending_returns_pending_first` — 복합 가드
+    활성 시 ALLOW 안 됨 invariant
+- `backend/tests/test_backtest_engine.py` (+4 tests, **21 → 25**):
+  - `test_engine_rejects_non_positive_initial_cash`
+  - `test_engine_rejects_non_positive_quantity`
+  - `test_empty_bars_yields_zero_trades_and_full_cash`
+  - `test_summarize_metrics_smoke`
+- `backend/tests/test_strategy_base_contract.py` (+5 tests, **21 → 26**):
+  - `test_to_legacy_signal_maps_all_five_action_values` — SignalAction 5개
+    (BUY/SELL/EXIT/WATCH/NO_SIGNAL) → legacy Signal 매핑
+  - `test_strategy_context_carries_all_optional_fields`
+  - `test_exit_plan_carries_time_exit_and_invalidation`
+  - `test_sizing_hint_with_reduce_only_flag`
+  - `test_from_legacy_signal_hold_yields_no_signal`
+
+### P0 모듈 테스트 합계
+- RiskManager: **91 tests**
+- OrderGuard: **33 tests**
+- StrategyBase: **26 tests**
+- BacktestEngine: **25 + 20 = 45 tests** (engine + execution_costs)
+- 총 **195건 P0 단위 테스트**
+
+### 안전 invariant
+- ✓ 본 PR은 *테스트만 추가* — `app/` 운영 로직 변경 0건
+- ✓ 따라서 broker / 주문 / LIVE flag / Secret 변경이 자명하게 0건
+- ✓ 외부 API 호출 0건 — 모든 신규 테스트는 in-memory MockBrokerAdapter +
+  fake settings 사용
+- ✓ SELL/청산 정책 분리 시나리오를 단위 테스트로 명시 lock —
+  `test_sell_bypasses_*` 3건
+
+### 테스트 결과
+- **신규 18건 모두 PASS** (RiskManager 7 + OrderGuard 2 + BacktestEngine 4 +
+  StrategyBase 5)
+- **P0 4개 모듈 합산: 175 PASS** (engine + execution_costs 합산 시 195 PASS)
+- backend regression: `test_status_exposes_safety_flags`만 실패 — pre-existing
+  환경 이슈 (#60부터 알려진 flake, 본 PR과 무관)

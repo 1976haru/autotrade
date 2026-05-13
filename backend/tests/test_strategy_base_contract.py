@@ -254,3 +254,79 @@ def test_concrete_strategies_satisfy_new_contract():
         s.calculate_size(sig)
         s.exit_rule(sig)
         s.explain_signal(sig, context=ctx)
+
+
+# =====================================================================
+# #65 추가: SignalAction 5개 값 + StrategyContext 확장 필드 + ExitPlan
+# =====================================================================
+
+
+def test_to_legacy_signal_maps_all_five_action_values():
+    """SignalAction 5개 값(BUY/SELL/EXIT/WATCH/NO_SIGNAL)이 모두 legacy
+    Signal(BUY/SELL/HOLD)로 매핑된다 — EXIT은 SELL, WATCH/NO_SIGNAL은 HOLD."""
+    assert to_legacy_signal(StrategySignal(action=SignalAction.BUY))       == Signal.BUY
+    assert to_legacy_signal(StrategySignal(action=SignalAction.SELL))      == Signal.SELL
+    assert to_legacy_signal(StrategySignal(action=SignalAction.EXIT))      == Signal.SELL
+    assert to_legacy_signal(StrategySignal(action=SignalAction.WATCH))     == Signal.HOLD
+    assert to_legacy_signal(StrategySignal(action=SignalAction.NO_SIGNAL)) == Signal.HOLD
+    # None 입력은 HOLD로 안전 처리
+    assert to_legacy_signal(None) == Signal.HOLD
+
+
+def test_strategy_context_carries_all_optional_fields():
+    """StrategyContext가 regime / watchlist / account_equity / extra를 전달
+    가능하며 Strategy.generate_signal이 context.bars 외 정보에 접근 가능."""
+    bars = [Bar(symbol="X", timestamp=datetime.now(timezone.utc),
+                open=1, high=1, low=1, close=1, volume=1)]
+    ctx = StrategyContext(
+        bars=bars,
+        symbol="X",
+        regime="trending_up",
+        watchlist=["X", "Y"],
+        account_equity=1_000_000,
+        extra={"sentiment": 70, "test_run": True},
+    )
+    assert ctx.regime == "trending_up"
+    assert ctx.watchlist == ["X", "Y"]
+    assert ctx.account_equity == 1_000_000
+    assert ctx.extra["sentiment"] == 70
+    # validate_context는 bars가 있으면 OK
+    class _OK(Strategy):
+        def on_bar(self, bars): return Signal.HOLD  # noqa: ARG002
+    assert _OK().validate_context(ctx).ok is True
+
+
+def test_exit_plan_carries_time_exit_and_invalidation():
+    """ExitPlan에 time_exit_bars / invalidation / rule_summary 모두 carry."""
+    plan = ExitPlan(
+        take_profit_pct=5.0,
+        stop_loss_pct=2.0,
+        time_exit_bars=10,
+        invalidation="추세 반전",
+        rule_summary="TP +5% / SL -2% / 10봉 후 청산",
+    )
+    d = plan.to_dict()
+    assert d["take_profit_pct"] == 5.0
+    assert d["stop_loss_pct"]   == 2.0
+    assert d["time_exit_bars"]  == 10
+    assert d["invalidation"]    == "추세 반전"
+    assert d["rule_summary"]    == "TP +5% / SL -2% / 10봉 후 청산"
+
+
+def test_sizing_hint_with_reduce_only_flag():
+    """SizingHint.reduce_only=True는 호출자에게 자금 부족 / 위험 신호를 명시."""
+    hint = SizingHint(
+        quantity=None, position_size_pct=None, risk_pct=None,
+        reduce_only=True, note="자금 부족 — 신규 진입 자제",
+    )
+    d = hint.to_dict()
+    assert d["reduce_only"] is True
+    assert d["note"] == "자금 부족 — 신규 진입 자제"
+
+
+def test_from_legacy_signal_hold_yields_no_signal():
+    """legacy Signal.HOLD → SignalAction.NO_SIGNAL (BUY/SELL 둘 다 아님)."""
+    sig = from_legacy_signal(Signal.HOLD, symbol="X")
+    assert sig.action == SignalAction.NO_SIGNAL
+    assert sig.symbol == "X"
+    assert sig.is_order_intent is False
