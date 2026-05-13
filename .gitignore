@@ -38,3 +38,4 @@ data/
 # .gitkeep만 placeholder로 유지, 실제 markdown은 미커밋.
 reports/*
 !reports/.gitkeep
+.venv-310/

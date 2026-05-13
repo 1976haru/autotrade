@@ -723,3 +723,59 @@ execution/.env/API contract 무수정.
 - Frontend `vitest run`: 신규 24건 + 기존 1365건 회귀 무 — 전체 PASS
 - Backend 변경 0건, pytest 회귀 없음 (영향 받는 backend 테스트 없음)
 - Lint / typecheck (frontend): `npm run lint` PASS, `vite build` PASS
+
+## 추가 (#62) — Risk Control Panel (3단계 Kill Switch 액션 UI)
+
+체크리스트 #62: 리스크 설정과 킬스위치 화면을 *AI 매매 전환용 안전 인프라*로
+강화. 운영자가 한 화면에서 3단계 Kill Switch를 안전하게 실행할 수 있도록
+RiskControlPanel을 만들고, 위험 버튼은 반드시 확인 모달을 거치게 한다.
+
+### 신규 파일
+- `frontend/src/components/tabs/RiskControlPanel.jsx` — 6개 export:
+  - `RiskControlPanel` — 메인 orchestrator (StrategyRisk 탭에 마운트)
+  - `RiskLimitsSummary` — 5개 핵심 한도 카드
+  - `SafetyFlagsRow` — 실거래/AI/선물/긴급정지 4 chip (read-only 표시)
+  - `CancelCandidatesList` — LEVEL 2 후보 + "실제 취소 아님" banner
+  - `LiquidationCandidatesList` — LEVEL 3 후보 + "자동 청산 아님" banner
+  - `RiskActionConfirmModal` — 4 actionType 확인 모달 (DecisionDialog 재사용)
+- `frontend/src/components/tabs/RiskControlPanel.test.jsx` — 30건 신규 테스트
+  (각 sub-component 단위 + 전체 lifecycle invariant)
+- `docs/risk_control_panel.md` — 정책 / UI 구조 / 3단계 의미 / 모바일 / 12개 invariant
+
+### 변경 파일
+- `frontend/src/components/tabs/StrategyRisk.jsx` — `RiskControlPanel`을
+  `BackendPolicyCard` 위에 마운트. 기존 KillSwitchPanel(read-only) /
+  BackendPolicyCard(22개 필드 dump)는 그대로 유지 — 본 패널은 *액션 가능한
+  핵심 UI*로 공존.
+
+### 3단계 Kill Switch 의미
+- **LEVEL 1**: `RiskManager.emergency_stop=True` 토글 — 신규 주문 즉시 REJECTED.
+  자동 청산 / 자동 취소 *없음*.
+- **LEVEL 2**: `level=LEVEL_2` 토글 + read-only `GET /api/risk/emergency-stop/
+  cancel-candidates` 호출 → 미체결 후보 *표시*. `cancel_order` 호출 0건.
+- **LEVEL 3**: `level=LEVEL_3` 토글 + read-only `GET /api/risk/emergency-stop/
+  liquidation-candidates` 호출 → 청산 후보 *표시*. `place_order` 호출 0건.
+
+### 안전 invariant 단정문
+
+- ✓ 본 PR에서 `broker.place_order` / `cancel_order` / `route_order` 직접 호출
+  추가 0건 — `RiskControlPanel.test.jsx`의 mocked backendApi에 `brokerOrder`/
+  `approveApproval`/`cancelApproval`을 추가해 lifecycle 동안 0회 호출됨을
+  invariant 테스트로 lock
+- ✓ 자동 전량청산 / "Liquidate Now" / "Place Order" / "즉시 시장가 청산" 같은
+  라벨 0개 — invariant 테스트로 lock
+- ✓ 위험 버튼은 모달 없이 실행 불가 — 각 LEVEL 버튼 클릭 시 즉시 모달이 열리고,
+  확인 전에는 `setEmergencyStop` 호출 0건 (테스트로 lock)
+- ✓ `ENABLE_LIVE_TRADING` / `ENABLE_AI_EXECUTION` / `ENABLE_FUTURES_LIVE_TRADING`
+  변경 0건 (모두 default false)
+- ✓ `.env` / KIS app_key / secret / 계좌번호 / Anthropic key 변경 0건
+- ✓ backend 코드 변경 0건 — 본 PR은 frontend 신규 컴포넌트 + 문서 + 테스트만
+- ✓ `friendlyErrorMessage` 경유로 raw "Failed to fetch" 미노출
+
+### 테스트 결과
+
+- Frontend `vitest run`: 신규 30건 + 기존 1394건 = **1424/1424 PASS**
+  (re-run 1회 확인 — Approvals.stress.test의 flaky timing은 격리 실행 시 PASS)
+- Lint: 신규 파일 warnings 0건 (errors 16개는 모두 pre-existing 다른 파일)
+- Build: `vite build` 성공 (132ms, 579.26 kB)
+- Backend pytest: 변경 0건이라 회귀 없음

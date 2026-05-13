@@ -6,6 +6,10 @@ import { Btn, Card, SectionLabel, Toggle, Slider } from "../common";
 import { PageHeader } from "../common/primitives";
 import { AiPermissionCard } from "../common/AiPermissionCard";
 import { KillSwitchPanel } from "../common/KillSwitchPanel";
+// #62: 통합 RiskControlPanel — 3단계 Kill Switch 버튼 + 제한값 + 후보 표시.
+// 본 컴포넌트는 broker API 호출 0건. read-only 후보 endpoint 외 어떤 주문/
+// 취소 호출도 만들지 않는다.
+import { RiskControlPanel } from "./RiskControlPanel";
 import { PaperModeStatusCard } from "../common/PaperModeStatusCard";
 import { friendlyErrorMessage } from "../../utils/errorMessage";
 import { DecisionDialog } from "../common/DecisionDialog";
@@ -429,6 +433,11 @@ export function StrategyRisk({ strategyOn, toggle, strategyParams, updateParam, 
         title="전략·리스크"
         subtitle="백엔드 리스크 정책, 긴급 정지, 포지션 reconciliation"
       />
+      {/* #62: 통합 Risk Control Panel — 3단계 Kill Switch 버튼 + 제한값 +
+          후보 표시를 한 카드에 모아 사용자가 즉시 위험을 멈출 수 있도록 한다.
+          기존 KillSwitchPanel(read-only) / BackendPolicyCard(22개 필드)와
+          공존 — 본 패널은 *액션 가능한 핵심 UI*다. */}
+      <RiskControlPanel operatorName={operatorName} />
       <BackendPolicyCard riskPolicy={riskPolicy} operatorName={operatorName} />
       {/* #42: Paper Trading Mode Status — 현재 mode + paper broker + 안전
           flag read-only 표시. 주문 / test 버튼 없음 — 상태 표시 전용. */}
