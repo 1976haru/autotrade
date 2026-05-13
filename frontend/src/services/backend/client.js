@@ -432,4 +432,13 @@ export const backendApi = {
       method: "POST",
       body: JSON.stringify(body || {}),
     }),
+  // 75: AI Execution Activation Gate — readiness 평가 + 정책 조회 (read-only).
+  // 본 client는 ENABLE_AI_EXECUTION 토글 / AI 자동매매 시작 호출을 제공하지 않는다.
+  aiExecutionGateEvaluate: (body) =>
+    backendFetch("/api/governance/ai-execution-gate/evaluate", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
+  aiExecutionGatePolicy: () =>
+    backendFetch("/api/governance/ai-execution-gate/policy"),
 };

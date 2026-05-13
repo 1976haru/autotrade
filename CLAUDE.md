@@ -252,6 +252,33 @@ DB는 read-only SELECT만, `settings.enable_*_trading =` mutate 0건 (정적 gre
 "ENABLE_AI_EXECUTION" / "AI 자동 실행" / "Place Order" 버튼 0개 (frontend
 테스트로 lock). 자세한 정책: [`docs/ai_assist_gate.md`](docs/ai_assist_gate.md).
 
+**#75 AI Execution Activation Gate**: `LIVE_AI_EXECUTION` 모드 *활성화*
+readiness를 코드 단으로 평가하는 *최종* 게이트 —
+`app/governance/ai_execution_gate.py::evaluate_ai_execution_gate` (#45 order-time
+`AIExecutionGate`와는 *별개* 파일 / 책임). READY_FOR_REVIEW 조건: Paper Gate +
+Promotion Gate + AI Assist Gate + Live Manual Gate 모두 PASS + 운영자 explicit
+opt-in + Live Manual 운영 ≥28일 + AI Assist 운영 ≥28일 + RiskManager /
+OrderGuard / AI Permission Gate / AuditLog / KillSwitch / Circuit Breaker 모두
+활성 + 1회 주문 ≤ 3만원 + 일일 손실 ≤ 5천원 + 일일 주문 ≤ 10건 + 동시 보유
+≤ 2개 + 종목 whitelist 1~5개 + 거래 시간 (KST 09:30~14:30) 명시 + AI
+confidence ≥75 + signal quality ≥70 + system_errors=0 + audit_missing=0 +
+approval_bypass_attempts=0. API: `POST /api/governance/ai-execution-gate/evaluate`
++ `GET /api/governance/ai-execution-gate/policy`. UI: `AIExecutionGateCard`.
+**READY_FOR_REVIEW는 *실제 활성화가 아니다*** —
+`AIExecutionActivationGateResult.is_live_authorization=False` 불변 (dataclass
+`__post_init__` ValueError 가드), 활성화는 별도 옵트인 PR + 사용자 명시 승인 +
+`ENABLE_AI_EXECUTION=true` 전환 + 초소액 canary + 즉시 kill switch 가능 모두
+필요. **선물 AI Execution은 본 게이트가 *영구* 허용하지 않는다** —
+`futures_allowed=False` 불변 (True 생성 시 ValueError, `futures_target=True`
+또는 `enable_futures_live_trading=True` 입력 시 즉시 BLOCKED). 본 모듈은 broker /
+OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client` /
+`anthropic` / `openai` / `httpx` / `requests` / `app.core.config.get_settings`
+import 0건 (evaluator는 안전 플래그를 *입력 DTO*로만 받음), DB write 0건,
+`settings.enable_*_trading =` mutate 0건 (정적 grep 가드), UI에 "AI 자동매매
+켜기" / "ENABLE_AI_EXECUTION 토글" / "활성화 토글" / "주문 시작" / "Place Order"
+라벨 버튼 0개 (frontend 테스트로 lock). 자세한 정책:
+[`docs/ai_execution_gate.md`](docs/ai_execution_gate.md).
+
 ## 변경 시 동기화
 
 다음 변경은 본 문서도 같이 업데이트해야 한다 (PR 리뷰에서 요구):

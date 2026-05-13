@@ -451,3 +451,151 @@ def evaluate_ai_assist_gate_endpoint(
 
     result: AIAssistGateResult = evaluate_ai_assist_gate(inp)
     return AIAssistGateResultPayload(**result.to_dict())
+
+
+# ---------- #75 AI Execution Activation Gate ----------
+
+from datetime import time as _dt_time
+
+from app.governance.ai_execution_gate import (
+    AIExecutionGateInput,
+    AIExecutionActivationGateResult,
+    evaluate_ai_execution_gate,
+    get_policy_summary,
+)
+
+
+class AIExecutionGateInputPayload(BaseModel):
+    """AI Execution Activation Gate 평가 입력 (read-only).
+
+    안전 플래그 / opt-in / 한도 / 운영 로그는 *입력으로*만 받는다 — 본 endpoint
+    는 어떤 값도 mutate 하지 않으며, 선물 AI execution은 본 게이트가 *영구*
+    허용하지 않으므로 `futures_target=True` 이면 BLOCKED.
+    """
+    strategy_name:                 str  = Field(..., min_length=1, max_length=64)
+
+    promotion_gate_passed:         bool = False
+    paper_gate_passed:             bool = False
+    ai_assist_gate_passed:         bool = False
+    live_manual_gate_passed:       bool = False
+
+    user_explicit_opt_in:          bool = False
+    enable_live_trading:           bool = False
+    enable_ai_execution:           bool = False
+    enable_futures_live_trading:   bool = False
+
+    live_manual_days:              int  = 0
+    ai_assist_days:                int  = 0
+
+    risk_manager_active:           bool = False
+    order_guard_active:            bool = False
+    ai_permission_gate_active:     bool = False
+    audit_log_complete:            bool = False
+    kill_switch_ready:             bool = False
+    circuit_breaker_configured:    bool = False
+
+    current_max_order_notional_krw: int = 0
+    current_max_daily_loss_krw:     int = 0
+    current_max_daily_order_count:  int = 0
+    current_max_open_positions:     int = 0
+    allowed_symbols:                list[str] = Field(default_factory=list)
+
+    explicit_time_window_set:       bool = False
+    window_start_kst:               str | None = None
+    window_end_kst:                 str | None = None
+
+    ai_confidence_threshold:        int  = 0
+    signal_quality_threshold:       int  = 0
+
+    system_errors:                  int  = 0
+    audit_missing_count:            int  = 0
+    approval_bypass_attempts:       int  = 0
+
+    futures_target:                 bool = False
+
+
+class AIExecutionGateResultPayload(BaseModel):
+    strategy_name:           str
+    evaluated_at:            datetime
+    verdict:                 str
+    passed_criteria:         list[str]
+    blocked_criteria:        list[str]
+    cautions:                list[str]
+    required_actions:        list[str]
+    metrics:                 dict
+    thresholds:              dict
+    next_step:               str
+    is_live_authorization:   bool = Field(False, description="invariant — 항상 false (READY_FOR_REVIEW != 활성화)")
+    is_order_signal:         bool = Field(False, description="invariant — BUY/SELL/HOLD 신호 아님")
+    is_investment_advice:    bool = Field(False, description="invariant — 시스템 검증 자료")
+    futures_allowed:         bool = Field(False, description="invariant — 선물 AI 자동 실행 영구 차단")
+    live_flag_changed:       bool = Field(False, description="invariant — 안전 플래그 미변경")
+    mode_changed:            bool = Field(False, description="invariant — 모드 미변경")
+    generated_at:            datetime
+
+
+def _parse_hhmm(raw: str | None) -> _dt_time | None:
+    if not raw:
+        return None
+    try:
+        h, m = raw.split(":")
+        return _dt_time(int(h), int(m))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@router.post("/ai-execution-gate/evaluate", response_model=AIExecutionGateResultPayload)
+def evaluate_ai_execution_gate_endpoint(
+    payload: AIExecutionGateInputPayload,
+) -> AIExecutionGateResultPayload:
+    """AI Execution Activation Gate 평가. read-only — broker / DB write /
+    LIVE flag 변경 0건.
+
+    **READY_FOR_REVIEW 판정은 실제 활성화가 아니다.** 활성화는 별도 옵트인
+    PR + 사용자 명시 승인 + 초소액 canary + 즉시 kill switch 모두 필요.
+    """
+    try:
+        inp = AIExecutionGateInput(
+            strategy_name=payload.strategy_name,
+            promotion_gate_passed=payload.promotion_gate_passed,
+            paper_gate_passed=payload.paper_gate_passed,
+            ai_assist_gate_passed=payload.ai_assist_gate_passed,
+            live_manual_gate_passed=payload.live_manual_gate_passed,
+            user_explicit_opt_in=payload.user_explicit_opt_in,
+            enable_live_trading=payload.enable_live_trading,
+            enable_ai_execution=payload.enable_ai_execution,
+            enable_futures_live_trading=payload.enable_futures_live_trading,
+            live_manual_days=payload.live_manual_days,
+            ai_assist_days=payload.ai_assist_days,
+            risk_manager_active=payload.risk_manager_active,
+            order_guard_active=payload.order_guard_active,
+            ai_permission_gate_active=payload.ai_permission_gate_active,
+            audit_log_complete=payload.audit_log_complete,
+            kill_switch_ready=payload.kill_switch_ready,
+            circuit_breaker_configured=payload.circuit_breaker_configured,
+            current_max_order_notional_krw=payload.current_max_order_notional_krw,
+            current_max_daily_loss_krw=payload.current_max_daily_loss_krw,
+            current_max_daily_order_count=payload.current_max_daily_order_count,
+            current_max_open_positions=payload.current_max_open_positions,
+            allowed_symbols=tuple(payload.allowed_symbols),
+            explicit_time_window_set=payload.explicit_time_window_set,
+            window_start_kst=_parse_hhmm(payload.window_start_kst),
+            window_end_kst=_parse_hhmm(payload.window_end_kst),
+            ai_confidence_threshold=payload.ai_confidence_threshold,
+            signal_quality_threshold=payload.signal_quality_threshold,
+            system_errors=payload.system_errors,
+            audit_missing_count=payload.audit_missing_count,
+            approval_bypass_attempts=payload.approval_bypass_attempts,
+            futures_target=payload.futures_target,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"invalid ai execution gate input: {e}")
+
+    result: AIExecutionActivationGateResult = evaluate_ai_execution_gate(inp)
+    return AIExecutionGateResultPayload(**result.to_dict())
+
+
+@router.get("/ai-execution-gate/policy")
+def get_ai_execution_gate_policy() -> dict:
+    """기본 제한 + required gates + futures_allowed=false 정보 (read-only)."""
+    return get_policy_summary()
