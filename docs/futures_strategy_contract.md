@@ -214,6 +214,7 @@ mock 전략을 *실 거래용 전략*으로 승격하려면:
 - [`futures_broker_contract.md`](futures_broker_contract.md) — `FuturesBrokerAdapter` 공식 contract (#47)
 - [`futures_margin_risk.md`](futures_margin_risk.md) — Margin/Leverage/Liquidation rules (#48)
 - [`futures_simulation_report.md`](futures_simulation_report.md) — 가상 산식 + invariant (#151)
+- [`futures_promotion_policy.md`](futures_promotion_policy.md) — **선물 단계별 승격 정책 (#76)** — 전략 승격은 본 정책의 단계별 기준을 따른다 (자동 롤오버 금지, 만기 5일 이내 신규 진입 강등 등)
 - [`live_activation_blockers.md`](live_activation_blockers.md) — LIVE 활성화 시 변경 매트릭스
 - [`strategy_contract.md`](strategy_contract.md) — 주식 Strategy contract (#28, 참고용)
 - [`CLAUDE.md`](../CLAUDE.md) — 절대 원칙
