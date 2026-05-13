@@ -447,4 +447,11 @@ export const backendApi = {
       method: "POST",
       body: JSON.stringify(body || {}),
     }),
+  // 78: Correlation Guard — sector/theme 익스포저 사전 검사 (read-only preview).
+  // BUY만 차단 / SELL은 SKIP_NON_BUY. 실제 주문 제출은 별도 흐름.
+  correlationGuardPreview: (body) =>
+    backendFetch("/api/risk/correlation-guard/preview", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
 };

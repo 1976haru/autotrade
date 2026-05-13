@@ -384,3 +384,115 @@ def ai_permission_status(
     )
     mode = OperationMode(settings.default_mode)
     return build_ai_permission_status(mode=mode, flags=flags)
+
+
+# ---------- #78 Correlation Guard preview ----------
+
+from pydantic import Field
+
+from app.risk.correlation_guard import (
+    CandidateOrder,
+    CorrelationGuardInput,
+    CorrelationGuardPolicy,
+    CorrelationGuardResult,
+    CorrelationGuardRule,
+    HeldPosition,
+    SymbolMeta,
+)
+
+
+class _SymbolMetaPayload(BaseModel):
+    symbol: str
+    sector: str = ""
+    themes: list[str] = Field(default_factory=list)
+
+
+class _CandidatePayload(BaseModel):
+    symbol:   str
+    side:     str  # BUY | SELL
+    notional: int
+    meta:     _SymbolMetaPayload
+
+
+class _HeldPositionPayload(BaseModel):
+    meta:     _SymbolMetaPayload
+    notional: int
+
+
+class _CorrelationGuardPolicyPayload(BaseModel):
+    max_symbols_per_sector:   int = 0
+    max_sector_exposure:      int = 0
+    max_sector_exposure_pct:  float = 0.0
+    max_symbols_per_theme:    int = 0
+    max_theme_exposure:       int = 0
+    max_theme_exposure_pct:   float = 0.0
+    warn_ratio:               float = 0.8
+
+
+class CorrelationGuardPreviewPayload(BaseModel):
+    candidate:        _CandidatePayload
+    held_positions:   list[_HeldPositionPayload] = Field(default_factory=list)
+    equity_krw:       int = 0
+    policy:           _CorrelationGuardPolicyPayload = Field(
+        default_factory=_CorrelationGuardPolicyPayload,
+    )
+
+
+class CorrelationGuardResultPayload(BaseModel):
+    verdict:                 str
+    blocked_reasons:         list[str]
+    warnings:                list[str]
+    sector_exposure:         dict[str, int]
+    theme_exposure:          dict[str, int]
+    projected_sector:        str | None
+    projected_themes:        list[str]
+    projected_sector_exposure: int
+    projected_theme_exposure:  dict[str, int]
+    sector_symbol_count:     int
+    projected_sector_symbol_count: int
+    is_order_signal:         bool = Field(False, description="invariant — 항상 false")
+    auto_apply_allowed:      bool = Field(False, description="invariant — advisory only")
+    live_flag_changed:       bool = Field(False)
+    mode_changed:            bool = Field(False)
+    generated_at:            datetime
+
+
+@router.post("/correlation-guard/preview", response_model=CorrelationGuardResultPayload)
+def correlation_guard_preview(
+    payload: CorrelationGuardPreviewPayload,
+) -> CorrelationGuardResultPayload:
+    """sector / theme 익스포저 사전 검사. read-only — 주문 / 모드 / flag 변경 0건.
+
+    BUY는 한도 위반 시 REJECT. SELL/EXIT은 *리스크 축소* 목적으로 SKIP_NON_BUY.
+    """
+    def _meta(p: _SymbolMetaPayload) -> SymbolMeta:
+        return SymbolMeta(
+            symbol=p.symbol, sector=p.sector, themes=tuple(p.themes),
+        )
+
+    pol = CorrelationGuardPolicy(
+        max_symbols_per_sector=payload.policy.max_symbols_per_sector,
+        max_sector_exposure=payload.policy.max_sector_exposure,
+        max_sector_exposure_pct=payload.policy.max_sector_exposure_pct,
+        max_symbols_per_theme=payload.policy.max_symbols_per_theme,
+        max_theme_exposure=payload.policy.max_theme_exposure,
+        max_theme_exposure_pct=payload.policy.max_theme_exposure_pct,
+        warn_ratio=payload.policy.warn_ratio,
+    )
+    rule = CorrelationGuardRule(policy=pol)
+
+    inp = CorrelationGuardInput(
+        candidate=CandidateOrder(
+            symbol=payload.candidate.symbol,
+            side=payload.candidate.side,
+            notional=payload.candidate.notional,
+            meta=_meta(payload.candidate.meta),
+        ),
+        held_positions=tuple(
+            HeldPosition(meta=_meta(h.meta), notional=h.notional)
+            for h in payload.held_positions
+        ),
+        equity_krw=payload.equity_krw,
+    )
+    result: CorrelationGuardResult = rule.evaluate(inp)
+    return CorrelationGuardResultPayload(**result.to_dict())
