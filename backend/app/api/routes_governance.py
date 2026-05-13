@@ -686,3 +686,128 @@ def evaluate_alpha_decay_endpoint(
 
     result: AlphaDecayResult = evaluate_alpha_decay(inp)
     return AlphaDecayResultPayload(**result.to_dict())
+
+
+# ---------- #80 Pre-market Check ----------
+
+from app.governance.pre_market_check import (
+    PreMarketCheckInput,
+    PreMarketCheckResult,
+    evaluate_pre_market_check,
+)
+
+
+class PreMarketCheckPayload(BaseModel):
+    """Pre-market 점검 입력 (read-only).
+
+    안전 플래그 / 시스템 상태 / 게이트 결과는 *현재값 carry* — 본 endpoint 는
+    어떤 값도 mutate 하지 않는다.
+    """
+    mode:                              str   = "SIMULATION"
+    strict:                            bool  = False
+    include_optional:                  bool  = True
+
+    api_reachable:                     bool  = True
+    db_reachable:                      bool  = True
+
+    broker_ready:                      bool | None = None
+    kis_is_paper:                      bool  = True
+    kis_credentials_present:           bool | None = None
+
+    market_data_provider:              str   = "mock"
+    data_freshness_ok:                 bool | None = None
+    stale_symbol_count:                int   = 0
+
+    watchlist_item_count:              int   = 0
+    active_strategy_count:             int   = 0
+
+    risk_policy_configured:            bool  = True
+    daily_loss_limit_configured:       bool  = True
+    daily_loss_used_ratio:             float = 0.0
+    position_limits_configured:        bool  = True
+
+    emergency_stop_active:             bool  = False
+    kill_switch_level:                 str   = "OFF"
+
+    ai_permission_gate_active:         bool  = True
+    ai_execution_enabled:              bool  = False
+    enable_live_trading:               bool  = False
+    enable_futures_live_trading:       bool  = False
+
+    notification_configured:           bool  = False
+
+    paper_gate_pass:                   bool | None = None
+    live_manual_gate_pass:             bool | None = None
+    ai_assist_gate_pass:               bool | None = None
+    ai_execution_gate_ready:           bool | None = None
+
+    manual_ack:                        bool  = False
+    manual_ack_by:                     str   = Field(default="", max_length=64)
+    manual_ack_note:                   str   = Field(default="", max_length=500)
+
+
+class PreMarketCheckItemPayload(BaseModel):
+    name:        str
+    category:    str
+    status:      str
+    required:    bool
+    message:     str
+    detail:      dict
+
+
+class PreMarketCheckResultPayload(BaseModel):
+    mode:                str
+    verdict:             str
+    start_allowed:       bool
+    items:               list[PreMarketCheckItemPayload]
+    failed_required:     list[str]
+    warnings:            list[str]
+    required_actions:    list[str]
+    manual_ack_recorded: bool
+    manual_ack_by:       str
+    manual_ack_note:     str
+    is_order_signal:     bool = Field(False, description="invariant — 항상 false")
+    live_flag_changed:   bool = Field(False, description="invariant — flag 미변경")
+    mode_changed:        bool = Field(False, description="invariant — 모드 미변경")
+    generated_at:        datetime
+
+
+@router.post(
+    "/pre-market-check",
+    response_model=PreMarketCheckResultPayload,
+)
+def pre_market_check_post(
+    payload: PreMarketCheckPayload,
+) -> PreMarketCheckResultPayload:
+    """장 시작 전 자동 점검 (POST — operator 가 현재 상태를 명시 입력).
+
+    read-only — broker / DB write / 모드 / flag 변경 0건. manual_ack 는
+    *기록*만 — required FAIL 우회 불가.
+    """
+    try:
+        inp = PreMarketCheckInput(**payload.model_dump())
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"invalid pre_market input: {e}")
+    result: PreMarketCheckResult = evaluate_pre_market_check(inp)
+    return PreMarketCheckResultPayload(**result.to_dict())
+
+
+@router.get(
+    "/pre-market-check",
+    response_model=PreMarketCheckResultPayload,
+)
+def pre_market_check_get(
+    mode:             str  = "SIMULATION",
+    strict:           bool = False,
+    include_optional: bool = True,
+) -> PreMarketCheckResultPayload:
+    """기본 SIMULATION default 로 dry-run 점검 (read-only).
+
+    운영자 / 시스템 상태를 명시 입력 없이 default 값으로만 평가. 실제 운영
+    상태는 POST endpoint 또는 별도 collector 로 채워서 사용 권장.
+    """
+    inp = PreMarketCheckInput(
+        mode=mode, strict=strict, include_optional=include_optional,
+    )
+    result = evaluate_pre_market_check(inp)
+    return PreMarketCheckResultPayload(**result.to_dict())
