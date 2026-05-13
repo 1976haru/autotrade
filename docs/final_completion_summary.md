@@ -1538,3 +1538,105 @@ PASS verdict는 *LIVE_MANUAL_APPROVAL 모드 진입 검토 가능* + *초소액*
 - Notification 연계 — verdict 변동 시 운영자 알림
 - Frontend Settings 탭에 `user_explicit_opt_in` 토글 (현재는 입력으로만)
 - `live_activation_blockers.md` 의 9단계 checklist 자동 검증
+
+---
+
+## #74 AI Assist Gate (LIVE_AI_ASSIST 품질 검증)
+
+> AI 자동매매 진입 *전 필수* 검증 단계. **본 PR로 LIVE_AI_EXECUTION 활성화 0건**.
+> 본 리포트는 **투자 조언이 아니라 시스템 검증 자료**.
+
+### 생성 / 수정 파일
+- `backend/app/governance/ai_assist_gate.py` (신규) —
+  `AIAssistGateInput` / `AIAssistGateResult` / `AIAssistGateVerdict` /
+  `AIAssistGateThresholds` + `AIAssistFailureReason` enum + `evaluate_ai_assist_gate()`
+  + `render_markdown_report()`
+- `backend/app/governance/ai_assist_gate_collector.py` (신규) —
+  `build_ai_assist_gate_input(db, ...)` + `list_ai_assist_strategies()` read-only
+- `backend/app/api/routes_governance.py` (수정) —
+  `POST /governance/ai-assist-gate/evaluate`
+- `scripts/evaluate_ai_assist_gate.py` (신규) — CLI (markdown/json, dry-run)
+- `backend/tests/test_ai_assist_gate.py` (신규, **34 PASS**)
+- `frontend/src/services/backend/client.js` (수정) — 1 helper 추가
+- `frontend/src/components/tabs/AIAssistGateCard.jsx` (신규)
+- `frontend/src/components/tabs/AIAssistGateCard.test.jsx` (신규, **8 PASS**)
+- `docs/ai_assist_gate.md` (신규)
+- `docs/promotion_policy.md` / `docs/live_activation_blockers.md` /
+  `CLAUDE.md` / `README.md` / `docs/final_completion_summary.md` (수정)
+
+### AI Assist 평가 지표
+- proposal_count / approved_proposals / risk_rejected / operator_rejected / expired
+- approved_expectancy / approved_loss_rate
+- risk_rejection_rate / operator_rejection_rate / expired_or_cancelled_rate
+- confidence_calibration / avg_confidence
+- rejected_but_would_have_won (CAUTION 신호)
+- ai_decision_audit_drift / emergency_stops_in_period / active_days
+
+### Failure Reason Tags (advisory only, *주문 신호 0개*)
+`low_confidence` / `data_stale` / `price_gap` / `liquidity` / `risk_limit` /
+`operator_rejected` / `approval_expired` / `emergency_stop` / `regime_mismatch` /
+`news_or_theme_overheated` / `duplicate_or_cooldown` / `uncategorized`.
+BUY / SELL / HOLD 0개 (테스트로 lock).
+
+### PASS 기준 (모두 충족)
+1. 제안 ≥ **100건**
+2. 운영 기간 ≥ **28일**
+3. expectancy > 0
+4. 승인 손실율 ≤ **55%**
+5. Risk 거절율 ≤ **60%**
+6. 운영자 거절율 ≤ **50%**
+7. confidence calibration ≥ **0.5**
+8. audit drift = **0**
+9. 긴급정지 ≤ **2회**
+
+CAUTION: 만료/취소율 > 30% / calibration < 0.65 / rejected_but_would_have_won > 25% / 단일 failure reason > 40%.
+
+### 리포트 생성 방식
+- **CLI**: `python scripts/evaluate_ai_assist_gate.py --strategy X --format markdown --output reports/...`
+- **JSON**: `python scripts/evaluate_ai_assist_gate.py --strategy X --format json`
+- **API**: `POST /api/governance/ai-assist-gate/evaluate`
+- exit code: PASS/CAUTION/UNKNOWN=0, FAIL=1, 실행 오류=2
+
+### API / UI 변경
+- 신규 API: `POST /api/governance/ai-assist-gate/evaluate`
+- 신규 UI: `AIAssistGateCard` (frontend tabs) — 위험 문구 영구 노출, AI 자동매매 활성화 버튼 0개
+
+### 안전 invariant (테스트로 lock)
+- ✓ broker / OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client` / `anthropic` / `openai` / `httpx` / `requests` import 0건
+- ✓ `broker.place_order(` / `route_order(` / `OrderExecutor(` / `submit_candidate(` / `AiClient(` 호출 0건
+- ✓ DB write (INSERT/UPDATE/DELETE/.add/.commit/.flush) 0건
+- ✓ `from app.core.config import` / `get_settings(` 호출 0건 (evaluator는 입력 DTO만 사용)
+- ✓ `settings.enable_*_trading =` / `os.environ["ENABLE_*"]` mutate 0건
+- ✓ `AIAssistGateResult.is_live_authorization=True` 생성 불가 (ValueError)
+- ✓ `AIAssistGateResult.is_order_signal=True` 생성 불가 (ValueError)
+- ✓ `AIAssistGateResult.is_investment_advice=True` 생성 불가 (ValueError)
+- ✓ `AIAssistFailureReason` enum에 BUY/SELL/HOLD 값 0개
+- ✓ UI에 "AI 자동매매 시작" / "LIVE_AI_EXECUTION 활성화" / "ENABLE_AI_EXECUTION" / "AI 자동 실행" / "Place Order" / "주문 실행" / "실거래 활성화" 라벨 버튼 0개
+- ✓ UI에 BUY/SELL/HOLD/긴급정지 토글 문구 0건
+- ✓ 응답 / 리포트에 Secret 패턴 0건
+
+### 테스트 결과
+- **신규 backend**: 34 PASS (DTO invariant 4 + evaluator happy/CAUTION/FAIL 15 + threshold override 1 + markdown 3 + collector 4 + API 3 + 정적 grep 5 — 5)
+- **신규 frontend**: 8 PASS (PASS 배지 / FAIL 사유 + tags / 위험 문구 영구 / 활성화 버튼 0개 / BUY-SELL 0건 / Secret 비노출 / 평가 버튼 라벨 / 핵심 메트릭)
+- Regression: ai_assist_gate + live_manual_gate + paper_gate + monitoring 합쳐 140 PASS, 0 fail
+
+### 실거래 / AI 자동매매 금지 invariant — 본 PR 미변경
+- ✓ `ENABLE_LIVE_TRADING=false`, `ENABLE_AI_EXECUTION=false`, `ENABLE_FUTURES_LIVE_TRADING=false`, `KIS_IS_PAPER=true`
+- ✓ `app/core/config.py` 변경 0건
+- ✓ `.env` / Secret / API Key / 계좌번호 변경 0건
+- ✓ 실제 broker / KIS / Anthropic API 호출 0건 (테스트는 fake DB + MockBroker)
+- ✓ 절대 원칙 1~6 모두 유지
+
+### PASS = LIVE_AI_EXECUTION 허가가 아님 (강조)
+PASS verdict는 *AI Assist 품질이 다음 검증 단계로 진입 가능* 만 의미. AI
+자동매매 활성화는 `AIExecutionGate`(#45) + 별도 옵트인 PR + 사용자 명시
+승인 모두 필요.
+
+### 남은 AI Assist Gate backlog
+- env override (`AI_ASSIST_MIN_PROPOSAL_COUNT` 등)
+- 수익 메트릭 자동 산출 (현재는 운영자 입력)
+- confidence calibration 정교화 (≥70 heuristic 보강)
+- 종목 / 시간대 / regime별 AI 신호 분포 분석
+- AI vs 비-AI 주문 결과 비교 (선택성 검증)
+- Notification 연계 — 주간 자동 평가 + 운영자 알림
+- AgentDecisionLog chain_id 통합 — 의사결정 사슬 trace

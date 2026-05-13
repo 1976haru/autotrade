@@ -130,6 +130,15 @@
   - 인간 승인율 측정.
   - **(123)** AI 호출 audit (`AiAnalysisLog.mode`)에 `LIVE_AI_ASSIST`로 분류된 호출의 평균 비용/모델 분포 — `docs/strategies.md` Signal Quality 섹션 참조.
   - **(139)** AI 추천이 만든 LIVE 주문은 `signal_strength` / `signal_confidence`에 AI confluence score(004)를 매핑해서 영구화 — 사후 분석에서 AI 신호 강도와 PnL 상관관계 추적.
+- **#74 AI Assist Gate 평가**: 위 승격 기준을 코드 단으로 일관 평가하는 게이트
+  추가 — `app/governance/ai_assist_gate.py::evaluate_ai_assist_gate()`. CLI는
+  `scripts/evaluate_ai_assist_gate.py`, API는
+  `POST /api/governance/ai-assist-gate/evaluate`. PASS 기준: ≥100 제안 + ≥28일
+  + expectancy > 0 + 손실율 ≤ 55% + Risk 거절율 ≤ 60% + 운영자 거절율 ≤ 50% +
+  confidence calibration ≥ 0.5 + audit drift = 0 + 긴급정지 ≤ 2회. 12개
+  failure reason 태그 분포 carry. 자세한 정책: [`ai_assist_gate.md`](ai_assist_gate.md).
+  **PASS는 `LIVE_AI_EXECUTION` 자동 허가가 *아니다*** — `AIExecutionGate`(#45) +
+  별도 옵트인 PR + 사용자 명시 승인 필요.
 
 ### 6. AI Execution (`LIVE_AI_EXECUTION`)
 

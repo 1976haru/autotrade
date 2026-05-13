@@ -126,6 +126,7 @@ LIVE 활성화 전 운영자가 확인해야 할 것:
 - [ ] AI 자동매매 활성화는 LIVE_MANUAL_APPROVAL 단계 1개월 이상 무사고 후만.
 - [ ] **#72 Paper Gate** PASS — `scripts/evaluate_paper_gate.py` 또는 `POST /api/governance/paper-gate/evaluate` 통과.
 - [ ] **#73 Live Manual Gate** PASS (또는 의도된 CAUTION) — `POST /api/governance/live-manual-gate/evaluate` 통과. 극소액 정책(주문 ≤ 5만 / 일일 손실 ≤ 1만 / 보유 ≤ 3개) + Approval API 강제 + AI/FUTURES live disabled 검증. 자세한 정책: [`live_manual_gate.md`](live_manual_gate.md).
+- [ ] **#74 AI Assist Gate** PASS — `POST /api/governance/ai-assist-gate/evaluate` 통과. AI 제안 ≥100건 + ≥28일 + expectancy > 0 + 손실율 ≤ 55% + Risk 거절율 ≤ 60% + 운영자 거절율 ≤ 50% + confidence calibration ≥ 0.5 + audit drift = 0. **PASS는 `LIVE_AI_EXECUTION` 자동 허가가 아니다** — AI 자동매매 활성화는 `AIExecutionGate`(#45) + 별도 옵트인 PR 필요. 자세한 정책: [`ai_assist_gate.md`](ai_assist_gate.md).
 
 ## 9. 본 세션이 "절대 안 한 것" 단정문
 
