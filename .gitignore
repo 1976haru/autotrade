@@ -1,13 +1,29 @@
-# env / secrets
+# ============================================================
+# Agent Trader v1 — .gitignore
+#
+# 단일 진실:
+#   - Secret 보호 (`.env`, `*.key`, `*.pem`) — 절대 commit 금지
+#   - 운영 데이터 (`data/`, `logs/`, `backups/`, `*.sqlite`) — git 추적 0건
+#   - build artifact (`dist/`, `node_modules/`, `__pycache__/`) — 추적 X
+#
+# 본 파일 변경 시 `tests/test_repository_hygiene.py` 의 정적 검사가 깨지지
+# 않는지 확인 (.env / .env.example allowlist / backups 등 핵심 패턴 유지).
+# ============================================================
+
+
+# ---------- env / secrets ----------
 .env
 .env.*
 !.env.example
 !.env.staging.example
 *.pem
 *.key
-backend/notepad .env
+backend/.env
+frontend/.env
+*.local
 
-# Python
+
+# ---------- Python ----------
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -15,36 +31,57 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+# project-local venvs (#88 — explicit so backend/.venv-310/ stops showing as
+# untracked in `git status`).
+.venv-310/
+backend/.venv-310/
 
-# Node
+
+# ---------- Node / build ----------
 node_modules/
 dist/
 build/
 .vite/
+.cache/
+coverage/
 
-# IDE / OS
+
+# ---------- IDE / OS ----------
 .DS_Store
 .vscode/
 .idea/
 .claude/
 
-# logs / data
+
+# ---------- logs / data ----------
 *.log
 logs/
 data/
 *.sqlite
 *.db
 
-# local reports — daily_report_agent 산출물 (docs/daily_report_policy.md 참조).
-# .gitkeep만 placeholder로 유지, 실제 markdown은 미커밋.
+
+# ---------- local reports — daily_report_agent 산출물 ----------
+# .gitkeep placeholder만 추적되도록.
 reports/*
 !reports/.gitkeep
 
-# #69: DB backups — scripts/backup_db.sh 산출물. 운영 데이터(주문 / 감사 로그
-# / 가상 거래 등)가 포함될 수 있으므로 git 추적 0건. backups/ 디렉터리는
-# .gitkeep placeholder만 추적되도록.
+
+# ---------- DB backups (#69) ----------
+# scripts/backup_db.sh 산출물. 운영 데이터(주문 / 감사 로그 / 가상 거래 등)가
+# 포함될 수 있으므로 git 추적 0건. backups/ 디렉터리는 .gitkeep placeholder만.
 backups/*
 !backups/.gitkeep
 *.sql.gz
 *.db.backup
 *.sqlite.bak
+
+
+# ---------- Tauri / Rust desktop build (#86) ----------
+# private signing key는 절대 commit 금지.
+src-tauri/target/
+src-tauri/gen/
+*.msi
+*.nsis
+*.dmg
+*.pkg

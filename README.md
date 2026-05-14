@@ -2,6 +2,11 @@
 
 > **AI 에이전트가 시장을 분석하고, 사용자는 핵심 판단과 위험만 확인하는 자동매매 관제 시스템**
 
+> ⚠ **현재 상태**: MVP / Paper / Shadow 검증을 위한 연구·운영 플랫폼.
+> **실거래 자동매매 허가 상태가 *아닙니다*** — LIVE 관련 flag 는 기본 `false`
+> 이며, 모든 실거래 전환은 별도 PR 과 사용자 명시 승인 후에만 가능합니다.
+> 자세한 현재 상태: [`docs/status/current_state.md`](docs/status/current_state.md) (#88).
+
 | 정보 | 값 |
 |---|---|
 | 프로그램명 (한글) | 에이전트 트레이더 v1 |
@@ -50,7 +55,21 @@ npm run dev -- --host 0.0.0.0
 - 🔗 [`docs/correlation_guard_policy.md`](docs/correlation_guard_policy.md) — sector/theme 익스포저 사전 검사 + 신규 BUY 집중도 제한 + SELL/EXIT 우회 (#78)
 - 🏷️ [`docs/loss_tagging_policy.md`](docs/loss_tagging_policy.md) — 손실 거래 *추정 원인* 자동 태깅 + 7카테고리 25태그 + append+review only (확정 원인 아님) (#79)
 - 🚦 [`docs/pre_market_check_policy.md`](docs/pre_market_check_policy.md) — 장 시작 전 자동 점검 + 11카테고리 + 모드별 required + manual ack 비우회 (#80)
-- 📚 [`docs/strategy_registry.md`](docs/strategy_registry.md) — 6개 실제 전략 메타데이터 + 초보자용 한글명 + 가짜 전략명 추가 영구 금지 (#81)
+- 📚 [`docs/strategy_registry.md`](docs/strategy_registry.md) — 6개 실제 전략 메타데이터 + 초보자용 한글명 + 가짜 전략명 추가 영구 금지 (#81~#83)
+- 🧩 [`docs/strategy_signal_aggregator.md`](docs/strategy_signal_aggregator.md) — 4 단타 전략 vote → 종목별 통합 advisory 후보 (#84)
+- 🎯 [`docs/strategy_selection_agent.md`](docs/strategy_selection_agent.md) — 시장 상태 + 4 전략 → 최적 조합 선택 + blocked reason (#85)
+- 💻 [`docs/desktop_packaging.md`](docs/desktop_packaging.md) — Tauri v2 Windows 설치형 앱 skeleton + backend 자동 실행 (#86)
+- 🔄 [`docs/desktop_update_policy.md`](docs/desktop_update_policy.md) — 데스크톱 자동 업데이트 / 서명 키 / 자동 적용 금지 (#86)
+- 👶 [`docs/beta_tester_install_guide.md`](docs/beta_tester_install_guide.md) — 초보자용 설치 가이드 (SmartScreen / 진단 / Secret 보호) (#86)
+- 📱 [`docs/tailscale_smartphone_access.md`](docs/tailscale_smartphone_access.md) — Tailscale 스마트폰 원격 관제 — 포트포워딩 금지 (#86)
+- 🔧 [`docs/first_run_setup_wizard.md`](docs/first_run_setup_wizard.md) — 첫 실행 설정 wizard (skeleton + .env fallback) (#86)
+- 📋 [`docs/system_audit_2026_05.md`](docs/system_audit_2026_05.md) — 6 전략 + 전 영역 단일 진실 카탈로그 + 22 invariant (#87)
+- 🧹 [`docs/system_hygiene_report.md`](docs/system_hygiene_report.md) — `.gitignore` / workflow / env example / Pages 점검 결과 (#88)
+- 📊 [`docs/status/current_state.md`](docs/status/current_state.md) — 현재 main 상태 단일 진실 (#88)
+- ✅ [`docs/status/completed_checklist_060_088.md`](docs/status/completed_checklist_060_088.md) — #60~#88 체크리스트 표 (#88)
+- ⚠ [`docs/status/known_risks.md`](docs/status/known_risks.md) — 알려진 위험 8 카테고리 (#88)
+- 🛣 [`docs/status/next_steps.md`](docs/status/next_steps.md) — P0/P1/P2/P3 우선순위 + 실거래 baseline (#88)
+- 📦 [`docs/dependency_policy.md`](docs/dependency_policy.md) — frontend/backend/desktop 의존성 + Paper freeze 정책 (#88)
 - 📦 [`docs/beta_distribution_plan.md`](docs/beta_distribution_plan.md) — 베타테스터 배포 + Tauri / Electron
 - 🔄 [`docs/auto_update_plan.md`](docs/auto_update_plan.md) — Phase 1-2-3 단계별 업데이트
 - 🔒 [`docs/local_security_policy.md`](docs/local_security_policy.md) — Secret hygiene + Tailscale + 사고 대응
