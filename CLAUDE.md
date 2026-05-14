@@ -402,6 +402,36 @@ OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client` /
 0건, storage 는 `db.delete(` / `DELETE FROM` 0건. 자세한 정책:
 [`docs/loss_tagging_policy.md`](docs/loss_tagging_policy.md).
 
+**#94 Signal Alpha Decay (신호 단위 신선도 advisory)**: *개별 신호* 의 시간
+경과 후 기대수익 감쇠를 분석하는 advisory 모듈 — `app/analytics/signal_alpha_decay.py`.
+**#77 governance/alpha_decay** (*전략 단위* 일/주 baseline vs recent) 와는
+**완전히 다른 개념** — 본 모듈은 진입 신호가 t=0 에서 1분 / 3분 / 5분 / 10분 /
+30분 / 60분 후 어떻게 감쇠하는지 bucket 단위로 측정. verdict 5단계
+(`FRESH` / `DECAYING` / `STALE` / `EXPIRED` / `UNKNOWN`) + `decay_score`
+(0~100, t=0 대비 평균 % clamp). default thresholds: `max_actionable_age_minutes=30`
+/ `decay_warn_pct=70.0` / `decay_fail_pct=30.0` / `min_sample_count=10` /
+verdict 시간 임계 (FRESH ≤ 1m / DECAYING ≤ 30m / STALE ≤ 60m / EXPIRED > 60m).
+realtime helpers (`compute_signal_age_minutes` / `freshness_verdict_for_age` /
+`is_signal_actionable(strict=False|True)`) — `strict=False` 는 EXPIRED 만 차단,
+`strict=True` 는 STALE 도 차단. **EXPIRED 신호는 신규 진입 근거로 사용 금지** —
+AI Agent prompt context 에 verdict carry 권장 (후속 PR), UI 카드는
+"이 신호는 오래되어 진입 근거로 사용 금지" 차단 배너 노출. API: `POST /api/analytics/alpha-decay/evaluate`
++ `GET /api/analytics/alpha-decay/freshness?age_minutes=N` read-only. UI:
+`SignalAlphaDecayCard.jsx` (기존 `AlphaDecayCard.jsx` 와 별개 파일) — verdict
+헤드라인 + 4 invariant 영구 배지 ("주문 신호 아님" / "자동 적용 안 함" /
+"실거래 허가 아님" / "advisory 분석") + EXPIRED 차단 배너 + bucket 표 토글 +
+실시간 freshness 표시 (currentAgeMinutes prop). 절대 invariant (테스트로
+lock): `is_order_signal=False` / `auto_apply_allowed=False` /
+`is_live_authorization=False` (dataclass `__post_init__` ValueError), broker /
+OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client`
+/ `anthropic` / `openai` / `httpx` / `requests` / `app.core.config.get_settings`
+import 0건 (정적 grep 가드), DB write 0건, settings 안전 flag mutate 0건,
+frontend `input` / `textarea` 0개, "지금 매수" / "지금 매도" / "Place Order" /
+"실거래 활성화" / "ENABLE_LIVE_TRADING 토글" / "BUY/SELL/HOLD signal" 라벨
+button 0개. 본 PR 은 실거래 실행 기능을 추가하지 *않으며*, RiskManager /
+OrderGuard 우회 없음 — 본 카드는 *판단 보조*만 제공. 43개 신규 backend
+테스트 + 18개 신규 frontend 테스트 PASS. 자세한 정책: [`docs/alpha_decay.md`](docs/alpha_decay.md).
+
 **#93 Security Scan 보강 (secret / 인증서 / 번들 누출 차단)**: secret 탐지 +
 인증서/키 파일 + EXE/MSI/sidecar bundle artifact + `.env` 실제 파일 추적을
 *read-only* 검출하는 통합 보안 스캐너. 신규 `scripts/security_scan.py` (744
