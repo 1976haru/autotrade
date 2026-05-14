@@ -3,6 +3,12 @@ import { Btn, Card, Inp, SectionLabel } from "../common";
 import { fmtKRW, pnlColor } from "../../utils/format";
 import { backendApi } from "../../services/backend/client";
 import { useLiveEngine } from "../../store/useLiveEngine";
+// 82: 초보자용 displayName 매핑. internal id는 *항상* 함께 노출 — 로그/audit
+// 매핑 보존. lookup fetch 실패 시 internal id 그대로 (graceful fallback).
+import {
+  strategyDisplayShort,
+  useStrategyDisplayNames,
+} from "../../utils/strategyNames";
 import { VirtualOrderLedgerCard } from "./VirtualOrderLedgerCard";
 import { VirtualPositionsCard } from "./VirtualPositionsCard";
 
@@ -35,6 +41,16 @@ function inputTypeFor(type) {
 function StatusCard({ status, busy, onReset }) {
   const configured = status?.configured;
   const accent = configured ? (status.holding ? "#22c55e44" : "#7dd3fc44") : "#33415544";
+  // 82: displayName 매핑. internal id 가 그대로 보이지 않도록.
+  const { lookup: strategyLookup } = useStrategyDisplayNames();
+  const strategyDisplay = status?.strategy
+    ? (() => {
+        const display = strategyDisplayShort(status.strategy, strategyLookup);
+        return display === status.strategy
+          ? status.strategy
+          : `${display} (${status.strategy})`;
+      })()
+    : "—";
 
   return (
     <Card accentColor={accent}>
@@ -44,7 +60,7 @@ function StatusCard({ status, busy, onReset }) {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
         <Field label="구성"      value={configured ? "✓ 구성됨" : "✗ 미구성"} />
-        <Field label="전략"      value={status?.strategy ?? "—"} />
+        <Field label="전략"      value={strategyDisplay} />
         <Field label="처리 봉 수" value={String(status?.bars_seen ?? 0)} />
         <Field label="포지션"    value={status?.holding ? "보유 중" : "없음"} />
       </div>
@@ -65,6 +81,8 @@ export function ScoreboardCard() {
   const [rows, setRows]       = useState(null);
   const [error, setError]     = useState("");
   const [loading, setLoading] = useState(true);
+  // 82: displayName lookup. internal id 가 raw 로 보이지 않도록.
+  const { lookup: strategyLookup } = useStrategyDisplayNames();
 
   const refresh = async () => {
     setLoading(true);
@@ -126,7 +144,18 @@ export function ScoreboardCard() {
                   data-testid={`scoreboard-row-${r.strategy}`}>
                 <td style={{ padding: "3px 6px", fontSize: 11,
                               color: "#7dd3fc", fontWeight: 700 }}>
-                  {r.strategy}
+                  {/* 82: displayName 우선, internal id는 작은 글씨로 함께. */}
+                  <span data-testid={`scoreboard-display-${r.strategy}`}>
+                    {strategyDisplayShort(r.strategy, strategyLookup)}
+                  </span>
+                  {strategyDisplayShort(r.strategy, strategyLookup) !== r.strategy ? (
+                    <span style={{
+                      marginLeft: 6, fontSize: 9, color: "#64748b",
+                      fontWeight: 500, fontFamily: "monospace",
+                    }}>
+                      ({r.strategy})
+                    </span>
+                  ) : null}
                 </td>
                 <td style={{ padding: "3px 6px", fontSize: 10, textAlign: "right",
                               color: "#94a3b8" }}>{r.runs}</td>

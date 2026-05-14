@@ -8,6 +8,11 @@ import { backendApi } from "../../services/backend/client";
 import { SignalExplainabilityPanel } from "../common/SignalExplainabilityPanel";
 // #68: 통합 audit_event timeline (append-only). 삭제/수정 UI 0개.
 import { AuditEventTimelineCard } from "../common/AuditEventTimelineCard";
+// 82: 초보자용 strategy displayName. internal id 는 *항상* 함께 노출.
+import {
+  strategyDisplayShort,
+  useStrategyDisplayNames,
+} from "../../utils/strategyNames";
 import {
   useAiAudits,
   useBacktestRuns,
@@ -81,6 +86,8 @@ function decisionColor(decision) {
 
 export function OrderAuditRow({ r }) {
   const [explainOpen, setExplainOpen] = useState(false);
+  // 82: strategy badge 에 displayName + (internal_id) 함께 표시.
+  const { lookup: strategyLookup } = useStrategyDisplayNames();
   return (
     <div style={{ padding: "8px 0", borderBottom: "1px solid #05121f" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
@@ -131,12 +138,22 @@ export function OrderAuditRow({ r }) {
           <>
             <span>·</span>
             <span data-testid="strategy-badge"
+                  data-internal-id={r.strategy}
                   style={{
                     color: "#67e8f9", fontSize: 9, fontWeight: 700,
                     padding: "1px 5px", borderRadius: 3,
                     border: "1px solid #67e8f955", background: "#67e8f915",
                   }}>
-              {r.strategy}
+              {/* 82: displayName + (internal_id). lookup 부재 시 internal id 그대로. */}
+              {strategyDisplayShort(r.strategy, strategyLookup)}
+              {strategyDisplayShort(r.strategy, strategyLookup) !== r.strategy ? (
+                <span style={{
+                  marginLeft: 4, fontSize: 8, fontFamily: "monospace",
+                  color: "#67e8f988", fontWeight: 500,
+                }}>
+                  ({r.strategy})
+                </span>
+              ) : null}
             </span>
           </>
         )}
@@ -1274,13 +1291,28 @@ export function BacktestExtremesSummary({ items, onJump }) {
   const { best, worst } = summarizeBacktestExtremes(items);
   // 동일 행이면(=1건뿐이거나 모든 PnL이 같음) 비교 의미 없음.
   if (!best || !worst || best.id === worst.id) return null;
+  // 82: displayName lookup — best/worst strategy 의 한글명 + internal id.
+  const { lookup: strategyLookup } = useStrategyDisplayNames();
   // 126: clickable buttons jump to the matching row in the list. onJump
   // 미제공이면 plain span fallback — 정보는 그대로 보이지만 액션 없음.
   const _Row = ({ label, r, testId }) => {
+    const display = strategyDisplayShort(r.strategy, strategyLookup);
+    const showInternal = display !== r.strategy;
     const inner = (
       <>
         <span style={{ color: "#475569" }}>{label}:</span>
-        <span style={{ color: "#7dd3fc", fontWeight: 700 }}>{r.strategy}</span>
+        <span data-internal-id={r.strategy}
+              style={{ color: "#7dd3fc", fontWeight: 700 }}>
+          {display}
+          {showInternal ? (
+            <span style={{
+              marginLeft: 4, fontSize: 9, fontFamily: "monospace",
+              color: "#7dd3fc88", fontWeight: 500,
+            }}>
+              ({r.strategy})
+            </span>
+          ) : null}
+        </span>
         <span style={{ color: "#475569" }}>#{r.id}</span>
         <span style={{ color: pnlColor(r.total_pnl), fontWeight: 700 }}>
           {r.total_pnl >= 0 ? "+" : ""}{fmtKRW(r.total_pnl)}
@@ -1328,18 +1360,36 @@ export function BacktestStrategyMiniTable({ items, onJumpStrategy }) {
   // 0개거나 1개면 비교가 의미 없어 hide — 단일 strategy의 합계는 098 list
   // 자체 + 정렬로 충분.
   if (rows.length < 2) return null;
+  // 82: displayName lookup. internal id 는 *항상* 작은 글씨로 함께 표시.
+  const { lookup: strategyLookup } = useStrategyDisplayNames();
   const _td = { padding: "3px 6px", fontSize: 10 };
   const _th = { ..._td, color: "#475569", fontWeight: 700,
                  borderBottom: "1px solid #1a3a5c", textAlign: "left" };
   // 129: strategy 셀을 클릭 가능 button으로 — 126의 jump-to-row 패턴을 strategy
   // 단위로 확장. onJumpStrategy 미제공 시 plain text fallback (테스트 단독
-  // render 경로 호환).
+  // render 경로 호환). 82: displayName + (internal_id) 표시.
+  const _strategyContent = (strategy) => {
+    const display = strategyDisplayShort(strategy, strategyLookup);
+    if (display === strategy) return strategy;
+    return (
+      <>
+        {display}
+        <span style={{
+          marginLeft: 4, fontSize: 9, fontFamily: "monospace",
+          color: "#67e8f988", fontWeight: 500,
+        }}>
+          ({strategy})
+        </span>
+      </>
+    );
+  };
   const _StrategyCell = ({ strategy }) => {
     if (onJumpStrategy) {
       return (
         <button
           type="button"
           data-testid={`backtest-strategy-cell-${strategy}`}
+          data-internal-id={strategy}
           onClick={() => onJumpStrategy(strategy)}
           style={{
             background: "transparent", border: "none", padding: 0, margin: 0,
@@ -1347,14 +1397,15 @@ export function BacktestStrategyMiniTable({ items, onJumpStrategy }) {
             fontFamily: "inherit", cursor: "pointer", textAlign: "left",
           }}
         >
-          {strategy}
+          {_strategyContent(strategy)}
         </button>
       );
     }
     return (
       <span data-testid={`backtest-strategy-cell-${strategy}`}
+            data-internal-id={strategy}
             style={{ color: "#7dd3fc", fontWeight: 700 }}>
-        {strategy}
+        {_strategyContent(strategy)}
       </span>
     );
   };

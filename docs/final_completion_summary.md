@@ -2379,3 +2379,68 @@ CLI exit code: 0=start_allowed=True / 1=False / 2=실행 오류.
 - displayName 변경 이력 audit
 - `recommended_mode` 자동 조정 (Strategy Researcher #55 연계)
 - Alpha Decay (#77) 결합 — DISABLE_CANDIDATE 전략 옆에 *비활성 후보* 배지
+
+---
+
+## #82 Strategy displayName UI 적용
+
+> #81 의 beginner metadata 를 기존 UI 컴포넌트 6곳에 적용. **internal id 는
+> *항상* 함께 노출** — 운영자 / 로그 / audit 매핑 보존. *기존 매매 로직 0줄
+> 변경*, *API 변경 0건*.
+
+### 생성 / 수정 파일 (10개)
+- `frontend/src/utils/strategyNames.js` (신규) — `formatStrategyName` /
+  `strategyDisplayShort` / `useStrategyDisplayNames` hook (module-level 캐시) /
+  `fetchStrategyDisplayLookup`
+- `frontend/src/utils/strategyNames.test.js` (신규, **12 PASS**)
+- `frontend/src/components/tabs/LiveEngine.jsx` (수정) — ScoreboardCard 행 +
+  StatusCard 전략 필드
+- `frontend/src/components/tabs/AuditLog.jsx` (수정) — OrderAuditRow strategy
+  badge + BacktestStrategyMiniTable 셀 + BacktestExtremesSummary best/worst
+- `frontend/src/components/tabs/AgentStatsCard.jsx` (수정) — per-strategy 행
+- `frontend/src/components/tabs/DisplayNameIntegration.test.jsx` (신규, **8 PASS**)
+- `docs/strategy_registry.md` (수정) — UI 적용 현황 표 추가
+
+### 적용된 UI 위치 (6곳)
+| 컴포넌트 | 위치 | 결과 |
+|---|---|---|
+| OrderAuditRow strategy 배지 | AuditLog.jsx | `단기/장기 이동평균 교차 (sma_crossover)` |
+| BacktestStrategyMiniTable 셀 | AuditLog.jsx | 동일 |
+| BacktestExtremesSummary best/worst | AuditLog.jsx | 동일 |
+| ScoreboardCard 누적 성과 행 | LiveEngine.jsx | 동일 |
+| StatusCard "전략" 필드 | LiveEngine.jsx | 동일 |
+| AgentStatsCard per-strategy 행 | AgentStatsCard.jsx | 동일 |
+
+### 공통 helper
+- `formatStrategyName(id, lookup)` → `"displayName (internal_id)"`
+- `strategyDisplayShort(id, lookup)` → `"displayName"` only
+- `useStrategyDisplayNames()` hook — module-level 캐시 (한 번 fetch → 6개 컴포넌트 공유)
+- `fetchStrategyDisplayLookup()` — Promise dedup + 실패 시 in-flight 해제
+
+### 안전 invariant (테스트로 lock)
+- ✓ 모든 적용 위치에서 internal id 가 *항상 함께 노출* (data-internal-id attribute + 본문 텍스트)
+- ✓ lookup 부재 / 미등록 id / 네트워크 실패 시 internal id 그대로 (graceful fallback)
+- ✓ helper 가 lookup 응답을 *변형하지 않음* (캐시 dict 만 저장)
+- ✓ UI 에 가짜 / 외부 hype 전략명 (`골든브릿지` / `100% 승률` / `guaranteed` / `magic strategy` 등) 0건 (통합 테스트로 lock)
+
+### 테스트 결과
+- **신규 frontend**: 20 PASS (helper 12 + 통합 8)
+- **Regression**: 기존 LiveEngine + AuditLog + AgentStatsCard + StrategyRegistryCard 합산 **396 PASS, 0 fail** (기존 366 + 신규 30)
+
+### 안전 / 변경 금지 invariant — 본 PR 미변경
+- ✓ `app/strategies/concrete/*.py` (6개 전략 로직) 변경 0건
+- ✓ `app/strategies/base.py` / `live_engine.py` / `quality.py` / `scoreboard.py` 변경 0건
+- ✓ `app/risk/*` / `app/execution/*` / `app/core/config.py` 변경 0건
+- ✓ `.env` / Secret / API Key / 계좌번호 변경 0건
+- ✓ Backend 변경 0건 (frontend + 문서만)
+- ✓ Backend API 응답 변경 0건 (`/api/strategies/beginner-registry` 만 사용)
+- ✓ `ENABLE_LIVE_TRADING` / `ENABLE_AI_EXECUTION` / `ENABLE_FUTURES_LIVE_TRADING` 변경 0건
+- ✓ 절대 원칙 1~6 모두 유지
+
+### 남은 displayName UI backlog
+- Approvals.jsx AI hero summary line
+- ApprovalQueue.jsx proposal strategy chip
+- AgentMemoryCard.jsx memory row metadata
+- ExecutionRecommenderCard.jsx proposal strategy display
+- BotControl.jsx 전략 선택 dropdown (현재는 internal id 만 표시 예상)
+- Dashboard.jsx 24h activity card 전략 컬럼 (있다면)
