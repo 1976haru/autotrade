@@ -495,6 +495,18 @@ export const backendApi = {
       method: "POST",
       body: JSON.stringify(body || {}),
     }),
+  // 94: Signal Alpha Decay — *신호 단위* 신선도 분석 (read-only).
+  // 본 endpoint 는 어떤 주문도 발행하지 않는다. EXPIRED verdict 인 신호는
+  // 신규 진입 근거로 사용 금지.
+  alphaDecayEvaluate: (body) =>
+    backendFetch("/api/analytics/alpha-decay/evaluate", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
+  alphaDecayFreshness: ({ ageMinutes = 0 } = {}) => {
+    const qs = new URLSearchParams({ age_minutes: String(ageMinutes) });
+    return backendFetch(`/api/analytics/alpha-decay/freshness?${qs.toString()}`);
+  },
   lossTagsSummary: ({ days = 7, strategy = null } = {}) => {
     const qs = new URLSearchParams({ days: String(days) });
     if (strategy) qs.set("strategy", strategy);

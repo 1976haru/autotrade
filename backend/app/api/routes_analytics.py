@@ -332,3 +332,153 @@ def loss_tags_review(
         review_note=row.review_note,
         reviewed_at=row.reviewed_at,
     )
+
+
+# ============================================================
+# #94 Signal Alpha Decay — 신호 단위 *신선도* 분석.
+# ============================================================
+# 본 endpoint 는 #77 governance/alpha_decay (전략 단위) 와는 *별개*. 신호가
+# t=0 에서 시간 경과 후 얼마나 빨리 감쇠하는지 측정 + 만료된 신호 사용 차단
+# 안내.
+
+
+from app.analytics.signal_alpha_decay import (
+    FreshnessVerdict,
+    SignalAlphaDecayInput,
+    SignalAlphaDecayResult,
+    SignalAlphaDecayThresholds,
+    SignalSamplePoint,
+    evaluate_signal_alpha_decay,
+    freshness_verdict_for_age,
+    is_signal_actionable,
+)
+
+
+class SignalSamplePointPayload(BaseModel):
+    age_minutes:     int   = Field(..., ge=0)
+    mean_return_bps: float
+    sample_count:    int   = Field(0, ge=0)
+    pass_rate:       float | None = None
+    std_return_bps:  float = 0.0
+
+
+class SignalAlphaDecayPayload(BaseModel):
+    """평가 입력 — collector / 운영자가 historical 표본 채워서 전달."""
+    strategy_name: str = Field(..., min_length=1, max_length=64)
+    samples:       list[SignalSamplePointPayload] = Field(default_factory=list)
+    strict:        bool = False
+    # threshold override (옵션 — 기본은 SignalAlphaDecayThresholds default).
+    max_actionable_age_minutes: int | None = None
+    decay_warn_pct:             float | None = None
+    decay_fail_pct:             float | None = None
+    min_sample_count:           int | None = None
+
+
+class SignalDecayBucketPayload(BaseModel):
+    label:               str
+    age_minutes:         int
+    mean_return_bps:     float
+    sample_count:        int
+    relative_to_t0_pct:  float
+    severity:            str
+    note:                str
+
+
+class SignalAlphaDecayResultPayload(BaseModel):
+    strategy_name:                 str
+    buckets:                       list[SignalDecayBucketPayload]
+    decay_score:                   float
+    max_actionable_age_minutes:    int
+    verdict_overall:               str
+    warnings:                      list[str]
+    advice:                        list[str]
+    insufficient_data:             bool
+    is_order_signal:               bool = Field(
+        False, description="invariant — 본 게이트는 BUY/SELL/HOLD 신호 아님"
+    )
+    auto_apply_allowed:            bool = Field(
+        False, description="invariant — 본 게이트는 자동 적용 안 함"
+    )
+    is_live_authorization:         bool = Field(
+        False, description="invariant — 본 게이트는 실거래 허가 아님"
+    )
+    generated_at:                  datetime
+
+
+@router.post(
+    "/alpha-decay/evaluate",
+    response_model=SignalAlphaDecayResultPayload,
+)
+def alpha_decay_evaluate(
+    payload: SignalAlphaDecayPayload,
+) -> SignalAlphaDecayResultPayload:
+    """Signal Alpha Decay 평가 (POST — collector / 운영자가 표본 입력).
+
+    read-only — broker / DB write / 안전 flag 변경 0건.
+    """
+    try:
+        samples = tuple(
+            SignalSamplePoint(
+                age_minutes=s.age_minutes,
+                mean_return_bps=s.mean_return_bps,
+                sample_count=s.sample_count,
+                pass_rate=s.pass_rate,
+                std_return_bps=s.std_return_bps,
+            )
+            for s in payload.samples
+        )
+        inp = SignalAlphaDecayInput(
+            strategy_name=payload.strategy_name,
+            samples=samples,
+            strict=payload.strict,
+        )
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"invalid input: {e}")
+
+    # threshold override.
+    th_kwargs: dict = {}
+    if payload.max_actionable_age_minutes is not None:
+        th_kwargs["max_actionable_age_minutes"] = payload.max_actionable_age_minutes
+    if payload.decay_warn_pct is not None:
+        th_kwargs["decay_warn_pct"] = payload.decay_warn_pct
+    if payload.decay_fail_pct is not None:
+        th_kwargs["decay_fail_pct"] = payload.decay_fail_pct
+    if payload.min_sample_count is not None:
+        th_kwargs["min_sample_count"] = payload.min_sample_count
+    th = SignalAlphaDecayThresholds(**th_kwargs) if th_kwargs else None
+
+    result: SignalAlphaDecayResult = evaluate_signal_alpha_decay(inp, th)
+    return SignalAlphaDecayResultPayload(**result.to_dict())
+
+
+class FreshnessQueryResponse(BaseModel):
+    """실시간 신호 신선도 빠른 조회."""
+    age_minutes:        int
+    verdict:            str
+    actionable:         bool
+    actionable_strict:  bool
+    is_order_signal:    bool = Field(
+        False, description="invariant — 본 helper 는 주문 신호 아님"
+    )
+
+
+@router.get(
+    "/alpha-decay/freshness",
+    response_model=FreshnessQueryResponse,
+)
+def alpha_decay_freshness(
+    age_minutes: int = Query(..., ge=0),
+) -> FreshnessQueryResponse:
+    """*시간 경과* 만으로 신호 신선도 판정 (빠른 advisory).
+
+    read-only — RiskManager / OrderGuard 우회 X. 본 응답은 *판단 보조*만,
+    실제 주문 차단은 RiskManager 가 담당.
+    """
+    th = SignalAlphaDecayThresholds()
+    verdict = freshness_verdict_for_age(age_minutes, th)
+    return FreshnessQueryResponse(
+        age_minutes=age_minutes,
+        verdict=verdict.value,
+        actionable=is_signal_actionable(age_minutes, th, strict=False),
+        actionable_strict=is_signal_actionable(age_minutes, th, strict=True),
+    )

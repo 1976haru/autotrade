@@ -76,6 +76,7 @@ npm run dev -- --host 0.0.0.0
 - 🚦 [`docs/pre_market_checklist.md`](docs/pre_market_checklist.md) — Pre-market Checklist 초보자 흐름 (#91)
 - 📊 [`docs/release_readiness_policy.md`](docs/release_readiness_policy.md) — Release Readiness Report advisory meta-aggregator (실거래 허가 아님) (#92)
 - 🔐 [`docs/security_scan.md`](docs/security_scan.md) — **Secret / 인증서 / 번들 누출 정적 스캐너** + fake placeholder 표준 + CI 자동 회귀 차단 (#93)
+- ⏱️ [`docs/alpha_decay.md`](docs/alpha_decay.md) — **신호 단위 알파 감쇠** advisory 분석 (1m~60m bucket) + EXPIRED 신호 신규 진입 금지 안내 (#94, #77 전략 단위와 별개)
 - 📦 [`docs/beta_distribution_plan.md`](docs/beta_distribution_plan.md) — 베타테스터 배포 + Tauri / Electron
 - 🔄 [`docs/auto_update_plan.md`](docs/auto_update_plan.md) — Phase 1-2-3 단계별 업데이트
 - 🔒 [`docs/local_security_policy.md`](docs/local_security_policy.md) — Secret hygiene + Tailscale + 사고 대응
