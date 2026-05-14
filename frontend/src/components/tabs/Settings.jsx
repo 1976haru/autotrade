@@ -9,6 +9,7 @@ import {
   ReleaseNotesModal,
   VersionBadge,
 } from "../common/VersionBadge";
+import { UpdateCheckerCard } from "../common/UpdateCheckerCard";
 import { UserGuideCard } from "../common/UserGuideModal";
 import { FaqCard, HelpFeedbackPanel } from "../common/HelpFeedbackPanel";
 import { DeploymentInfoCard } from "../common/DeploymentInfoCard";
@@ -227,6 +228,10 @@ export function Settings({ settings }) {
 
       {/* 버전 / 공지 — VersionBadge 클릭으로 release notes 재오픈 */}
       <VersionInfoCard />
+
+      {/* #86 데스크톱 업데이트 확인 카드 — mock 단계, 후속 PR 에서 Tauri
+          updater 와 실 연결. broker 호출 0건, 안전 flag 변경 0건. */}
+      <UpdateCheckerCard />
 
       {/* 배포 / 접속 안내 — Local / LAN / Tailscale / Pages 자동 감지 + 정책 */}
       <DeploymentInfoCard />

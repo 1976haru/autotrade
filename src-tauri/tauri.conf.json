@@ -1,0 +1,70 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Agent Trader v1",
+  "version": "1.0.0",
+  "identifier": "com.agenttrader.beta",
+  "build": {
+    "frontendDist": "../frontend/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm --prefix ../frontend run dev",
+    "beforeBuildCommand": "npm --prefix ../frontend run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Agent Trader v1 — 에이전트 트레이더",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true,
+        "decorations": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' http://127.0.0.1:8000 http://localhost:8000 ipc: http://ipc.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "category": "Finance",
+    "shortDescription": "Agent Trader v1 — AI 에이전트 단타 자동매매 관제 (베타)",
+    "longDescription": "에이전트 트레이더 v1: AI 에이전트가 시장을 분석하고 운영자가 핵심 판단과 위험만 확인하는 자동매매 관제 시스템. 기본 운용모드는 SIMULATION / PAPER이며 LIVE 거래는 운영자 명시 옵트인 후에만 활성화됩니다.",
+    "publisher": "Agent Trader Beta",
+    "copyright": "Copyright (c) Agent Trader Beta",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "wix": {
+        "language": ["ko-KR", "en-US"]
+      },
+      "nsis": {
+        "languages": ["Korean", "English"],
+        "installerIcon": "icons/icon.ico",
+        "installMode": "perUser",
+        "displayLanguageSelector": true
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "active": false,
+      "_comment_active": "베타 PR 시점: false로 둠. 실제 활성화는 별도 GitHub Actions 릴리스 PR에서 public key + endpoint 주입 후 true로 변경. docs/desktop_update_policy.md 참고.",
+      "endpoints": [
+        "https://github.com/__ORG__/__REPO__/releases/latest/download/latest.json"
+      ],
+      "_comment_endpoints": "endpoint placeholder — __ORG__/__REPO__은 실제 릴리스 PR에서 대체. 본 파일은 private key 없이 commit 가능.",
+      "pubkey": "",
+      "_comment_pubkey": "PR 시점 비워둠. 실제 배포 시 tauri signer generate 로 생성한 public key 만 채워서 commit, private key 는 GitHub Secrets(TAURI_PRIVATE_KEY)에만 보관."
+    }
+  }
+}
