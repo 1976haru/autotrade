@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 import { Card, SectionLabel, Btn } from "../common";
 import { friendlyErrorMessage } from "../../utils/errorMessage";
 import { backendApi } from "../../services/backend/client";
+// 82: strategy displayName 매핑. internal id 는 *항상* 함께 표시.
+import {
+  strategyDisplayShort,
+  useStrategyDisplayNames,
+} from "../../utils/strategyNames";
 
 const HISTO_ORDER = ["0-25", "25-50", "50-75", "75-100"];
 
@@ -38,6 +43,8 @@ export function AgentStatsCard() {
   const [busy,   setBusy]   = useState(false);
   const [error,  setError]  = useState("");
   const [days,   setDays]   = useState(7);
+  // 82: strategy displayName lookup. internal id 는 작은 글씨로 함께.
+  const { lookup: strategyLookup } = useStrategyDisplayNames();
 
   const load = async (lookback) => {
     setBusy(true); setError("");
@@ -160,13 +167,29 @@ export function AgentStatsCard() {
                   <span style={{ textAlign: "right" }}>W/L</span>
                   <span style={{ textAlign: "right" }}>P/L</span>
                 </div>
-                {stats.per_strategy.slice(0, 8).map((row) => (
-                  <div key={row.strategy} style={{
+                {stats.per_strategy.slice(0, 8).map((row) => {
+                  const display = strategyDisplayShort(row.strategy, strategyLookup);
+                  const showInternal = display !== row.strategy;
+                  return (
+                  <div key={row.strategy}
+                       data-internal-id={row.strategy}
+                       style={{
                     display: "grid",
                     gridTemplateColumns: "1.4fr 0.6fr 0.6fr 0.8fr 0.8fr",
                     color: "#94a3b8",
                   }}>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{row.strategy}</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {/* 82: displayName + (internal_id). lookup 부재 시 internal id 그대로. */}
+                      {display}
+                      {showInternal ? (
+                        <span style={{
+                          marginLeft: 4, fontSize: 9, fontFamily: "monospace",
+                          color: "#475569",
+                        }}>
+                          ({row.strategy})
+                        </span>
+                      ) : null}
+                    </span>
                     <span style={{ textAlign: "right" }}>{row.total}</span>
                     <span style={{ textAlign: "right" }}>{fmtPct(row.approval_rate)}</span>
                     <span style={{ textAlign: "right" }}>
@@ -179,7 +202,8 @@ export function AgentStatsCard() {
                       {row.realized_pnl ?? 0}
                     </span>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

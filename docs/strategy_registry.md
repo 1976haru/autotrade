@@ -174,7 +174,33 @@
 
 ---
 
-## 8. 후속 backlog
+## 8. UI 적용 현황 (#82)
+
+#81 메타데이터가 다음 UI 컴포넌트에 *적용*되었습니다 (#82). 모든 위치에서
+`displayName + (internal_id)` *함께* 노출 — 운영자 / 로그 / audit 매핑 보존.
+
+| 컴포넌트 | 위치 | 변환 전 | 변환 후 |
+|---|---|---|---|
+| `OrderAuditRow` (감사 로그 행 strategy 배지) | `AuditLog.jsx:130` | `sma_crossover` | **단기/장기 이동평균 교차** `(sma_crossover)` |
+| `BacktestStrategyMiniTable` 전략 셀 | `AuditLog.jsx:1354` | `sma_crossover` | **단기/장기 이동평균 교차** `(sma_crossover)` |
+| `BacktestExtremesSummary` best/worst | `AuditLog.jsx:1300` | `sma_crossover` | **단기/장기 이동평균 교차** `(sma_crossover)` |
+| `ScoreboardCard` 누적 성과 행 | `LiveEngine.jsx:130` | `sma_crossover` | **단기/장기 이동평균 교차** `(sma_crossover)` |
+| `StatusCard` 엔진 상태 "전략" 필드 | `LiveEngine.jsx:47` | `sma_crossover` | **단기/장기 이동평균 교차** `(sma_crossover)` |
+| `AgentStatsCard` per-strategy 행 | `AgentStatsCard.jsx:169` | `sma_crossover` | **단기/장기 이동평균 교차** `(sma_crossover)` |
+
+공통 helper: `frontend/src/utils/strategyNames.js`
+- `formatStrategyName(id, lookup)` — `"displayName (internal_id)"` 반환
+- `strategyDisplayShort(id, lookup)` — `"displayName"` 만
+- `useStrategyDisplayNames()` hook — module-level 캐시 (한 번 fetch, 모든 컴포넌트 공유)
+- 모두 *graceful fallback* — lookup 부재 시 internal id 그대로
+
+미적용 컴포넌트 (후속 PR):
+- `Approvals.jsx` AI hero summary line
+- `ApprovalQueue.jsx` proposal strategy chip
+- `AgentMemoryCard.jsx` memory row metadata
+- `ExecutionRecommenderCard.jsx` proposal strategy display
+
+## 9. 후속 backlog
 
 - 운영자가 직접 UI 에서 beginner metadata 편집 (현재는 코드에 hard-coded)
 - displayName 다국어 (영문 fallback)
