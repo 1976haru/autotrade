@@ -20,6 +20,10 @@
 >   workflow / env example / Pages 점검 결과 (#88)
 > - 📦 [`docs/dependency_policy.md`](dependency_policy.md) — 의존성 lock / freeze
 >   정책 (#88)
+> - 🧪 [`docs/kis_paper_oneclick.md`](kis_paper_oneclick.md) — 한투 모의투자
+>   원클릭 AI 자동매매 테스트 (#89)
+> - 💻 [`docs/desktop_exe_status.md`](desktop_exe_status.md) — Windows installer
+>   빌드 상태 (#89)
 >
 > 본 문서를 *현재 상태 확인용* 으로 사용하지 마세요 — `status/current_state.md`
 > 가 단일 진실입니다.

@@ -30,6 +30,7 @@ from app.api.routes_governance import router as governance_router
 from app.api.routes_themes import router as themes_router
 from app.api.routes_virtual import router as virtual_router
 from app.api.routes_watchlists import router as watchlists_router
+from app.api.routes_kis_paper import router as kis_paper_router  # #89
 from app.core.config import get_settings
 from app.db.session import apply_migrations
 from app.execution.fill_poller import FillPoller
@@ -102,6 +103,7 @@ app.include_router(auto_trader_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(monitoring_router, prefix="/api")
 app.include_router(analytics_router, prefix="/api")
+app.include_router(kis_paper_router, prefix="/api")  # #89
 
 
 @app.get("/")
