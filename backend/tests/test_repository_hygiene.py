@@ -570,6 +570,153 @@ def test_fake_secrets_module_has_clear_markers():
     assert_all_placeholders_contain_fake_marker()
 
 
+# ====================================================================
+# Desktop release workflow safety guards
+# ====================================================================
+
+
+def _workflow_path() -> pathlib.Path:
+    return _ROOT / ".github" / "workflows" / "desktop-release.yml"
+
+
+def test_desktop_release_workflow_has_no_secret_strings():
+    """desktop-release.yml 에 직접 secret 문자열 0건.
+
+    secret 은 `${{ secrets.XXX }}` 참조로만 사용 — 원문 직접 임베드 금지.
+    """
+    p = _workflow_path()
+    if not p.exists():
+        pytest.skip("desktop-release.yml 미존재 — 본 검사 skip")
+    src = _read(p)
+    # 명백한 secret 패턴 — 어느 것이라도 *직접* 들어 있으면 fail.
+    for pat in (
+        r"\bsk-[A-Za-z0-9]{20,}",
+        r"\bsk-ant-[A-Za-z0-9_\-]{20,}",
+        r"\bghp_[A-Za-z0-9]{30,}",
+        r"\bxox[abprs]-[A-Za-z0-9\-]{10,}",
+        r"\bPST[A-Z0-9]{20,}",
+        r"\b\d{8,10}-\d{2}\b",
+    ):
+        m = re.search(pat, src)
+        assert m is None, (
+            f"desktop-release.yml 에 secret-like 문자열 직접 임베드 의심: "
+            f"pattern={pat!r}, match={m.group()!r}"
+        )
+
+
+def test_desktop_release_workflow_artifact_path_excludes_secrets():
+    """artifact path 패턴에 secret 확장자 / .env 포함 없음."""
+    p = _workflow_path()
+    if not p.exists():
+        pytest.skip("desktop-release.yml 미존재 — 본 검사 skip")
+    src = _read(p)
+    for forbidden in ("*.pem", "*.key", "*.p12", "*.pfx", "*.crt", "*.cer",
+                      "*.keystore", "*.jks", "**/.env"):
+        assert forbidden not in src, (
+            f"workflow 에 금지 path 패턴 '{forbidden}' 포함"
+        )
+
+
+def test_desktop_release_workflow_does_not_enable_live_flags():
+    """workflow 가 `ENABLE_LIVE_TRADING=true` 같은 안전 flag 활성화 0건.
+
+    YAML env / shell assignment 어느 곳에서도 LIVE flag 를 *true* 로 설정하지
+    않아야 한다. 단 *self-check 패턴 문자열*은 banned 리스트 안에 등장 가능
+    — 본 검사는 *YAML 키 설정* + *shell assignment* 패턴만 잡는다.
+    """
+    p = _workflow_path()
+    if not p.exists():
+        pytest.skip("desktop-release.yml 미존재 — 본 검사 skip")
+    src = _read(p)
+    lines = src.splitlines()
+    for i, ln in enumerate(lines):
+        stripped = ln.strip()
+        if stripped.startswith("#"):
+            continue
+        # YAML 키-값 형식 — line 시작이 key (앞에 공백 포함) + `:` + true.
+        # banned 리스트 안의 string ("ENABLE_LIVE_TRADING: true" 같은 search
+        # needle) 은 line 시작이 따옴표/쉼표/dash 이므로 본 패턴에 매칭 X.
+        for key in (
+            "ENABLE_LIVE_TRADING", "ENABLE_AI_EXECUTION",
+            "ENABLE_FUTURES_LIVE_TRADING",
+        ):
+            yaml_assign_pat = (
+                rf"^{key}\s*:\s*['\"]?true['\"]?\s*$"
+            )
+            assert not re.match(yaml_assign_pat, stripped, re.IGNORECASE), (
+                f"workflow line {i+1}: YAML 키 '{key}' 가 true 로 설정됨"
+            )
+        # KIS_IS_PAPER = false 도 차단.
+        if re.match(r"^KIS_IS_PAPER\s*:\s*['\"]?false['\"]?\s*$",
+                    stripped, re.IGNORECASE):
+            pytest.fail(f"workflow line {i+1}: KIS_IS_PAPER false 로 설정")
+        # 본 line 이 YAML 리스트 안의 banned 패턴 *문자열* 인지 (- 또는 따옴표로
+        # 시작) 검사 — assignment 자체는 *line 시작* 패턴이므로 위에서 잡힘.
+        # 별도 검사: shell command 안에 직접 export.
+        for assign in (
+            "export ENABLE_LIVE_TRADING=true",
+            "export ENABLE_AI_EXECUTION=true",
+            "export ENABLE_FUTURES_LIVE_TRADING=true",
+            "export KIS_IS_PAPER=false",
+            "$env:ENABLE_LIVE_TRADING = 'true'",
+            "$env:ENABLE_AI_EXECUTION = 'true'",
+            "$env:ENABLE_FUTURES_LIVE_TRADING = 'true'",
+            "$env:KIS_IS_PAPER = 'false'",
+        ):
+            assert assign not in ln, (
+                f"workflow line {i+1} shell assignment 의심: '{ln.strip()}'"
+            )
+
+
+def test_desktop_release_workflow_uses_workflow_dispatch_only():
+    """workflow_dispatch 만 트리거 — push/tag 자동 트리거 0건."""
+    p = _workflow_path()
+    if not p.exists():
+        pytest.skip("desktop-release.yml 미존재 — 본 검사 skip")
+    try:
+        import yaml
+    except ImportError:
+        pytest.skip("PyYAML 미설치 — 본 검사 skip")
+    data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    # YAML 'on' 키는 PyYAML 에서 bool True 로 파싱될 수 있음.
+    on = data.get("on") or data.get(True)
+    assert on is not None, "workflow 'on' 트리거 누락"
+    if isinstance(on, str):
+        triggers = {on}
+    elif isinstance(on, list):
+        triggers = set(on)
+    elif isinstance(on, dict):
+        triggers = set(on.keys())
+    else:
+        pytest.fail(f"unexpected 'on' type: {type(on)}")
+    assert "workflow_dispatch" in triggers, (
+        "workflow_dispatch 트리거 누락 — 본 workflow 는 수동 trigger 만 허용"
+    )
+    for banned in ("push", "schedule", "pull_request"):
+        assert banned not in triggers, (
+            f"자동 트리거 '{banned}' 발견 — workflow_dispatch 만 사용해야 함"
+        )
+
+
+def test_desktop_release_workflow_runs_on_windows():
+    """Windows runner 에서만 실행 — Linux/macOS 빌드 차단."""
+    p = _workflow_path()
+    if not p.exists():
+        pytest.skip("desktop-release.yml 미존재 — 본 검사 skip")
+    try:
+        import yaml
+    except ImportError:
+        pytest.skip("PyYAML 미설치 — 본 검사 skip")
+    data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    jobs = data.get("jobs", {})
+    assert jobs, "workflow 에 jobs 없음"
+    for job_name, job_def in jobs.items():
+        runs_on = job_def.get("runs-on", "")
+        assert "windows" in str(runs_on).lower(), (
+            f"job '{job_name}' runs-on='{runs_on}' — windows runner 가 아님"
+        )
+
+
 def test_no_real_kis_token_pattern_tracked():
     """KIS Personal Secret Token (PST + 20+) 형식 추적 0건."""
     import subprocess

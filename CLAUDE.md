@@ -402,6 +402,30 @@ OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client` /
 0건, storage 는 `db.delete(` / `DELETE FROM` 0건. 자세한 정책:
 [`docs/loss_tagging_policy.md`](docs/loss_tagging_policy.md).
 
+**Desktop Release Workflow (GitHub Actions 자동 빌드)**: 로컬 PC 에 Rust /
+WiX 가 설치되어 있지 않아도 EXE/MSI 를 자동 빌드할 수 있도록
+`.github/workflows/desktop-release.yml` 정식 활성화. 10 step (Checkout →
+Node/Python/Rust setup → Tauri CLI v2 → 빌드 전 safety guard (`.env.example`
+default + workflow self-check regex) → repository hygiene + security_scan →
+frontend test+build → backend sidecar PyInstaller → `cargo tauri build` (WiX/
+NSIS 자동 다운로드) → 빌드 후 safety guard (`.env` / `*.pem` / `*.key` /
+`*.p12` / `*.pfx` / `*.crt` / `*.cer` / `*.keystore` / `*.jks` bundle 내
+포함 0건 검증) → workflow artifact + GitHub Release draft 업로드). 절대 원칙
+(workflow + test 로 강제): **수동 trigger only** (`workflow_dispatch` 만, push
+/ schedule / pull_request 자동 트리거 0건 — `test_desktop_release_workflow_uses_workflow_dispatch_only`),
+**Windows runner 한정** (`runs-on: windows-latest` — `test_desktop_release_workflow_runs_on_windows`),
+**LIVE/AI/FUTURES enable flag true 설정 0건** (`test_desktop_release_workflow_does_not_enable_live_flags`
++ workflow self-check regex), **KIS_IS_PAPER false 설정 0건** (동일), **secret /
+API key 직접 임베드 0건** (`test_desktop_release_workflow_has_no_secret_strings`
+— sk- / sk-ant- / ghp_ / xox / PST / 한국 계좌번호 패턴 검사), **artifact
+path 에 .env / .pem / .key 등 포함 0건** (`test_desktop_release_workflow_artifact_path_excludes_secrets`),
+**signing private key 는 GitHub Secrets 만** (코드 직접 임베드 0건). 5개
+신규 hygiene test 추가 (34 → 39 PASS). 운영 로직 변경 0건, broker /
+OrderExecutor / route_order 호출 0건, settings 안전 flag default mutate 0건.
+실행: GitHub Actions 탭 → desktop-release → Run workflow (release_tag /
+draft / create_release 입력). 자세한 정책: [`docs/desktop_exe_status.md`](docs/desktop_exe_status.md)
+§8-C, [`docs/exe_oneclick_installation.md`](docs/exe_oneclick_installation.md) §3-1.
+
 **#96 Loss Root Cause Tagging (결정/실행 단계 손실 원인 advisory)**: 손실 거래에
 *"왜 잃었는가"* 의 근본원인을 16개 태그 × 5 카테고리로 *추정* 분류하는 advisory
 모듈 — `app/analytics/loss_root_cause.py`. **#79 `loss_tagging.py`** (post-trade

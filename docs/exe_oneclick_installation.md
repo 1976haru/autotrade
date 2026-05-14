@@ -38,7 +38,26 @@ src-tauri/target/release/bundle/nsis/Agent Trader v1_1.0.0_x64-setup.exe
 https://github.com/<ORG>/<REPO>/releases/latest
 ```
 
-> 본 PR 시점에 위 빌드가 아직 *없을 수* 있습니다. 그 경우 `docs/desktop_exe_status.md`
+### 3-1. (운영자) GitHub Actions 자동 빌드로 installer 만들기
+
+로컬 PC 에 Rust / WiX 가 없어도 **GitHub Actions Windows runner** 에서 자동
+빌드 가능 (`.github/workflows/desktop-release.yml`):
+
+1. 저장소 GitHub 페이지 → **Actions** 탭
+2. 좌측 workflow 목록에서 **desktop-release** 선택
+3. 우측 상단 **Run workflow** 클릭
+4. 입력:
+   - `release_tag`: 예) `v1.0.1-beta.1`
+   - `draft`: true (운영자가 수동 publish)
+   - `create_release`: true (GitHub Release draft 생성) / false (Actions
+     artifact 만)
+5. **Run workflow** 클릭 → 30~45분 후 완료
+6. Actions 실행 페이지 하단 *Artifacts* 에서 `agent-trader-windows-installer-{tag}.zip`
+   다운로드 → 압축 해제 → `.msi` / `-setup.exe` 사용
+
+자세한 정책: [`docs/desktop_exe_status.md`](desktop_exe_status.md) §8-C.
+
+> 본 시점에 위 빌드가 아직 *없을 수* 있습니다. 그 경우 `docs/desktop_exe_status.md`
 > §1 "한 줄 결론" 을 먼저 확인하세요. 빌드가 안 되어 있어도 §6 의 대체 흐름
 > (script + 브라우저) 으로 동일한 모의 테스트가 가능합니다.
 
