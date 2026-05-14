@@ -339,6 +339,13 @@ export const backendApi = {
     method: "POST",
     body: JSON.stringify(body || {}),
   }),
+  // 85: Strategy Selection Agent — 4개 단타 전략 vote → 최적 조합 advisory.
+  // 주문 신호 아님 (is_order_intent / is_order_signal / can_execute_order = false).
+  // broker call 0건, audit row 0건, DB write 0건, 외부 네트워크 호출 0건.
+  strategySelection: (body) => backendFetch("/api/agents/strategy-selection", {
+    method: "POST",
+    body: JSON.stringify(body || { votes: [] }),
+  }),
   // 56: Execution Recommender — 매수/매도 *제안*만. 직접 주문 X.
   executionRecommenderRecommend: (body) =>
     backendFetch("/api/agents/execution-recommender/recommend", {

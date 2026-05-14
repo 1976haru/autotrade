@@ -30,6 +30,9 @@ import { BackendDataSourceBanner } from "../common/DataSourceBanner";
 import { useBackendStatus } from "../../store/useBackendStatus";
 // 70: Monitoring Dashboard Card — 시스템 안정성 read-only 집계.
 import { MonitoringCard } from "./MonitoringCard";
+// 85: Strategy Selection — 4개 단타 전략 vote → 최적 조합 advisory (주문 아님).
+import { StrategySelectionCard } from "./StrategySelectionCard";
+import { useStrategySelection } from "../../store/useStrategySelection";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
 // AuditLog timeline에서도 mode badge로 쓰기 위해 공유. Dashboard는 re-export
@@ -320,6 +323,22 @@ export function StatusSummaryCard({
 
 // Activity24hCard 내부 행을 버튼으로 만들기 위한 공용 스타일.
 // AuditLog 탭으로 점프 + kind filter를 미리 세팅해 도착 시 자동 적용되도록 한다.
+// 85: Dashboard slot for Strategy Selection. 기본 입력은 비어 있어서 backend
+// 가 NO_SIGNAL 리포트 반환 — 실 vote 가 들어오기 시작하면 풍부 표시.
+//
+// 이름은 PascalCase — react-hooks/rules-of-hooks 가 hook 호출을 허용하려면
+// 컴포넌트는 대문자로 시작해야 한다 (underscore prefix 가 lowercase 로 인식됨).
+function StrategySelectionDashboardSlot() {
+  const { report, loading, error, refresh } = useStrategySelection();
+  return (
+    <StrategySelectionCard
+      report={report} loading={loading} error={error}
+      onRefresh={() => refresh()}
+    />
+  );
+}
+
+
 const _DRILLDOWN_BUTTON_STYLE = {
   background:   "transparent",
   border:       "none",
@@ -584,6 +603,12 @@ export function Dashboard({
           read-only — 선택 / 변경 / 주문 발생 X. */}
       <div className="dashboard-span-full">
         <AgentStrategyChoiceCard />
+      </div>
+
+      {/* 85: Strategy Selection Card — 4개 단타 전략 vote → 최적 조합 advisory.
+          주문 아님 / 승인 후보 전 단계. broker call 0건, audit row 0건. */}
+      <div className="dashboard-span-full">
+        <StrategySelectionDashboardSlot />
       </div>
 
       {/* 긴급 정지가 오래 켜져 있을 때 reminder — 위험/상태 요약보다 먼저 노출 */}

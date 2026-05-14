@@ -1227,3 +1227,108 @@ def daily_report_generate(
         warnings_count=len(report.tomorrow_warnings),
         action_items_count=len(report.action_items),
     )
+
+
+# ====================================================================
+# #85: Strategy Selection Agent — advisory only (NOT order signal)
+# ====================================================================
+
+
+class StrategyVoteIn(BaseModel):
+    strategy_id:    str
+    symbol:         str
+    action:         str                       # BUY / SELL / EXIT / WATCH / NO_SIGNAL
+    confidence:     int
+    quality_score:  int
+    reasons:        list[str] | None = None
+    risk_notes:     list[str] | None = None
+    indicators:     dict | None = None
+    is_fresh:       bool = True
+
+
+class StrategySelectionIn(BaseModel):
+    votes:          list[StrategyVoteIn]
+    market_regime:  str | None = None         # TREND_UP / CHOPPY / RISK_OFF 등
+    focus_symbol:   str | None = None
+
+
+class StrategyCandidateOut(BaseModel):
+    strategy_id:    str
+    symbol:         str
+    action:         str
+    confidence:     int
+    quality_score:  int
+    score:          float
+    is_supporting:  bool
+    reasons:        list[str]
+
+
+class BlockedStrategyOut(BaseModel):
+    strategy_id:    str
+    symbol:         str
+    reason:         str
+    detail:         str
+    action_voted:   str | None = None
+
+
+class StrategySelectionOut(BaseModel):
+    symbol:               str | None
+    market_regime:        str | None
+    selected_strategy:    str | None
+    final_action:         str
+    confidence:           int
+    quality_score:        int
+    conflict_level:       str
+    candidate_qualified:  bool
+    candidates:           list[StrategyCandidateOut]
+    blocked:              list[BlockedStrategyOut]
+    reasons:              list[str]
+    risk_notes:           list[str]
+    is_order_intent:      bool
+    is_order_signal:      bool
+    can_execute_order:    bool
+    generated_at:         str
+
+
+@router.post("/strategy-selection", response_model=StrategySelectionOut)
+def post_strategy_selection(req: StrategySelectionIn) -> StrategySelectionOut:
+    """4개 전략 vote → 최적 전략 선택 (read-only advisory).
+
+    **broker 호출 0건, audit row 0건, DB 변경 0건, 외부 네트워크 호출 0건.**
+    응답의 ``is_order_signal`` / ``is_order_intent`` / ``can_execute_order`` 은
+    모두 *항상 False* — 본 출력은 *주문이 아니라* approval candidate 전 단계의
+    advisory 리포트.
+    """
+    # lazy import — 응답 시점에만 모듈을 불러옴 (top-level cycle 회피).
+    from app.agents.strategy_selection_agent import (
+        StrategySelectionInput,
+        select_strategies,
+    )
+    from app.strategies.aggregator import StrategyVote
+    from app.strategies.base import SignalAction
+
+    votes: list[StrategyVote] = []
+    for v in req.votes:
+        try:
+            action = SignalAction(v.action)
+        except ValueError:
+            action = SignalAction.NO_SIGNAL
+        votes.append(StrategyVote(
+            strategy_id=v.strategy_id,
+            symbol=v.symbol,
+            action=action,
+            confidence=int(v.confidence),
+            quality_score=int(v.quality_score),
+            reasons=tuple(v.reasons or ()),
+            risk_notes=tuple(v.risk_notes or ()),
+            indicators=dict(v.indicators or {}),
+            is_fresh=bool(v.is_fresh),
+        ))
+
+    inp = StrategySelectionInput(
+        votes=tuple(votes),
+        market_regime=req.market_regime,
+        focus_symbol=req.focus_symbol,
+    )
+    report = select_strategies(inp)
+    return StrategySelectionOut(**report.to_dict())
