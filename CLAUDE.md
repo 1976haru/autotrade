@@ -402,6 +402,31 @@ OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client` /
 0건, storage 는 `db.delete(` / `DELETE FROM` 0건. 자세한 정책:
 [`docs/loss_tagging_policy.md`](docs/loss_tagging_policy.md).
 
+**#86 Desktop Installer / Beta 배포 (skeleton + 문서)**: 베타테스터가
+PowerShell / uvicorn / npm 명령어를 직접 실행하지 않고 `AgentTrader-v1-Setup.exe`
+를 더블클릭해 설치하고 바탕화면 아이콘으로 실행할 수 있게 만드는 *Windows
+설치형 앱* 구조 — Tauri v2 채택. 본 PR 시점: `src-tauri/` skeleton(`tauri.conf.json`
+/ `Cargo.toml` / `src/main.rs` / `capabilities/default.json` / `icons/README.md`
+/ `.gitignore` / `build.rs`) + 6개 문서 + `UpdateCheckerCard` 프론트엔드(mock) +
+`.github/workflows/desktop-release.yml`(draft, manual_dispatch only). Tauri
+**updater 는 비활성** (`plugins.updater.active=false`, `pubkey=""`) — 실 활성화
+는 후속 PR에서 `tauri signer generate` 결과 public key 만 commit, private key 는
+`GitHub Secrets::TAURI_PRIVATE_KEY` 에만. **본 PR 에서 `ENABLE_LIVE_TRADING` /
+`ENABLE_AI_EXECUTION` / `ENABLE_FUTURES_LIVE_TRADING` / API Key / Secret / 계좌
+번호 변경 0건, broker 호출 0건**. `UpdateCheckerCard` 는 mock 응답만 사용
+(`provider` prop 으로 테스트 주입 가능) — 자동 *적용* 0건, 사용자가 "재시작
+하여 적용" 명시 클릭해야만 시뮬레이션 진행. 자세한 정책:
+[`docs/desktop_packaging.md`](docs/desktop_packaging.md) — 패키징 / Tauri 구조 /
+backend 자동 실행 설계,
+[`docs/desktop_update_policy.md`](docs/desktop_update_policy.md) — 자동 업데이트
+/ 서명 키 관리,
+[`docs/beta_tester_install_guide.md`](docs/beta_tester_install_guide.md) — 초보자
+설치 가이드,
+[`docs/tailscale_smartphone_access.md`](docs/tailscale_smartphone_access.md) —
+스마트폰 원격 관제,
+[`docs/first_run_setup_wizard.md`](docs/first_run_setup_wizard.md) — 첫 실행
+wizard 설계.
+
 ## 변경 시 동기화
 
 다음 변경은 본 문서도 같이 업데이트해야 한다 (PR 리뷰에서 요구):

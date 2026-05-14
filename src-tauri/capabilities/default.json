@@ -1,0 +1,20 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Agent Trader v1 베타 — 기본 capability set. broker 직접 호출 0건, 외부 임의 셸 명령 실행 0건. backend 와의 통신은 http://127.0.0.1:8000 만 허용.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-open",
+    "process:default",
+    {
+      "identifier": "updater:default"
+    }
+  ],
+  "_comment_security": [
+    "허용 호스트 (CSP connect-src 와 lockstep): 127.0.0.1:8000 / localhost:8000 만.",
+    "임의 외부 URL fetch / 임의 셸 명령 실행은 금지 — 베타테스터 PC 의 사이드채널 노출 방지.",
+    "updater 권한은 conf 의 pubkey 가 비어 있으면 실효 없음 (tauri-plugin-updater 기본 동작).",
+    "본 PR 시점 updater pubkey 미설정 — 자동 업데이트 비활성."
+  ]
+}

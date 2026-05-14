@@ -1,0 +1,132 @@
+# Agent Trader v1 — Windows desktop release (skeleton draft).
+#
+# 본 워크플로는 *현 PR 시점* drafts only — 수동 trigger 만 가능하며 tag-push
+# 트리거는 비활성. 실제 활성화는 다음 후속 PR 에서:
+#   1) `tauri signer generate` 로 키 생성 후 GitHub Secrets 등록
+#      (TAURI_PRIVATE_KEY, TAURI_KEY_PASSWORD)
+#   2) `src-tauri/tauri.conf.json` 의 `plugins.updater.pubkey` 채움
+#   3) `src-tauri/binaries/` 에 PyInstaller backend sidecar 등록
+#   4) 본 파일에서 `workflow_dispatch` 만 두고 `tags: 'v*'` 트리거 enable
+#
+# 자세한 정책: docs/desktop_update_policy.md
+#
+# 안전:
+#   - signing private key 는 *절대 repo 에 commit 하지 않음* — GitHub Secrets 만
+#   - 빌드 결과는 Releases 의 *draft* 로만 업로드 — 운영자 수동 publish
+#   - ENABLE_LIVE_TRADING / ENABLE_AI_EXECUTION 같은 안전 flag 는 본 workflow
+#     에서 변경 0건 — 빌드만 수행
+
+name: desktop-release
+
+on:
+  # 본 PR 시점: manual trigger only. 후속 PR 에서 `push: tags: 'v*'` 추가.
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag (예: v1.0.1-beta.1)"
+        required: true
+        type: string
+      draft:
+        description: "GitHub Release 를 draft 로 생성 (true 권장 — 운영자 수동 publish)"
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  build-windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    permissions:
+      contents: write   # release 업로드용
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ----- frontend 빌드 -----
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend lint + tests + build
+        working-directory: frontend
+        run: |
+          npm run lint
+          npm test
+          npm run build
+
+      # ----- Tauri / Rust 빌드 -----
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.toml') }}
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      # ----- (후속 PR) PyInstaller sidecar 빌드 자리 -----
+      # - name: Build backend sidecar (PyInstaller)
+      #   run: |
+      #     pip install -r backend/requirements.txt
+      #     pip install pyinstaller
+      #     pyinstaller --onefile --name agent-trader-backend \
+      #                 --distpath src-tauri/binaries backend/app/main.py
+
+      # ----- Tauri build (msi + nsis) -----
+      - name: Tauri build
+        env:
+          # 후속 PR: signing key 주입.
+          # TAURI_PRIVATE_KEY:    ${{ secrets.TAURI_PRIVATE_KEY }}
+          # TAURI_KEY_PASSWORD:   ${{ secrets.TAURI_KEY_PASSWORD }}
+          NODE_ENV: production
+        run: cargo tauri build
+
+      # ----- artifact 업로드 -----
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-trader-v1-windows-installer
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.nsis.zip
+            src-tauri/target/release/bundle/nsis/*.nsis.zip.sig
+          if-no-files-found: warn
+
+      # ----- GitHub Release draft 생성 -----
+      - name: Create GitHub Release (draft)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: "Agent Trader v1 — ${{ inputs.release_tag }}"
+          draft: ${{ inputs.draft }}
+          generate_release_notes: true
+          files: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.nsis.zip
+            src-tauri/target/release/bundle/nsis/*.nsis.zip.sig
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ----- (후속 PR) auto-updater latest.json 생성 / 업로드 자리 -----
+  # 본 PR 시점에는 updater 가 비활성 (pubkey 빈 값). 후속 PR 에서:
+  #   - tauri-action 또는 별도 script 가 latest.json (각 platform 의 url +
+  #     서명 + version) 을 생성
+  #   - 같은 release 에 첨부
