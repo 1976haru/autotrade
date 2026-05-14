@@ -228,6 +228,17 @@
 - DailyReportAgent / StrategyResearcherAgent / RiskAuditorAgent 자동 호출
 - multi-tag confidence weighting — tag 수가 아니라 강도 가중치
 
+## #81 Strategy Registry beginner metadata — 후속 (현재 6개 전략만)
+
+- 운영자가 UI 에서 beginner metadata 편집 (현재 코드 hard-coded)
+- displayName 다국어 (영문 fallback)
+- 전략별 backtest 결과 미니 카드 통합
+- 운영 노트 영구화 (DB 테이블)
+- displayName 변경 이력 audit
+- recommended_mode 자동 조정 (Strategy Researcher #55 연계)
+- Alpha Decay(#77) 결합 — DISABLE_CANDIDATE 전략 옆 *비활성 후보* 배지
+- 새 매매기법 추가는 *별도 PR* — 본 메타 정책은 그 PR 에서 1:1 일치 검증으로 자동 보호
+
 ## #80 Pre-market Checklist — 후속 (read-only, manual ack 비우회)
 
 - 자동 collector — `/api/status` + `/api/monitoring/health` + `/api/risk/policy`

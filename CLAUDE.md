@@ -337,6 +337,27 @@ settings mutate 0건 (정적 grep 가드). `CorrelationGuardResult.is_order_sign
 UI에 "주문 실행" / "정책 적용" / "ENABLE_*" 라벨 버튼 0개 (frontend 테스트로
 lock). 자세한 정책: [`docs/correlation_guard_policy.md`](docs/correlation_guard_policy.md).
 
+**#81 Strategy Registry beginner metadata**: 코드의 6개 strategy_id
+(`sma_crossover` / `rsi_reversion` / `vwap_strategy` / `orb_vwap` /
+`volume_breakout` / `pullback_rebreak`) 위에 *얇은 메타 레이어* —
+`app/strategies/registry_metadata.py`. displayName (한글) / beginnerName /
+description / risk_level (low/medium/high) / recommended_mode
+(paper_recommended / live_after_validation / live_caution) / supported_modes
+/ backtest_available / paper_trading_available /
+**live_trading_available=False 영구** (KIS live 미구현). API:
+`GET /api/strategies/beginner-registry` (기존 `/registry` 와 *별도*, 호환
+유지). UI: `StrategyRegistryCard` — displayName + `(internal_id)` *항상
+함께 노출* (운영자가 로그/audit 매핑 가능). **기존 매매 로직 0줄 변경**,
+**가짜 전략명 추가 영구 금지** (`골든브릿지` / `트라이앵글 전설` / `다이아
+전략` / `퀀텀 점프` / `황금알` / `100% 승률` / `guaranteed` /
+`magic strategy` 등 정적 grep 가드). `validate_metadata()` 가
+STRATEGY_REGISTRY 와 1:1 불일치를 즉시 검출. 본 모듈은 broker / OrderExecutor /
+route_order / paper_trader / 외부 HTTP / AI SDK import 0건, DB write 0건,
+`STRATEGY_REGISTRY[...] =` mutation 0건, `settings.enable_*` mutate 0건.
+UI 카드에 "전략 활성화 / 비활성화 / Apply Parameters / 주문 실행 / ENABLE_*"
+라벨 버튼 0개 — 운영은 기존 BotControl / LiveEngine 흐름에서. 자세한 정책:
+[`docs/strategy_registry.md`](docs/strategy_registry.md).
+
 **#80 Pre-market Checklist**: 장 시작 전 자동 점검 —
 `app/governance/pre_market_check.py::evaluate_pre_market_check`. 11 카테고리
 (api / db / broker / data / watchlist / strategy / risk / kill_switch /

@@ -160,6 +160,10 @@ export const backendApi = {
   // INFO grouped reasons + summary + final_status를 반환.
   explainSignal: (auditId) => backendFetch(`/api/signals/${auditId}/explain`),
   engineRegistry:  () => backendFetch("/api/strategies/registry"),
+  // 81: Beginner-friendly strategy metadata layer (read-only).
+  // 기존 매매 로직 0줄 변경 — displayName / beginnerName / riskLevel /
+  // supportedModes / live_trading_available 등 메타만 carry.
+  engineBeginnerRegistry: () => backendFetch("/api/strategies/beginner-registry"),
   engineStatus:    () => backendFetch("/api/strategies/status"),
   engineScoreboard: () => backendFetch("/api/strategies/scoreboard"),
   engineConfigure: (req) => backendFetch("/api/strategies/configure", {

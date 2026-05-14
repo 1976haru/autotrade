@@ -2277,3 +2277,105 @@ CLI exit code: 0=start_allowed=True / 1=False / 2=실행 오류.
 - Notification 연계 (DO_NOT_START 시 자동 알림)
 - BotControl 통합 (시작 버튼이 본 게이트 결과를 *직접* 참조하도록)
 - Strategy Researcher 연계 (반복 FAIL 패턴을 학습 자료로)
+
+---
+
+## #81 Strategy Registry beginner metadata (현재 6개 전략 정리)
+
+> 사용자 지시에 따라 *현재 코드에 실제 구현된* 6개 매매 전략에 한해, *기존
+> 매매 로직 0줄 변경* 으로 초보자용 메타데이터 레이어만 추가. 가짜 전략명 /
+> 경쟁 앱 표현 영구 금지.
+
+### 실제 확인된 매매기법 (6종)
+| internal id | 클래스 | displayName (한글) | 위험도 |
+|---|---|---|---|
+| `sma_crossover` | `SmaCrossoverStrategy` | 단기/장기 이동평균 교차 | 보통 |
+| `rsi_reversion` | `RsiReversionStrategy` | RSI 과매도/과매수 회복 | 보통 |
+| `vwap_strategy` | `VWAPStrategy` | VWAP 평균 회귀 | 보통 |
+| `orb_vwap` | `OrbVwapStrategy` | ORB + VWAP 돌파 | 높음 |
+| `volume_breakout` | `VolumeBreakoutStrategy` | 거래량 급증 돌파 | 높음 |
+| `pullback_rebreak` | `PullbackRebreakStrategy` | 눌림목 재돌파 | 높음 |
+
+### 제거한 예시 전략명 / 가짜 전략명 영구 금지
+- 본 PR 시점에 코드에 *원래부터 없던* 가짜 / 외부 앱식 전략명 — 따라서 제거할
+  대상이 없음. 단 영구 차단 패턴 (테스트로 lock): `골든브릿지` / `트라이앵글
+  전설` / `다이아 전략` / `퀀텀 점프` / `황금알` / `100% 승률` / `guaranteed` /
+  `magic strategy` 등.
+
+### 생성 / 수정 파일
+- `backend/app/strategies/registry_metadata.py` (신규) — `BeginnerMetadata` /
+  `RiskLevel` / `RecommendedMode` enum + `_BEGINNER_METADATA` 6 entry +
+  `list_beginner_registry()` / `validate_metadata()` / helpers
+- `backend/app/api/routes_live_engine.py` (수정) — `GET /api/strategies/beginner-registry` 추가
+- `backend/tests/test_strategy_registry_metadata.py` (신규, **23 PASS**)
+- `frontend/src/services/backend/client.js` (수정) — 1 helper 추가
+- `frontend/src/components/tabs/StrategyRegistryCard.jsx` (신규)
+- `frontend/src/components/tabs/StrategyRegistryCard.test.jsx` (신규, **10 PASS**)
+- `docs/strategy_registry.md` (신규)
+- `CLAUDE.md` / `README.md` / `docs/final_completion_summary.md` /
+  `docs/backlog.md` (수정)
+
+### 각 전략의 현재 연결 상태
+모든 전략 공통:
+- **백테스트**: ✅ 가용 (`app/backtest/engine.py` 통해)
+- **모의투자(Paper)**: ✅ 가용 (`MockBrokerAdapter` + `PaperTrader`)
+- **위험관리**: ✅ `route_order` → `RiskManager` (#34) 단일 진입점 경유
+- **실전투자(Live)**: 🛑 **모두 비활성** — `KisBrokerAdapter.place_order(is_paper=False)` 가 `NotImplementedError`. 본 메타가 그 상태를 carry.
+
+### 모의투자 / 백테스트 / 위험관리 연결 매트릭스
+| 전략 | 백테스트 | 모의 | LIVE_SHADOW | LIVE_MANUAL_APPROVAL | RiskManager |
+|---|---|---|---|---|---|
+| 6개 모두 | ✓ | ✓ | ✓ | (라우팅 가능, 실주문은 NotImpl) | ✓ 단일 진입점 |
+
+### UI 표시명 변경 내역
+| internal id (변경 X) | 기존 UI 표시 | 신규 UI 표시 |
+|---|---|---|
+| `sma_crossover` | `sma_crossover` (raw) | **단기/장기 이동평균 교차** (sma_crossover) |
+| `rsi_reversion` | `rsi_reversion` | **RSI 과매도/과매수 회복** (rsi_reversion) |
+| `vwap_strategy` | `vwap_strategy` | **VWAP 평균 회귀** (vwap_strategy) |
+| `orb_vwap` | `orb_vwap` | **ORB + VWAP 돌파** (orb_vwap) |
+| `volume_breakout` | `volume_breakout` | **거래량 급증 돌파** (volume_breakout) |
+| `pullback_rebreak` | `pullback_rebreak` | **눌림목 재돌파** (pullback_rebreak) |
+
+원칙: displayName 표시 + internal id 괄호 *항상 함께* — 운영자가 로그·audit과 매핑 가능.
+
+### 추가된 데이터 모델
+없음. *DB schema 변경 0건* — 본 PR은 메타데이터 in-memory 만 (코드 dict).
+
+### 테스트 결과
+- **신규 backend**: 23 PASS (6개 ID inventory 4 + content invariant 3 + safety
+  invariant 5 + 가짜 전략명 차단 1 + helper 2 + API 4 + 정적 grep 4)
+- **신규 frontend**: 10 PASS (6개 렌더 / displayName+internal id 함께 노출 /
+  위험도 / live=false / disclaimer / 활성화 버튼 0개 / 펼치기 / 가짜 전략명 0건 /
+  Secret 0건 / 가용 칩)
+- Regression: 기존 `/api/strategies/registry` endpoint 호환 (테스트 포함)
+- Ruff 신규 파일: clean
+
+### 안전 invariant (테스트로 lock)
+- ✓ STRATEGY_REGISTRY 와 beginner_metadata 1:1 일치
+- ✓ broker / OrderExecutor / route_order / paper_trader / 외부 HTTP / AI SDK import 0건
+- ✓ DB write 0건
+- ✓ `STRATEGY_REGISTRY[ ... ] = ...` / `.pop(` / `.update(` mutation 0건
+- ✓ `settings.enable_*_trading =` mutate 0건
+- ✓ `live_trading_available` 모든 전략 false 영구
+- ✓ `is_order_signal=False` / `auto_apply_allowed=False` / `is_investment_advice=False` 응답 entry 영구
+- ✓ UI 카드 "전략 활성화" / "비활성화" / "Apply Parameters" / "주문 실행" / "ENABLE_*" / "Place Order" / "실거래 활성화" 라벨 버튼 0개
+- ✓ UI / 응답 / 메타 텍스트에 가짜 전략명 0건 (`골든브릿지` / `퀀텀 점프` / `100% 승률` / `guaranteed` / `magic strategy` 등)
+
+### 실거래 / 자동 정책 변경 / 매매 로직 변경 금지 invariant — 본 PR 미변경
+- ✓ `ENABLE_LIVE_TRADING=false`, `ENABLE_AI_EXECUTION=false`, `ENABLE_FUTURES_LIVE_TRADING=false`
+- ✓ `app/strategies/concrete/*.py` 변경 0건 (6개 전략 로직 그대로)
+- ✓ `app/strategies/base.py` / `live_engine.py` / `quality.py` / `scoreboard.py` 변경 0건
+- ✓ `app/risk/*` / `app/execution/*` / `app/core/config.py` 변경 0건
+- ✓ `.env` / Secret / API Key / 계좌번호 변경 0건
+- ✓ 실제 broker / KIS / Anthropic / OpenAI 호출 0건
+- ✓ 절대 원칙 1~6 모두 유지
+
+### 남은 Strategy Registry backlog
+- 운영자가 직접 UI 에서 beginner metadata 편집 (현재 코드 hard-coded)
+- displayName 다국어 (영문 fallback)
+- 전략별 backtest 결과 미니 카드 통합
+- 운영 노트 영구화 (DB 테이블)
+- displayName 변경 이력 audit
+- `recommended_mode` 자동 조정 (Strategy Researcher #55 연계)
+- Alpha Decay (#77) 결합 — DISABLE_CANDIDATE 전략 옆에 *비활성 후보* 배지

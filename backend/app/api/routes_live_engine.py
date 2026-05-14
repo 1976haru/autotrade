@@ -156,6 +156,55 @@ def get_registry() -> list[StrategyDescription]:
     return [StrategyDescription(**d) for d in describe_all_strategies()]
 
 
+# ---------- #81 Beginner Registry (advisory metadata layer) ----------
+
+from app.strategies.registry_metadata import list_beginner_registry
+
+
+class BeginnerRegistryEntry(BaseModel):
+    """초보자용 displayName / 위험도 / 권장 모드 + 기존 contract metadata 합성.
+
+    *advisory only* — `is_order_signal=False` / `auto_apply_allowed=False` /
+    `is_investment_advice=False` invariant. 본 entry 는 *기존 매매 로직을
+    설명*하는 메타데이터일 뿐, 새 매매기법을 만들지 않는다.
+    """
+    strategy_id:              str
+    internal_name:            str
+    display_name:             str
+    beginner_name:            str
+    description:              str
+    risk_level:               str
+    recommended_mode:         str
+    typical_hold_minutes:     int | None = None
+    notes:                    list[str] = []
+
+    supported_modes:          list[str] = []
+    backtest_available:       bool = False
+    paper_trading_available:  bool = False
+    live_trading_available:   bool = False
+
+    entry_rule:               str | None = None
+    exit_rule:                str | None = None
+    invalidation:             str | None = None
+    required_regime:          str | None = None
+    risk_profile:             dict = {}
+    parameters:               list[dict] = []
+
+    is_order_signal:          bool = Field(False, description="invariant — 항상 false")
+    auto_apply_allowed:       bool = Field(False, description="invariant — 자동 적용 금지")
+    is_investment_advice:     bool = Field(False, description="invariant — 투자 조언 아님")
+
+
+@router.get("/beginner-registry", response_model=list[BeginnerRegistryEntry])
+def get_beginner_registry() -> list[BeginnerRegistryEntry]:
+    """초보자용 메타데이터 + 기존 contract metadata 통합.
+
+    기존 `/registry` 와 호환 — *별도 endpoint*. 본 endpoint 는 read-only.
+    어떤 mode / flag / 전략 로직도 변경하지 않는다.
+    """
+    return [BeginnerRegistryEntry(**d) for d in list_beginner_registry()]
+
+
 class ScoreboardEntry(BaseModel):
     strategy:  str
     # backtest aggregate (137)
