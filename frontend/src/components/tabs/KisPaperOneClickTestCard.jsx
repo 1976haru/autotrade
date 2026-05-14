@@ -1,8 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, SectionLabel } from "../common";
 import { backendApi } from "../../services/backend/client";
+import {
+  LAUNCHER_STATES,
+  isDesktopApp,
+  launcherStateColor,
+  startBackendPoll,
+  summarizeForCard,
+} from "../../desktop/backendLauncher";
 
 // #89 한투 모의투자 AI 자동매매 one-click 테스트 카드.
+// #90 데스크톱(EXE) 모드 보강 — backend sidecar 자동 실행 + 상태 표시.
 //
 // **주문이 아닙니다. 실제 돈이 나가지 않습니다.** 한투 모의투자 API 전용.
 // 사용자는 "테스트 시작" 만 누르며, 매수/매도 *수동 버튼* 은 0개.
@@ -52,6 +60,27 @@ function _Field({ label, value, testid, color }) {
       </span>
     </div>
   );
+}
+
+
+function useDesktopLauncher() {
+  // #90: backend sidecar 자동 실행 상태. 데스크톱 모드가 아니어도 *backend
+  // 연결 polling* 은 유용 — 브라우저 dev 환경에서 backend 시작 여부를 같이 표시.
+  const [snapshot, setSnapshot] = useState(null);
+  const ctlRef = useRef(null);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    const ctl = startBackendPoll({
+      intervalMs: 1500,
+      timeoutMs:  30_000,
+      onUpdate: setSnapshot,
+    });
+    ctlRef.current = ctl;
+    return () => { try { ctl.cancel(); } catch { /* ignore */ } };
+  }, []);
+
+  return summarizeForCard(snapshot);
 }
 
 
@@ -149,6 +178,9 @@ export function KisPaperOneClickTestCard() {
     requestStart, cancelStart, confirmStart, stop,
   } = useKisPaperTest();
 
+  // #90: 데스크톱(EXE) 모드 + backend sidecar 연결 상태.
+  const launcher = useDesktopLauncher();
+
   const state = status?.state || "IDLE";
   const isRunning = state === "RUNNING";
 
@@ -176,6 +208,38 @@ export function KisPaperOneClickTestCard() {
         이 화면은 한투 모의투자 전용입니다. 실제 돈이 나가지 않습니다. 모든
         주문은 RiskManager + PermissionGate + OrderExecutor 경로를 지나가며,
         KIS_IS_PAPER=true / ENABLE_LIVE_TRADING=false 가 강제됩니다.
+        실전 전환은 별도 승인 절차가 필요합니다.
+      </div>
+
+      {/* #90: 데스크톱(EXE) 모드 + backend sidecar 연결 상태. */}
+      <div data-testid="kis-paper-desktop-launcher"
+           style={{ marginBottom: 8, padding: "6px 8px",
+                     background: "#0c2035", borderRadius: 4,
+                     color: "#cbd5e1", fontSize: "var(--fs-xs)",
+                     lineHeight: 1.5, border: "1px solid #1e3a5c" }}>
+        <div style={{ display: "flex", justifyContent: "space-between",
+                       alignItems: "baseline", marginBottom: 4 }}>
+          <span style={{ fontWeight: 700, color: "#7dd3fc" }}>
+            🖥 데스크톱 앱 상태
+          </span>
+          <span data-testid="kis-paper-desktop-mode-flag"
+                style={{ fontSize: 10,
+                          color: launcher.desktopMode ? "#22c55e" : "#94a3b8" }}>
+            {launcher.desktopMode
+              ? "EXE 데스크톱 모드 — 백엔드가 자동으로 실행됩니다"
+              : "브라우저 모드 — 백엔드는 수동으로 실행"}
+          </span>
+        </div>
+        <_Field label="백엔드 연결 상태"
+                value={launcher.label}
+                testid="kis-paper-launcher-state"
+                color={launcherStateColor(launcher.state)} />
+        {launcher.hint && (
+          <div data-testid="kis-paper-launcher-hint"
+               style={{ marginTop: 4, fontSize: 10, color: "#94a3b8" }}>
+            {launcher.hint}
+          </div>
+        )}
       </div>
 
       {/* 준비 상태 */}
