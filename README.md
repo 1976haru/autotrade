@@ -78,6 +78,7 @@ npm run dev -- --host 0.0.0.0
 - 🔐 [`docs/security_scan.md`](docs/security_scan.md) — **Secret / 인증서 / 번들 누출 정적 스캐너** + fake placeholder 표준 + CI 자동 회귀 차단 (#93)
 - ⏱️ [`docs/alpha_decay.md`](docs/alpha_decay.md) — **신호 단위 알파 감쇠** advisory 분석 (1m~60m bucket) + EXPIRED 신호 신규 진입 금지 안내 (#94, #77 전략 단위와 별개)
 - 🔗📊 [`docs/correlation_guard.md`](docs/correlation_guard.md) — **포트폴리오 수익률 상관관계** advisory (Pearson 매트릭스) + BLOCK 시 신규 진입 권고 차단 (#95, #78 sector/theme cap 과 별개)
+- 🏷️🧠 [`docs/loss_tagging.md`](docs/loss_tagging.md) — **결정/실행 단계 손실 원인 root cause** 추정 태깅 (16 tag × 5 cat) + AI Agent 학습 자료 (#96, #79 post-trade 와 별개)
 - 📦 [`docs/beta_distribution_plan.md`](docs/beta_distribution_plan.md) — 베타테스터 배포 + Tauri / Electron
 - 🔄 [`docs/auto_update_plan.md`](docs/auto_update_plan.md) — Phase 1-2-3 단계별 업데이트
 - 🔒 [`docs/local_security_policy.md`](docs/local_security_policy.md) — Secret hygiene + Tailscale + 사고 대응

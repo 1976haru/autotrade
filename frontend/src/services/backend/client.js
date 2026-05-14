@@ -514,6 +514,18 @@ export const backendApi = {
       method: "POST",
       body: JSON.stringify(body || {}),
     }),
+  // 96: Loss Root Cause Tagging — 결정/실행 단계 손실 원인 *추정* 태깅 (read-only).
+  // 본 결과는 추정 태그이며 확정 원인 아님. AI Agent 성능 개선 학습 자료.
+  lossRootCauseEvaluate: (body) =>
+    backendFetch("/api/analytics/loss-root-cause/evaluate", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
+  lossRootCauseSummarize: (body) =>
+    backendFetch("/api/analytics/loss-root-cause/summarize", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
   lossTagsSummary: ({ days = 7, strategy = null } = {}) => {
     const qs = new URLSearchParams({ days: String(days) });
     if (strategy) qs.set("strategy", strategy);
