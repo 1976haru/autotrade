@@ -85,3 +85,13 @@ src-tauri/gen/
 *.nsis
 *.dmg
 *.pkg
+
+# ---------- Desktop sidecar binaries (#90) ----------
+# backend PyInstaller 산출물. scripts/build_backend_sidecar.ps1 가 생성.
+# 빌드 머신마다 산출 — git 에 올리지 않는다 (재현은 build script 로).
+# 단, README.md 는 디렉토리 의도 + 안전 invariant 설명을 git 에 보존.
+src-tauri/binaries/*
+!src-tauri/binaries/README.md
+backend/dist/
+backend/build/
+backend/autotrade-backend.spec

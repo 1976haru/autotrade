@@ -25,6 +25,35 @@ vi.mock("../../services/backend/client", () => ({
   },
 }));
 
+// #90: backendLauncher 는 setTimeout 기반 polling 을 시작 — 본 카드 단위 테스트
+// 에서는 polling 을 *비활성* 화하고 deterministic 한 stub snapshot 만 사용.
+vi.mock("../../desktop/backendLauncher", () => ({
+  LAUNCHER_STATES: {
+    IDLE: "IDLE", CONNECTING: "CONNECTING", READY: "READY",
+    NEEDS_ENV: "NEEDS_ENV", UNSAFE: "UNSAFE", FAILED: "FAILED",
+  },
+  isDesktopApp:       () => false,
+  launcherStateColor: () => "#22c55e",
+  launcherStateLabel: (s) => `state:${s}`,
+  // startBackendPoll 은 no-op stub — onUpdate 한 번 호출 후 cancel.
+  startBackendPoll: ({ onUpdate } = {}) => {
+    if (typeof onUpdate === "function") {
+      onUpdate({ state: "READY", elapsedMs: 0 });
+    }
+    return { cancel: () => {} };
+  },
+  summarizeForCard: (snap) => ({
+    desktopMode: false,
+    state: snap?.state || "IDLE",
+    label: `state:${snap?.state || "IDLE"}`,
+    color: "#22c55e",
+    canStartTest: snap?.state === "READY" || snap?.state === "NEEDS_ENV",
+    hint: snap?.state === "READY"
+      ? "한투 모의 빠른 점검 시작 버튼을 누를 수 있습니다."
+      : "",
+  }),
+}));
+
 import { backendApi } from "../../services/backend/client";
 import { KisPaperOneClickTestCard } from "./KisPaperOneClickTestCard";
 
@@ -322,5 +351,44 @@ describe("KisPaperOneClickTestCard — invariant", () => {
     // input / textarea 어떤 것도 — secret 입력 UI 0개.
     expect(container.querySelectorAll("input").length).toBe(0);
     expect(container.querySelectorAll("textarea").length).toBe(0);
+  });
+});
+
+
+// ====================================================================
+// 6. #90 데스크톱(EXE) launcher 상태 블록
+// ====================================================================
+
+
+describe("KisPaperOneClickTestCard — #90 데스크톱 launcher", () => {
+  it("데스크톱 launcher 블록 렌더링 + 'EXE 데스크톱 모드' / '브라우저 모드' 표시", async () => {
+    const { getByTestId } = render(<KisPaperOneClickTestCard />);
+    expect(getByTestId("kis-paper-desktop-launcher")).toBeTruthy();
+    // mocked isDesktopApp → false 이므로 "브라우저 모드" 노출.
+    expect(getByTestId("kis-paper-desktop-mode-flag").textContent).toContain("브라우저 모드");
+  });
+
+  it("백엔드 연결 상태 라벨 노출", async () => {
+    const { getByTestId } = render(<KisPaperOneClickTestCard />);
+    await waitFor(() => {
+      expect(getByTestId("kis-paper-launcher-state").textContent).toContain("state:READY");
+    });
+  });
+
+  it("notice 에 '실전 전환은 별도 승인 절차가 필요' 문구 포함", async () => {
+    const { getByTestId } = render(<KisPaperOneClickTestCard />);
+    const notice = getByTestId("kis-paper-notice").textContent;
+    expect(notice).toContain("실전 전환은 별도 승인 절차가 필요");
+  });
+
+  it("desktop launcher 블록에 '실거래 시작' / 'Place Order' 라벨 button 0개", async () => {
+    const { getByTestId } = render(<KisPaperOneClickTestCard />);
+    const block = getByTestId("kis-paper-desktop-launcher");
+    const buttons = block.querySelectorAll("button");
+    expect(buttons.length).toBe(0);
+    const text = (block.textContent || "").toLowerCase();
+    for (const banned of ["place order", "지금 매수", "지금 매도", "실거래 시작", "live 켜기"]) {
+      expect(text).not.toContain(banned.toLowerCase());
+    }
   });
 });
