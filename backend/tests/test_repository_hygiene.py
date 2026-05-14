@@ -380,6 +380,229 @@ def test_sw_js_blocks_api_caching():
 # ====================================================================
 
 
+# ====================================================================
+# 15-23. #93 Security scan 보강 — EXE / MSI / sidecar bundle / fake secret
+# ====================================================================
+
+
+def test_gitignore_blocks_certificate_and_key_files():
+    """*.pem / *.key / *.p12 / *.pfx / *.crt 가 .gitignore 에 의해 추적 제외.
+
+    본 PR 시점에는 *.pem 과 *.key 가 명시. 추가 keystore 형식도 별도로 ignore
+    되거나 .gitignore 에 명시적 항목이 있어야 한다.
+    """
+    src = _read(_GITIGNORE)
+    lines = [ln.strip() for ln in src.splitlines()]
+    # 핵심 두 가지는 반드시 — 추가 keystore 형식은 향후 PR 에서.
+    assert "*.pem" in lines, ".gitignore 에 '*.pem' 명시 필요"
+    assert "*.key" in lines, ".gitignore 에 '*.key' 명시 필요"
+
+
+def test_gitignore_blocks_installer_and_bundle_artifacts():
+    """`.msi` / `.nsis` / `*-setup.exe` (Tauri / NSIS bundle) 가 .gitignore 차단.
+
+    실거래 secret 이 install bundle 에 포함될 위험을 줄이기 위해 *artifact 자체*
+    를 추적 대상에서 제외.
+    """
+    src = _read(_GITIGNORE)
+    lines = [ln.strip() for ln in src.splitlines()]
+    for needle in ("*.msi", "*.nsis", "*.dmg", "*.pkg"):
+        assert needle in lines, f".gitignore 에 '{needle}' 명시 필요"
+
+
+def test_gitignore_blocks_pyinstaller_sidecar_outputs():
+    """backend/dist/ + backend/build/ + autotrade-backend.spec 차단."""
+    src = _read(_GITIGNORE)
+    lines = [ln.strip() for ln in src.splitlines()]
+    assert "backend/dist/" in lines
+    assert "backend/build/" in lines
+    assert "backend/autotrade-backend.spec" in lines
+
+
+def test_gitignore_blocks_tauri_sidecar_binaries_keeps_readme():
+    """src-tauri/binaries/ 의 *.exe 는 차단, README.md 는 allowlist."""
+    src = _read(_GITIGNORE)
+    lines = [ln.strip() for ln in src.splitlines()]
+    assert "src-tauri/binaries/*" in lines
+    assert "!src-tauri/binaries/README.md" in lines
+
+
+def test_no_certificate_or_keystore_files_tracked():
+    """`git ls-files` 결과에 *.pem / *.key / *.p12 / *.pfx / *.crt 등 0건."""
+    import subprocess
+    try:
+        out = subprocess.check_output(
+            ["git", "ls-files"], cwd=str(_ROOT),
+            text=True, encoding="utf-8", errors="replace",
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pytest.skip("git 미설치 또는 repo 아님")
+
+    tracked = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    suspicious_exts = (".pem", ".key", ".p12", ".pfx", ".crt", ".cer",
+                       ".keystore", ".jks", ".pkcs12")
+    leaks = [p for p in tracked if any(p.endswith(ext) for ext in suspicious_exts)]
+    # 본 패턴에 매칭되는 파일이 commit 됐다면 즉시 차단.
+    assert leaks == [], f"인증서/키 파일이 git 추적 대상에 있음: {leaks}"
+
+
+def test_no_installer_or_bundle_artifacts_tracked():
+    """`*.msi` / `*-setup.exe` / `*.dmg` / `backend/dist/*.exe` 등 0건."""
+    import subprocess
+    try:
+        out = subprocess.check_output(
+            ["git", "ls-files"], cwd=str(_ROOT),
+            text=True, encoding="utf-8", errors="replace",
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pytest.skip("git 미설치 또는 repo 아님")
+
+    tracked = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    forbidden_patterns = (
+        ".msi", ".nsis", ".dmg", ".pkg", "-setup.exe",
+    )
+    leaks = []
+    for p in tracked:
+        for pat in forbidden_patterns:
+            if p.endswith(pat):
+                leaks.append(p)
+                break
+        # backend/dist/ 또는 src-tauri/binaries/*.exe 추적 여부.
+        if p.startswith("backend/dist/"):
+            leaks.append(p)
+        if p.startswith("src-tauri/binaries/") and p.endswith(".exe"):
+            leaks.append(p)
+
+    assert leaks == [], (
+        f"installer / bundle artifact 가 git 추적 대상에 있음: {leaks}"
+    )
+
+
+def test_no_dotenv_file_tracked_only_examples():
+    """`.env` / `backend/.env` / `frontend/.env` 추적 0건 — `.env.example` 만 OK."""
+    import subprocess
+    try:
+        out = subprocess.check_output(
+            ["git", "ls-files"], cwd=str(_ROOT),
+            text=True, encoding="utf-8", errors="replace",
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pytest.skip("git 미설치 또는 repo 아님")
+
+    tracked = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    leaks = []
+    for p in tracked:
+        # 정확한 파일명 매칭 — example / staging.example 은 허용.
+        base = p.rsplit("/", 1)[-1]
+        if base in (".env", ".env.local"):
+            leaks.append(p)
+    assert leaks == [], f".env 파일이 git 추적 대상에 있음: {leaks}"
+
+
+def test_security_scan_script_exists_and_runs_clean():
+    """`scripts/security_scan.py` 가 존재 + 현재 main 기준 finding 0건.
+
+    본 테스트는 보안 회귀 방지 — 누가 secret 을 commit 하려고 하면 본
+    테스트가 실패한다 (test_repository_hygiene 가 CI 에서 매번 실행됨).
+    """
+    import subprocess
+    script_path = _ROOT / "scripts" / "security_scan.py"
+    assert script_path.exists(), "scripts/security_scan.py 가 없음"
+    assert script_path.stat().st_size > 1000, (
+        "security_scan.py 가 비정상적으로 작음 — 누락 의심"
+    )
+    try:
+        proc = subprocess.run(
+            [
+                str(__import__("sys").executable),
+                str(script_path),
+                "--format", "json",
+                "--output", str(_ROOT / ".security_scan_test_output.json"),
+            ],
+            cwd=str(_ROOT),
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=60,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pytest.skip("security_scan.py 실행 환경 부적합")
+
+    out_file = _ROOT / ".security_scan_test_output.json"
+    try:
+        assert out_file.exists(), (
+            f"security_scan.py 가 output 파일을 만들지 못함. stderr: {proc.stderr}"
+        )
+        import json as _json
+        result = _json.loads(out_file.read_text(encoding="utf-8"))
+    finally:
+        if out_file.exists():
+            out_file.unlink()
+
+    # finding 0건 이어야 함 — 새 secret commit 시 본 테스트가 실패.
+    findings = result.get("findings", [])
+    if findings:
+        details = "\n".join(
+            f"  {f['path']}:{f['line']} [{f['severity']}] {f['rule']}: {f['snippet']}"
+            for f in findings
+        )
+        pytest.fail(
+            f"security_scan.py 가 {len(findings)} findings 검출:\n{details}"
+        )
+
+    # exit code 0 (clean) 확인.
+    assert proc.returncode == 0, (
+        f"security_scan.py exit code {proc.returncode}: "
+        f"stdout={proc.stdout!r}, stderr={proc.stderr!r}"
+    )
+
+
+def test_fake_secrets_module_has_clear_markers():
+    """tests/_fake_secrets.py 의 모든 placeholder 가 'FAKE'/'PLACEHOLDER'/'0000'
+    중 하나를 포함해 *진짜 secret 과 구분 가능*.
+
+    본 self-check 는 다음을 보장한다:
+    1. 신규 테스트가 본 모듈의 상수를 import 해서 쓸 때 — 패턴이 일관적.
+    2. 누군가 실수로 _fake_secrets.py 의 placeholder 를 진짜 secret 으로 바꿔
+       commit 하지 못하도록.
+    """
+    from tests._fake_secrets import assert_all_placeholders_contain_fake_marker
+    # 본 함수가 ValueError / AssertionError 를 던지면 본 테스트 실패.
+    assert_all_placeholders_contain_fake_marker()
+
+
+def test_no_real_kis_token_pattern_tracked():
+    """KIS Personal Secret Token (PST + 20+) 형식 추적 0건."""
+    import subprocess
+    try:
+        out = subprocess.check_output(
+            ["git", "ls-files"], cwd=str(_ROOT),
+            text=True, encoding="utf-8", errors="replace",
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pytest.skip("git 미설치 또는 repo 아님")
+
+    tracked = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    pst_pattern = re.compile(r"\bPST[A-Z0-9]{20,}\b")
+    leaks: list[tuple[str, str]] = []
+    for p in tracked:
+        full = _ROOT / p
+        if not full.exists() or full.is_dir():
+            continue
+        # binary 파일 스킵.
+        try:
+            text = full.read_text(encoding="utf-8", errors="strict")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for m in pst_pattern.finditer(text):
+            leaks.append((p, m.group()[:6] + "...REDACTED"))
+    assert leaks == [], f"KIS PST 토큰 추적 의심: {leaks}"
+
+
+# ====================================================================
+# self-validation (#88 — 본 테스트가 broker 0건)
+# ====================================================================
+
+
 def test_this_test_file_does_not_actually_import_broker_modules():
     """본 hygiene 테스트 자체가 broker / OrderExecutor / route_order *runtime
     import* 가 없는지 검사 — module __dict__ 를 확인.

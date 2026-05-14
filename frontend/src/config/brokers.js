@@ -17,7 +17,7 @@ export const BROKERS = {
     fields: [
       { key: "appKey",    label: "App Key",   type: "text" },
       { key: "appSecret", label: "App Secret",type: "password" },
-      { key: "accountNo", label: "계좌번호",  type: "text", placeholder: "12345678-01" },
+      { key: "accountNo", label: "계좌번호",  type: "text", placeholder: "12345678-01" },  // security-scan: ignore (UI placeholder, not a real account)
     ],
     note: "미래에셋 OpenAPI | REST | 모의투자 지원",
   },
@@ -36,7 +36,7 @@ export const BROKERS = {
     fields: [
       { key: "appKey",    label: "App Key",   type: "text" },
       { key: "appSecret", label: "App Secret",type: "password" },
-      { key: "accountNo", label: "계좌번호",  type: "text", placeholder: "50123456-01" },
+      { key: "accountNo", label: "계좌번호",  type: "text", placeholder: "50123456-01" },  // security-scan: ignore (UI placeholder, not a real account)
     ],
     note: "KIS Developers | REST API | 문서 최충실",
   },
