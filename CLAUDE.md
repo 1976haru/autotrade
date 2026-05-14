@@ -402,6 +402,40 @@ OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client` /
 0건, storage 는 `db.delete(` / `DELETE FROM` 0건. 자세한 정책:
 [`docs/loss_tagging_policy.md`](docs/loss_tagging_policy.md).
 
+**#93 Security Scan 보강 (secret / 인증서 / 번들 누출 차단)**: secret 탐지 +
+인증서/키 파일 + EXE/MSI/sidecar bundle artifact + `.env` 실제 파일 추적을
+*read-only* 검출하는 통합 보안 스캐너. 신규 `scripts/security_scan.py` (744
+tracked file 스캔 시 sub-second) — 20+ 패턴 (`openai_api_key` /
+`anthropic_api_key` / `github_pat` / `slack_token` / `telegram_bot_token` /
+`aws_access_key` / `gcp_api_key` / `kis_personal_secret_token` / `jwt_token` /
+`bearer_long_token` / `korean_bank_account` / `credit_card` 등) + `.env` 의
+실제 secret 값 / `ENABLE_LIVE_TRADING=true` / `ENABLE_AI_EXECUTION=true` /
+`ENABLE_FUTURES_LIVE_TRADING=true` / `KIS_IS_PAPER=false` 값 측 매칭. 4단계
+severity (`HIGH` / `MEDIUM` / `LOW` / `INFO`) + 마스킹된 snippet 출력 (head 4
++ "..." + tail 4 — 진짜 secret 도 출력 노출 0건). False positive 처리:
+*디렉토리 단위 allowlist* (`backend/tests/**` / `docs/**` / `assets/**` /
+`frontend/src/**/*.test.*`) + *라인 단위 ignore 마커* (`# security-scan: ignore`
+또는 `// security-scan: ignore`) + `.env.example` placeholder 패턴 (빈 값 /
+`여기에` / `your-` / `<...>`). `frontend/src/config/brokers.js` 의 UI
+placeholder (8자리 + 2자리 계좌번호 예시) 2건은 line 단위 ignore 마커 추가 — 원본 파일 + bundled `assets/index-*.js` 모두 clean. 신규
+`backend/tests/_fake_secrets.py` — 테스트 fake placeholder 단일 진실 (모든
+값이 `FAKE-` / `PLACEHOLDER` / `0000` 마커 포함, `assert_all_placeholders_contain_fake_marker()`
+self-check). `backend/tests/test_repository_hygiene.py` 보강 — 9개 신규 case
+(`test_gitignore_blocks_certificate_and_key_files` / `_blocks_installer_and_bundle_artifacts`
+/ `_blocks_pyinstaller_sidecar_outputs` / `_blocks_tauri_sidecar_binaries_keeps_readme`
+/ `test_no_certificate_or_keystore_files_tracked` / `_no_installer_or_bundle_artifacts_tracked`
+/ `_no_dotenv_file_tracked_only_examples` / `test_security_scan_script_exists_and_runs_clean`
+/ `test_fake_secrets_module_has_clear_markers` / `test_no_real_kis_token_pattern_tracked`),
+매 CI 실행마다 본 스캐너를 subprocess 로 호출해 finding 0건 검증 — 신규 secret
+commit 시도 시 회귀 차단. 본 PR 시점 `git ls-files` 744 파일 스캔 결과 finding
+0건 (initial false positive 4건은 brokers.js 의 UI placeholder 라인 마커 +
+`assets/**` skip_glob 으로 제거). 본 모듈은 broker / OrderExecutor / route_order
+/ DB / 외부 HTTP / AI SDK import 0건, read-only — 어떤 파일도 *수정하지
+않는다*. 안전 flag (`KIS_IS_PAPER=true` / `ENABLE_LIVE_TRADING=false` /
+`ENABLE_AI_EXECUTION=false` / `ENABLE_FUTURES_LIVE_TRADING=false`) default 변경
+0건, 출금 기능 추가 0건. 자세한 정책 / 패턴 카탈로그 / 확장 가이드:
+[`docs/security_scan.md`](docs/security_scan.md).
+
 **#92 Release Readiness Report (advisory meta-aggregator)**: 운영자가 "지금 새
 릴리스 태그를 찍어도 되는가 / 다음 promotion 단계로 검토 가능한가" 를 판단할 수
 있는 *단일 advisory 리포트* — `app/governance/release_readiness.py`. 기존

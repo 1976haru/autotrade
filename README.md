@@ -73,6 +73,9 @@ npm run dev -- --host 0.0.0.0
 - 🧪 [`docs/kis_paper_oneclick.md`](docs/kis_paper_oneclick.md) — 한투 모의투자 AI 자동매매 *원클릭* 테스트 (3 모드 / 점수판 / 안전 invariant) (#89)
 - 💻 [`docs/desktop_exe_status.md`](docs/desktop_exe_status.md) — Windows installer 빌드 상태 + Rust 툴체인 점검 결과 (#89, #90 갱신)
 - 🚀 [`docs/exe_oneclick_installation.md`](docs/exe_oneclick_installation.md) — **EXE 원클릭 설치 + 한투 모의 테스트 흐름** — 베타테스터 / 지인 배포 가이드 (#90)
+- 🚦 [`docs/pre_market_checklist.md`](docs/pre_market_checklist.md) — Pre-market Checklist 초보자 흐름 (#91)
+- 📊 [`docs/release_readiness_policy.md`](docs/release_readiness_policy.md) — Release Readiness Report advisory meta-aggregator (실거래 허가 아님) (#92)
+- 🔐 [`docs/security_scan.md`](docs/security_scan.md) — **Secret / 인증서 / 번들 누출 정적 스캐너** + fake placeholder 표준 + CI 자동 회귀 차단 (#93)
 - 📦 [`docs/beta_distribution_plan.md`](docs/beta_distribution_plan.md) — 베타테스터 배포 + Tauri / Electron
 - 🔄 [`docs/auto_update_plan.md`](docs/auto_update_plan.md) — Phase 1-2-3 단계별 업데이트
 - 🔒 [`docs/local_security_policy.md`](docs/local_security_policy.md) — Secret hygiene + Tailscale + 사고 대응
