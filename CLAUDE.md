@@ -402,6 +402,38 @@ OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client` /
 0건, storage 는 `db.delete(` / `DELETE FROM` 0건. 자세한 정책:
 [`docs/loss_tagging_policy.md`](docs/loss_tagging_policy.md).
 
+**#91 Pre-market Checklist 확장 (Desktop EXE / KIS Paper one-click 흐름)**: 기존
+#80 `evaluate_pre_market_check` 위에 *데스크톱 / KIS Paper 특화 점검 항목*을
+추가한 확장 — 신규 모듈 생성 0건, 동일 `app/governance/pre_market_check.py` 에
+필드 / 카테고리 / check item *얹기*. 신규 `CheckCategory` 2종(`DESKTOP` / `KIS_PAPER`,
+기존 11 카테고리 유지). 신규 input 필드 7종(`desktop_mode` / `desktop_sidecar_connected`
+/ `desktop_status_endpoint_ok` / `kis_paper_ready` / `kis_paper_can_run_mock` /
+`kis_paper_can_run_kis` / `kis_paper_blocked_reasons`). 신규 result 필드 1종
+(`kis_paper_test_allowed: bool` — `start_allowed=True` AND KIS Paper / Mock 중
+하나 이상 가능할 때만 True, `desktop_mode=False` 면 항상 False). 신규 check
+items 9종 — *초보자 안전 flag proactive checks 4종*(`kis_is_paper_safety` /
+`enable_live_trading_safety` / `enable_ai_execution_safety` / `enable_futures_safety`,
+SIM/PAPER/LIVE_SHADOW 한정으로 `.env` 의 안전 flag *비활성* 상태를 검증 — 기존 #80
+의 LIVE invariant 와 *반대 방향*) + *desktop 2종*(`desktop_sidecar` /
+`desktop_status_endpoint`, DESKTOP 카테고리, `desktop_mode=True` 한정) + *KIS Paper
+3종*(`kis_paper_readiness` / `kis_paper_capability`, KIS_PAPER 카테고리, blocked
+사유는 라벨만 carry — secret 원문 0건). Frontend `PreMarketCheckCard` 확장 —
+desktop / kis_paper 카테고리 항목 포함 시 *KIS Paper test 활성화 게이트 배너*
+(`pre-market-kis-paper-test-gate` testid) 표시, `DO_NOT_START` 시 *초보자 안내 블록*
+(`pre-market-beginner-help` testid)에 `.env` 4개 flag 점검 가이드. `KisPaperOneClickTestCard`
+옵션 prop `preMarketCheckResult` 추가 — 있을 때만 `start_allowed=false` 면 quick /
+slow / mock 3개 시작 버튼 모두 disabled + 차단 배너 (backwards compat 유지). 절대
+invariant: 본 카드 `input` / `textarea` 0개 (secret 입력 form 미허용), "실거래
+시작" / "지금 매수" / "Place Order" / "ENABLE_*" 라벨 button 0개, `.env` 자동 수정
+0건 (수정 안내만), `kis_paper_blocked_reasons` 는 라벨만 carry (KIS App Key / Secret
+/ 계좌번호 / Anthropic Key 원문 0건). 본 모듈은 broker / OrderExecutor / route_order /
+paper_trader / `app.ai.assist` / `app.ai.client` / `anthropic` / `openai` / `httpx` /
+`requests` / `app.core.config.get_settings` import 0건 유지 (정적 grep 가드), DB write
+0건, `settings.enable_*_trading =` mutate 0건. 38개 신규 테스트 PASS(backend 22 +
+frontend Card 10 + frontend KisPaper 6) + 기존 95개 회귀 0건(backend 41 + Card 10 +
+KisPaper 19). 자세한 정책: [`docs/pre_market_check_policy.md`](docs/pre_market_check_policy.md)
+§10-A, [`docs/pre_market_checklist.md`](docs/pre_market_checklist.md).
+
 **#89 KIS Paper one-click test + EXE 상태 점검**: 한투 모의투자 API 를 사용한
 *원클릭* AI 자동매매 모의 테스트 orchestration. 사용자는 "준비상태 확인" 후
 *확인 모달* 을 거쳐 "한투 모의 빠른 점검 시작" / "한투 모의 느린 스트레스 시작"

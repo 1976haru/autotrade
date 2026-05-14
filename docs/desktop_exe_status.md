@@ -312,6 +312,22 @@ release 컴파일) 소요 예상. WiX / NSIS 는 Tauri v2 가 첫 빌드 시 `bu
   GitHub Actions Windows runner 에서 빌드 → Release artifact 첨부.
 - (c) backend sidecar 산출물 (`autotrade-backend.exe` 83.7 MiB) 만 별도 검증/사용 가능.
 
+## 8-A. #91 Pre-market Checklist 통합 (2026-05-14)
+
+EXE 가 있든 없든 사용자가 **실행 전 단계에서 안전 점검을 받도록** Pre-market
+Checklist (#80) 를 desktop / KIS Paper 흐름에 맞춰 확장 (#91). 본 PR 의 EXE
+산출물 빌드 가능 여부와 무관하게, *모든 베타테스터 흐름*에 적용된다.
+
+| 흐름 | Pre-market Checklist 표시 위치 | 영향 |
+|---|---|---|
+| EXE 정상 빌드 + 설치 | 대시보드 메인 화면 상단 카드 | KIS Paper One-Click Test 시작 버튼이 verdict 에 따라 활성/비활성 |
+| EXE 없이 `start_kis_paper_test_windows.bat` 흐름 | 브라우저 (`http://localhost:5173`) 대시보드 상단 카드 | 동일 |
+| 백엔드 + frontend 수동 실행 (개발자) | 동일 | 동일 |
+
+추가 정보:
+- 정책 원문: [`docs/pre_market_check_policy.md`](pre_market_check_policy.md) §10-A
+- 초보자 흐름 요약: [`docs/pre_market_checklist.md`](pre_market_checklist.md)
+
 ## 9. 참고
 
 - [`docs/desktop_packaging.md`](desktop_packaging.md) — #86 패키징 설계
@@ -319,6 +335,8 @@ release 컴파일) 소요 예상. WiX / NSIS 는 Tauri v2 가 첫 빌드 시 `bu
 - [`docs/beta_tester_install_guide.md`](beta_tester_install_guide.md) — #86 일반 설치 가이드
 - [`docs/exe_oneclick_installation.md`](exe_oneclick_installation.md) — **#90 초보자 / 지인 배포 가이드** (신규)
 - [`docs/kis_paper_oneclick.md`](kis_paper_oneclick.md) — #89 KIS 모의투자 one-click 테스트 정책
+- [`docs/pre_market_check_policy.md`](pre_market_check_policy.md) — #80 + **#91 확장** 정책
+- [`docs/pre_market_checklist.md`](pre_market_checklist.md) — **#91 초보자 흐름 요약** (신규)
 - [`scripts/start_kis_paper_test_windows.bat`](../scripts/start_kis_paper_test_windows.bat)
   / [`.ps1`](../scripts/start_kis_paper_test_windows.ps1) — EXE 없는 실행 보조 (#89)
 - [`scripts/build_backend_sidecar.ps1`](../scripts/build_backend_sidecar.ps1) — **#90 sidecar PyInstaller 빌드** (신규)

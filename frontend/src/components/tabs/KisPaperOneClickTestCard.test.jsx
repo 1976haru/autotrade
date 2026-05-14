@@ -392,3 +392,101 @@ describe("KisPaperOneClickTestCard — #90 데스크톱 launcher", () => {
     }
   });
 });
+
+
+// ====================================================================
+// #91 — Pre-market Checklist 결과로 시작 버튼 게이트
+// ====================================================================
+
+
+describe("KisPaperOneClickTestCard — #91 Pre-market Checklist 게이트", () => {
+  it("#91 — preMarketCheckResult.start_allowed=false 시 3개 start 버튼 모두 disabled", async () => {
+    const { getByTestId } = render(
+      <KisPaperOneClickTestCard
+        preMarketCheckResult={{
+          start_allowed: false,
+          verdict: "DO_NOT_START",
+          kis_paper_test_allowed: false,
+        }}
+      />,
+    );
+    await waitFor(() => {
+      expect(getByTestId("kis-paper-btn-start-quick").disabled).toBe(true);
+    });
+    expect(getByTestId("kis-paper-btn-start-slow").disabled).toBe(true);
+    expect(getByTestId("kis-paper-btn-start-mock").disabled).toBe(true);
+  });
+
+  it("#91 — preMarketCheckResult.start_allowed=false 시 차단 안내 배너 노출", async () => {
+    const { getByTestId } = render(
+      <KisPaperOneClickTestCard
+        preMarketCheckResult={{
+          start_allowed: false,
+          verdict: "DO_NOT_START",
+          kis_paper_test_allowed: false,
+        }}
+      />,
+    );
+    const banner = getByTestId("kis-paper-premarket-blocked-banner");
+    expect(banner.textContent).toContain("Pre-market Checklist");
+    expect(banner.textContent).toContain("start_allowed=false");
+  });
+
+  it("#91 — preMarketCheckResult 없으면 기존 동작 유지 (start 버튼 활성 가능)", async () => {
+    const { getByTestId, queryByTestId } = render(<KisPaperOneClickTestCard />);
+    await waitFor(() => {
+      // readiness PASS 면 quick 버튼 활성.
+      expect(getByTestId("kis-paper-btn-start-quick").disabled).toBe(false);
+    });
+    expect(queryByTestId("kis-paper-premarket-blocked-banner")).toBeNull();
+  });
+
+  it("#91 — preMarketCheckResult.start_allowed=true 시 start 버튼 활성 유지", async () => {
+    const { getByTestId, queryByTestId } = render(
+      <KisPaperOneClickTestCard
+        preMarketCheckResult={{
+          start_allowed: true,
+          verdict: "READY_TO_START",
+          kis_paper_test_allowed: true,
+        }}
+      />,
+    );
+    await waitFor(() => {
+      expect(getByTestId("kis-paper-btn-start-quick").disabled).toBe(false);
+    });
+    expect(getByTestId("kis-paper-btn-start-mock").disabled).toBe(false);
+    expect(queryByTestId("kis-paper-premarket-blocked-banner")).toBeNull();
+  });
+
+  it("#91 — 차단 배너에서도 매수 / 매도 / Place Order 라벨 button 0개", async () => {
+    const { getByTestId } = render(
+      <KisPaperOneClickTestCard
+        preMarketCheckResult={{ start_allowed: false }}
+      />,
+    );
+    const banner = getByTestId("kis-paper-premarket-blocked-banner");
+    expect(banner.querySelectorAll("button").length).toBe(0);
+    const text = (banner.textContent || "").toLowerCase();
+    for (const banned of [
+      "place order", "지금 매수", "지금 매도", "실거래 시작",
+      "enable_live_trading 토글",
+    ]) {
+      expect(text).not.toContain(banned.toLowerCase());
+    }
+  });
+
+  it("#91 — 차단 배너의 secret 패턴 노출 0건", async () => {
+    const { getByTestId } = render(
+      <KisPaperOneClickTestCard
+        preMarketCheckResult={{ start_allowed: false }}
+      />,
+    );
+    const text = (getByTestId("kis-paper-premarket-blocked-banner").textContent || "").toLowerCase();
+    for (const needle of [
+      "kis_app_key=", "kis_app_secret=", "anthropic_api_key=",
+      "telegram_bot_token=", "sk-", "bearer ",
+    ]) {
+      expect(text).not.toContain(needle);
+    }
+  });
+});
