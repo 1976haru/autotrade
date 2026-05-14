@@ -33,6 +33,8 @@ import { MonitoringCard } from "./MonitoringCard";
 // 85: Strategy Selection — 4개 단타 전략 vote → 최적 조합 advisory (주문 아님).
 import { StrategySelectionCard } from "./StrategySelectionCard";
 import { useStrategySelection } from "../../store/useStrategySelection";
+// 89: KIS Paper one-click AI auto-trade test — 한투 모의투자 전용. 실거래 0건.
+import { KisPaperOneClickTestCard } from "./KisPaperOneClickTestCard";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
 // AuditLog timeline에서도 mode badge로 쓰기 위해 공유. Dashboard는 re-export
@@ -609,6 +611,12 @@ export function Dashboard({
           주문 아님 / 승인 후보 전 단계. broker call 0건, audit row 0건. */}
       <div className="dashboard-span-full">
         <StrategySelectionDashboardSlot />
+      </div>
+
+      {/* 89: 한투 모의투자 AI 자동매매 원클릭 테스트.
+          실제 돈 0원, KIS_IS_PAPER=true / ENABLE_LIVE_TRADING=false 강제. */}
+      <div className="dashboard-span-full">
+        <KisPaperOneClickTestCard />
       </div>
 
       {/* 긴급 정지가 오래 켜져 있을 때 reminder — 위험/상태 요약보다 먼저 노출 */}

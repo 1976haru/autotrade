@@ -70,6 +70,8 @@ npm run dev -- --host 0.0.0.0
 - ⚠ [`docs/status/known_risks.md`](docs/status/known_risks.md) — 알려진 위험 8 카테고리 (#88)
 - 🛣 [`docs/status/next_steps.md`](docs/status/next_steps.md) — P0/P1/P2/P3 우선순위 + 실거래 baseline (#88)
 - 📦 [`docs/dependency_policy.md`](docs/dependency_policy.md) — frontend/backend/desktop 의존성 + Paper freeze 정책 (#88)
+- 🧪 [`docs/kis_paper_oneclick.md`](docs/kis_paper_oneclick.md) — 한투 모의투자 AI 자동매매 *원클릭* 테스트 (3 모드 / 점수판 / 안전 invariant) (#89)
+- 💻 [`docs/desktop_exe_status.md`](docs/desktop_exe_status.md) — Windows installer 빌드 상태 + Rust 툴체인 점검 결과 (#89)
 - 📦 [`docs/beta_distribution_plan.md`](docs/beta_distribution_plan.md) — 베타테스터 배포 + Tauri / Electron
 - 🔄 [`docs/auto_update_plan.md`](docs/auto_update_plan.md) — Phase 1-2-3 단계별 업데이트
 - 🔒 [`docs/local_security_policy.md`](docs/local_security_policy.md) — Secret hygiene + Tailscale + 사고 대응

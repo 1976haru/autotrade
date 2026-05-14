@@ -402,6 +402,40 @@ OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client` /
 0건, storage 는 `db.delete(` / `DELETE FROM` 0건. 자세한 정책:
 [`docs/loss_tagging_policy.md`](docs/loss_tagging_policy.md).
 
+**#89 KIS Paper one-click test + EXE 상태 점검**: 한투 모의투자 API 를 사용한
+*원클릭* AI 자동매매 모의 테스트 orchestration. 사용자는 "준비상태 확인" 후
+*확인 모달* 을 거쳐 "한투 모의 빠른 점검 시작" / "한투 모의 느린 스트레스 시작"
+/ "내부 Mock 고속 스트레스 시작" 버튼 중 하나만 누른다. 매수/매도 수동 버튼
+0개 — AI 판단 결과는 *카운터* 로만 표시. 신규 모듈 `app/kis_paper/` 4종
+(`__init__.py` / `readiness.py` / `engine.py` / `scoring.py`) + 신규 API
+`/api/kis-paper/{readiness,start,stop,status,report}`. 14개 절대 invariant
+정적 lock:
+- 실계좌 주문 0건 (`KisBrokerAdapter.place_order(is_paper=False)` `NotImplementedError`)
+- `KIS_IS_PAPER=false` / `ENABLE_LIVE_TRADING=true` / `ENABLE_AI_EXECUTION=true`
+  변경 0건
+- frontend 에 KIS key/secret/account 입력 form 0개 (테스트로 lock)
+- readiness 응답에 secret 원문 0건 — `*_present: bool` 만 carry
+- BLOCKED 모드에서 engine 진행 0건
+- KIS 모드 예외 시 mock 으로 silent swap 0건
+- `KisPaperReadiness.is_order_intent/is_order_signal=False` 불변
+- `KisPaperScore.is_live_authorization=False` 불변 + 점수 문구에 "실거래
+  가능"/"LIVE 시작"/"지금 매수"/"지금 매도"/"Place Order" 단어 0건
+- engine 모듈이 broker / OrderExecutor / route_order 를 *runtime* import 0건
+- UI 에 "지금 매수"/"실거래 시작"/"Place Order" 라벨 button 0개
+- 확인 모달 통과 (`confirm=true`) 전에 backend `/start` 호출 0건
+- API rate limit 적용 (≥3초 간격) + KIS rate limit hit 즉시 중단
+- engine 의 default tick runner 는 *카운터 갱신만* — 실 broker 호출은
+  운영자가 본인 PC 에서 wrapper 주입 시점에 활성화
+
+UI: `KisPaperOneClickTestCard` (5개 버튼 + 안전 배지 + readiness / counters /
+점수판 / 확인 모달, BUY/SELL/HOLD/Place Order/실거래 라벨 버튼 0개). 35
+backend 신규 PASS + 15 frontend 신규 PASS. EXE 상태: 현재 src-tauri/target/
+부재 + Rust 툴체인 미설치 → `cargo tauri build` 시도 불가 (`docs/desktop_exe_status.md`
+에 기록), `scripts/start_kis_paper_test_windows.bat` + `.ps1` 가 backend
+자동 실행 보조 (Secret 입력 0건, ENABLE_* 변경 0건). 자세한 정책:
+[`docs/kis_paper_oneclick.md`](docs/kis_paper_oneclick.md),
+[`docs/desktop_exe_status.md`](docs/desktop_exe_status.md).
+
 **#88 System Hygiene (운영 로직 변경 0건)**: GitHub 원격 저장소 기준
 보완사항 — `.gitignore` 정리 (`.venv-310/` / `backend/.venv-310/` 명시 추가
 + `src-tauri/target/` / `*.msi` 등 #86 desktop artifact), 6개 workflow YAML

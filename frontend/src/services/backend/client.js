@@ -499,4 +499,15 @@ export const backendApi = {
       method: "PATCH",
       body: JSON.stringify(payload || {}),
     }),
+
+  // #89 KIS Paper one-click test — 한투 모의투자 전용. 실거래 0건 invariant.
+  kisPaperReadiness: () => backendFetch("/api/kis-paper/readiness"),
+  kisPaperStart: ({ mode, confirm = false } = {}) =>
+    backendFetch("/api/kis-paper/start", {
+      method: "POST",
+      body: JSON.stringify({ mode, confirm }),
+    }),
+  kisPaperStop: () => backendFetch("/api/kis-paper/stop", { method: "POST" }),
+  kisPaperStatus: () => backendFetch("/api/kis-paper/status"),
+  kisPaperReport: () => backendFetch("/api/kis-paper/report"),
 };
