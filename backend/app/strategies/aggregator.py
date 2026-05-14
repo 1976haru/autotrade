@@ -799,3 +799,58 @@ def to_execution_proposal(
         strategy=signal.recommended_strategy or "aggregator",
         market_regime=signal.market_regime,
     )
+
+
+# ====================================================================
+# Facade — 호출자 친화 wrapper
+# ====================================================================
+
+
+class StrategySignalAggregator:
+    """Stateless facade around :func:`aggregate_signals` / :func:`to_execution_proposal`.
+
+    본 클래스는 *순수 wrapper* — internal state 없음, broker / OrderExecutor /
+    route_order 호출 0건. 호출자는 같은 ``AggregatorPolicy`` 를 인스턴스에 묶어
+    여러 batch 를 처리할 수 있다.
+
+    invariant:
+    - 본 class 의 메서드는 **주문을 만들지 않는다** —
+      ``aggregate(votes) -> StrategyAggregationResult`` 는 advisory.
+    - ``to_proposal(signal)`` 의 반환값 ``ExecutionProposal`` 도
+      ``is_order_intent=False`` / ``can_execute_order=False`` 그대로 carry.
+    """
+
+    def __init__(self, policy: AggregatorPolicy | None = None) -> None:
+        self.policy = policy or AggregatorPolicy()
+
+    def aggregate(
+        self,
+        votes: Iterable[StrategyVote],
+        *,
+        market_regime: str | None = None,
+        now: datetime | None = None,
+    ) -> StrategyAggregationResult:
+        """4개 전략 vote → 종목별 ``AggregatedSignal`` 묶음. broker 호출 0건."""
+        return aggregate_signals(
+            votes, market_regime=market_regime, policy=self.policy, now=now,
+        )
+
+    def to_proposal(
+        self,
+        signal: AggregatedSignal,
+        *,
+        expires_in_seconds: int = 300,
+        default_quantity: int = 1,
+        now: datetime | None = None,
+    ):
+        """advisory ``AggregatedSignal`` → advisory ``ExecutionProposal``.
+
+        반환값은 *주문이 아니다* (``ExecutionProposal.is_order_intent=False``).
+        본 helper 도 broker 호출 0건.
+        """
+        return to_execution_proposal(
+            signal,
+            expires_in_seconds=expires_in_seconds,
+            default_quantity=default_quantity,
+            now=now,
+        )
