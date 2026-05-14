@@ -507,6 +507,13 @@ export const backendApi = {
     const qs = new URLSearchParams({ age_minutes: String(ageMinutes) });
     return backendFetch(`/api/analytics/alpha-decay/freshness?${qs.toString()}`);
   },
+  // 95: Portfolio Correlation Guard — *수익률 상관관계* advisory (read-only).
+  // 본 endpoint 는 어떤 주문도 발행하지 않는다. BLOCK verdict 도 권고 수준.
+  portfolioCorrelationEvaluate: (body) =>
+    backendFetch("/api/risk/portfolio-correlation/evaluate", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
   lossTagsSummary: ({ days = 7, strategy = null } = {}) => {
     const qs = new URLSearchParams({ days: String(days) });
     if (strategy) qs.set("strategy", strategy);
