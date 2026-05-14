@@ -105,33 +105,28 @@ export function strategyDisplayShort(strategyId, lookup) {
 /**
  * React hook — 컴포넌트가 displayName lookup 을 안전하게 사용할 수 있도록.
  *
+ * 다수의 row 가 동시에 hook 을 사용해도 module-level 캐시 + in-flight Promise
+ * dedup 으로 backend 호출은 1회. 컴포넌트 당 state 도 lookup 1개만 — fetch
+ * 실패는 graceful fallback(internal id) 으로 처리, error/loading 상태는 노출
+ * 하지 않아 대량 row stress 환경에서 re-render 폭발을 피한다.
+ *
  * @returns {{ lookup: Object, loading: boolean, error: string }}
  */
 export function useStrategyDisplayNames() {
-  const [lookup, setLookup]   = useState(_CACHE);
-  const [loading, setLoading] = useState(_CACHE == null);
-  const [error, setError]     = useState("");
+  const [lookup, setLookup] = useState(_CACHE);
 
   useEffect(() => {
-    let cancelled = false;
     if (_CACHE) {
-      setLookup(_CACHE);
-      setLoading(false);
-      return () => { cancelled = true; };
+      if (lookup !== _CACHE) setLookup(_CACHE);
+      return undefined;
     }
+    let cancelled = false;
     fetchStrategyDisplayLookup()
-      .then((data) => {
-        if (!cancelled) {
-          setLookup(data);
-          setError("");
-        }
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e?.message || "전략 이름 조회 실패");
-      })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      .then((data) => { if (!cancelled) setLookup(data); })
+      .catch(() => { /* graceful — internal id 그대로 노출 */ });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { lookup, loading, error };
+  return { lookup, loading: lookup == null, error: "" };
 }

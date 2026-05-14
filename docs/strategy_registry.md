@@ -174,10 +174,12 @@
 
 ---
 
-## 8. UI 적용 현황 (#82)
+## 8. UI 적용 현황 (#82, #83)
 
-#81 메타데이터가 다음 UI 컴포넌트에 *적용*되었습니다 (#82). 모든 위치에서
+#81 메타데이터가 다음 UI 컴포넌트에 *적용*되었습니다. 모든 위치에서
 `displayName + (internal_id)` *함께* 노출 — 운영자 / 로그 / audit 매핑 보존.
+
+### 8.1 #82 (1차)
 
 | 컴포넌트 | 위치 | 변환 전 | 변환 후 |
 |---|---|---|---|
@@ -188,17 +190,29 @@
 | `StatusCard` 엔진 상태 "전략" 필드 | `LiveEngine.jsx:47` | `sma_crossover` | **단기/장기 이동평균 교차** `(sma_crossover)` |
 | `AgentStatsCard` per-strategy 행 | `AgentStatsCard.jsx:169` | `sma_crossover` | **단기/장기 이동평균 교차** `(sma_crossover)` |
 
+### 8.2 #83 (2차 — 결재 / Agent Memory / Execution Recommender)
+
+| 컴포넌트 | 위치 | 변환 전 | 변환 후 |
+|---|---|---|---|
+| `_OrderSummary` AI hero 줄 | `Approvals.jsx:329` | `· sma_crossover` | `· `**`단기/장기 이동평균 교차`**` (sma_crossover)` |
+| `ApprovalProposalSummary` strategy chip | `ApprovalQueue.jsx:124` | `sma_crossover` | **단기/장기 이동평균 교차** `(sma_crossover)` |
+| `ApproveConfirmSummary` strategy 줄 | `ApprovalQueue.jsx:409` | `· sma_crossover` | `· `**`단기/장기 이동평균 교차`**` (sma_crossover)` |
+| `_MemoryRow` / `_MemoryDetail` strategy 배지 | `AgentMemoryCard.jsx:56, 120` | `orb_vwap` | **ORB + VWAP 돌파** `(orb_vwap)` |
+| `_ProposalRow` 전략 필드 | `ExecutionRecommenderCard.jsx:51` | `rsi_reversion` | **RSI 과매도/과매수 회복** `(rsi_reversion)` |
+
+### 8.3 공통 helper / hook
+
 공통 helper: `frontend/src/utils/strategyNames.js`
 - `formatStrategyName(id, lookup)` — `"displayName (internal_id)"` 반환
 - `strategyDisplayShort(id, lookup)` — `"displayName"` 만
-- `useStrategyDisplayNames()` hook — module-level 캐시 (한 번 fetch, 모든 컴포넌트 공유)
+- `useStrategyDisplayNames()` hook — module-level 캐시 (한 번 fetch, 모든 컴포넌트
+  공유). state 1개(`lookup`)만 노출 — fetch 실패는 graceful fallback(internal id)
+  로 처리, error/loading 은 컴포넌트 re-render 를 유발하지 않음 (#83 — 200+
+  pending row 동시 mount 환경에서 re-render 폭발 방지).
 - 모두 *graceful fallback* — lookup 부재 시 internal id 그대로
 
-미적용 컴포넌트 (후속 PR):
-- `Approvals.jsx` AI hero summary line
-- `ApprovalQueue.jsx` proposal strategy chip
-- `AgentMemoryCard.jsx` memory row metadata
-- `ExecutionRecommenderCard.jsx` proposal strategy display
+각 컴포넌트 행/배지에 `data-internal-id="<strategy_id>"` 속성을 carry — 테스트
+selector / audit 자동화에서 internal id 로 매핑 가능.
 
 ## 9. 후속 backlog
 

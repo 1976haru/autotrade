@@ -22,6 +22,11 @@ import {
   formatPendingAge,
   isPendingStale,
 } from "../../utils/format";
+// 83: strategy displayName 매핑.
+import {
+  strategyDisplayShort,
+  useStrategyDisplayNames,
+} from "../../utils/strategyNames";
 
 
 // ---------- 1. Freshness badge — TTL + age stale 통합 ----------
@@ -115,6 +120,12 @@ export function ApprovalProposalSummary({ approval }) {
   const isAI = source === "AI";
   const meta = approval.ai_decision_meta || {};
   const supporting = Array.isArray(meta.supporting_reasons) ? meta.supporting_reasons : [];
+  // 83: strategy displayName.
+  const { lookup: strategyLookup } = useStrategyDisplayNames();
+  const strategyDisplay = approval.strategy
+    ? strategyDisplayShort(approval.strategy, strategyLookup)
+    : "";
+  const showInternal = strategyDisplay && strategyDisplay !== approval.strategy;
   const opposing   = Array.isArray(meta.opposing_reasons)   ? meta.opposing_reasons   : [];
   const expectedReward = meta.expected_reward;
   const expectedRisk   = meta.expected_risk;
@@ -148,8 +159,18 @@ export function ApprovalProposalSummary({ approval }) {
         </span>
         {approval.strategy && (
           <span data-testid="proposal-strategy"
+                data-internal-id={approval.strategy}
                 style={{ fontSize: 9, color: "#7dd3fc" }}>
-            {approval.strategy}
+            {/* 83: displayName + (internal id). lookup 부재 시 internal id 그대로. */}
+            {strategyDisplay}
+            {showInternal ? (
+              <span style={{
+                marginLeft: 4, fontSize: 8, fontFamily: "monospace",
+                color: "#7dd3fc99", fontWeight: 500,
+              }}>
+                ({approval.strategy})
+              </span>
+            ) : null}
           </span>
         )}
         {approval.signal_confidence != null && (
@@ -384,6 +405,12 @@ export function ApproveConfirmSummary({ approval, action, now }) {
   const showStaleWarning = action === "approve" && stale;
   const reasons = Array.isArray(approval.reasons) ? approval.reasons : [];
   const top3Reasons = reasons.slice(0, 3);
+  // 83: strategy displayName.
+  const { lookup: strategyLookup } = useStrategyDisplayNames();
+  const strategyDisplay = approval.strategy
+    ? strategyDisplayShort(approval.strategy, strategyLookup)
+    : "";
+  const showInternalStrategy = strategyDisplay && strategyDisplay !== approval.strategy;
   return (
     <div
       data-testid="approve-confirm-summary"
@@ -411,8 +438,18 @@ export function ApproveConfirmSummary({ approval, action, now }) {
       <div style={{ fontSize: 9, color: "#475569" }}>
         #{approval.id} · {approval.mode}
         {approval.strategy && (
-          <span style={{ marginLeft: 4, color: "#7dd3fc" }}>
-            · {approval.strategy}
+          <span data-internal-id={approval.strategy}
+                style={{ marginLeft: 4, color: "#7dd3fc" }}>
+            {/* 83: displayName + (internal id). */}
+            · {strategyDisplay}
+            {showInternalStrategy ? (
+              <span style={{
+                marginLeft: 4, fontSize: 8, fontFamily: "monospace",
+                color: "#7dd3fc99",
+              }}>
+                ({approval.strategy})
+              </span>
+            ) : null}
           </span>
         )}
         {approval.signal_confidence != null && (

@@ -1,6 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
 import { Card, SectionLabel } from "../common";
 import { backendApi } from "../../services/backend/client";
+// 83: strategy displayName 매핑.
+import {
+  strategyDisplayShort,
+  useStrategyDisplayNames,
+} from "../../utils/strategyNames";
+
+
+function _StrategyInline({ strategy, lookup }) {
+  if (!strategy) return null;
+  const display = strategyDisplayShort(strategy, lookup);
+  if (display === strategy) {
+    return <span data-internal-id={strategy}>{strategy}</span>;
+  }
+  return (
+    <span data-internal-id={strategy}>
+      {display}
+      <span style={{ marginLeft: 3, fontSize: 9, fontFamily: "monospace",
+                     color: "#475569" }}>
+        ({strategy})
+      </span>
+    </span>
+  );
+}
 
 // Agent Memory card — 과거 운영 사례 / 손실 원인 / 전략 변경 이력 검색.
 //
@@ -29,6 +52,8 @@ const _SEVERITY_COLOR = {
 
 
 function _MemoryRow({ rec, onOpen, onArchive }) {
+  // 83: strategy displayName.
+  const { lookup: strategyLookup } = useStrategyDisplayNames();
   const sevColor = _SEVERITY_COLOR[rec.severity] || "#94a3b8";
   return (
     <div data-testid={`agent-memory-row-${rec.id}`}
@@ -45,7 +70,9 @@ function _MemoryRow({ rec, onOpen, onArchive }) {
       </div>
       <div style={{ color: "#94a3b8", fontSize: 10, marginBottom: 3 }}>
         <span style={{ fontFamily: "monospace" }}>{rec.memory_type}</span>
-        {rec.strategy && <> · <span>{rec.strategy}</span></>}
+        {rec.strategy && (
+          <> · <_StrategyInline strategy={rec.strategy} lookup={strategyLookup} /></>
+        )}
         {rec.symbol && <> · <span>{rec.symbol}</span></>}
         {rec.mode && <> · <span>{rec.mode}</span></>}
       </div>
@@ -89,6 +116,8 @@ function _MemoryRow({ rec, onOpen, onArchive }) {
 
 
 function _MemoryDetail({ rec, onClose }) {
+  // 83: strategy displayName.
+  const { lookup: strategyLookup } = useStrategyDisplayNames();
   if (!rec) return null;
   return (
     <div data-testid="agent-memory-detail"
@@ -108,7 +137,11 @@ function _MemoryDetail({ rec, onClose }) {
       </div>
       <div style={{ color: "#94a3b8", fontSize: 10, marginBottom: 6 }}>
         ID #{rec.id} · {rec.memory_type} ·
-        {rec.strategy && ` ${rec.strategy} ·`}
+        {rec.strategy && (
+          <>
+            {" "}<_StrategyInline strategy={rec.strategy} lookup={strategyLookup} /> ·
+          </>
+        )}
         {rec.symbol && ` ${rec.symbol} ·`}
         severity {rec.severity}
       </div>

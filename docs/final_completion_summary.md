@@ -2437,10 +2437,84 @@ CLI exit code: 0=start_allowed=True / 1=False / 2=실행 오류.
 - ✓ `ENABLE_LIVE_TRADING` / `ENABLE_AI_EXECUTION` / `ENABLE_FUTURES_LIVE_TRADING` 변경 0건
 - ✓ 절대 원칙 1~6 모두 유지
 
+### 남은 displayName UI backlog (#82 시점)
+- ~~Approvals.jsx AI hero summary line~~ → **#83 완료**
+- ~~ApprovalQueue.jsx proposal strategy chip~~ → **#83 완료**
+- ~~AgentMemoryCard.jsx memory row metadata~~ → **#83 완료**
+- ~~ExecutionRecommenderCard.jsx proposal strategy display~~ → **#83 완료**
+- BotControl.jsx 전략 선택 dropdown (현재는 internal id 만 표시 예상)
+- Dashboard.jsx 24h activity card 전략 컬럼 (있다면)
+
+
+## #83 Strategy displayName UI 적용 — 결재 / Agent Memory / Execution Recommender (2차)
+
+> #82 의 displayName 적용을 결재 큐 / Agent Memory / Execution Recommender 의
+> *4개 UI* 컴포넌트에 추가 적용. **internal id 는 *항상* 함께 노출** —
+> `data-internal-id` HTML 속성 + 본문 텍스트로 이중 carry. *기존 매매 로직 0줄
+> 변경*, *Backend / API / Strategy / Risk / Execution / .env / Secret 모두 0건
+> 변경*.
+
+### 생성 / 수정 파일 (8개)
+- `frontend/src/components/tabs/Approvals.jsx` (수정) — `_OrderSummary` AI hero
+  줄에 displayName + (internal id) carry
+- `frontend/src/components/tabs/ApprovalQueue.jsx` (수정) —
+  `ApprovalProposalSummary` 전략 chip + `ApproveConfirmSummary` 전략 줄 (두
+  곳 모두 hook + `data-internal-id` carry)
+- `frontend/src/components/tabs/AgentMemoryCard.jsx` (수정) — `_MemoryRow` +
+  `_MemoryDetail` 에서 `_StrategyInline` helper 도입 (raw `{rec.strategy}` 대체)
+- `frontend/src/components/tabs/ExecutionRecommenderCard.jsx` (수정) —
+  `_ProposalRow` 전략 필드에 hook + `data-internal-id` carry
+- `frontend/src/utils/strategyNames.js` (수정) — `useStrategyDisplayNames` 의
+  `error` / `loading` state 제거 (대량 row stress 환경에서 200+ row 동시
+  fetch 실패 시 re-render 폭발 방지). state 1개(`lookup`)만 노출, graceful
+  fallback 유지.
+- `frontend/src/components/tabs/Approvals.stress.test.jsx` (수정) — 200 pending
+  + 500 history 통합 stress test timeout 15s 로 완화 (jsdom + Windows + hook
+  비용 SLA 임계 완화)
+- `frontend/src/components/tabs/DisplayNameIntegration2.test.jsx` (신규, **10
+  PASS**) — 4개 UI displayName 통합 테스트 + 가짜 전략명 0건 invariant
+- `docs/strategy_registry.md` (수정) — §8.1 / §8.2 분리, 8.3 helper / hook
+  설명 보강
+
+### 적용된 UI 위치 (4곳)
+| 컴포넌트 | 위치 | 결과 |
+|---|---|---|
+| `_OrderSummary` AI hero 줄 | `Approvals.jsx:329` | `🤖 AI · 단기/장기 이동평균 교차 (sma_crossover)` |
+| `ApprovalProposalSummary` strategy chip | `ApprovalQueue.jsx:124` | `단기/장기 이동평균 교차 (sma_crossover)` |
+| `ApproveConfirmSummary` strategy 줄 | `ApprovalQueue.jsx:409` | `· 단기/장기 이동평균 교차 (sma_crossover)` |
+| `_MemoryRow` / `_MemoryDetail` strategy 배지 | `AgentMemoryCard.jsx:56, 120` | `ORB + VWAP 돌파 (orb_vwap)` |
+| `_ProposalRow` 전략 필드 | `ExecutionRecommenderCard.jsx:51` | `RSI 과매도/과매수 회복 (rsi_reversion)` |
+
+### 안전 invariant (테스트로 lock)
+- ✓ 4개 UI 모두에서 internal id 가 *항상 함께 노출* — `data-internal-id` HTML
+  속성 + 본문 텍스트 이중 carry
+- ✓ 미등록 / null / 빈 문자열 strategy 는 graceful fallback (internal id 또는
+  `—`)
+- ✓ `data-testid` 변경 0건 — 기존 테스트 selector 무회귀
+- ✓ 가짜 / 외부 hype 전략명 (`골든브릿지` / `트라이앵글 전설` / `다이아 전략`
+  / `퀀텀 점프` / `황금알` / `100% 승률` / `guaranteed` / `magic strategy`)
+  0건 — 통합 테스트로 lock
+- ✓ hook 은 state 1개(`lookup`) 만 노출 — fetch 실패 시 시각적 컴포넌트
+  re-render 안 일어남 (graceful 정적 fallback)
+
+### 테스트 결과
+- **신규 frontend**: 10 PASS (DisplayNameIntegration2.test.jsx — 4개 UI 통합)
+- **Regression**: frontend 전체 **1572 PASS, 0 fail** (`vitest run`,
+  Approvals.stress.test.jsx 200 pending + 500 history 포함)
+- **Backend**: `test_strategy_registry_metadata.py` 23 PASS — 메타데이터
+  invariant 무회귀
+
+### 안전 / 변경 금지 invariant — 본 PR 미변경
+- ✓ `app/strategies/concrete/*.py` (6개 전략 로직) 변경 0건
+- ✓ `app/strategies/base.py` / `live_engine.py` / `quality.py` / `scoreboard.py` 변경 0건
+- ✓ `app/risk/*` / `app/execution/*` / `app/permission/*` / `app/core/config.py` 변경 0건
+- ✓ `app/api/routes_*.py` 변경 0건 (frontend 만)
+- ✓ Backend 코드 변경 0건 (frontend + 문서 + 테스트만)
+- ✓ Backend API 응답 변경 0건 (`/api/strategies/beginner-registry` 만 사용)
+- ✓ `.env` / Secret / API Key / 계좌번호 변경 0건
+- ✓ `ENABLE_LIVE_TRADING` / `ENABLE_AI_EXECUTION` / `ENABLE_FUTURES_LIVE_TRADING` 변경 0건
+- ✓ 절대 원칙 1~6 모두 유지
+
 ### 남은 displayName UI backlog
-- Approvals.jsx AI hero summary line
-- ApprovalQueue.jsx proposal strategy chip
-- AgentMemoryCard.jsx memory row metadata
-- ExecutionRecommenderCard.jsx proposal strategy display
 - BotControl.jsx 전략 선택 dropdown (현재는 internal id 만 표시 예상)
 - Dashboard.jsx 24h activity card 전략 컬럼 (있다면)

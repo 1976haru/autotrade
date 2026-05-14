@@ -10,6 +10,11 @@ import {
   fmtKRW, formatPendingAge, isPendingStale,
 } from "../../utils/format";
 import { friendlyErrorMessage } from "../../utils/errorMessage";
+// 83: strategy displayName 매핑. internal id 는 *항상* 함께 노출.
+import {
+  strategyDisplayShort,
+  useStrategyDisplayNames,
+} from "../../utils/strategyNames";
 // 체크리스트 #61: ApprovalQueue 구조화 sub-components. broker 호출 / approve
 // API 직접 호출 0건 — display only.
 import {
@@ -320,6 +325,8 @@ export function HistoryRow({ a, focused = false, expanded = false, onClick }) {
 
 
 function _OrderSummary({ approval }) {
+  // 83: strategy displayName. AI hero summary 줄에 한글명 + (internal id).
+  const { lookup: strategyLookup } = useStrategyDisplayNames();
   return (
     <div style={{
       fontSize: 11, color: "#94a3b8", padding: "8px 10px", marginBottom: 10,
@@ -343,8 +350,16 @@ function _OrderSummary({ approval }) {
       </div>
       {approval.requested_by_ai && (
         <div data-testid="approval-ai-provenance"
+             data-internal-id={approval.strategy || ""}
              style={{ fontSize: 10, color: "#a78bfa", marginTop: 4 }}>
-          🤖 AI{approval.strategy ? ` · ${approval.strategy}` : ""}
+          🤖 AI
+          {/* 83: strategy 줄에 displayName + (internal id) 함께 표시. */}
+          {approval.strategy ? (() => {
+            const display = strategyDisplayShort(approval.strategy, strategyLookup);
+            return display === approval.strategy
+              ? ` · ${approval.strategy}`
+              : ` · ${display} (${approval.strategy})`;
+          })() : ""}
           {approval.signal_confidence != null
             ? ` · conf ${approval.signal_confidence}` : ""}
           {approval.ai_decision_meta && Array.isArray(approval.ai_decision_meta.reasons)

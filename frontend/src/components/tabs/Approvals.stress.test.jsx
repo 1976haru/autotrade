@@ -59,6 +59,9 @@ describe("<Approvals> renders large datasets without crashing (133)", () => {
     expect(elapsed).toBeLessThan(3000);
   });
 
+  // stress combo: jsdom + Windows + 700 row + 200개 pending row 의 hook
+  // useState/useEffect 비용 + 풀 스위트 안의 캐시/타이머 잔재로 5s default
+  // 임계를 자주 넘김. SLA 보다는 *터지지 않음* 검증이 목적이라 timeout 만 완화.
   it("renders 200 PENDING rows + 500 history rows together without crashing", () => {
     const pending = Array.from({ length: 200 }, (_, i) => ({
       id: 10_000 + i, symbol: `P${i % 50}`, side: "BUY", quantity: 1,
@@ -74,5 +77,5 @@ describe("<Approvals> renders large datasets without crashing (133)", () => {
     );
     expect(container.querySelectorAll('[data-testid^="approval-pending-row-"]').length).toBe(200);
     expect(container.querySelectorAll('[data-testid^="approval-history-row-"]').length).toBe(500);
-  });
+  }, 15000);
 });

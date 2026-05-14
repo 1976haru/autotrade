@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { Card, SectionLabel } from "../common";
 import { backendApi } from "../../services/backend/client";
+// 83: strategy displayName 매핑.
+import {
+  strategyDisplayShort,
+  useStrategyDisplayNames,
+} from "../../utils/strategyNames";
 
 // 56: Execution Recommender card — 매수/매도 *제안*만 surface.
 //
@@ -42,6 +47,12 @@ function _Field({ label, value }) {
 
 
 function _ProposalRow({ proposal, onPrecheck, onSubmit, busy }) {
+  // 83: strategy displayName.
+  const { lookup: strategyLookup } = useStrategyDisplayNames();
+  const strategyDisplay = proposal.strategy
+    ? strategyDisplayShort(proposal.strategy, strategyLookup)
+    : "";
+  const showInternalStrategy = strategyDisplay && strategyDisplay !== proposal.strategy;
   const sideColor = proposal.side === "BUY" ? "#22c55e" : "#ef4444";
   const [precheck, setPrecheck] = useState(null);
   const [submitResult, setSubmitResult] = useState(null);
@@ -105,10 +116,24 @@ function _ProposalRow({ proposal, onPrecheck, onSubmit, busy }) {
         </span>
       </div>
 
-      {/* 핵심 metric */}
+      {/* 핵심 metric — 83: displayName + (internal id) 함께 표시. */}
       <_Field label="전략" value={
-        <span style={{ fontFamily: "monospace", fontSize: 10 }}>
-          {proposal.strategy || "—"}
+        <span data-testid="exec-rec-strategy"
+              data-internal-id={proposal.strategy || ""}
+              style={{ fontSize: 10 }}>
+          {proposal.strategy ? (
+            <>
+              {strategyDisplay}
+              {showInternalStrategy ? (
+                <span style={{
+                  marginLeft: 4, fontSize: 9, fontFamily: "monospace",
+                  color: "#475569",
+                }}>
+                  ({proposal.strategy})
+                </span>
+              ) : null}
+            </>
+          ) : "—"}
         </span>
       } />
       {proposal.expected_reward != null && (
