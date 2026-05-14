@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -496,3 +496,138 @@ def correlation_guard_preview(
     )
     result: CorrelationGuardResult = rule.evaluate(inp)
     return CorrelationGuardResultPayload(**result.to_dict())
+
+
+# ============================================================
+# #95 Portfolio Correlation Guard — *수익률 상관관계* advisory.
+# ============================================================
+# 본 endpoint 는 #78 sector/theme guard 와는 *별개*. 종목 간 historical return
+# Pearson correlation 매트릭스를 계산해 동일 시장 리스크에 과노출되었는지
+# 검사. 본 모듈은 어떤 주문도 발행하지 않음 (advisory only).
+
+
+from app.risk.portfolio_correlation_guard import (
+    PortfolioCorrelationInput,
+    PortfolioCorrelationResult,
+    PortfolioCorrelationThresholds,
+    PortfolioPositionInput,
+    evaluate_portfolio_correlation,
+)
+
+
+class PortfolioPositionPayload(BaseModel):
+    symbol:       str  = Field(..., min_length=1, max_length=32)
+    notional_krw: int  = 0
+    direction:    str  = "LONG"
+
+
+class PortfolioCorrelationPayload(BaseModel):
+    """평가 입력 — collector / 운영자가 포지션 + 시계열 채워서 전달."""
+    positions:                tuple[PortfolioPositionPayload, ...] = ()
+    candidate:                PortfolioPositionPayload | None = None
+    # 종목별 수익률 시계열 (이미 returns_from_closes 적용된 값) 또는 종가.
+    return_series_by_symbol:  dict[str, tuple[float, ...]] = Field(default_factory=dict)
+    close_series_by_symbol:   dict[str, tuple[float, ...]] = Field(default_factory=dict)
+    strict:                   bool = False
+    # threshold override (옵션).
+    warn_threshold:           float | None = None
+    caution_threshold:        float | None = None
+    block_threshold:          float | None = None
+    min_bars:                 int | None = None
+
+
+class CorrelatedPairPayload(BaseModel):
+    symbol_a:    str
+    symbol_b:    str
+    correlation: float
+    severity:    str
+    sample_size: int
+    note:        str
+
+
+class PortfolioCorrelationResultPayload(BaseModel):
+    verdict:                       str
+    pairs:                         list[CorrelatedPairPayload]
+    portfolio_correlation_score:   float
+    max_pairwise_correlation:      float
+    mean_pairwise_correlation:     float
+    high_correlation_pair_count:   int
+    candidate_max_correlation:     float | None = None
+    new_entry_allowed:             bool
+    warnings:                      list[str]
+    advice:                        list[str]
+    insufficient_data:             bool
+    is_order_signal:               bool = Field(
+        False, description="invariant — 본 가드는 BUY/SELL/HOLD 신호 아님"
+    )
+    auto_apply_allowed:            bool = Field(
+        False, description="invariant — 본 가드는 자동 적용 안 함"
+    )
+    is_live_authorization:         bool = Field(
+        False, description="invariant — 본 가드는 실거래 허가 아님"
+    )
+    generated_at:                  datetime
+
+
+@router.post(
+    "/portfolio-correlation/evaluate",
+    response_model=PortfolioCorrelationResultPayload,
+)
+def portfolio_correlation_evaluate(
+    payload: PortfolioCorrelationPayload,
+) -> PortfolioCorrelationResultPayload:
+    """Portfolio Correlation Guard 평가 (POST — collector / 운영자 입력).
+
+    read-only — broker / DB write / 안전 flag 변경 0건. BLOCK verdict 도 *권고*
+    수준으로, 실제 차단은 별도 RiskRule 에서 처리.
+    """
+    try:
+        positions = tuple(
+            PortfolioPositionInput(
+                symbol=p.symbol,
+                notional_krw=p.notional_krw,
+                direction=p.direction,
+            )
+            for p in payload.positions
+        )
+        candidate = (
+            PortfolioPositionInput(
+                symbol=payload.candidate.symbol,
+                notional_krw=payload.candidate.notional_krw,
+                direction=payload.candidate.direction,
+            )
+            if payload.candidate is not None else None
+        )
+        inp = PortfolioCorrelationInput(
+            positions=positions,
+            candidate=candidate,
+            return_series_by_symbol={
+                k: tuple(v) for k, v in payload.return_series_by_symbol.items()
+            },
+            close_series_by_symbol={
+                k: tuple(v) for k, v in payload.close_series_by_symbol.items()
+            },
+            strict=payload.strict,
+        )
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"invalid input: {e}")
+
+    # threshold override.
+    th_kwargs: dict = {}
+    if payload.warn_threshold is not None:
+        th_kwargs["warn_threshold"] = payload.warn_threshold
+    if payload.caution_threshold is not None:
+        th_kwargs["caution_threshold"] = payload.caution_threshold
+    if payload.block_threshold is not None:
+        th_kwargs["block_threshold"] = payload.block_threshold
+    if payload.min_bars is not None:
+        th_kwargs["min_bars"] = payload.min_bars
+    try:
+        th = PortfolioCorrelationThresholds(**th_kwargs) if th_kwargs else None
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400, detail=f"invalid threshold: {e}",
+        )
+
+    result: PortfolioCorrelationResult = evaluate_portfolio_correlation(inp, th)
+    return PortfolioCorrelationResultPayload(**result.to_dict())

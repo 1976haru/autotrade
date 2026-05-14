@@ -402,6 +402,40 @@ OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client` /
 0건, storage 는 `db.delete(` / `DELETE FROM` 0건. 자세한 정책:
 [`docs/loss_tagging_policy.md`](docs/loss_tagging_policy.md).
 
+**#95 Portfolio Correlation Guard (포트폴리오 수익률 상관관계 advisory)**:
+현재 보유 포지션 + 신규 진입 후보 종목 간의 *Pearson 상관계수 매트릭스*를
+계산해 동일 시장 리스크 과노출을 advisory 검사 —
+`app/risk/portfolio_correlation_guard.py`. **#78 `correlation_guard.py`**
+(*sector/theme 노출 cap*) 와는 **완전히 다른 개념** — 본 모듈은 종목 간
+*historical return correlation* 매트릭스 분석. #78 의 helper 함수
+`compute_return_correlation` / `returns_from_closes` 를 *재사용* 한다.
+verdict 5단계 (`HEALTHY` / `WATCH` / `WARN` / `BLOCK` / `INSUFFICIENT_DATA`)
++ pair severity 4단계 (`LOW` / `MEDIUM` / `HIGH` / `EXTREME`). default
+thresholds: `warn_threshold=0.50` / `caution_threshold=0.70` /
+`block_threshold=0.85` / `min_bars=20`. 본 가드는 **|corr| 절댓값 기준** —
+음의 상관관계 (-0.85 등) 도 *반대 방향의 강한 결합* 이므로 동일하게 advisory
+발생. 후보 vs 기존 max |corr| 추적 (`candidate_max_correlation`) 으로 신규
+종목 진입 시 즉시 위험도 평가. strict 모드: WARN 도 `new_entry_allowed=False`
+로 격하. 데이터 부족 시 INSUFFICIENT_DATA (차단 안 함 — *advisory 미적용*).
+**적용 범위**: asset-class agnostic — 본 프로젝트 1차 배포는 국내주식 단타,
+crypto 는 후속 PR (모듈 재사용 가능). API: `POST /api/risk/portfolio-correlation/evaluate`
+read-only — return_series 또는 close_series 둘 중 하나 입력. UI:
+`PortfolioCorrelationGuardCard.jsx` (기존 `CorrelationGuardCard.jsx` 와 별개
+파일) — verdict 헤드라인 + BLOCK 차단 배너 ("상관관계 과다로 신규 진입 주의")
++ 4 invariant 영구 배지 + 쌍 정렬 표 (severity 순) + 후보 max |corr| 표시.
+절대 invariant (테스트로 lock): `is_order_signal=False` /
+`auto_apply_allowed=False` / `is_live_authorization=False` 불변 (dataclass
+`__post_init__` ValueError), broker / OrderExecutor / route_order /
+paper_trader / `app.ai.assist` / `app.ai.client` / `anthropic` / `openai` /
+`httpx` / `requests` / `app.core.config.get_settings` import 0건 (정적 grep
+가드), DB write 0건, settings 안전 flag mutate 0건, frontend `input` /
+`textarea` 0개, "지금 매수" / "지금 매도" / "Place Order" / "실거래 활성화" /
+"ENABLE_LIVE_TRADING 토글" / "BUY/SELL/HOLD signal" 라벨 button 0개. 본 PR
+은 **실거래 실행 기능을 추가하지 않으며**, BLOCK verdict 도 *권고* 수준 —
+실제 차단은 별도 RiskRule (후속 PR + 운영자 명시 옵트인) 에서 처리.
+RiskManager / OrderGuard 우회 0건. 35개 신규 backend 테스트 + 19개 신규
+frontend 테스트 PASS. 자세한 정책: [`docs/correlation_guard.md`](docs/correlation_guard.md).
+
 **#94 Signal Alpha Decay (신호 단위 신선도 advisory)**: *개별 신호* 의 시간
 경과 후 기대수익 감쇠를 분석하는 advisory 모듈 — `app/analytics/signal_alpha_decay.py`.
 **#77 governance/alpha_decay** (*전략 단위* 일/주 baseline vs recent) 와는
