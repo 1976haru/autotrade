@@ -482,3 +482,180 @@ def alpha_decay_freshness(
         actionable=is_signal_actionable(age_minutes, th, strict=False),
         actionable_strict=is_signal_actionable(age_minutes, th, strict=True),
     )
+
+
+# ============================================================
+# #96 Loss Root Cause Tagging — *결정 시점 / 실행 단계* 원인 태깅.
+# ============================================================
+# 본 endpoint 는 #79 loss-tags/estimate 와는 별개 분석 레이어. 16개 root cause
+# tag × 5 카테고리. 본 결과는 *추정 태그* 이며 확정 원인이 아니다.
+
+
+from app.analytics.loss_root_cause import (
+    LossRootCauseInput,
+    LossRootCauseResult,
+    LossRootCauseSummary,
+    RootCauseThresholds,
+    evaluate_loss_root_cause,
+    summarize_root_causes,
+)
+
+
+class LossRootCausePayload(BaseModel):
+    """근본원인 평가 입력. 호출자가 거래 전후 metric 채워서 전달."""
+    symbol:                       str  = Field(..., min_length=1, max_length=32)
+    is_loss:                      bool = True
+    trade_pnl:                    int  = 0
+    strategy:                     str | None = None
+    mode:                         str | None = None
+
+    entry_lag_seconds:            int | None = None
+    exit_lag_seconds:             int | None = None
+    signal_age_minutes_at_entry:  int | None = None
+    operator_overruled_ai:        bool = False
+
+    portfolio_max_correlation:    float | None = None
+    risk_gate_was_rejected:       bool = False
+
+    intraday_volatility:          float | None = None
+    market_regime_at_entry:       str | None = None
+    market_regime_unfavorable:    bool = False
+    adverse_news_event:           bool = False
+
+    realized_slippage_bps:        float | None = None
+    volume_to_avg_ratio:          float | None = None
+    spread_bps_at_entry:          float | None = None
+
+    hit_stop_loss:                bool = False
+    hit_time_stop:                bool = False
+    kimp_convergence_failed:      bool = False
+
+    # threshold override (옵션).
+    late_entry_seconds:           int | None = None
+    late_exit_seconds:            int | None = None
+    stale_signal_age_minutes:     int | None = None
+    high_correlation_threshold:   float | None = None
+    high_volatility_threshold:    float | None = None
+    slippage_bps_threshold:       float | None = None
+    low_liquidity_volume_ratio:   float | None = None
+    spread_bps_threshold:         float | None = None
+
+
+class RootCauseTagAssignmentPayload(BaseModel):
+    tag:         str
+    category:    str
+    severity:    str
+    rationale:   str
+
+
+class LossRootCauseResultPayload(BaseModel):
+    symbol:               str
+    is_loss:              bool
+    trade_pnl:            int
+    tags:                 list[RootCauseTagAssignmentPayload]
+    primary_tag:          str | None
+    primary_category:     str | None
+    rationale:            list[str]
+    improvement_advice:   list[str]
+    is_estimated:         bool = Field(
+        True, description="invariant — 본 결과는 *추정 태그*"
+    )
+    is_order_signal:      bool = Field(
+        False, description="invariant — 주문 신호 아님"
+    )
+    auto_apply_allowed:   bool = Field(
+        False, description="invariant — 자동 적용 안 함"
+    )
+    is_investment_advice: bool = Field(
+        False, description="invariant — 투자 조언 아님"
+    )
+    generated_at:         datetime
+
+
+_THRESHOLD_FIELDS = {
+    "late_entry_seconds", "late_exit_seconds", "stale_signal_age_minutes",
+    "high_correlation_threshold", "high_volatility_threshold",
+    "slippage_bps_threshold", "low_liquidity_volume_ratio",
+    "spread_bps_threshold",
+}
+
+
+def _build_thresholds(payload: LossRootCausePayload) -> RootCauseThresholds | None:
+    th_kwargs: dict = {}
+    for name in _THRESHOLD_FIELDS:
+        v = getattr(payload, name, None)
+        if v is not None:
+            th_kwargs[name] = v
+    return RootCauseThresholds(**th_kwargs) if th_kwargs else None
+
+
+@router.post(
+    "/loss-root-cause/evaluate",
+    response_model=LossRootCauseResultPayload,
+)
+def loss_root_cause_evaluate(
+    payload: LossRootCausePayload,
+) -> LossRootCauseResultPayload:
+    """근본원인 평가 (POST). read-only — broker / DB write / 안전 flag 변경 0건."""
+    th = _build_thresholds(payload)
+    inp_kwargs = payload.model_dump(exclude=_THRESHOLD_FIELDS)
+    try:
+        inp = LossRootCauseInput(**inp_kwargs)
+    except (TypeError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=f"invalid input: {e}")
+
+    result: LossRootCauseResult = evaluate_loss_root_cause(inp, th)
+    return LossRootCauseResultPayload(**result.to_dict())
+
+
+class LossRootCauseBatchPayload(BaseModel):
+    """N개 손실 거래의 batch 평가 + 요약."""
+    losses: list[LossRootCausePayload]
+
+
+class TagFrequencyPayload(BaseModel):
+    tag:           str
+    category:      str
+    count:         int
+    share_pct:     float
+    severity_dist: dict[str, int]
+
+
+class LossRootCauseSummaryPayload(BaseModel):
+    total_loss_count:    int
+    by_tag:              list[TagFrequencyPayload]
+    by_category:         dict[str, int]
+    top_tags:            list[str]
+    high_severity_tags:  list[str]
+    by_strategy:         dict[str, dict[str, int]]
+    is_estimated:        bool = Field(True)
+    is_order_signal:     bool = Field(False)
+    auto_apply_allowed:  bool = Field(False)
+
+
+@router.post(
+    "/loss-root-cause/summarize",
+    response_model=LossRootCauseSummaryPayload,
+)
+def loss_root_cause_summarize(
+    payload: LossRootCauseBatchPayload,
+) -> LossRootCauseSummaryPayload:
+    """N개 손실 거래 평가 후 집계 요약. read-only."""
+    results: list[LossRootCauseResult] = []
+    strategies: list[str | None] = []
+    for item in payload.losses:
+        try:
+            inp = LossRootCauseInput(
+                **item.model_dump(exclude=_THRESHOLD_FIELDS),
+            )
+        except (TypeError, ValueError) as e:
+            raise HTTPException(
+                status_code=400, detail=f"invalid input: {e}",
+            )
+        results.append(evaluate_loss_root_cause(inp))
+        strategies.append(item.strategy)
+
+    summary: LossRootCauseSummary = summarize_root_causes(
+        results, strategies,
+    )
+    return LossRootCauseSummaryPayload(**summary.to_dict())

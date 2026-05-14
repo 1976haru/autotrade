@@ -402,6 +402,40 @@ OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client` /
 0건, storage 는 `db.delete(` / `DELETE FROM` 0건. 자세한 정책:
 [`docs/loss_tagging_policy.md`](docs/loss_tagging_policy.md).
 
+**#96 Loss Root Cause Tagging (결정/실행 단계 손실 원인 advisory)**: 손실 거래에
+*"왜 잃었는가"* 의 근본원인을 16개 태그 × 5 카테고리로 *추정* 분류하는 advisory
+모듈 — `app/analytics/loss_root_cause.py`. **#79 `loss_tagging.py`** (post-trade
+25 tag × 7 cat) 와는 **별개 분석 레이어** — 본 모듈은 *결정 시점 / 실행 단계*
+약점에 초점. 16 root cause tag: decision(`LATE_ENTRY` / `LATE_EXIT` /
+`STALE_SIGNAL` / `AGENT_OVERRULED`) + risk(`HIGH_CORRELATION` /
+`RISK_GATE_REJECTED`) + market(`HIGH_VOLATILITY` / `BAD_REGIME` / `NEWS_RISK`)
++ execution(`LOW_LIQUIDITY` / `SLIPPAGE` / `SPREAD_TOO_WIDE`) +
+strategy(`STOP_LOSS_HIT` / `TIME_STOP_HIT` / `KIMP_CONVERGENCE_FAIL`) +
+`UNKNOWN`. `KIMP_CONVERGENCE_FAIL` 은 *crypto-specific* — 본 프로젝트 1차 배포
+미적용, 향후 crypto 확장 시 활성화. primary tag 선정 우선순위: 카테고리
+priority (risk > decision > market > execution > strategy > unknown) × severity
+(HIGH > MEDIUM > LOW). #94 `STALE_SIGNAL` 과 #95 `HIGH_CORRELATION` 직접 연동
+(`signal_age_minutes_at_entry` / `portfolio_max_correlation` 입력). 집계 함수
+`summarize_root_causes()` 로 N개 손실 거래 → frequency / by_strategy / top_tags /
+high_severity_tags 통계. API: `POST /api/analytics/loss-root-cause/{evaluate,summarize}`
+read-only. UI: `LossRootCauseCard.jsx` (기존 `LossReasonCard.jsx` 와 별개 파일)
+— primary tag 배지 + 5 invariant 영구 배지 ("추정 태그 · 확정 아님" / "주문
+신호 아님" / "자동 적용 안 함" / "투자 조언 아님" / "분석 전용 · 주문 기능 아님")
++ 단일 거래 detail (multi-cause tag + rationale + improvement_advice) + 집계
+요약 (top tags / high severity / by_strategy 분포 토글). **본 결과는 *추정값*
+이며 *확정 원인이 아님*** — `LossRootCauseResult.is_estimated=True` 영구 +
+`is_order_signal=False` / `auto_apply_allowed=False` / `is_investment_advice=False`
+불변 (dataclass `__post_init__` ValueError). broker / OrderExecutor / route_order /
+paper_trader / `app.ai.assist` / `app.ai.client` / `anthropic` / `openai` /
+`httpx` / `requests` / `app.core.config.get_settings` import 0건 (정적 grep
+가드), DB write 0건, settings 안전 flag mutate 0건, frontend `input` /
+`textarea` 0개, "지금 매수" / "지금 매도" / "Place Order" / "실거래 활성화" /
+"ENABLE_LIVE_TRADING 토글" / "BUY/SELL/HOLD signal" 라벨 button 0개. 본 PR 은
+**실거래 실행 기능을 추가하지 않으며**, 태그는 advisory — RiskManager /
+OrderGuard 자동 차단 트리거로 사용하지 않음. AI Agent prompt context 에 carry
+받아 *선택적 학습* 자료로만 사용. 49개 신규 backend 테스트 + 14개 신규 frontend
+테스트 PASS. 자세한 정책: [`docs/loss_tagging.md`](docs/loss_tagging.md).
+
 **#95 Portfolio Correlation Guard (포트폴리오 수익률 상관관계 advisory)**:
 현재 보유 포지션 + 신규 진입 후보 종목 간의 *Pearson 상관계수 매트릭스*를
 계산해 동일 시장 리스크 과노출을 advisory 검사 —
