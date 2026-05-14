@@ -1,5 +1,31 @@
 # Final Completion Summary
 
+> ⚠ **본 문서는 *과거 시점* (2026-05-07 / 186 머지 직후) 의 스냅샷입니다.**
+> 현재 (#88 이후) 상태와 최신 우선순위는 아래 *status* 시리즈를 참고하세요.
+> 본 문서의 기존 내용은 *역사적 기록* 으로 그대로 보존됩니다.
+>
+> ## 최신 상태 인덱스 (2026-05 / #88)
+>
+> - 📊 [`docs/status/current_state.md`](status/current_state.md) — 현재 main
+>   상태 단일 진실 (운영 모드 / 안전 flag / 6 전략 / #80~#88 요약)
+> - ✅ [`docs/status/completed_checklist_060_088.md`](status/completed_checklist_060_088.md)
+>   — #60~#88 체크리스트 표
+> - ⚠ [`docs/status/known_risks.md`](status/known_risks.md) — 8 카테고리 알려진
+>   위험 (배포 / 의존성 / 데이터 / CI / Frontend / Secret)
+> - 🛣 [`docs/status/next_steps.md`](status/next_steps.md) — P0/P1/P2/P3 작업
+>   우선순위 + 실거래 전환 baseline
+> - 📋 [`docs/system_audit_2026_05.md`](system_audit_2026_05.md) — 전 영역 단일
+>   진실 카탈로그 (#87)
+> - 🧹 [`docs/system_hygiene_report.md`](system_hygiene_report.md) — `.gitignore` /
+>   workflow / env example / Pages 점검 결과 (#88)
+> - 📦 [`docs/dependency_policy.md`](dependency_policy.md) — 의존성 lock / freeze
+>   정책 (#88)
+>
+> 본 문서를 *현재 상태 확인용* 으로 사용하지 마세요 — `status/current_state.md`
+> 가 단일 진실입니다.
+
+---
+
 **시점**: 2026-05-07
 **저장소**: `C:\trade\autotrade`
 **main 커밋**: 186 머지 직후 (origin/main과 동기화)

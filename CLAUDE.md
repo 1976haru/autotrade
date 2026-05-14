@@ -402,6 +402,34 @@ OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client` /
 0건, storage 는 `db.delete(` / `DELETE FROM` 0건. 자세한 정책:
 [`docs/loss_tagging_policy.md`](docs/loss_tagging_policy.md).
 
+**#88 System Hygiene (운영 로직 변경 0건)**: GitHub 원격 저장소 기준
+보완사항 — `.gitignore` 정리 (`.venv-310/` / `backend/.venv-310/` 명시 추가
++ `src-tauri/target/` / `*.msi` 등 #86 desktop artifact), 6개 workflow YAML
+검증 (모두 `python -c "yaml.safe_load"` 통과), `backend/requirements.txt` /
+`backend/.env.example` / `.env.staging.example` 형식 점검 (각각 1줄 1패키지 /
+1줄 1환경변수, 실 Secret 0건, LIVE flag 모두 false), README *실거래 허가
+아님* 배너 + #84~#88 신규 문서 링크 (`strategy_signal_aggregator.md` /
+`strategy_selection_agent.md` / `desktop_packaging.md` / `desktop_update_policy.md`
+/ `beta_tester_install_guide.md` / `tailscale_smartphone_access.md` /
+`first_run_setup_wizard.md` / `system_audit_2026_05.md` / `system_hygiene_report.md`
++ 4개 `status/*.md` + `dependency_policy.md`), `docs/final_completion_summary.md`
+최상단에 *과거 스냅샷* 경고 + status/ 인덱스 추가 (기존 내용 보존). 새 정적
+검사 `backend/tests/test_repository_hygiene.py` 24 PASS — `.gitignore` Secret
+allowlist / `.venv-310/` ignore / `backups/*` ignore / requirements 1줄 구조
+/ env example Secret 의심값 (`sk-`, `ghp_`, `xox`, Bearer, 계좌번호 형식)
+0건 / workflow Secret echo 0건 / LIVE flag 활성화 패턴 0건 / README 핵심 문구
+/ `sw.js` `/api` 캐시 금지 / 6개 docs 존재. **본 PR 변경 항목**: `.gitignore` /
+8개 신규 docs (`docs/status/*.md` 4종 + `dependency_policy.md` +
+`system_hygiene_report.md`) / README / `final_completion_summary.md` 헤더 /
+`test_repository_hygiene.py`. **변경 0건**: `app/` 운영 로직 / broker /
+OrderExecutor / `route_order` / Strategy / RiskManager / DB schema / Alembic
+migrations / `.env*` 값 / 안전 flag default. 자세한 정책:
+[`docs/system_hygiene_report.md`](docs/system_hygiene_report.md),
+[`docs/dependency_policy.md`](docs/dependency_policy.md),
+[`docs/status/current_state.md`](docs/status/current_state.md),
+[`docs/status/known_risks.md`](docs/status/known_risks.md),
+[`docs/status/next_steps.md`](docs/status/next_steps.md).
+
 **#87 System Audit 2026-05 (코드/로직 변경 0건)**: 새 매매기법 추가 / 안전
 flag 변경 / `.env` 수정 / broker / Strategy / RiskManager / OrderExecutor /
 `route_order` 코드 *전혀 변경 없이*, 현재 자동매매 시스템의 전 영역을 *단일
