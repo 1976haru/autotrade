@@ -71,7 +71,7 @@ npm run dev -- --host 0.0.0.0
 - 🛣 [`docs/status/next_steps.md`](docs/status/next_steps.md) — P0/P1/P2/P3 우선순위 + 실거래 baseline (#88)
 - 📦 [`docs/dependency_policy.md`](docs/dependency_policy.md) — frontend/backend/desktop 의존성 + Paper freeze 정책 (#88)
 - 🧪 [`docs/kis_paper_oneclick.md`](docs/kis_paper_oneclick.md) — 한투 모의투자 AI 자동매매 *원클릭* 테스트 (3 모드 / 점수판 / 안전 invariant) (#89)
-- 💻 [`docs/desktop_exe_status.md`](docs/desktop_exe_status.md) — Windows installer 빌드 상태 + Rust 툴체인 점검 결과 (#89, #90 갱신)
+- 💻 [`docs/desktop_exe_status.md`](docs/desktop_exe_status.md) — Windows installer 빌드 상태 + Rust 툴체인 점검 결과 + **GitHub Actions 자동 빌드 활성화** (#89, #90, 2026-05-15 갱신)
 - 🚀 [`docs/exe_oneclick_installation.md`](docs/exe_oneclick_installation.md) — **EXE 원클릭 설치 + 한투 모의 테스트 흐름** — 베타테스터 / 지인 배포 가이드 (#90)
 - 🚦 [`docs/pre_market_checklist.md`](docs/pre_market_checklist.md) — Pre-market Checklist 초보자 흐름 (#91)
 - 📊 [`docs/release_readiness_policy.md`](docs/release_readiness_policy.md) — Release Readiness Report advisory meta-aggregator (실거래 허가 아님) (#92)
