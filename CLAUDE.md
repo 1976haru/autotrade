@@ -402,6 +402,27 @@ OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client` /
 0건, storage 는 `db.delete(` / `DELETE FROM` 0건. 자세한 정책:
 [`docs/loss_tagging_policy.md`](docs/loss_tagging_policy.md).
 
+**#87 System Audit 2026-05 (코드/로직 변경 0건)**: 새 매매기법 추가 / 안전
+flag 변경 / `.env` 수정 / broker / Strategy / RiskManager / OrderExecutor /
+`route_order` 코드 *전혀 변경 없이*, 현재 자동매매 시스템의 전 영역을 *단일
+진실* 문서로 카탈로그화한 audit PR. 6개 매매기법 (`sma_crossover` /
+`rsi_reversion` / `vwap_strategy` / `orb_vwap` / `volume_breakout` /
+`pullback_rebreak`) 외 *어떤 전략도 존재하지 않음을* 정적 grep + dataclass
+가드로 lock. 가짜 / 경쟁사 전략명 (`골든브릿지` / `100% 승률` /
+`guaranteed` / `magic strategy` 등) 도입 0건 (`test_strategy_registry_metadata.py`
++ 본 PR 의 `test_system_audit_invariants.py` 9개 통합 invariant 로 재검증).
+`OperationMode` 7종 / `KillSwitchLevel` 4단계 / `live_trading_available=False`
+6/6 / `backtest_available=True` 6/6 / `paper_trading_available=True` 6/6 /
+`ENABLE_LIVE_TRADING=ENABLE_AI_EXECUTION=ENABLE_FUTURES_LIVE_TRADING=false`
+(`.env.example` default) / `KIS_IS_PAPER=true` default / `DEFAULT_MODE=SIMULATION`
+default 모두 테스트로 강제. **추가된 데이터 모델 0건** — 사용자 요청서의
+`DecisionLog` 는 기존 `AgentDecisionLog` (chain_id + symbol + reasons + meta)
+가 이미 모든 필드를 표현. 자세한 카탈로그:
+[`docs/system_audit_2026_05.md`](docs/system_audit_2026_05.md) — 18개 섹션,
+6개 전략의 파일 / 클래스 / entry / exit / risk_profile / 핵심 파라미터 /
+모드 별 가용성 / UI 표시명 (10곳) / 위험관리 8개 Rule / Broker 4개 어댑터 /
+Agent 15종 / DB 22 migrations / 알림 채널.
+
 **#86 Desktop Installer / Beta 배포 (skeleton + 문서)**: 베타테스터가
 PowerShell / uvicorn / npm 명령어를 직접 실행하지 않고 `AgentTrader-v1-Setup.exe`
 를 더블클릭해 설치하고 바탕화면 아이콘으로 실행할 수 있게 만드는 *Windows
