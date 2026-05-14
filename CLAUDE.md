@@ -402,6 +402,42 @@ OrderExecutor / route_order / paper_trader / `app.ai.assist` / `app.ai.client` /
 0건, storage 는 `db.delete(` / `DELETE FROM` 0건. 자세한 정책:
 [`docs/loss_tagging_policy.md`](docs/loss_tagging_policy.md).
 
+**#92 Release Readiness Report (advisory meta-aggregator)**: 운영자가 "지금 새
+릴리스 태그를 찍어도 되는가 / 다음 promotion 단계로 검토 가능한가" 를 판단할 수
+있는 *단일 advisory 리포트* — `app/governance/release_readiness.py`. 기존
+governance gates(#72/#73/#74/#75) + #80/#91 Pre-market + #77 Alpha Decay + #88
+System Hygiene + #90 Desktop EXE 빌드 상태 + recent activity metrics 를
+*read-only 로 carry* 받아 종합 verdict 산출. verdict 4단계(`READY_TO_TAG` /
+`READY_WITH_CAVEATS` / `DO_NOT_TAG` / `INSUFFICIENT_DATA`). 10 카테고리
+(`safety_flags` / `governance_gates` / `pre_market` / `strategy_health` /
+`desktop_build` / `system_hygiene` / `documentation` / `data_freshness` /
+`recent_activity` / `operator`) × 평균 2개 항목 = 약 21개 check item.
+`release_kind` 3단계(`BETA` / `RC` / `STABLE`)별 required 매트릭스가 단계별로
+강화 — `BETA` 는 안전 flag + pre-market + hygiene 최소, `RC` 추가 Paper Gate /
+Strategy Health / 운영자 opt-in / desktop sidecar / test pass rate, `STABLE` 추가
+Live Manual Gate / desktop installer / data freshness / emergency stop 한도.
+**READY_TO_TAG 라벨은 *실거래 활성화 / 자동 promotion 이 아니다*** —
+`ReleaseReadinessResult.is_live_authorization=False` /
+`auto_apply_allowed=False` / `is_order_signal=False` / `live_flag_changed=False` /
+`mode_changed=False` 불변(dataclass `__post_init__` ValueError 가드). 본 모듈은
+다른 governance gate evaluator 를 *직접 호출하지 않는다* — 호출자가 각 gate
+결과를 *라벨 / boolean 으로 요약*해서 전달 (정적 grep 가드로 lock). 본 모듈은
+broker / OrderExecutor / route_order / paper_trader / `app.ai.assist` /
+`app.ai.client` / `anthropic` / `openai` / `httpx` / `requests` /
+`app.core.config.get_settings` import 0건 (정적 grep 가드), DB write 0건,
+settings 안전 flag mutate 0건 — 운영자가 *현재 .env 상태* 를 input DTO 로 명시
+입력해 실제값↔입력값 혼선 시 즉시 인지. `Secret` 원문 0건 — input DTO 에 API
+key / 계좌번호 / Anthropic Key / Telegram Bot Token 필드 없음, `operator_note`
+plaintext 만 max 500 chars 허용. API: `POST /api/governance/release-readiness/{evaluate,markdown}`
+read-only. UI: `ReleaseReadinessCard` — verdict 헤드라인 + 4 invariant 영구 배지
+("실거래 허가 아님" / "자동 .env 수정 안 함" / "release 자동 태깅 안 함" /
+"주문 신호 아님") + 실패 / 경고 / 필요 조치 리스트 + 세부 항목 / markdown
+미리보기 토글, secret 입력 form (input / textarea) 0개, "릴리스 자동 태깅" /
+"git tag 자동 생성" / "GitHub Release publish" / "자동 promotion" / "실거래
+활성화" / "Place Order" / "ENABLE_*" 라벨 button 0개 (frontend 테스트로 lock).
+47개 신규 backend 테스트 + 19개 frontend 테스트 PASS. 자세한 정책:
+[`docs/release_readiness_policy.md`](docs/release_readiness_policy.md).
+
 **#91 Pre-market Checklist 확장 (Desktop EXE / KIS Paper one-click 흐름)**: 기존
 #80 `evaluate_pre_market_check` 위에 *데스크톱 / KIS Paper 특화 점검 항목*을
 추가한 확장 — 신규 모듈 생성 0건, 동일 `app/governance/pre_market_check.py` 에
