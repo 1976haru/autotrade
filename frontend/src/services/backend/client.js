@@ -483,6 +483,18 @@ export const backendApi = {
       method: "POST",
       body: JSON.stringify(body || {}),
     }),
+  // 92: Release Readiness Report — advisory meta-aggregator (read-only).
+  // READY_TO_TAG 라벨은 *실거래 활성화 / 자동 promotion 이 아니다*.
+  releaseReadinessEvaluate: (body) =>
+    backendFetch("/api/governance/release-readiness/evaluate", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
+  releaseReadinessMarkdown: (body) =>
+    backendFetch("/api/governance/release-readiness/markdown", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
   lossTagsSummary: ({ days = 7, strategy = null } = {}) => {
     const qs = new URLSearchParams({ days: String(days) });
     if (strategy) qs.set("strategy", strategy);

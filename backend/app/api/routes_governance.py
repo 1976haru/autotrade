@@ -827,3 +827,141 @@ def pre_market_check_get(
     )
     result = evaluate_pre_market_check(inp)
     return PreMarketCheckResultPayload(**result.to_dict())
+
+
+# ---------- #92 Release Readiness Report ----------
+
+from app.governance.release_readiness import (
+    ReleaseReadinessInput,
+    ReleaseReadinessResult,
+    evaluate_release_readiness,
+    render_markdown_report as render_release_readiness_markdown,
+)
+
+
+class ReleaseReadinessPayload(BaseModel):
+    """Release Readiness 평가 입력 (read-only).
+
+    모든 필드는 *현재값 carry* — 본 endpoint 는 어떤 안전 flag / .env / DB /
+    broker 도 mutate 하지 않는다. Secret 원문 0건.
+    """
+    target_release_tag:                  str       = "v0.0.0-unspecified"
+    release_kind:                        str       = "BETA"
+    strict:                              bool      = False
+
+    kis_is_paper:                        bool      = True
+    enable_live_trading:                 bool      = False
+    enable_ai_execution:                 bool      = False
+    enable_futures_live_trading:         bool      = False
+
+    paper_gate_verdict:                  str | None = None
+    live_manual_gate_verdict:            str | None = None
+    ai_assist_gate_verdict:              str | None = None
+    ai_execution_gate_verdict:           str | None = None
+
+    pre_market_verdict:                  str | None = None
+    pre_market_start_allowed:            bool | None = None
+
+    alpha_decay_worst_status:            str | None = None
+    alpha_decay_disable_candidate_count: int       = 0
+    alpha_decay_strategies_evaluated:    int       = 0
+
+    desktop_sidecar_built:               bool | None = None
+    desktop_installer_built:             bool | None = None
+
+    last_system_audit_at:                datetime | None = None
+    repository_hygiene_pass:             bool | None = None
+
+    documentation_coverage_ok:           bool | None = None
+
+    data_freshness_ok:                   bool | None = None
+    market_data_provider:                str       = "mock"
+
+    recent_paper_trade_count_7d:         int       = 0
+    recent_paper_active_days_7d:         int       = 0
+    recent_loss_limit_violations_7d:     int       = 0
+    recent_emergency_stop_events_7d:     int       = 0
+    recent_audit_missing_7d:             int       = 0
+    recent_test_pass_rate_pct:           float | None = None
+    recent_test_total_count:             int       = 0
+
+    operator_explicit_opt_in:            bool      = False
+    operator_note:                       str       = Field(default="", max_length=500)
+
+
+class ReleaseReadinessItemPayload(BaseModel):
+    name:        str
+    category:    str
+    severity:    str
+    required:    bool
+    message:     str
+    detail:      dict
+
+
+class ReleaseReadinessResultPayload(BaseModel):
+    target_release_tag:     str
+    release_kind:           str
+    verdict:                str
+    items:                  list[ReleaseReadinessItemPayload]
+    failed_required:        list[str]
+    warnings:               list[str]
+    required_actions:       list[str]
+    operator_note:          str
+    is_live_authorization:  bool = Field(False, description="invariant — 항상 false")
+    auto_apply_allowed:     bool = Field(False, description="invariant — 항상 false")
+    is_order_signal:        bool = Field(False, description="invariant — 항상 false")
+    live_flag_changed:      bool = Field(False, description="invariant — flag 미변경")
+    mode_changed:           bool = Field(False, description="invariant — 모드 미변경")
+    generated_at:           datetime
+
+
+@router.post(
+    "/release-readiness/evaluate",
+    response_model=ReleaseReadinessResultPayload,
+)
+def release_readiness_evaluate(
+    payload: ReleaseReadinessPayload,
+) -> ReleaseReadinessResultPayload:
+    """Release Readiness 평가 (POST — 호출자가 현재 상태를 명시 입력).
+
+    read-only — broker / DB write / 안전 flag mutate 0건.
+    """
+    try:
+        inp = ReleaseReadinessInput(**payload.model_dump())
+    except (TypeError, ValueError) as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid release_readiness input: {e}",
+        )
+    result: ReleaseReadinessResult = evaluate_release_readiness(inp)
+    return ReleaseReadinessResultPayload(**result.to_dict())
+
+
+class ReleaseReadinessMarkdownPayload(BaseModel):
+    markdown: str
+    verdict:  str
+
+
+@router.post(
+    "/release-readiness/markdown",
+    response_model=ReleaseReadinessMarkdownPayload,
+)
+def release_readiness_markdown(
+    payload: ReleaseReadinessPayload,
+) -> ReleaseReadinessMarkdownPayload:
+    """Release Readiness 결과의 markdown 리포트.
+
+    동일 입력으로 evaluator 호출 후 markdown 변환 — DB / 외부 시스템 영향 0건.
+    """
+    try:
+        inp = ReleaseReadinessInput(**payload.model_dump())
+    except (TypeError, ValueError) as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"invalid release_readiness input: {e}",
+        )
+    result: ReleaseReadinessResult = evaluate_release_readiness(inp)
+    return ReleaseReadinessMarkdownPayload(
+        markdown=render_release_readiness_markdown(result),
+        verdict=result.verdict.value,
+    )
