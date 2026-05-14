@@ -745,6 +745,16 @@ class PreMarketCheckPayload(BaseModel):
     manual_ack_by:                     str   = Field(default="", max_length=64)
     manual_ack_note:                   str   = Field(default="", max_length=500)
 
+    # ---------- #91: Desktop EXE / KIS Paper one-click extension ----------
+    desktop_mode:                      bool  = False
+    desktop_sidecar_connected:         bool | None = None
+    desktop_status_endpoint_ok:        bool | None = None
+    kis_paper_ready:                   bool | None = None
+    kis_paper_can_run_mock:            bool | None = None
+    kis_paper_can_run_kis:             bool | None = None
+    # blocked_reasons 는 label 만 carry — secret 원문 / API key 0건.
+    kis_paper_blocked_reasons:         list[str] = Field(default_factory=list)
+
 
 class PreMarketCheckItemPayload(BaseModel):
     name:        str
@@ -756,20 +766,26 @@ class PreMarketCheckItemPayload(BaseModel):
 
 
 class PreMarketCheckResultPayload(BaseModel):
-    mode:                str
-    verdict:             str
-    start_allowed:       bool
-    items:               list[PreMarketCheckItemPayload]
-    failed_required:     list[str]
-    warnings:            list[str]
-    required_actions:    list[str]
-    manual_ack_recorded: bool
-    manual_ack_by:       str
-    manual_ack_note:     str
-    is_order_signal:     bool = Field(False, description="invariant — 항상 false")
-    live_flag_changed:   bool = Field(False, description="invariant — flag 미변경")
-    mode_changed:        bool = Field(False, description="invariant — 모드 미변경")
-    generated_at:        datetime
+    mode:                   str
+    verdict:                str
+    start_allowed:          bool
+    items:                  list[PreMarketCheckItemPayload]
+    failed_required:        list[str]
+    warnings:               list[str]
+    required_actions:       list[str]
+    manual_ack_recorded:    bool
+    manual_ack_by:          str
+    manual_ack_note:        str
+    is_order_signal:        bool = Field(False, description="invariant — 항상 false")
+    live_flag_changed:      bool = Field(False, description="invariant — flag 미변경")
+    mode_changed:           bool = Field(False, description="invariant — 모드 미변경")
+    # #91 — One-click paper test 활성화 게이트. start_allowed=True 이고 KIS Paper
+    # / Mock 중 하나라도 가능할 때만 True. desktop_mode 가 아니면 항상 False.
+    kis_paper_test_allowed: bool = Field(
+        False,
+        description="One-click paper test 시작 활성화 게이트 (#91)",
+    )
+    generated_at:           datetime
 
 
 @router.post(

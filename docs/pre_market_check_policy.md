@@ -213,6 +213,97 @@ Content-Type: application/json
 
 ---
 
+## 10-A. #91 확장 — Desktop EXE / KIS Paper one-click flow
+
+### 배경
+
+#90 PR 에서 추가된 EXE/MSI 원클릭 설치 + backend sidecar + `KisPaperOneClickTestCard`
+흐름은 *초보자가 한 번의 더블클릭으로 모의투자 자동매매를 시작*하는 것을 목표로 한다.
+이 흐름의 *바로 앞 단계*에 안전 점검이 필요하다 — 사용자가 `backend/.env` 의 안전
+flag 를 실수로 켠 채로 시작 버튼을 누르지 못하도록.
+
+**#91 은 #80 을 *대체하지 않는다*** — 동일한 `evaluate_pre_market_check` evaluator
+위에 *데스크톱 / KIS Paper 특화 점검 항목*을 추가한 확장이다. 기존 SIMULATION /
+PAPER / LIVE_* 흐름은 그대로 작동한다.
+
+### 신규 카테고리
+
+| 카테고리 | 식별자 | 추가 항목 |
+|---|---|---|
+| Desktop EXE | `desktop` | `desktop_sidecar`, `desktop_status_endpoint` |
+| KIS Paper readiness | `kis_paper` | `kis_is_paper_safety`, `kis_paper_readiness`, `kis_paper_capability` |
+
+### 신규 입력 필드 (`PreMarketCheckInput`)
+
+| 필드 | 타입 | 기본 | 의미 |
+|---|---|---|---|
+| `desktop_mode` | `bool` | `False` | True 일 때만 desktop / kis_paper capability 항목이 추가됨 |
+| `desktop_sidecar_connected` | `bool \| None` | `None` | backend sidecar 가 frontend 에 연결됐는지 (UNKNOWN 가능) |
+| `desktop_status_endpoint_ok` | `bool \| None` | `None` | `/api/status` 응답 OK 여부 |
+| `kis_paper_ready` | `bool \| None` | `None` | `/api/kis-paper/readiness` 의 ready 값 (KisPaperReadiness 의 `ready` 필드) |
+| `kis_paper_can_run_mock` | `bool \| None` | `None` | KisPaperReadiness 의 `can_run_mock` |
+| `kis_paper_can_run_kis` | `bool \| None` | `None` | KisPaperReadiness 의 `can_run_kis_paper` |
+| `kis_paper_blocked_reasons` | `tuple[str, ...]` | `()` | KisPaperReadiness 의 `blocked_reasons` (라벨만, secret 0건) |
+
+### 신규 출력 필드 (`PreMarketCheckResult`)
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| `kis_paper_test_allowed` | `bool` | `start_allowed=True` 이고 KIS Paper 또는 Mock 모드 중 하나라도 가능할 때만 True. `desktop_mode=False` 면 항상 False. **One-click paper test 의 *프론트엔드 시작 버튼 활성화 여부 게이트*** — 본 값이 False 면 `KisPaperOneClickTestCard` 의 quick / slow / mock 시작 버튼이 disabled. |
+
+### 초보자 안전 flag proactive check (SIMULATION / PAPER / LIVE_SHADOW 한정)
+
+기존 #80 은 LIVE_* 모드에서 *안전 flag 가 OFF 면* FAIL 했다 (예: LIVE_AI_EXECUTION
+모드인데 `ENABLE_AI_EXECUTION=false`). #91 은 *반대 방향*도 추가:
+
+| Check | 동작 |
+|---|---|
+| `kis_is_paper_safety` | SIM / PAPER / LIVE_SHADOW 에서 `KIS_IS_PAPER=true` 필수. False 면 FAIL. |
+| `enable_live_trading_safety` | SIM / PAPER / LIVE_SHADOW 에서 `ENABLE_LIVE_TRADING=false` 필수. True 면 FAIL. |
+| `enable_ai_execution_safety` | SIM / PAPER / LIVE_SHADOW 에서 `ENABLE_AI_EXECUTION=false` 필수. True 면 FAIL. |
+| `enable_futures_safety` | SIM / PAPER / LIVE_SHADOW 에서 `ENABLE_FUTURES_LIVE_TRADING=false` 필수. True 시 기존 `futures_live_flag` FAIL 과 같이 차단. |
+
+→ 베타테스터가 `.env` 에서 실수로 LIVE / AI / 선물 flag 를 켠 채로 모의투자를
+시도하지 못하도록.
+
+### 절대 원칙 invariant (#91 추가분)
+
+- **secret 원문 0건**: `kis_paper_blocked_reasons` 는 **라벨만 carry** — 본 모듈은
+  KIS App Key / Secret / 계좌번호 / Anthropic Key 원문을 절대 받지 않는다 (테스트로
+  lock). 프론트엔드도 secret 입력 form (`input` / `textarea`) 0개.
+- **PASS 일 때만 KIS Paper test 시작 활성화**: `kis_paper_test_allowed` 는
+  `start_allowed=True` 가 *필요조건*. required FAIL 이 1건이라도 있으면
+  `KisPaperOneClickTestCard` 의 시작 버튼은 모두 disabled.
+- **자동매매 시작 / mode 변경 / flag 토글 버튼 0개**: `PreMarketCheckCard` 가
+  desktop 항목을 표시해도 본 카드 자체의 버튼은 여전히 "다시 점검" / "확인했습니다"
+  / "세부 항목 펼치기" 3개만.
+- **`auto_apply_allowed` 0건**: 본 게이트는 `.env` 를 *수정하지 않는다* — 사용자에게
+  *수정 안내*만 제공.
+
+### Frontend 통합
+
+- `PreMarketCheckCard`
+  - 결과 items 에 `desktop` / `kis_paper` 카테고리가 포함되면 *KIS Paper test
+    활성화 게이트 배너* (`data-testid="pre-market-kis-paper-test-gate"`) 표시.
+  - `verdict=DO_NOT_START` 일 때 *초보자 안내 블록* (`data-testid="pre-market-beginner-help"`)
+    노출 — `.env` 4개 flag 점검 가이드. `showBeginnerHelp=false` prop 으로 비활성 가능.
+- `KisPaperOneClickTestCard`
+  - 옵션 prop `preMarketCheckResult` — 있을 때만 동작. `start_allowed=false` 면
+    quick / slow / mock 3개 시작 버튼 모두 disabled + 차단 배너 노출
+    (`data-testid="kis-paper-premarket-blocked-banner"`).
+  - **backwards compat**: prop 미지정 시 기존 동작 그대로 (#89 / #90 behavior 유지).
+
+### 테스트 추가 (#91)
+
+- backend `tests/test_pre_market_check.py` — 22개 신규 case (enum 1 + safety flag 6 +
+  desktop 3 + kis_paper 3 + test_allowed 5 + to_dict 1 + API 2 + secret 0건 1).
+- frontend `PreMarketCheckCard.test.jsx` — 10개 신규 case (활성화 게이트 배너 / 차단
+  배너 / 초보자 안내 / secret 패턴 0건 / 입력 form 0개 / 실거래 라벨 button 0개 등).
+- frontend `KisPaperOneClickTestCard.test.jsx` — 6개 신규 case (prop 게이트 / 차단
+  배너 / backwards compat / secret 0건 등).
+
+---
+
 ## 11. 후속 backlog
 
 - **자동 collector** — `/api/status` + `/api/monitoring/health` + `/api/risk/policy`

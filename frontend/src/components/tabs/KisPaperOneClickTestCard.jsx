@@ -171,7 +171,9 @@ function useKisPaperTest() {
 }
 
 
-export function KisPaperOneClickTestCard() {
+export function KisPaperOneClickTestCard({
+  preMarketCheckResult = null,
+} = {}) {
   const {
     readiness, status, report, loading, error, pendingMode,
     refreshReadiness, refreshStatus, refreshReport,
@@ -183,6 +185,14 @@ export function KisPaperOneClickTestCard() {
 
   const state = status?.state || "IDLE";
   const isRunning = state === "RUNNING";
+
+  // #91 — Pre-market Checklist 결과를 받아서 시작 버튼을 추가로 게이트.
+  // start_allowed=false (DO_NOT_START / FAIL) 면 어떤 mode 도 시작 불가.
+  // result 가 없으면 기존 동작 유지 (backwards compat).
+  const preMarketBlocked = (
+    preMarketCheckResult != null
+    && preMarketCheckResult.start_allowed === false
+  );
 
   return (
     <Card>
@@ -303,6 +313,20 @@ export function KisPaperOneClickTestCard() {
                 testid="kis-paper-current-mode" />
       )}
 
+      {/* #91 — Pre-market check 가 차단 상태이면 시작 버튼이 disabled 됨을 안내. */}
+      {preMarketBlocked ? (
+        <div data-testid="kis-paper-premarket-blocked-banner"
+             style={{ marginTop: 8, padding: "8px 10px",
+                       background: "#fee2e2",
+                       border: "1px solid #ef444455",
+                       borderRadius: 4, fontSize: 11,
+                       color: "#991b1b", fontWeight: 700,
+                       lineHeight: 1.5 }}>
+          🛑 Pre-market Checklist 가 시작 차단 상태입니다 (start_allowed=false).
+          위 점검을 통과해야 모의투자 테스트를 시작할 수 있습니다.
+        </div>
+      ) : null}
+
       {/* 큰 버튼 5개 */}
       <div style={{ marginTop: 12, display: "flex", gap: 6, flexWrap: "wrap" }}>
         <button data-testid="kis-paper-btn-readiness"
@@ -319,15 +343,15 @@ export function KisPaperOneClickTestCard() {
         </button>
         <button data-testid="kis-paper-btn-start-quick"
                 onClick={() => requestStart("quick")}
-                disabled={isRunning || !readiness?.can_run_kis_paper}
+                disabled={isRunning || !readiness?.can_run_kis_paper || preMarketBlocked}
                 style={{
                   padding: "6px 12px", fontSize: "var(--fs-sm)",
-                  background: readiness?.can_run_kis_paper ? "#22c55e" : "#475569",
-                  color: readiness?.can_run_kis_paper ? "#000" : "#94a3b8",
+                  background: (readiness?.can_run_kis_paper && !preMarketBlocked) ? "#22c55e" : "#475569",
+                  color: (readiness?.can_run_kis_paper && !preMarketBlocked) ? "#000" : "#94a3b8",
                   border: "1px solid",
-                  borderColor: readiness?.can_run_kis_paper ? "#22c55e" : "#475569",
+                  borderColor: (readiness?.can_run_kis_paper && !preMarketBlocked) ? "#22c55e" : "#475569",
                   borderRadius: 4,
-                  cursor: (isRunning || !readiness?.can_run_kis_paper)
+                  cursor: (isRunning || !readiness?.can_run_kis_paper || preMarketBlocked)
                     ? "not-allowed" : "pointer",
                   fontWeight: 700, fontFamily: "inherit",
                 }}>
@@ -335,15 +359,15 @@ export function KisPaperOneClickTestCard() {
         </button>
         <button data-testid="kis-paper-btn-start-slow"
                 onClick={() => requestStart("slow")}
-                disabled={isRunning || !readiness?.can_run_kis_paper}
+                disabled={isRunning || !readiness?.can_run_kis_paper || preMarketBlocked}
                 style={{
                   padding: "6px 12px", fontSize: "var(--fs-sm)",
-                  background: readiness?.can_run_kis_paper ? "#fbbf24" : "#475569",
-                  color: readiness?.can_run_kis_paper ? "#000" : "#94a3b8",
+                  background: (readiness?.can_run_kis_paper && !preMarketBlocked) ? "#fbbf24" : "#475569",
+                  color: (readiness?.can_run_kis_paper && !preMarketBlocked) ? "#000" : "#94a3b8",
                   border: "1px solid",
-                  borderColor: readiness?.can_run_kis_paper ? "#fbbf24" : "#475569",
+                  borderColor: (readiness?.can_run_kis_paper && !preMarketBlocked) ? "#fbbf24" : "#475569",
                   borderRadius: 4,
-                  cursor: (isRunning || !readiness?.can_run_kis_paper)
+                  cursor: (isRunning || !readiness?.can_run_kis_paper || preMarketBlocked)
                     ? "not-allowed" : "pointer",
                   fontWeight: 700, fontFamily: "inherit",
                 }}>
@@ -351,15 +375,15 @@ export function KisPaperOneClickTestCard() {
         </button>
         <button data-testid="kis-paper-btn-start-mock"
                 onClick={() => requestStart("mock")}
-                disabled={isRunning || !readiness?.can_run_mock}
+                disabled={isRunning || !readiness?.can_run_mock || preMarketBlocked}
                 style={{
                   padding: "6px 12px", fontSize: "var(--fs-sm)",
-                  background: readiness?.can_run_mock ? "#7dd3fc" : "#475569",
-                  color: readiness?.can_run_mock ? "#000" : "#94a3b8",
+                  background: (readiness?.can_run_mock && !preMarketBlocked) ? "#7dd3fc" : "#475569",
+                  color: (readiness?.can_run_mock && !preMarketBlocked) ? "#000" : "#94a3b8",
                   border: "1px solid",
-                  borderColor: readiness?.can_run_mock ? "#7dd3fc" : "#475569",
+                  borderColor: (readiness?.can_run_mock && !preMarketBlocked) ? "#7dd3fc" : "#475569",
                   borderRadius: 4,
-                  cursor: (isRunning || !readiness?.can_run_mock)
+                  cursor: (isRunning || !readiness?.can_run_mock || preMarketBlocked)
                     ? "not-allowed" : "pointer",
                   fontWeight: 700, fontFamily: "inherit",
                 }}>

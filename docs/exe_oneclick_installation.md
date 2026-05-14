@@ -127,6 +127,8 @@ KIS_ACCOUNT_NO=여기에_모의투자_계좌번호
 
 ## 7. "준비상태 확인" 방법
 
+### 7-1. KIS Paper test 카드의 준비상태 확인
+
 1. 앱 메인 윈도우 → 상단 좌측 **🧪 한투 모의투자 AI 자동매매 테스트** 카드
 2. **[1. 준비상태 확인]** 버튼 클릭
 3. 카드에 다음이 표시됩니다:
@@ -138,6 +140,24 @@ KIS_ACCOUNT_NO=여기에_모의투자_계좌번호
    - KIS Paper 모드 가능 (✓ / ❌)
    - Mock 모드 가능 (✓ / ❌)
 4. 안내 메시지에 노란색 텍스트가 있으면 그 안내를 따라 `.env` 를 수정.
+
+### 7-2. **#91 — Pre-market Checklist 카드 확인 (권장)**
+
+대시보드의 **Pre-market Checklist (#80 / #91)** 카드는 KIS Paper test 카드와
+*별개*로 *전체 자동매매 시스템*의 안전 상태를 점검합니다. 모드별 헤드라인:
+
+| Verdict | 의미 | One-click test 시작 가능? |
+|---|---|---|
+| `READY_TO_START` (녹색 — "오늘 자동운용 가능") | 모든 required 항목 PASS | ✅ 가능 |
+| `WARN_BUT_START_ALLOWED` (주황 — "주의 필요") | required PASS + WARN 존재 | ✅ 가능 (운영자 검토 후) |
+| `DO_NOT_START` (빨강 — "시작 금지") | required FAIL 1건 이상 | ❌ 차단 — One-click test 카드의 시작 버튼이 모두 disabled |
+
+`DO_NOT_START` 일 때 카드 안에 **초보자 안내 블록**이 나타나며, `backend/.env`
+의 4개 안전 flag (`KIS_IS_PAPER=true` / `ENABLE_LIVE_TRADING=false` /
+`ENABLE_AI_EXECUTION=false` / `ENABLE_FUTURES_LIVE_TRADING=false`) 를 확인하는
+체크리스트가 표시됩니다. 변경 후 backend 를 재시작하고 "다시 점검" 버튼을 누르세요.
+
+자세한 정책은 [`docs/pre_market_checklist.md`](pre_market_checklist.md) 참조.
 
 ## 8. "한투 모의 빠른 점검 시작" 방법
 

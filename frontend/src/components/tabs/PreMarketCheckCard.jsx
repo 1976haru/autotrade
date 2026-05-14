@@ -1,5 +1,5 @@
 /**
- * 체크리스트 #80: Pre-market Checklist card (read-only).
+ * 체크리스트 #80 + #91: Pre-market Checklist card (read-only).
  *
  * CLAUDE.md 절대 원칙:
  *   1. 본 카드는 *점검 결과 표시*만 — broker / 주문 / route_order 호출 0건.
@@ -7,12 +7,21 @@
  *      "다시 점검" / "확인했습니다" 버튼만 — 확인은 UI 상태만 갱신.
  *   3. required FAIL 이 있으면 start_allowed=False — UI 의 *어떤 버튼도*
  *      이 결과를 우회하지 않는다.
+ *   4. secret 입력 form 0개. KIS / Anthropic / 계좌번호 원문 표시 0건.
  *
  * 표시:
  *   - 모바일 헤드라인: "오늘 자동운용 가능" / "주의 필요" / "시작 금지"
- *   - PASS / WARN / FAIL 항목 목록
+ *   - PASS / WARN / FAIL 항목 목록 (#80 11카테고리 + #91 desktop / kis_paper)
  *   - 실패 / 경고 / 필요 조치
  *   - 수동 확인 버튼 ("확인했습니다") — 기록 / 표시만, 실제 start_allowed 불변
+ *   - #91: 초보자 안내 블록 (DO_NOT_START 일 때 backend/.env 점검 가이드)
+ *   - #91: KIS Paper one-click test 활성화 게이트 표시 (`kis_paper_test_allowed`)
+ *
+ * Props:
+ *   - mode: 운영 모드 (기본 SIMULATION)
+ *   - inputOverride: POST 입력값 명시 (없으면 GET dry-run)
+ *   - resultOverride: 테스트용 mock 결과 — 제공 시 fetch 생략
+ *   - showBeginnerHelp: 초보자 안내 블록 노출 여부 (기본 true)
  */
 
 import { useEffect, useState } from "react";
@@ -87,6 +96,7 @@ export function PreMarketCheckCard({
   mode = "SIMULATION",
   inputOverride = null,
   resultOverride = null,
+  showBeginnerHelp = true,
 }) {
   const [result, setResult]   = useState(resultOverride);
   const [loading, setLoading] = useState(false);
@@ -129,6 +139,13 @@ export function PreMarketCheckCard({
   const failed        = result?.failed_required || [];
   const warnings      = result?.warnings || [];
   const actions       = result?.required_actions || [];
+  // #91 — One-click paper test 활성화 게이트 (read-only carry).
+  const kisPaperTestAllowed = !!result?.kis_paper_test_allowed;
+
+  // #91 — desktop / kis_paper 항목이 포함된 경우 초보자 안내 표시.
+  const hasDesktopItems = items.some(
+    (it) => it.category === "desktop" || it.category === "kis_paper",
+  );
 
   return (
     <Card style={{ marginBottom: 12 }} accentColor={VERDICT_COLOR[verdict]}>
@@ -136,7 +153,7 @@ export function PreMarketCheckCard({
         display: "flex", justifyContent: "space-between",
         alignItems: "center", marginBottom: 10,
       }}>
-        <SectionLabel>Pre-market Checklist (#80)</SectionLabel>
+        <SectionLabel>Pre-market Checklist (#80 / #91)</SectionLabel>
         <span data-testid={`pre-market-verdict-${verdict}`} style={{
           padding: "2px 8px", borderRadius: 3,
           fontSize: 10, fontWeight: 700,
@@ -147,6 +164,83 @@ export function PreMarketCheckCard({
       </div>
 
       <HeadlineBanner verdict={verdict} startAllowed={startAllowed} />
+
+      {/* #91 — desktop / KIS Paper one-click 흐름에서 사용. 데스크톱 항목이
+          있으면 KIS Paper test 활성화 게이트 표시. */}
+      {hasDesktopItems ? (
+        <div
+          data-testid="pre-market-kis-paper-test-gate"
+          style={{
+            padding: "8px 12px",
+            borderRadius: 6,
+            border: `1px solid ${kisPaperTestAllowed ? "#22c55e55" : "#94a3b855"}`,
+            background: kisPaperTestAllowed ? "#dcfce7" : "var(--c-surface-2)",
+            color: kisPaperTestAllowed ? "#166534" : "var(--c-text-2)",
+            fontSize: 12,
+            fontWeight: 600,
+            marginBottom: 10,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <span>
+            {kisPaperTestAllowed
+              ? "✅ KIS 모의투자 One-click 테스트 시작 가능"
+              : "🛑 KIS 모의투자 One-click 테스트 시작 차단 — 위 항목 해결 후 재점검"}
+          </span>
+          <span
+            data-testid="pre-market-kis-paper-test-gate-flag"
+            style={{
+              fontFamily: "monospace",
+              fontSize: 10,
+              fontWeight: 700,
+              padding: "2px 6px",
+              borderRadius: 3,
+              background: kisPaperTestAllowed ? "#22c55e25" : "#94a3b825",
+            }}
+          >
+            kis_paper_test_allowed={String(kisPaperTestAllowed)}
+          </span>
+        </div>
+      ) : null}
+
+      {/* #91 — 초보자 안내. DO_NOT_START 일 때 .env 점검 가이드. */}
+      {showBeginnerHelp && verdict === "DO_NOT_START" ? (
+        <div
+          data-testid="pre-market-beginner-help"
+          style={{
+            padding: "10px 12px",
+            background: "#eff6ff",
+            border: "1px solid #3b82f655",
+            color: "#1e3a8a",
+            borderRadius: 6,
+            fontSize: 12,
+            marginBottom: 12,
+            lineHeight: 1.6,
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>
+            💡 초보자 안내 — 시작이 차단된 이유
+          </div>
+          <div>
+            대부분의 차단 사유는 <code>backend/.env</code> 파일의 안전 flag
+            설정 때문입니다. 다음 4개 항목이 모두 설정돼 있는지 확인하세요:
+          </div>
+          <ul style={{ margin: "6px 0 0 18px", padding: 0 }}>
+            <li><code>KIS_IS_PAPER=true</code> — 모의투자 강제</li>
+            <li><code>ENABLE_LIVE_TRADING=false</code> — 실거래 차단</li>
+            <li><code>ENABLE_AI_EXECUTION=false</code> — AI 자동 실행 차단</li>
+            <li><code>ENABLE_FUTURES_LIVE_TRADING=false</code> — 선물 LIVE 차단</li>
+          </ul>
+          <div style={{ marginTop: 6 }}>
+            변경 후 backend 를 재시작하고 "다시 점검" 버튼을 누르세요. API
+            key / 계좌번호는 본 화면에 입력하지 마세요 — backend/.env 에서만
+            관리합니다.
+          </div>
+        </div>
+      ) : null}
 
       <div
         data-testid="pre-market-disclaimer"

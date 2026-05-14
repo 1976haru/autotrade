@@ -188,4 +188,145 @@ describe("PreMarketCheckCard", () => {
     expect(getByTestId("pre-market-recheck-btn").textContent.trim()).toBe("다시 점검");
     expect(getByTestId("pre-market-ack-btn").textContent.trim()).toBe("확인했습니다");
   });
+
+  // ==================================================
+  // #91 — Desktop EXE / KIS Paper one-click extension
+  // ==================================================
+
+  const _DESKTOP_READY = {
+    ..._READY,
+    items: [
+      ..._READY.items,
+      { name: "desktop_sidecar", category: "desktop", status: "PASS",
+        required: true, message: "sidecar 연결 OK", detail: {} },
+      { name: "desktop_status_endpoint", category: "desktop", status: "PASS",
+        required: true, message: "/api/status OK", detail: {} },
+      { name: "kis_paper_readiness", category: "kis_paper", status: "PASS",
+        required: true, message: "KIS Paper readiness PASS", detail: {} },
+      { name: "kis_paper_capability", category: "kis_paper", status: "PASS",
+        required: false, message: "KIS Paper + Mock 모두 가능", detail: {} },
+    ],
+    kis_paper_test_allowed: true,
+  };
+
+  const _DESKTOP_BLOCKED = {
+    ..._BLOCKED,
+    items: [
+      ..._BLOCKED.items,
+      { name: "desktop_sidecar", category: "desktop", status: "FAIL",
+        required: true, message: "sidecar 미연결", detail: {} },
+      { name: "kis_paper_readiness", category: "kis_paper", status: "FAIL",
+        required: true,
+        message: "KIS Paper readiness 차단 — 사유: ENABLE_LIVE_TRADING_TRUE",
+        detail: {} },
+    ],
+    failed_required: [..._BLOCKED.failed_required, "desktop_sidecar", "kis_paper_readiness"],
+    kis_paper_test_allowed: false,
+  };
+
+  it("#91 — desktop 항목 포함 + kis_paper_test_allowed=true 시 시작 가능 배너", () => {
+    const { getByTestId } = render(
+      <PreMarketCheckCard resultOverride={_DESKTOP_READY} />,
+    );
+    const gate = getByTestId("pre-market-kis-paper-test-gate");
+    expect(gate.textContent).toContain("시작 가능");
+    expect(getByTestId("pre-market-kis-paper-test-gate-flag").textContent)
+      .toContain("kis_paper_test_allowed=true");
+  });
+
+  it("#91 — kis_paper_test_allowed=false 시 시작 차단 배너", () => {
+    const { getByTestId } = render(
+      <PreMarketCheckCard resultOverride={_DESKTOP_BLOCKED} />,
+    );
+    const gate = getByTestId("pre-market-kis-paper-test-gate");
+    expect(gate.textContent).toContain("시작 차단");
+    expect(getByTestId("pre-market-kis-paper-test-gate-flag").textContent)
+      .toContain("kis_paper_test_allowed=false");
+  });
+
+  it("#91 — 데스크톱 항목 없으면 활성화 게이트 배너 미노출", () => {
+    const { queryByTestId } = render(
+      <PreMarketCheckCard resultOverride={_READY} />,
+    );
+    expect(queryByTestId("pre-market-kis-paper-test-gate")).toBeNull();
+  });
+
+  it("#91 — DO_NOT_START + 데스크톱 흐름에서 초보자 안내 + .env 4개 flag 명시", () => {
+    const { getByTestId } = render(
+      <PreMarketCheckCard resultOverride={_DESKTOP_BLOCKED} />,
+    );
+    const help = getByTestId("pre-market-beginner-help");
+    expect(help.textContent).toContain("초보자 안내");
+    expect(help.textContent).toContain("KIS_IS_PAPER=true");
+    expect(help.textContent).toContain("ENABLE_LIVE_TRADING=false");
+    expect(help.textContent).toContain("ENABLE_AI_EXECUTION=false");
+    expect(help.textContent).toContain("ENABLE_FUTURES_LIVE_TRADING=false");
+  });
+
+  it("#91 — READY 상태에서는 초보자 안내 미노출", () => {
+    const { queryByTestId } = render(
+      <PreMarketCheckCard resultOverride={_DESKTOP_READY} />,
+    );
+    expect(queryByTestId("pre-market-beginner-help")).toBeNull();
+  });
+
+  it("#91 — showBeginnerHelp=false 면 초보자 안내 미노출", () => {
+    const { queryByTestId } = render(
+      <PreMarketCheckCard
+        resultOverride={_DESKTOP_BLOCKED}
+        showBeginnerHelp={false}
+      />,
+    );
+    expect(queryByTestId("pre-market-beginner-help")).toBeNull();
+  });
+
+  it("#91 — desktop 항목에 secret 패턴 노출 0건", () => {
+    const { container } = render(
+      <PreMarketCheckCard resultOverride={_DESKTOP_BLOCKED} />,
+    );
+    const text = (container.textContent || "").toLowerCase();
+    for (const needle of [
+      "kis_app_key=", "kis_app_secret=", "anthropic_api_key=",
+      "telegram_bot_token=", "sk-", "bearer ", "psas000000",
+    ]) {
+      expect(text.includes(needle)).toBe(false);
+    }
+  });
+
+  it("#91 — secret 입력 form (input / textarea) 0개", () => {
+    const { container } = render(
+      <PreMarketCheckCard resultOverride={_DESKTOP_BLOCKED} />,
+    );
+    expect(container.querySelectorAll("input").length).toBe(0);
+    expect(container.querySelectorAll("textarea").length).toBe(0);
+  });
+
+  it("#91 — 데스크톱 모드에서도 실거래 라벨 버튼 0개", () => {
+    const { container } = render(
+      <PreMarketCheckCard resultOverride={_DESKTOP_BLOCKED} />,
+    );
+    const buttons = container.querySelectorAll("button");
+    for (const b of buttons) {
+      const txt = (b.textContent || "").trim();
+      for (const banned of [
+        "실거래 시작", "지금 매수", "지금 매도", "Place Order",
+        "ENABLE_LIVE_TRADING 토글", "AI 자동 실행 활성화",
+        "ENABLE_FUTURES 활성화",
+      ]) {
+        expect(txt.includes(banned)).toBe(false);
+      }
+    }
+  });
+
+  it("#91 — 데스크톱 항목이 세부 펼치기 토글로 표시", () => {
+    const { getByTestId } = render(
+      <PreMarketCheckCard resultOverride={_DESKTOP_READY} />,
+    );
+    fireEvent.click(getByTestId("pre-market-toggle-detail-btn"));
+    const itemsBox = getByTestId("pre-market-items").textContent;
+    expect(itemsBox).toContain("desktop_sidecar");
+    expect(itemsBox).toContain("kis_paper_readiness");
+    expect(itemsBox).toContain("desktop");
+    expect(itemsBox).toContain("kis_paper");
+  });
 });

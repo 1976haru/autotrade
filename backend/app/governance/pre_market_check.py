@@ -31,7 +31,7 @@ from typing import Any
 
 
 class CheckCategory(StrEnum):
-    """11 카테고리."""
+    """카테고리. #80 11개 + #91 desktop / kis_paper 2개."""
     API           = "api"
     DB            = "db"
     BROKER        = "broker"
@@ -43,6 +43,9 @@ class CheckCategory(StrEnum):
     AGENT         = "agent"
     NOTIFICATION  = "notification"
     GOVERNANCE    = "governance"
+    # #91 — desktop EXE / KIS Paper one-click flow.
+    DESKTOP       = "desktop"
+    KIS_PAPER     = "kis_paper"
 
 
 class CheckStatus(StrEnum):
@@ -147,6 +150,19 @@ class PreMarketCheckInput:
     manual_ack_by:                     str   = ""
     manual_ack_note:                   str   = ""
 
+    # ---------- #91: Desktop EXE / KIS Paper one-click flow ----------
+    # desktop_mode=True 일 때만 desktop / kis_paper 카테고리 항목이 추가된다.
+    # 본 필드는 *현재값 carry* — secret 원문 0건, broker 호출 0건.
+    desktop_mode:                      bool  = False
+    desktop_sidecar_connected:         bool | None = None
+    desktop_status_endpoint_ok:        bool | None = None
+    kis_paper_ready:                   bool | None = None
+    kis_paper_can_run_mock:            bool | None = None
+    kis_paper_can_run_kis:             bool | None = None
+    # blocked_reasons 는 read-only carry — 라벨만 표시 (예: "KIS_IS_PAPER_FALSE").
+    # secret 원문 / API key 값을 *절대 넣지 않는다*.
+    kis_paper_blocked_reasons:         tuple[str, ...] = ()
+
 
 @dataclass
 class PreMarketCheckResult:
@@ -170,6 +186,13 @@ class PreMarketCheckResult:
     is_order_signal:         bool      = False
     live_flag_changed:       bool      = False
     mode_changed:            bool      = False
+    # #91 — One-click paper test 시작 활성화 게이트.
+    # `start_allowed=True` AND (kis_paper_can_run_mock OR kis_paper_can_run_kis)
+    # 일 때만 True. desktop_mode 가 아니면 항상 False.
+    # 본 필드는 *주문 신호가 아니다* — frontend 가 KIS Paper one-click test 의
+    # start 버튼 활성화 여부 판단에만 사용. broker / OrderExecutor / route_order
+    # 와 무관.
+    kis_paper_test_allowed:  bool      = False
     generated_at:            datetime  = field(
         default_factory=lambda: datetime.now(timezone.utc),
     )
@@ -193,20 +216,21 @@ class PreMarketCheckResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "mode":                self.mode,
-            "verdict":             self.verdict.value,
-            "start_allowed":       self.start_allowed,
-            "items":               [it.to_dict() for it in self.items],
-            "failed_required":     list(self.failed_required),
-            "warnings":            list(self.warnings),
-            "required_actions":    list(self.required_actions),
-            "manual_ack_recorded": self.manual_ack_recorded,
-            "manual_ack_by":       self.manual_ack_by,
-            "manual_ack_note":     self.manual_ack_note,
-            "is_order_signal":     self.is_order_signal,
-            "live_flag_changed":   self.live_flag_changed,
-            "mode_changed":        self.mode_changed,
-            "generated_at":        self.generated_at.isoformat(),
+            "mode":                   self.mode,
+            "verdict":                self.verdict.value,
+            "start_allowed":          self.start_allowed,
+            "items":                  [it.to_dict() for it in self.items],
+            "failed_required":        list(self.failed_required),
+            "warnings":               list(self.warnings),
+            "required_actions":       list(self.required_actions),
+            "manual_ack_recorded":    self.manual_ack_recorded,
+            "manual_ack_by":          self.manual_ack_by,
+            "manual_ack_note":        self.manual_ack_note,
+            "is_order_signal":        self.is_order_signal,
+            "live_flag_changed":      self.live_flag_changed,
+            "mode_changed":           self.mode_changed,
+            "kis_paper_test_allowed": self.kis_paper_test_allowed,
+            "generated_at":           self.generated_at.isoformat(),
         }
 
 
@@ -538,6 +562,178 @@ def evaluate_pre_market_check(inp: PreMarketCheckInput) -> PreMarketCheckResult:
             message="ENABLE_FUTURES_LIVE_TRADING=true — 본 게이트는 선물 LIVE 미허용",
         ))
 
+    # ---- #91: 초보자 안전 flag proactive checks ----
+    # 본 4개 check 는 LIVE 가 아닌 모드(SIMULATION / PAPER / LIVE_SHADOW)에서도
+    # 안전 flag 가 *비활성*인지 명시적으로 검증한다. 기존 LIVE invariant 와
+    # *반대 방향* — 베타테스터가 .env 에서 실수로 LIVE flag 를 켜는 것을 사전
+    # 차단하기 위함. desktop_mode 와 무관하게 항상 추가 (단 SIMULATION/PAPER/
+    # LIVE_SHADOW 한정).
+    _beginner_safety_modes = frozenset({"SIMULATION", "PAPER", "LIVE_SHADOW"})
+    if mode in _beginner_safety_modes:
+        # KIS_IS_PAPER — PAPER 모드 외에도 표시 (SIMULATION 도 안전한 상태 확인용).
+        if inp.kis_is_paper:
+            items.append(CheckItem(
+                name="kis_is_paper_safety", category=CheckCategory.KIS_PAPER,
+                status=CheckStatus.PASS, required=True,
+                message="KIS_IS_PAPER=true — 모의투자 강제 OK",
+            ))
+        else:
+            items.append(CheckItem(
+                name="kis_is_paper_safety", category=CheckCategory.KIS_PAPER,
+                status=CheckStatus.FAIL, required=True,
+                message=(
+                    "KIS_IS_PAPER=false — backend/.env 에서 true 로 변경 후 재시작. "
+                    "초보자 안전 흐름은 KIS 모의투자 전용입니다."
+                ),
+            ))
+        # ENABLE_LIVE_TRADING — 비-LIVE 모드에서는 무조건 false.
+        if not inp.enable_live_trading:
+            items.append(CheckItem(
+                name="enable_live_trading_safety", category=CheckCategory.AGENT,
+                status=CheckStatus.PASS, required=True,
+                message="ENABLE_LIVE_TRADING=false — 실거래 차단 OK",
+            ))
+        else:
+            items.append(CheckItem(
+                name="enable_live_trading_safety", category=CheckCategory.AGENT,
+                status=CheckStatus.FAIL, required=True,
+                message=(
+                    "ENABLE_LIVE_TRADING=true — 초보자 안전 흐름에서는 비활성 "
+                    "필수. backend/.env 에서 false 로 변경 후 재시작."
+                ),
+            ))
+        # ENABLE_AI_EXECUTION — LIVE_AI_EXECUTION 외 모든 모드에서 false.
+        if not inp.ai_execution_enabled:
+            items.append(CheckItem(
+                name="enable_ai_execution_safety", category=CheckCategory.AGENT,
+                status=CheckStatus.PASS, required=True,
+                message="ENABLE_AI_EXECUTION=false — AI 자동 실행 차단 OK",
+            ))
+        else:
+            items.append(CheckItem(
+                name="enable_ai_execution_safety", category=CheckCategory.AGENT,
+                status=CheckStatus.FAIL, required=True,
+                message=(
+                    "ENABLE_AI_EXECUTION=true — 초보자 안전 흐름에서는 비활성 "
+                    "필수. backend/.env 에서 false 로 변경 후 재시작."
+                ),
+            ))
+        # ENABLE_FUTURES_LIVE_TRADING — 모든 모드에서 false (#76 영구 BLOCKED).
+        if not inp.enable_futures_live_trading:
+            items.append(CheckItem(
+                name="enable_futures_safety", category=CheckCategory.AGENT,
+                status=CheckStatus.PASS, required=True,
+                message="ENABLE_FUTURES_LIVE_TRADING=false — 선물 LIVE 차단 OK",
+            ))
+        # (true 케이스는 위 futures_live_flag 가 이미 FAIL 처리)
+
+    # ---- #91: Desktop EXE sidecar / status endpoint checks ----
+    # desktop_mode=True 일 때만 추가. 기본 SIMULATION / PAPER 흐름은 영향 없음.
+    if inp.desktop_mode:
+        if inp.desktop_sidecar_connected is None:
+            items.append(CheckItem(
+                name="desktop_sidecar", category=CheckCategory.DESKTOP,
+                status=CheckStatus.UNKNOWN, required=True,
+                message="데스크톱 backend sidecar 연결 상태 입력 없음 — 미확인",
+            ))
+        elif not inp.desktop_sidecar_connected:
+            items.append(CheckItem(
+                name="desktop_sidecar", category=CheckCategory.DESKTOP,
+                status=CheckStatus.FAIL, required=True,
+                message=(
+                    "backend sidecar 미연결 — Agent Trader 앱을 다시 시작하거나 "
+                    "scripts/start_kis_paper_test_windows.bat 으로 backend 를 "
+                    "수동 실행하세요."
+                ),
+            ))
+        else:
+            items.append(CheckItem(
+                name="desktop_sidecar", category=CheckCategory.DESKTOP,
+                status=CheckStatus.PASS, required=True,
+                message="backend sidecar 연결 OK",
+            ))
+
+        if inp.desktop_status_endpoint_ok is None:
+            items.append(CheckItem(
+                name="desktop_status_endpoint", category=CheckCategory.DESKTOP,
+                status=CheckStatus.UNKNOWN, required=True,
+                message="/api/status 응답 입력 없음 — 미확인",
+            ))
+        elif not inp.desktop_status_endpoint_ok:
+            items.append(CheckItem(
+                name="desktop_status_endpoint", category=CheckCategory.DESKTOP,
+                status=CheckStatus.FAIL, required=True,
+                message="/api/status 응답 실패 — backend 가 실행 중인지 확인",
+            ))
+        else:
+            items.append(CheckItem(
+                name="desktop_status_endpoint", category=CheckCategory.DESKTOP,
+                status=CheckStatus.PASS, required=True,
+                message="/api/status 응답 OK",
+            ))
+
+        # ---- #91: KIS Paper readiness aggregate ----
+        # /api/kis-paper/readiness 결과를 carry 받아 단일 PASS/FAIL 로 표시.
+        if inp.kis_paper_ready is None:
+            items.append(CheckItem(
+                name="kis_paper_readiness", category=CheckCategory.KIS_PAPER,
+                status=CheckStatus.UNKNOWN, required=True,
+                message="/api/kis-paper/readiness 응답 입력 없음 — 미확인",
+            ))
+        elif not inp.kis_paper_ready:
+            reasons = (
+                ", ".join(inp.kis_paper_blocked_reasons)
+                if inp.kis_paper_blocked_reasons else "(상세 없음)"
+            )
+            items.append(CheckItem(
+                name="kis_paper_readiness", category=CheckCategory.KIS_PAPER,
+                status=CheckStatus.FAIL, required=True,
+                message=(
+                    f"KIS Paper readiness 차단 — 사유: {reasons}. backend/.env "
+                    "의 안전 flag / KIS 키 입력 후 재시작."
+                ),
+                detail={"blocked_reasons": list(inp.kis_paper_blocked_reasons)},
+            ))
+        else:
+            items.append(CheckItem(
+                name="kis_paper_readiness", category=CheckCategory.KIS_PAPER,
+                status=CheckStatus.PASS, required=True,
+                message="KIS Paper readiness PASS",
+            ))
+
+        # capability — KIS 모드 / mock 모드 둘 다 차단되면 시작 불가, mock 만
+        # 가능하면 WARN, 둘 다 가능하면 PASS.
+        can_kis = bool(inp.kis_paper_can_run_kis)
+        can_mock = bool(inp.kis_paper_can_run_mock)
+        cap_detail = {"can_run_kis": can_kis, "can_run_mock": can_mock}
+        if not can_kis and not can_mock:
+            items.append(CheckItem(
+                name="kis_paper_capability", category=CheckCategory.KIS_PAPER,
+                status=CheckStatus.FAIL, required=True,
+                message="KIS Paper / Mock 모드 모두 차단 — 안전 flag 확인 필요",
+                detail=cap_detail,
+            ))
+        elif not can_kis and can_mock:
+            items.append(CheckItem(
+                name="kis_paper_capability", category=CheckCategory.KIS_PAPER,
+                status=CheckStatus.WARN, required=False,
+                message=(
+                    "KIS Paper 모드 차단 (Mock 모드만 가능). KIS 키 미입력이거나 "
+                    "KIS_IS_PAPER=false. Mock 모드로 우선 검증 후 KIS 키 입력 권장."
+                ),
+                detail=cap_detail,
+            ))
+        else:
+            items.append(CheckItem(
+                name="kis_paper_capability", category=CheckCategory.KIS_PAPER,
+                status=CheckStatus.PASS, required=False,
+                message=(
+                    "KIS Paper + Mock 모드 모두 가능" if can_kis and can_mock
+                    else "KIS Paper 모드 가능 (Mock 차단)"
+                ),
+                detail=cap_detail,
+            ))
+
     # ---- aggregate ----
     failed_required = [it.name for it in items
                        if it.required and it.status == CheckStatus.FAIL]
@@ -573,6 +769,16 @@ def evaluate_pre_market_check(inp: PreMarketCheckInput) -> PreMarketCheckResult:
             "manual_ack 가 기록되었으나 required FAIL 이 있어 시작은 금지됩니다."
         )
 
+    # #91 — One-click paper test 시작 활성화 게이트.
+    # start_allowed=True AND (KIS Paper 또는 Mock 중 하나라도 가능) → True.
+    # desktop_mode 가 아니면 false (PreMarketCheckCard 가 KIS Paper UI 와 무관).
+    if inp.desktop_mode and start_allowed:
+        kis_paper_test_allowed = bool(
+            inp.kis_paper_can_run_mock or inp.kis_paper_can_run_kis,
+        )
+    else:
+        kis_paper_test_allowed = False
+
     return PreMarketCheckResult(
         mode=mode,
         verdict=verdict,
@@ -584,6 +790,7 @@ def evaluate_pre_market_check(inp: PreMarketCheckInput) -> PreMarketCheckResult:
         manual_ack_recorded=bool(inp.manual_ack),
         manual_ack_by=(inp.manual_ack_by or "")[:64],
         manual_ack_note=(inp.manual_ack_note or "")[:500],
+        kis_paper_test_allowed=kis_paper_test_allowed,
     )
 
 
@@ -604,6 +811,12 @@ def render_markdown_report(result: PreMarketCheckResult) -> str:
     lines.append(
         f"- start_allowed: **{result.start_allowed}**"
     )
+    # #91 — desktop / KIS Paper 흐름 시 추가 게이트 표시.
+    if result.kis_paper_test_allowed:
+        lines.append(
+            "- kis_paper_test_allowed: **True** "
+            "(One-click paper test 시작 가능)"
+        )
     if result.failed_required:
         lines.append("")
         lines.append("## 실패 항목 (required FAIL)")
