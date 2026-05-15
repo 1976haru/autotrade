@@ -115,5 +115,45 @@ describe("<BackendOfflineBanner>", () => {
       expect(text).not.toContain("매도");
       expect(text).not.toContain("실거래 시작");
     });
+
+    it("shows backend sidecar log panel via Tauri invoke mock", async () => {
+      _enableDesktop();
+      window.__TAURI_INTERNALS__ = {
+        invoke: vi.fn(async (cmd) => {
+          if (cmd === "read_backend_log") {
+            return "[1234567890] === Agent Trader sidecar startup ===\n" +
+                   "[1234567891] STDOUT: INFO uvicorn running on 127.0.0.1:8000";
+          }
+          return "";
+        }),
+      };
+      _set({ error: "Failed to fetch" });
+      const { getByTestId, findByTestId } = render(<BackendOfflineBanner />);
+      fireEvent.click(getByTestId("btn-show-connection-log"));
+      expect(getByTestId("connection-log-panel")).toBeTruthy();
+      const backendPanel = await findByTestId("backend-log-panel");
+      expect(backendPanel).toBeTruthy();
+      const content = await findByTestId("backend-log-content");
+      expect(content.textContent).toContain("Agent Trader sidecar startup");
+      expect(content.textContent).toContain("uvicorn running on 127.0.0.1:8000");
+    });
+
+    it("backend log panel sanitizes secret patterns", async () => {
+      _enableDesktop();
+      window.__TAURI_INTERNALS__ = {
+        invoke: vi.fn(async () =>
+          "STDOUT: KIS_APP_KEY=abcd1234efgh5678ijkl9999 loaded\n" +
+          "STDOUT: ANTHROPIC_API_KEY=sk-ant-AAAAAAAAAAAAAAAA\n"
+        ),
+      };
+      _set({ error: "Failed to fetch" });
+      const { getByTestId, findByTestId } = render(<BackendOfflineBanner />);
+      fireEvent.click(getByTestId("btn-show-connection-log"));
+      const content = await findByTestId("backend-log-content");
+      expect(content.textContent).toContain("KIS_APP_KEY=[REDACTED]");
+      expect(content.textContent).toContain("ANTHROPIC_API_KEY=[REDACTED]");
+      expect(content.textContent).not.toContain("abcd1234efgh5678ijkl9999");
+      expect(content.textContent).not.toContain("sk-ant-AAAAAAAAAAAAAAAA");
+    });
   });
 });
