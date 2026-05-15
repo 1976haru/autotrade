@@ -35,7 +35,6 @@
     "longDescription": "에이전트 트레이더 v1: AI 에이전트가 시장을 분석하고 운영자가 핵심 판단과 위험만 확인하는 자동매매 관제 시스템. 기본 운용모드는 SIMULATION / PAPER이며 LIVE 거래는 운영자 명시 옵트인 후에만 활성화됩니다.",
     "publisher": "Agent Trader Beta",
     "copyright": "Copyright (c) Agent Trader Beta",
-    "_comment_externalBin": "backend sidecar — scripts/build_backend_sidecar.ps1 산출물. Tauri 가 빌드 시 binaries/autotrade-backend-<target-triple>.exe 를 찾는다. backend/.env / Secret 은 *포함되지 않는다* — 본 sidecar 는 uvicorn entry 만, .env 는 %APPDATA%/Autotrade/.env 등에서 런타임 로드.",
     "externalBin": ["binaries/autotrade-backend"],
     "resources": [],
     "icon": [
@@ -48,12 +47,6 @@
     "windows": {
       "wix": {
         "language": ["ko-KR", "en-US"]
-      },
-      "nsis": {
-        "languages": ["Korean", "English"],
-        "installerIcon": "icons/icon.ico",
-        "installMode": "perUser",
-        "displayLanguageSelector": true
       }
     },
     "createUpdaterArtifacts": true
@@ -61,13 +54,10 @@
   "plugins": {
     "updater": {
       "active": false,
-      "_comment_active": "베타 PR 시점: false로 둠. 실제 활성화는 별도 GitHub Actions 릴리스 PR에서 public key + endpoint 주입 후 true로 변경. docs/desktop_update_policy.md 참고.",
       "endpoints": [
         "https://github.com/__ORG__/__REPO__/releases/latest/download/latest.json"
       ],
-      "_comment_endpoints": "endpoint placeholder — __ORG__/__REPO__은 실제 릴리스 PR에서 대체. 본 파일은 private key 없이 commit 가능.",
-      "pubkey": "",
-      "_comment_pubkey": "PR 시점 비워둠. 실제 배포 시 tauri signer generate 로 생성한 public key 만 채워서 commit, private key 는 GitHub Secrets(TAURI_PRIVATE_KEY)에만 보관."
+      "pubkey": ""
     }
   }
 }
