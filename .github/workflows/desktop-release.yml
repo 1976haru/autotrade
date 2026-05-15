@@ -37,9 +37,25 @@
 #   5) Safety guard — .env / settings 안전 flag 검증
 #   6) Frontend: npm ci + test + build
 #   7) Backend sidecar: PyInstaller 빌드 → src-tauri/binaries/
-#   8) Tauri build (cargo tauri build) → MSI + NSIS setup.exe
+#   8) Tauri build (cargo tauri build) → NSIS setup.exe (우선 산출물)
 #   9) Safety guard — 산출물에 secret 포함 0건 검증
 #  10) Upload artifact (workflow artifact + GitHub Release draft)
+#
+# === MSI 산출 보류 (2026-05-15) ===
+#
+# 이전 빌드 시도에서 `cargo tauri build` 가 다음 에러로 실패:
+#   Downloading https://github.com/wixtoolset/wix3/releases/download/...
+#   Error failed to bundle project `http status: 503`
+#
+# 원인: Tauri 가 MSI 번들링 시 WiX 3.14 ZIP 을 GitHub release 에서 *외부
+# 다운로드* 하는데, GitHub release CDN 503 으로 빌드가 죽음. 앱 컴파일
+# 자체는 정상.
+#
+# 임시 조치: tauri.conf.json `bundle.targets` 를 `["nsis"]` 단일로 축소
+# (MSI 일시 제거). 베타테스터 EXE 원클릭 배포 목적상 NSIS setup.exe 만으로
+# 충분하다. MSI 재활성화는 `%LOCALAPPDATA%\tauri\WixTools314` 캐시 step
+# 또는 사전 다운로드 step 을 추가한 *별도 PR* 에서 진행한다 — 이번 PR 에서
+# MSI 를 강제 성공시키려 하지 않는다.
 #
 # 자세한 정책: docs/desktop_update_policy.md / docs/desktop_packaging.md /
 # docs/desktop_exe_status.md
@@ -252,28 +268,38 @@ jobs:
       - name: Summarize installer artifacts
         shell: pwsh
         run: |
-          $msis = Get-ChildItem -Recurse -Path src-tauri/target/release/bundle/msi -Filter "*.msi" -ErrorAction SilentlyContinue
+          # NSIS setup.exe 가 *필수 산출물*. MSI 는 일시 보류 (WiX 503) — 디렉터리가
+          # 존재하지 않아도 본 step 은 실패하지 않는다 (-ErrorAction SilentlyContinue).
           $exes = Get-ChildItem -Recurse -Path src-tauri/target/release/bundle/nsis -Filter "*-setup.exe" -ErrorAction SilentlyContinue
-          Write-Host "=== MSI installers ==="
-          foreach ($f in $msis) {
-            $sha = (Get-FileHash -Algorithm SHA256 $f.FullName).Hash
-            Write-Host "  $($f.FullName) ($($f.Length) bytes, sha256=$sha)"
+          $msis = Get-ChildItem -Recurse -Path src-tauri/target/release/bundle/msi -Filter "*.msi" -ErrorAction SilentlyContinue
+          Write-Host "=== NSIS setup.exe (required) ==="
+          if ($exes.Count -eq 0) {
+            Write-Error "FATAL: NSIS setup.exe 가 생성되지 않음"
+            exit 1
           }
-          Write-Host ""
-          Write-Host "=== NSIS setup.exe ==="
           foreach ($f in $exes) {
             $sha = (Get-FileHash -Algorithm SHA256 $f.FullName).Hash
             Write-Host "  $($f.FullName) ($($f.Length) bytes, sha256=$sha)"
           }
+          Write-Host ""
+          Write-Host "=== MSI installers (optional — WiX 503 안정화 후 재활성화) ==="
+          if ($msis.Count -eq 0) {
+            Write-Host "  (none — MSI target is disabled in tauri.conf.json)"
+          } else {
+            foreach ($f in $msis) {
+              $sha = (Get-FileHash -Algorithm SHA256 $f.FullName).Hash
+              Write-Host "  $($f.FullName) ($($f.Length) bytes, sha256=$sha)"
+            }
+          }
 
       # ----- 9. Upload workflow artifact -----
       # 항상 업로드 — 운영자가 Release 안 만들고 artifact 만 다운로드 가능.
+      # NSIS setup.exe 만 필수 — MSI 는 일시 보류 (tauri.conf.json targets=["nsis"]).
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
         with:
           name: agent-trader-windows-installer-${{ inputs.release_tag }}
           path: |
-            src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
           retention-days: 30
@@ -304,7 +330,6 @@ jobs:
             설치 후 SmartScreen 경고가 뜨면 "추가 정보 → 실행" 을 클릭하세요.
             본 릴리스는 코드 서명 인증서가 아직 없을 수 있습니다.
           files: |
-            src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*-setup.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

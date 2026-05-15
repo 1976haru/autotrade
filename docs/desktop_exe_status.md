@@ -448,6 +448,63 @@ during tauri-build
 - `_generate_icons.py` 는 재현 가능한 generator 로 git 에 보존 — 디자인 변경
   시 색상 / 라벨만 수정해 재실행 가능.
 
+## 8-F. CI 빌드 실패 이력 — WiX 3.14 다운로드 503 (2026-05-15)
+
+`desktop-release.yml` workflow 의 `cargo tauri build` 단계가 다음 에러로 실패한
+이력 (해결 완료):
+
+```
+Downloading https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/
+wix314-binaries.zip
+Error failed to bundle project `http status: 503`
+Error: Process completed with exit code 1.
+```
+
+**원인:**
+- `tauri.conf.json` `bundle.targets = ["msi", "nsis"]` 에서 *MSI* 타깃이 빌드 시
+  Tauri 가 GitHub Release CDN 에서 WiX 3.14 ZIP 을 *외부 다운로드* 함.
+- GitHub release CDN 503 (일시 장애) 으로 다운로드 실패 → `cargo tauri build`
+  전체 실패.
+- **앱 컴파일 자체는 정상** — 번들링 단계의 *외부 의존성* 실패.
+
+**해결 (NSIS 우선 전략):**
+- `tauri.conf.json` `bundle.targets` 를 `["msi", "nsis"]` → `["nsis"]` 로 축소.
+- NSIS setup.exe 는 WiX 같은 외부 다운로드 없이 자체 번들링 — 안정 산출 가능.
+- `desktop-release.yml` 의 Summarize / Upload / Release draft step 을 NSIS
+  중심으로 재구성 (NSIS setup.exe 가 0건이면 build fail, MSI 는 optional).
+- 베타테스터 EXE 원클릭 배포 목적상 NSIS setup.exe 만으로 충분.
+
+**MSI 처리 방침 (보류, 재활성화 조건):**
+- MSI 는 본 PR 에서 *완전히 제거하지 않음* — `bundle.windows.wix.language`
+  설정은 보존, `bundle.targets` 만 축소. 향후 별도 PR 에서 재활성화 가능.
+- 재활성화 시 필요 사전 작업:
+  1. WiX 사전 다운로드 step 을 workflow 에 추가 (workflow 캐시 또는
+     `%LOCALAPPDATA%\tauri\WixTools314` 캐시)
+  2. GitHub release 503 같은 외부 장애 시 재시도 / 폴백 로직 추가
+  3. 재활성화 후 `bundle.targets` 를 `["msi", "nsis"]` 로 복원
+- 본 PR 에서는 MSI 를 강제 성공시키지 않음 — 시간 효율성 우선.
+
+**안전 확인 (본 수정에서 변경 0건):**
+- broker / OrderExecutor / route_order 호출 0건
+- `ENABLE_LIVE_TRADING` / `ENABLE_AI_EXECUTION` / `ENABLE_FUTURES_LIVE_TRADING` /
+  `KIS_IS_PAPER` 안전 flag default 모두 그대로
+- `.env*` 추가 / Secret / API key / 인증서 / 계좌번호 추가 0건
+- installer 산출물 / `*.msi` / `*.exe` / `src-tauri/target/` 커밋 0건
+- security_scan / repository_hygiene / bundle safety guard 모두 유지
+- `bundle.active` / `externalBin` / `icon` / `security.csp` / updater 설정 모두
+  그대로 — `targets` 만 축소
+- workflow 의 Step 5 / 8 / 9 (safety flag 검증, bundle 내 .env / 인증서 / key
+  검출, secret scan) 모두 유지
+
+**베타테스터 배포 (NSIS setup.exe):**
+- GitHub Release artifact 에 `*-setup.exe` 한 파일만 첨부됨 (MSI 없음).
+- 베타테스터가 setup.exe 더블클릭 → Windows SmartScreen 경고 시 "추가 정보 →
+  실행" → 설치 완료. MSI 가 없어도 정상 설치 가능.
+- `KIS_IS_PAPER=true` / `ENABLE_LIVE_TRADING=false` / `ENABLE_AI_EXECUTION=false`
+  안전 flag 그대로 유지 — 실거래 자동 활성화 0건. 한투 *모의투자* 전용 흐름.
+- Secret / API key / `.env` 는 setup.exe 안에 *포함되지 않음* — 운영자가
+  `%APPDATA%\Autotrade\.env` 에 직접 입력.
+
 ## 8-D. CI 빌드 실패 이력 — Tauri v2 lib entrypoint (2026-05-15)
 
 `desktop-release.yml` workflow 의 `cargo tauri build` 단계가 다음 에러로 실패한
