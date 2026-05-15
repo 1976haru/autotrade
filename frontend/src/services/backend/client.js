@@ -41,6 +41,16 @@ export async function backendFetch(path, options = {}) {
 
 export const backendApi = {
   getStatus: () => backendFetch("/api/status"),
+  // AI Paper Auto Loop + Desktop health.
+  // 모든 경로는 PAPER/SIMULATION 한정 — broker.place_order 호출 0건.
+  desktopHealth:          () => backendFetch("/api/desktop/health"),
+  autoPaperStatus:        () => backendFetch("/api/auto-paper/status"),
+  autoPaperStart:         () => backendFetch("/api/auto-paper/start", { method: "POST" }),
+  autoPaperStop:          () => backendFetch("/api/auto-paper/stop", { method: "POST" }),
+  autoPaperEmergencyStop: () =>
+    backendFetch("/api/auto-paper/emergency-stop", { method: "POST" }),
+  autoPaperReset:         () =>
+    backendFetch("/api/auto-paper/reset", { method: "POST" }),
   getRiskPolicy: () => backendFetch("/api/risk/policy"),
   setEmergencyStop: (enabled, decision) => backendFetch("/api/risk/emergency-stop", {
     method: "POST",
