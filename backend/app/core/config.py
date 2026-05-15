@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     enable_live_trading: bool = False
     enable_ai_execution: bool = False
     enable_futures_live_trading: bool = False
+    # 작업 10 — 위험 기능 다중 잠금용 추가 flag. 본 settings 는 값을 carry만
+    # 하며 활성 가능 여부 판단은 app.core.feature_flags 에서 다중 조건으로
+    # 평가한다. 기본값은 반드시 False — 단일 flag 만으로 활성화 불가.
+    enable_crypto_futures_live: bool = False  # 코인 선물 실거래 (stock futures와 *별개*)
+    enable_kimp_strategy: bool = False        # 김프(Korean Premium) 전략 모듈 활성
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     database_url: str = "sqlite:///./data/auto_trader.db"
     market_data_provider: Literal["mock", "yfinance"] = "mock"
