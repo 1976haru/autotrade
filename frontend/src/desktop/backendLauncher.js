@@ -89,6 +89,35 @@ export function launcherStateColor(state) {
   }
 }
 
+// ====================================================================
+// 진단용 연결 시도 로그 (in-memory ring buffer)
+// ====================================================================
+//
+// EXE 모드에서 sidecar 가 살아나지 않을 때 사용자가 "로그 보기" 로 어떤
+// 시도가 있었고 어떤 에러가 났는지 한눈에 볼 수 있게 한다. localStorage 나
+// 디스크에 쓰지 않는다 — secret 노출 위험 회피.
+
+const _CONNECTION_LOG_MAX = 50;
+const _connectionLog = [];
+
+function _appendLog(entry) {
+  const ts = new Date().toISOString();
+  _connectionLog.push({ ts, ...entry });
+  while (_connectionLog.length > _CONNECTION_LOG_MAX) {
+    _connectionLog.shift();
+  }
+}
+
+export function getConnectionLog() {
+  // 복사본 반환 — 외부 mutation 차단.
+  return _connectionLog.slice();
+}
+
+export function clearConnectionLog() {
+  _connectionLog.length = 0;
+}
+
+
 /** Single probe — `/api/status` + `/api/kis-paper/readiness`. */
 export async function probeBackendOnce({
   baseUrl = DEFAULT_BACKEND_URL,
@@ -102,9 +131,12 @@ export async function probeBackendOnce({
   try {
     const statusRes = await fetchImpl(`${baseUrl}/api/status`);
     if (!statusRes || !statusRes.ok) {
-      return { statusOk: false, error: `status http ${statusRes?.status}` };
+      const err = `status http ${statusRes?.status}`;
+      _appendLog({ kind: "probe_failed", url: `${baseUrl}/api/status`, error: err });
+      return { statusOk: false, error: err };
     }
     const status = await statusRes.json();
+    _appendLog({ kind: "probe_ok", url: `${baseUrl}/api/status` });
 
     // readiness — *실패해도 launcher 는 살아있다*. backend healthy 인데
     // readiness 만 빠지면 NEEDS_ENV / UNSAFE 가 아닌 READY 로 보일 수
@@ -126,7 +158,9 @@ export async function probeBackendOnce({
       safety: status?.safety_flags || null,
     };
   } catch (err) {
-    return { statusOk: false, error: err?.message || String(err) };
+    const msg = err?.message || String(err);
+    _appendLog({ kind: "probe_exception", url: `${baseUrl}/api/status`, error: msg });
+    return { statusOk: false, error: msg };
   }
 }
 
