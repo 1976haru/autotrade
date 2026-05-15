@@ -1,0 +1,76 @@
+# Agent Trader v1 — Release Notes
+
+> 베타테스터 / 운영자가 *버전별 변경 내용* 을 한 곳에서 확인할 수 있는 단일
+> 진실. GitHub Release 생성 시 해당 버전 섹션 내용을 release body 에 복사
+> 권장 (자동 sync 는 후속 PR).
+>
+> 본 문서는 *고지 / 변경 요약* 이며 **투자 조언이 아닙니다**. 기본 모드는
+> SIMULATION / PAPER 이고 실거래 flag 는 항상 false default 입니다.
+
+## 안전 배너 (모든 버전 공통)
+
+- `KIS_IS_PAPER=true` 기본값 유지 — 실거래 자동 활성화 0건
+- `ENABLE_LIVE_TRADING=false` / `ENABLE_AI_EXECUTION=false` /
+  `ENABLE_FUTURES_LIVE_TRADING=false` 기본값 유지
+- installer (setup.exe / msi) 에 사용자 `.env` / API key / 계좌번호 *포함 0건*
+- 업데이트는 *앱 코드* (frontend / backend sidecar) 만 갱신 — 사용자 `.env`
+  보존
+- 베타 시점 SmartScreen 경고 가능 — "추가 정보 → 실행" 으로 진행
+
+---
+
+## v1.0.0 — 2026-05 초기 베타
+
+**범위:** Agent Trader v1 베타 첫 정식 릴리스. KIS 모의투자 one-click test +
+EXE 자동 빌드 + Desktop Auto Updater (A 단계).
+
+### 새 기능
+- EXE 더블클릭 → backend sidecar 자동 실행 → AI Paper Auto Loop 시작/정지/
+  긴급정지 컨트롤 (단일 화면).
+- GitHub Actions Windows runner 자동 빌드 (`desktop-release.yml`) — NSIS
+  setup.exe 산출물 + 안전 guard.
+- Strategy Optimization & Paper Readiness 파이프라인 — 6개 주식 전략 그리드
+  서치 + 다중 지표 + 스트레스 테스트 + Paper 후보 추천.
+- Feature Flags 다중 잠금 계층 (`app.core.feature_flags`) — 단일 env flag
+  만으로 실거래 / AI / 코인선물 활성화 불가.
+
+### 안전 invariant
+- broker / OrderExecutor / route_order 호출 0건 (정적 grep + dataclass 가드).
+- 자동 주문 트리거 라벨 0개 (button text 전수 검사 테스트로 lock).
+- secret 패턴 (`sk-...` / `ghp_...` / `Bearer ...`) release notes 에 발견 시
+  `[REDACTED]` 마스킹.
+
+### 알려진 제약
+- Tauri auto updater 서명 미활성 — A 단계는 *update 확인 + 수동 다운로드*
+  안내만. 자동 설치는 B 단계 (TAURI_PRIVATE_KEY 등록 후) 별도 PR.
+- MSI 산출 보류 — WiX 외부 다운로드 503 이슈로 NSIS-only. 향후 PR 에서 WiX
+  캐시 step 추가 후 복원.
+- KIS LIVE place_order 미구현 (`NotImplementedError`) — 실거래 경로 0건 유지.
+
+### 베타테스터 안내
+1. https://github.com/1976haru/autotrade/releases 에서 `*-setup.exe` 다운로드
+2. 더블클릭 → SmartScreen 경고 시 "추가 정보 → 실행"
+3. 첫 실행 시 `%APPDATA%\Autotrade\` 자동 생성 — 그 안의 `.env` 에 **한투
+   모의투자 API 키** 직접 입력 (실거래 키 입력 *절대 금지*)
+4. 앱 재시작 → Dashboard → AI Paper Auto Loop 카드 → "시작" 클릭
+
+---
+
+## v1.0.1-beta — (예정)
+
+본 섹션은 v1.0.1 릴리스 시점에 채워짐. 운영자가 PR 머지 후 본 파일을 업데이트.
+
+### 예정 항목
+- (TBD) Tauri updater B 단계 활성화 — TAURI_PRIVATE_KEY 등록 후 원클릭 자동
+  설치.
+- (TBD) MSI 산출 복원 — WiX 캐시 step 추가.
+- (TBD) AI Paper Auto Loop tick 실제 strategy 통합 (현 placeholder).
+
+---
+
+## 참고
+
+- [`docs/auto_update_policy.md`](auto_update_policy.md) — 자동 업데이트 정책
+- [`docs/desktop_update_policy.md`](desktop_update_policy.md) — 서명 키 관리
+- [`docs/exe_oneclick_installation.md`](exe_oneclick_installation.md) — 설치 가이드
+- [`docs/desktop_exe_status.md`](desktop_exe_status.md) — EXE 빌드 상태 / 실패 이력

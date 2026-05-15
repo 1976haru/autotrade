@@ -55,7 +55,7 @@
     "updater": {
       "active": false,
       "endpoints": [
-        "https://github.com/__ORG__/__REPO__/releases/latest/download/latest.json"
+        "https://github.com/1976haru/autotrade/releases/latest/download/latest.json"
       ],
       "pubkey": ""
     }
