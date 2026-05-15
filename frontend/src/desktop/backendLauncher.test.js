@@ -205,6 +205,44 @@ describe("probeBackendOnce", () => {
     expect(probe.statusOk).toBe(true);
     expect(probe.readiness).toBeNull();
   });
+
+  // fix/desktop-sidecar-runtime-diagnostics: /api/status 실패 시 /health
+  // fallback 으로 backend 가 *살아있는지* 만이라도 확인.
+  it("falls back to /health when /api/status returns 500", async () => {
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith("/api/status")) {
+        return { ok: false, status: 500 };
+      }
+      if (url.endsWith("/health")) {
+        return { ok: true, async json() { return { ok: true }; } };
+      }
+      return { ok: false, status: 404 };
+    });
+    const probe = await probeBackendOnce({ fetchImpl });
+    expect(probe.statusOk).toBe(true);
+    // status object 가 health fallback 임을 표시.
+    expect(probe.status.__via_health_fallback).toBe(true);
+    // /health 호출이 실제로 일어남.
+    const calls = fetchImpl.mock.calls.map((c) => c[0]);
+    expect(calls.some((u) => u.endsWith("/health"))).toBe(true);
+  });
+
+  it("both /api/status and /health failing returns statusOk=false", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 500 }));
+    const probe = await probeBackendOnce({ fetchImpl });
+    expect(probe.statusOk).toBe(false);
+    // 두 endpoint 모두 시도되었음을 확인.
+    expect(fetchImpl.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("/health fallback exception also surfaces statusOk=false", async () => {
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith("/api/status")) return { ok: false, status: 500 };
+      throw new Error("health endpoint TCP reset");
+    });
+    const probe = await probeBackendOnce({ fetchImpl });
+    expect(probe.statusOk).toBe(false);
+  });
 });
 
 

@@ -6,6 +6,10 @@ import {
   getConnectionLog,
   isDesktopApp,
 } from "../desktop/backendLauncher";
+import {
+  isBackendLogAvailable,
+  readBackendLog,
+} from "../desktop/backendLogReader";
 
 // 214: GitHub Pages 배포 시엔 실제 백엔드가 없다 (FastAPI는 Pages에서 실행되지
 // 않음). VITE_DEMO_MODE=true 빌드 플래그가 켜진 상태에서 backend가 unreachable
@@ -25,15 +29,23 @@ export function isDemoBuild() {
   return v === "true" || v === true;
 }
 
-function _DesktopBanner() {
+function _DesktopBanner({ readBackendLogImpl = readBackendLog } = {}) {
   const [showLog, setShowLog] = useState(false);
   const [logSnapshot, setLogSnapshot] = useState([]);
+  const [backendLog, setBackendLog] = useState(null); // null = not loaded
   const [reloadKey, setReloadKey] = useState(0);
 
-  const onShowLog = useCallback(() => {
+  const onShowLog = useCallback(async () => {
     setLogSnapshot(getConnectionLog());
     setShowLog(true);
-  }, []);
+    // backend log 도 함께 로드 (Tauri 환경에서만 실제 content; else null).
+    try {
+      const txt = await readBackendLogImpl();
+      setBackendLog(txt);
+    } catch (err) {
+      setBackendLog(`(read error: ${err?.message || err})`);
+    }
+  }, [readBackendLogImpl]);
 
   const onHideLog = useCallback(() => setShowLog(false), []);
 
@@ -104,35 +116,85 @@ function _DesktopBanner() {
         </button>
       </div>
       {showLog && (
-        <div
-          data-testid="connection-log-panel"
-          style={{
-            background: "#fff",
-            border: "1px solid #bfdbfe",
-            borderRadius: "var(--r-md)",
-            padding: "6px 10px",
-            marginTop: 6,
-            fontSize: "var(--fs-xs)",
-            color: "var(--c-text)",
-            maxHeight: 180,
-            overflowY: "auto",
-          }}
-        >
-          {logSnapshot.length === 0 ? (
-            <div data-testid="connection-log-empty">
-              아직 연결 시도 기록이 없습니다 (배너가 처음 뜬 직후 일 수 있음).
+        <>
+          <div
+            data-testid="connection-log-panel"
+            style={{
+              background: "#fff",
+              border: "1px solid #bfdbfe",
+              borderRadius: "var(--r-md)",
+              padding: "6px 10px",
+              marginTop: 6,
+              fontSize: "var(--fs-xs)",
+              color: "var(--c-text)",
+              maxHeight: 180,
+              overflowY: "auto",
+            }}
+          >
+            <div style={{ fontWeight: "var(--fw-bold)", marginBottom: 4 }}>
+              연결 시도 (frontend)
             </div>
-          ) : (
-            logSnapshot.map((e, i) => (
-              <div key={i} data-testid={`connection-log-entry-${i}`}>
-                <code style={{ color: "var(--c-text-3)" }}>{e.ts}</code>{" "}
-                <b>{e.kind}</b>
-                {e.url ? ` ${e.url}` : ""}
-                {e.error ? ` — ${e.error}` : ""}
+            {logSnapshot.length === 0 ? (
+              <div data-testid="connection-log-empty">
+                아직 연결 시도 기록이 없습니다 (배너가 처음 뜬 직후 일 수 있음).
               </div>
-            ))
-          )}
-        </div>
+            ) : (
+              logSnapshot.map((e, i) => (
+                <div key={i} data-testid={`connection-log-entry-${i}`}>
+                  <code style={{ color: "var(--c-text-3)" }}>{e.ts}</code>{" "}
+                  <b>{e.kind}</b>
+                  {e.url ? ` ${e.url}` : ""}
+                  {e.error ? ` — ${e.error}` : ""}
+                </div>
+              ))
+            )}
+          </div>
+          {/* fix/desktop-sidecar-runtime-diagnostics: Tauri 단에서 기록한 sidecar
+              stdout/stderr/exit 로그. 비-Tauri 환경에서는 null 반환 → "데스크톱
+              모드에서만" 안내. Secret 패턴은 backendLogReader 가 [REDACTED] 마스킹. */}
+          <div
+            data-testid="backend-log-panel"
+            style={{
+              background: "#0f172a",
+              border: "1px solid #334155",
+              borderRadius: "var(--r-md)",
+              padding: "6px 10px",
+              marginTop: 6,
+              fontSize: "var(--fs-xs)",
+              color: "#e2e8f0",
+              maxHeight: 240,
+              overflowY: "auto",
+              fontFamily: "ui-monospace, SFMono-Regular, monospace",
+            }}
+          >
+            <div style={{ fontWeight: "var(--fw-bold)", marginBottom: 4, color: "#7dd3fc" }}>
+              백엔드 sidecar 로그 ({"%APPDATA%\\Autotrade\\logs\\desktop-backend.log"})
+            </div>
+            {backendLog === null ? (
+              <div data-testid="backend-log-na">
+                {isBackendLogAvailable()
+                  ? "로딩 중..."
+                  : "데스크톱(EXE) 모드에서만 사용 가능합니다."}
+              </div>
+            ) : backendLog.trim() === "" ? (
+              <div data-testid="backend-log-empty">
+                (로그 파일이 비어 있습니다 — sidecar 가 아직 출력하지 않음)
+              </div>
+            ) : (
+              <pre
+                data-testid="backend-log-content"
+                style={{
+                  margin: 0,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  fontFamily: "inherit",
+                }}
+              >
+                {backendLog}
+              </pre>
+            )}
+          </div>
+        </>
       )}
       <div
         data-testid="desktop-mode-badge"

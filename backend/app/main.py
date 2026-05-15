@@ -111,3 +111,12 @@ app.include_router(kis_paper_router, prefix="/api")  # #89
 @app.get("/")
 def root() -> dict:
     return {"name": settings.app_name, "status": "ok", "docs": "/docs"}
+
+
+# fix/desktop-sidecar-runtime-diagnostics: 데스크톱 launcher 가
+# /api/status 실패 시 fallback 으로 호출하는 *최소* liveness probe.
+# 어떤 DB / monitoring 서비스 의존성 없이 즉시 200 — sidecar 가 살아있다는
+# 사실만 확인. Secret / API key / 계좌번호 포함 0건.
+@app.get("/health")
+def health() -> dict:
+    return {"ok": True, "status": "ok", "app": settings.app_name}

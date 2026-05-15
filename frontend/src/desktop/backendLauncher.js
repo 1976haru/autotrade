@@ -133,6 +133,33 @@ export async function probeBackendOnce({
     if (!statusRes || !statusRes.ok) {
       const err = `status http ${statusRes?.status}`;
       _appendLog({ kind: "probe_failed", url: `${baseUrl}/api/status`, error: err });
+      // fix/desktop-sidecar-runtime-diagnostics: /api/status 실패 시 /health
+      // fallback. backend 가 *살아있는지* 만이라도 확인. /health 가 응답하면
+      // statusOk=true 로 표시하되 status payload 는 empty — UNSAFE / NEEDS_ENV
+      // 분기는 classifyLauncherState 가 safety=null 로 READY 로 처리.
+      try {
+        const healthRes = await fetchImpl(`${baseUrl}/health`);
+        if (healthRes && healthRes.ok) {
+          _appendLog({ kind: "health_fallback_ok", url: `${baseUrl}/health` });
+          return {
+            statusOk: true,
+            status: { __via_health_fallback: true },
+            readiness: null,
+            safety: null,
+          };
+        }
+        _appendLog({
+          kind: "health_fallback_failed",
+          url: `${baseUrl}/health`,
+          error: `http ${healthRes?.status}`,
+        });
+      } catch (he) {
+        _appendLog({
+          kind: "health_fallback_exception",
+          url: `${baseUrl}/health`,
+          error: he?.message || String(he),
+        });
+      }
       return { statusOk: false, error: err };
     }
     const status = await statusRes.json();
