@@ -207,9 +207,46 @@ function _DesktopBanner({ readBackendLogImpl = readBackendLog } = {}) {
 }
 
 export function BackendOfflineBanner() {
-  const { error, loading } = useBackendStatus();
+  const { error, loading, baseUrl, viaFallback } = useBackendStatus();
   if (loading) return null;
-  if (!error) return null;
+
+  // fix/frontend-detects-fallback-backend-port: connected 상태에서 fallback
+  // 포트면 작은 초록 배지 — "✅ Backend 연결 완료: 8001". 기본 포트 (8000)
+  // 면 invisible (current behavior). 본 상태는 update fetch 실패와 *별개* —
+  // UpdateBanner 자체가 별도 컴포넌트로 격리됨.
+  if (!error) {
+    if (viaFallback && baseUrl) {
+      const portMatch = String(baseUrl).match(/:(\d+)/);
+      const portLabel = portMatch ? portMatch[1] : baseUrl;
+      return (
+        <div
+          data-testid="backend-connected-fallback-banner"
+          data-port={portLabel}
+          style={{
+            padding: "6px 12px",
+            margin: "6px 12px",
+            background: "#f0fdf4",
+            border: "1px solid #bbf7d0",
+            borderRadius: "var(--r-md)",
+            color: "#065f46",
+            fontSize: "var(--fs-xs)",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
+        >
+          <span>✅</span>
+          <span>
+            Backend 연결 완료: <b>:{portLabel}</b>
+            <span style={{ marginLeft: 6, color: "var(--c-text-3)" }}>
+              (fallback port — 기본 8000 사용 불가로 자동 전환됨)
+            </span>
+          </span>
+        </div>
+      );
+    }
+    return null;
+  }
 
   // EXE/Tauri 데스크톱 모드 — sidecar 자동 spawn 흐름. uvicorn 안내 *0건*.
   if (isDesktopApp()) {
