@@ -5,14 +5,26 @@ import { BackendOfflineBanner } from "./BackendOfflineBanner";
 
 
 // 213: useBackendStatus는 useEffect로 fetch — 모킹해서 deterministic하게.
-const _statusHook = { status: null, loading: false, error: "" };
+const _statusHook = {
+  status: null,
+  loading: false,
+  error: "",
+  baseUrl: "http://127.0.0.1:8000",
+  viaFallback: false,
+};
 vi.mock("../store/useBackendStatus", () => ({
   useBackendStatus: () => _statusHook,
 }));
 
 
 function _set(overrides) {
-  Object.assign(_statusHook, { status: null, loading: false, error: "" }, overrides);
+  Object.assign(_statusHook, {
+    status: null,
+    loading: false,
+    error: "",
+    baseUrl: "http://127.0.0.1:8000",
+    viaFallback: false,
+  }, overrides);
 }
 
 
@@ -25,10 +37,50 @@ describe("<BackendOfflineBanner>", () => {
     expect(queryByTestId("backend-offline-banner")).toBeNull();
   });
 
-  it("renders nothing on success", () => {
+  it("renders nothing on success (default 8000 port)", () => {
     _set({ status: { default_mode: "SIMULATION" } });
     const { queryByTestId } = render(<BackendOfflineBanner />);
     expect(queryByTestId("backend-offline-banner")).toBeNull();
+    expect(queryByTestId("backend-connected-fallback-banner")).toBeNull();
+  });
+
+  // fix/frontend-detects-fallback-backend-port: connected + fallback port
+  // → 작은 초록 "✅ Backend 연결 완료: :8001" 배지.
+  it("shows green connected banner when on fallback port 8001", () => {
+    _set({
+      status: { default_mode: "PAPER" },
+      baseUrl: "http://127.0.0.1:8001",
+      viaFallback: true,
+    });
+    const { getByTestId, queryByTestId } = render(<BackendOfflineBanner />);
+    const banner = getByTestId("backend-connected-fallback-banner");
+    expect(banner.getAttribute("data-port")).toBe("8001");
+    expect(banner.textContent).toContain("Backend 연결 완료");
+    expect(banner.textContent).toContain("8001");
+    // 빨간 offline 배너 0건.
+    expect(queryByTestId("backend-offline-banner")).toBeNull();
+  });
+
+  it("shows fallback banner for port 8002 too", () => {
+    _set({
+      status: { default_mode: "PAPER" },
+      baseUrl: "http://127.0.0.1:8002",
+      viaFallback: true,
+    });
+    const { getByTestId } = render(<BackendOfflineBanner />);
+    expect(
+      getByTestId("backend-connected-fallback-banner").getAttribute("data-port")
+    ).toBe("8002");
+  });
+
+  it("connected fallback banner stays hidden when viaFallback=false", () => {
+    _set({
+      status: { default_mode: "PAPER" },
+      baseUrl: "http://127.0.0.1:8000",
+      viaFallback: false,
+    });
+    const { queryByTestId } = render(<BackendOfflineBanner />);
+    expect(queryByTestId("backend-connected-fallback-banner")).toBeNull();
   });
 
   it("shows fallback banner with uvicorn hint on error", () => {

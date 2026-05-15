@@ -1,4 +1,71 @@
-const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
+// fix/frontend-detects-fallback-backend-port:
+// backend sidecar 가 8000 stale port 충돌 시 8001/8002 로 fallback bind 한다.
+// frontend 도 동일 순서로 multi-port probe 후 *성공한 포트* 의 baseUrl 을
+// 전역 API client 에 반영해 이후 모든 호출 (감사 / 에이전트 / 대시보드 /
+// auto-paper) 이 같은 포트를 사용한다.
+const DEFAULT_BACKEND_URL = "http://127.0.0.1:8000";
+const FALLBACK_PORTS = [8000, 8001, 8002];
+
+let _currentBackendBaseUrl =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_BACKEND_URL) ||
+  DEFAULT_BACKEND_URL;
+
+export function getBackendBaseUrl() {
+  return _currentBackendBaseUrl;
+}
+
+export function setBackendBaseUrl(url) {
+  if (typeof url !== "string" || !url) return;
+  _currentBackendBaseUrl = url;
+}
+
+export function resetBackendBaseUrl() {
+  // 테스트 / 운영자 명시 reset 용 — env / default 로 복귀.
+  _currentBackendBaseUrl =
+    (typeof import.meta !== "undefined" && import.meta.env?.VITE_BACKEND_URL) ||
+    DEFAULT_BACKEND_URL;
+}
+
+/**
+ * 8000 → 8001 → 8002 순서로 GET /api/status (or /health fallback) 를 시도해
+ * 첫 success 의 baseUrl 을 전역에 set. caller 가 명시적으로 호출.
+ *
+ * 반환: { ok, baseUrl, port, viaHealth } / 실패: { ok: false, error }.
+ * 본 함수는 *어떤 broker / 실거래 API 도 호출하지 않는다*.
+ */
+export async function discoverBackendBaseUrl({
+  ports = FALLBACK_PORTS,
+  fetchImpl = (typeof globalThis !== "undefined" && globalThis.fetch),
+} = {}) {
+  if (typeof fetchImpl !== "function") {
+    return { ok: false, error: "fetch not available" };
+  }
+  let lastError = "no ports tried";
+  for (const port of ports) {
+    const baseUrl = `http://127.0.0.1:${port}`;
+    try {
+      const sres = await fetchImpl(`${baseUrl}/api/status`);
+      if (sres && sres.ok) {
+        setBackendBaseUrl(baseUrl);
+        return { ok: true, baseUrl, port, viaHealth: false };
+      }
+      // /api/status 실패 → /health fallback (PR #25)
+      try {
+        const hres = await fetchImpl(`${baseUrl}/health`);
+        if (hres && hres.ok) {
+          setBackendBaseUrl(baseUrl);
+          return { ok: true, baseUrl, port, viaHealth: true };
+        }
+      } catch (he) {
+        lastError = he?.message || String(he);
+      }
+      lastError = `http ${sres?.status}`;
+    } catch (e) {
+      lastError = e?.message || String(e);
+    }
+  }
+  return { ok: false, error: lastError };
+}
 
 // Format the FastAPI HTTPException detail into something an operator can read
 // without having to mentally parse JSON. Structured server errors get
@@ -19,7 +86,9 @@ export function formatBackendErrorDetail(detail) {
 }
 
 export async function backendFetch(path, options = {}) {
-  const res = await fetch(`${API_BASE_URL}${path}`, {
+  // *매 호출* 시점에 현재 baseUrl 사용 — discoverBackendBaseUrl 이 바뀐 후
+  // 모든 후속 호출이 자동으로 새 포트로 향함.
+  const res = await fetch(`${_currentBackendBaseUrl}${path}`, {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
   });
