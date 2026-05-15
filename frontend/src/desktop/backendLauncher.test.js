@@ -247,6 +247,93 @@ describe("probeBackendOnce", () => {
 
 
 // ============================================================
+// 6. probeBackendWithFallback — 8000 → 8001 → 8002 multi-port
+// ============================================================
+
+import { probeBackendWithFallback } from "./backendLauncher";
+
+describe("probeBackendWithFallback", () => {
+  it("returns first successful port (8000 ok)", async () => {
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.startsWith("http://127.0.0.1:8000")) {
+        if (url.endsWith("/api/status"))
+          return { ok: true, async json() { return { safety_flags: {} }; } };
+      }
+      return { ok: false, status: 404 };
+    });
+    const res = await probeBackendWithFallback({ fetchImpl });
+    expect(res.statusOk).toBe(true);
+    expect(res.port).toBe(8000);
+    expect(res.baseUrl).toBe("http://127.0.0.1:8000");
+  });
+
+  it("falls back to 8001 when 8000 fails", async () => {
+    const fetchImpl = vi.fn(async (url) => {
+      // 8000 모든 path 실패.
+      if (url.startsWith("http://127.0.0.1:8000")) {
+        return { ok: false, status: 500 };
+      }
+      // 8001 /api/status 성공.
+      if (url.startsWith("http://127.0.0.1:8001")) {
+        if (url.endsWith("/api/status"))
+          return { ok: true, async json() { return { safety_flags: { kis_is_paper: true } }; } };
+      }
+      return { ok: false, status: 404 };
+    });
+    const res = await probeBackendWithFallback({ fetchImpl });
+    expect(res.statusOk).toBe(true);
+    expect(res.port).toBe(8001);
+    expect(res.baseUrl).toBe("http://127.0.0.1:8001");
+  });
+
+  it("falls back further to 8002 when 8000 and 8001 fail", async () => {
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.startsWith("http://127.0.0.1:8002")) {
+        if (url.endsWith("/api/status"))
+          return { ok: true, async json() { return { safety_flags: {} }; } };
+      }
+      return { ok: false, status: 500 };
+    });
+    const res = await probeBackendWithFallback({ fetchImpl });
+    expect(res.statusOk).toBe(true);
+    expect(res.port).toBe(8002);
+  });
+
+  it("all ports failing returns statusOk=false", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 500 }));
+    const res = await probeBackendWithFallback({ fetchImpl });
+    expect(res.statusOk).toBe(false);
+  });
+
+  it("respects /health fallback within each port", async () => {
+    // 8000 /api/status fails, /health OK → 8000 success via health.
+    const fetchImpl = vi.fn(async (url) => {
+      if (url === "http://127.0.0.1:8000/api/status") return { ok: false, status: 500 };
+      if (url === "http://127.0.0.1:8000/health")
+        return { ok: true, async json() { return { ok: true }; } };
+      return { ok: false, status: 404 };
+    });
+    const res = await probeBackendWithFallback({ fetchImpl });
+    expect(res.statusOk).toBe(true);
+    expect(res.port).toBe(8000);
+  });
+
+  it("custom ports list overrides default", async () => {
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.startsWith("http://127.0.0.1:9999")) {
+        if (url.endsWith("/api/status"))
+          return { ok: true, async json() { return {}; } };
+      }
+      return { ok: false, status: 500 };
+    });
+    const res = await probeBackendWithFallback({ ports: [9999], fetchImpl });
+    expect(res.statusOk).toBe(true);
+    expect(res.port).toBe(9999);
+  });
+});
+
+
+// ============================================================
 // 5. startBackendPoll
 // ============================================================
 

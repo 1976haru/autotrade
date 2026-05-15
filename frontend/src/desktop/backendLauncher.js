@@ -32,6 +32,15 @@ const DEFAULT_BACKEND_URL = "http://127.0.0.1:8000";
 const DEFAULT_TIMEOUT_MS  = 30_000;    // 30s 안에 살아나지 않으면 FAILED
 const DEFAULT_INTERVAL_MS = 1_000;     // 1s 간격 polling — KIS rate limit 무관 (로컬)
 
+// fix/desktop-sidecar-port-fallback: 8000 이 stale 프로세스에 점유된 경우
+// backend launcher 가 8001/8002 로 fallback bind 한다. frontend 도 동일 순서로
+// 시도 — 8000 실패 시 8001, 8002 를 차례로 probe.
+const DEFAULT_FALLBACK_PORTS = [8000, 8001, 8002];
+
+function _baseUrlForPort(port) {
+  return `http://127.0.0.1:${port}`;
+}
+
 // **Tauri 감지** — `window.__TAURI_INTERNALS__` 또는 `__TAURI__` 등을 통해
 // 데스크톱 모드 여부 판단. 브라우저 dev 환경에선 false → backend 수동 실행.
 export function isDesktopApp() {
@@ -191,9 +200,14 @@ export async function probeBackendOnce({
   }
 }
 
-/** Poll backend until READY/NEEDS_ENV/UNSAFE or timeout. Pure JS — caller decides UI. */
+/** Poll backend until READY/NEEDS_ENV/UNSAFE or timeout. Pure JS — caller decides UI.
+ *
+ * fix/desktop-sidecar-port-fallback: baseUrl 단일 probe 대신 ports 배열을
+ * 받아 multi-port probing. 호환성: baseUrl 만 주어진 경우 그 포트 1개로 fallback.
+ */
 export function startBackendPoll({
   baseUrl = DEFAULT_BACKEND_URL,
+  ports,
   intervalMs = DEFAULT_INTERVAL_MS,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   onUpdate,
@@ -202,6 +216,19 @@ export function startBackendPoll({
   clearTimeoutImpl = clearTimeout,
   nowImpl = () => Date.now(),
 } = {}) {
+  // ports 가 명시되지 않았고 baseUrl 이 default 면 fallback ports 사용.
+  // baseUrl 이 명시되면 그 단일 포트만 시도 (backwards compat).
+  let resolvedPorts;
+  if (Array.isArray(ports) && ports.length > 0) {
+    resolvedPorts = ports;
+  } else if (baseUrl === DEFAULT_BACKEND_URL) {
+    resolvedPorts = DEFAULT_FALLBACK_PORTS;
+  } else {
+    // baseUrl 에서 port 추출.
+    const m = String(baseUrl).match(/:(\d+)/);
+    resolvedPorts = m ? [parseInt(m[1], 10)] : DEFAULT_FALLBACK_PORTS;
+  }
+
   const startedAt = nowImpl();
   let timer = null;
   let cancelled = false;
@@ -217,7 +244,10 @@ export function startBackendPoll({
       });
       return;
     }
-    const probe = await probeBackendOnce({ baseUrl, fetchImpl });
+    const probe = await probeBackendWithFallback({
+      ports: resolvedPorts,
+      fetchImpl,
+    });
     if (cancelled) return;
     if (!probe.statusOk) {
       onUpdate?.({
@@ -239,6 +269,9 @@ export function startBackendPoll({
       readiness: probe.readiness,
       safety: probe.safety,
       status: probe.status,
+      // 어느 포트에 성공했는지 carry — UI 가 "현재 backend port: 8001" 표시 가능.
+      baseUrl: probe.baseUrl,
+      port: probe.port,
     });
     // 도달 후에도 *interval polling 을 유지* — 사용자가 .env 를 수정하면
     // 새 상태로 자동 전환. 다만 종료 조건은 cancel().
@@ -259,6 +292,32 @@ export function startBackendPoll({
     },
   };
 }
+
+/**
+ * Multi-port probe — 8000 실패 시 8001, 8002 순서 시도.
+ *
+ * 첫 번째 success 반환. 모두 실패면 마지막 error 반환. 매 시도가
+ * connection log 에 기록되므로 사용자가 "로그 보기" 로 어느 포트가 살아있는지
+ * 확인 가능.
+ */
+export async function probeBackendWithFallback({
+  ports = DEFAULT_FALLBACK_PORTS,
+  fetchImpl,
+} = {}) {
+  let lastError = "no ports tried";
+  for (const port of ports) {
+    const baseUrl = _baseUrlForPort(port);
+    const probe = await probeBackendOnce({ baseUrl, fetchImpl });
+    if (probe.statusOk) {
+      _appendLog({ kind: "probe_success_port", url: baseUrl });
+      return { ...probe, baseUrl, port };
+    }
+    lastError = probe.error || lastError;
+  }
+  _appendLog({ kind: "probe_all_ports_failed", error: lastError });
+  return { statusOk: false, error: lastError };
+}
+
 
 /** UI-friendly summary for KisPaperOneClickTestCard 데스크톱 보강. */
 export function summarizeForCard(snapshot) {

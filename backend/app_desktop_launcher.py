@@ -32,12 +32,15 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import socket
 import sys
 from datetime import datetime
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import urlopen
 
 # 본 모듈은 *간접* 진입만 사용 — broker / OrderExecutor 등을 *직접* import 0건.
 # 정적 grep 가드: 본 파일에 `from app.brokers` / `from app.execution` /
@@ -218,13 +221,108 @@ def _inject_env_keys(parsed: dict[str, str], log: logging.Logger) -> int:
 
 
 def is_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
-    """TCP 포트 in-use 여부 — 이미 backend 가 떠 있으면 sidecar 가 재spawn 하지 않음."""
+    """TCP 포트 in-use 여부 — connect 시도가 성공하면 누군가 listen 중."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)
     try:
         return sock.connect_ex((host, port)) == 0
     finally:
         sock.close()
+
+
+def is_backend_alive(host: str, port: int, timeout: float = 1.5) -> bool:
+    """포트에 listen 중인 프로세스가 *Agent Trader backend* 인지 확인.
+
+    /health 가 200 + body 에 'ok' or 'status' 키를 포함하면 같은 backend 로 간주.
+    실패 시 False — 다른 프로세스가 포트를 점유한 것 (예: 이전 stale sidecar /
+    다른 앱). 본 함수가 False 면 호출자는 fallback port 로 bind 시도한다.
+
+    *어떤 broker / OrderExecutor / 실거래 API 도 호출하지 않는다* — 단순 HTTP
+    GET /health 만.
+    """
+    url = f"http://{host}:{port}/health"
+    try:
+        with urlopen(url, timeout=timeout) as resp:  # noqa: S310 — local 127.0.0.1
+            if resp.status != 200:
+                return False
+            try:
+                body = json.loads(resp.read().decode("utf-8", errors="replace"))
+            except (ValueError, UnicodeDecodeError):
+                return False
+            if not isinstance(body, dict):
+                return False
+            return bool(body.get("ok")) or body.get("status") == "ok"
+    except (URLError, OSError, TimeoutError):
+        return False
+
+
+def find_free_port(
+    host: str,
+    candidates: list[int],
+    log: logging.Logger,
+) -> tuple[int, bool, str]:
+    """candidates 를 순회하며 첫 *free* 포트를 반환.
+
+    - 어떤 후보도 free 가 아니면 (host, candidates[0], False, "all in use")
+    - free 후보 발견 → (port, True, "free")
+    - in-use 후보가 *Agent Trader backend* (health 200) 면 → (port, True, "reuse-backend")
+
+    반환: (port, ok, reason)
+    """
+    if not candidates:
+        return (DEFAULT_PORT, False, "no candidates")
+
+    for p in candidates:
+        if not is_port_open(host, p):
+            log.info("port probe %s:%d → FREE", host, p)
+            return (p, True, "free")
+        log.warning("port probe %s:%d → IN USE", host, p)
+        if is_backend_alive(host, p):
+            log.info(
+                "port %s:%d already hosts an Agent Trader backend "
+                "(/health responded 200) — sidecar will reuse it.",
+                host, p,
+            )
+            return (p, True, "reuse-backend")
+        log.warning(
+            "port %s:%d in use but /health does NOT respond — likely a stale "
+            "process or non-backend listener. trying next candidate.",
+            host, p,
+        )
+    return (candidates[0], False, "all in use, none responded to /health")
+
+
+def write_backend_port_file(host: str, port: int, mode: str) -> Path | None:
+    """%APPDATA%/Autotrade/backend-port.json 에 현재 bound port 기록.
+
+    `mode`: "free" (새로 bind) / "reuse-backend" (기존 backend 재사용)
+    frontend backendLauncher 가 본 파일을 읽어 8000 외 fallback 포트를 알아낸다.
+
+    *Secret 절대 포함 0건* — host, port, mode, written_at 만.
+    """
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        return None
+    try:
+        out_dir = Path(appdata) / APPDATA_DIR_NAME
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / "backend-port.json"
+        out_path.write_text(
+            json.dumps({
+                "host":        host,
+                "port":        port,
+                "mode":        mode,
+                "written_at":  datetime.utcnow().isoformat() + "Z",
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return out_path
+    except OSError:
+        return None
+
+
+# Fallback 후보. 운영자가 명시 --port 를 안 주면 본 순서로 시도.
+DEFAULT_PORT_CANDIDATES: list[int] = [8000, 8001, 8002]
 
 
 def _parse_args(argv: list[str]) -> tuple[str, int]:
@@ -286,15 +384,51 @@ def run(argv: list[str] | None = None) -> int:
     _print_safety_snapshot(log, env_path)
 
     host, port = _parse_args(argv)
-    log.info("backend bind: %s:%d", host, port)
+    log.info("backend bind: %s:%d (requested)", host, port)
 
-    if is_port_open(host, port):
-        log.warning(
-            "port %s:%d already in use — assuming a previous backend instance "
-            "is alive. Sidecar will exit without starting a new one.",
-            host, port,
+    # Port fallback:
+    # - 운영자가 명시 --port 를 줬다면: 그 포트만 시도 (단일 candidate)
+    # - default 면: 8000 → 8001 → 8002 순서 시도
+    # - in-use 인데 /health 가 응답 → 기존 backend 재사용 (exit 5)
+    # - in-use 인데 /health 실패 → 다음 candidate 로 진행 (stale port 회피)
+    if port == DEFAULT_PORT:
+        candidates = list(DEFAULT_PORT_CANDIDATES)
+    else:
+        candidates = [port]
+
+    chosen_port, ok, reason = find_free_port(host, candidates, log)
+    if not ok:
+        log.error(
+            "could not find a usable port for backend (host=%s candidates=%s). "
+            "All ports in use and none responded to /health. Possible cause: "
+            "stale process holding 8000-8002 / OS firewall / corporate proxy. "
+            "Sidecar exits without starting.",
+            host, candidates,
         )
-        return 5  # frontend launcher can interpret this as "reuse existing"
+        return 5  # 기존 exit code 호환 — frontend 가 port 충돌로 인지
+
+    port_file = write_backend_port_file(host, chosen_port, reason)
+    if port_file is not None:
+        log.info("backend-port.json written → %s", port_file)
+    else:
+        log.warning(
+            "backend-port.json write skipped (APPDATA missing or write error)"
+        )
+
+    if reason == "reuse-backend":
+        log.info(
+            "existing backend on %s:%d verified via /health — sidecar exits, "
+            "frontend should connect to the existing instance.",
+            host, chosen_port,
+        )
+        return 5
+
+    if chosen_port != port:
+        log.warning(
+            "primary port %d in use without /health response → using fallback "
+            "port %d. frontend will read backend-port.json or try 8000/8001/8002.",
+            port, chosen_port,
+        )
 
     try:
         import uvicorn  # type: ignore
@@ -307,7 +441,7 @@ def run(argv: list[str] | None = None) -> int:
         uvicorn.run(
             "app.main:app",
             host=host,
-            port=port,
+            port=chosen_port,
             log_level="info",
             access_log=False,
         )
