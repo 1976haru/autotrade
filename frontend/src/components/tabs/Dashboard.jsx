@@ -35,6 +35,7 @@ import { StrategySelectionCard } from "./StrategySelectionCard";
 import { useStrategySelection } from "../../store/useStrategySelection";
 // 89: KIS Paper one-click AI auto-trade test — 한투 모의투자 전용. 실거래 0건.
 import { KisPaperOneClickTestCard } from "./KisPaperOneClickTestCard";
+import { UpdateBanner } from "../UpdateBanner";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
 // AuditLog timeline에서도 mode badge로 쓰기 위해 공유. Dashboard는 re-export
@@ -565,6 +566,13 @@ export function Dashboard({
           />
         </div>
       )}
+
+      {/* feature/desktop-auto-updater (A 단계): 앱 코드 자동 업데이트 배너.
+          GitHub Release latest 조회만 — 자동 설치 없음 (B 단계 signing key 필요).
+          사용자 .env / Secret / 실거래 flag 변경 0건 (테스트로 lock). */}
+      <div className="dashboard-span-full">
+        <UpdateBanner />
+      </div>
 
       {/* 230 (UI-002): Hero Summary — 앱명/모드/연결상태/긴급정지/결재대기 한 줄로 */}
       <div className="dashboard-span-full">
