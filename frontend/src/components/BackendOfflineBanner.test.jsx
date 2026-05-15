@@ -57,4 +57,30 @@ describe("<BackendOfflineBanner>", () => {
     expect(queryByTestId("backend-offline-banner")).toBeNull();
     vi.unstubAllEnvs();
   });
+
+  // fix/desktop-oneclick: EXE (Tauri) 모드에서는 uvicorn / cd backend 안내
+  // 대신 "백엔드 자동 실행 중" 친절한 안내가 떠야 한다.
+  it("renders desktop launching banner with no uvicorn hint in EXE mode", () => {
+    const prevTauri = window.__TAURI_INTERNALS__;
+    window.__TAURI_INTERNALS__ = { dummy: true };
+    try {
+      _set({ error: "Failed to fetch" });
+      const { getByTestId, queryByTestId, container } = render(
+        <BackendOfflineBanner />
+      );
+      const banner = getByTestId("desktop-backend-launching-banner");
+      expect(banner.textContent).toContain("백엔드 자동 실행 중");
+      expect(banner.textContent).toMatch(/실거래 OFF/);
+      // 일반 (개발자) 배너 + uvicorn 단어 0건.
+      expect(queryByTestId("backend-offline-banner")).toBeNull();
+      expect(container.textContent.toLowerCase()).not.toContain("uvicorn");
+      expect(container.textContent).not.toContain("cd backend");
+    } finally {
+      if (prevTauri === undefined) {
+        delete window.__TAURI_INTERNALS__;
+      } else {
+        window.__TAURI_INTERNALS__ = prevTauri;
+      }
+    }
+  });
 });

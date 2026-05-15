@@ -35,6 +35,7 @@ import { StrategySelectionCard } from "./StrategySelectionCard";
 import { useStrategySelection } from "../../store/useStrategySelection";
 // 89: KIS Paper one-click AI auto-trade test — 한투 모의투자 전용. 실거래 0건.
 import { KisPaperOneClickTestCard } from "./KisPaperOneClickTestCard";
+import { AutoPaperLoopCard } from "./AutoPaperLoopCard";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
 // AuditLog timeline에서도 mode badge로 쓰기 위해 공유. Dashboard는 re-export
@@ -582,6 +583,12 @@ export function Dashboard({
           emergencyStop={emergencyStop}
           onEmergencyStop={onEmergencyStop}
         />
+      </div>
+
+      {/* fix/desktop-oneclick-auto-paper-loop: EXE 원클릭 시작/정지/긴급정지.
+          PAPER/SIMULATION 한정 — broker.place_order 호출 0건, 실거래 OFF 영구. */}
+      <div className="dashboard-span-full">
+        <AutoPaperLoopCard />
       </div>
 
       {/* 225: 현재 장세 배지 — 위험/상태 요약 위에 한 줄로 */}
