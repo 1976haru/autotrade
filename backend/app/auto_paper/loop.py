@@ -429,26 +429,66 @@ class AutoPaperLoop:
         매 호출마다 market_clock 으로 phase 재확인. OPEN 으로 진입했으면
         *자동* RUNNING 으로 promote (start() 재호출 불필요).
 
-        - PRE_OPEN 유지: WAITING_MARKET 그대로 (별도 동작 없음)
-        - OPEN 전환  : WAITING_MARKET → RUNNING + started_at 갱신 + log
-        - CLOSED / WEEKEND 전환: 09시 전에 시작했는데 status 시점에 이미
-          장 종료 — 극단적 케이스 (예: 9시 직전 시작 후 6시간 후 status).
-          본 PR 에서는 *그대로 WAITING_MARKET 유지* — 운영자가 stop /
-          reset 으로 명시 종료. 자동 MARKET_CLOSED 전환은 후속 PR.
+        fix/update-popup-and-market-clock: 시장 시간이 *닫힌* 상태에서
+        RUNNING 이 잘못 표시되는 회귀 차단 — 토/일 / 평일 15:30 이후에는
+        RUNNING 도 자동 MARKET_CLOSED 로 demote. 평일 09:00 전 (PRE_OPEN)
+        에는 RUNNING → WAITING_MARKET demote. 본 자동 전이의 대상은
+        market-clock-driven 상태 (RUNNING / WAITING_MARKET) 뿐 — 운영자
+        명시 상태 (PAUSED / STOPPED / EMERGENCY_STOP / MARKET_CLOSED) 는
+        그대로 보존.
+
+        분기:
+        - WAITING_MARKET + phase=OPEN     → RUNNING (promote, 기존 동작)
+        - WAITING_MARKET + phase=PRE_OPEN → WAITING_MARKET (유지)
+        - WAITING_MARKET + phase=CLOSED   → MARKET_CLOSED (demote, 신규)
+        - WAITING_MARKET + phase=WEEKEND  → MARKET_CLOSED (demote, 신규)
+        - RUNNING + phase=OPEN            → RUNNING (유지)
+        - RUNNING + phase=PRE_OPEN        → WAITING_MARKET (demote, 신규)
+        - RUNNING + phase=CLOSED          → MARKET_CLOSED (demote, 신규)
+        - RUNNING + phase=WEEKEND         → MARKET_CLOSED (demote, 신규)
+        - 그 외 상태                      → 그대로 (operator-driven)
 
         Args:
             now: 시점 테스트 주입용 (default = datetime.now(utc)).
         """
         with self._lock:
-            if self._state == AutoPaperState.WAITING_MARKET:
+            cur = self._state
+            if cur in (AutoPaperState.WAITING_MARKET, AutoPaperState.RUNNING):
                 phase = current_market_phase(now)
+                target: AutoPaperState | None = None
                 if phase == MarketPhase.OPEN:
-                    self._state = AutoPaperState.RUNNING
-                    self._started_at = datetime.now(timezone.utc)
-                    _log.info(
-                        "[auto-paper] status() lazy-promote: WAITING_MARKET → "
-                        "RUNNING (market phase=OPEN at 09:00 KST)."
-                    )
+                    target = AutoPaperState.RUNNING
+                elif phase == MarketPhase.PRE_OPEN:
+                    target = AutoPaperState.WAITING_MARKET
+                else:
+                    # CLOSED / WEEKEND
+                    target = AutoPaperState.MARKET_CLOSED
+
+                if target != cur:
+                    self._state = target
+                    if target == AutoPaperState.RUNNING:
+                        # WAITING_MARKET → RUNNING (lazy promote)
+                        self._started_at = datetime.now(timezone.utc)
+                        _log.info(
+                            "[auto-paper] status() lazy-promote: %s → RUNNING "
+                            "(market phase=OPEN at 09:00 KST).",
+                            cur.value,
+                        )
+                    elif target == AutoPaperState.WAITING_MARKET:
+                        # RUNNING → WAITING_MARKET (PRE_OPEN 진입, 자정 넘은 케이스).
+                        _log.info(
+                            "[auto-paper] status() lazy-demote: %s → "
+                            "WAITING_MARKET (market phase=PRE_OPEN).",
+                            cur.value,
+                        )
+                    else:  # MARKET_CLOSED
+                        # 신규 가상 후보 생성을 즉시 차단 — RUNNING / WAITING 였든
+                        # 장이 닫혔으면 더 이상 진행하지 않는다 (주말 RUNNING 회귀 차단).
+                        _log.info(
+                            "[auto-paper] status() lazy-demote: %s → "
+                            "MARKET_CLOSED (market phase=%s).",
+                            cur.value, phase.value,
+                        )
             return self._snapshot_unlocked()
 
     def _snapshot_unlocked(self) -> AutoPaperStatus:

@@ -170,6 +170,92 @@ describe("<UpdateBanner>", () => {
     );
   });
 
+  // fix/update-banner-stale-release-notes: FAILED 상태 신규 invariant.
+  describe("FAILED state messaging (fix/stale-release-notes)", () => {
+    it("uses '최신 버전 확인 불가' instead of raw 'Failed to fetch'", async () => {
+      const check = _mockCheck(UPDATE_STATES.FAILED, {
+        currentVersion: "1.0.0",
+        error: "Failed to fetch",
+      });
+      const { container } = render(
+        <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />
+      );
+      await waitFor(() => screen.getByTestId("update-fail-headline"));
+      expect(screen.getByTestId("update-fail-headline").textContent).toContain(
+        "최신 버전 확인 불가"
+      );
+      // raw "Failed to fetch" 가 *headline* 에 노출되지 않아야 한다.
+      expect(screen.getByTestId("update-fail-headline").textContent).not.toContain(
+        "Failed to fetch"
+      );
+      // raw "업데이트 확인 실패" 단독 라벨도 노출 안 됨 — backend offline 과 혼동 방지.
+      expect(screen.getByTestId("update-fail-headline").textContent).not.toContain(
+        "업데이트 확인 실패"
+      );
+      // raw error 는 "기술 상세" details 안에서만 접근 가능 (사용자 친화적).
+      expect(container.textContent).toContain("Failed to fetch");
+    });
+
+    it("explicitly distinguishes from backend connection failure", async () => {
+      const check = _mockCheck(UPDATE_STATES.FAILED, {
+        currentVersion: "1.0.0",
+        error: "x",
+      });
+      render(
+        <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />
+      );
+      await waitFor(() => screen.getByTestId("update-fail-not-backend"));
+      expect(screen.getByTestId("update-fail-not-backend").textContent).toContain(
+        "백엔드 연결 실패"
+      );
+      expect(screen.getByTestId("update-fail-not-backend").textContent).toContain(
+        "별개"
+      );
+    });
+
+    it("does NOT show stale hardcoded release notes (v1.0.0 / 2026-05-08)", async () => {
+      // GitHub Release fetch 실패 시 *로컬 RELEASE_NOTES 의 v1.0.0 / 2026-05-08
+      // 안내가 최신 업데이트인 척 표시되면 안 된다*. UpdateBanner 는 fetch
+      // 결과만 표시하며 RELEASE_NOTES / WELCOME_NOTES 를 import 하지 않는다.
+      const check = _mockCheck(UPDATE_STATES.FAILED, {
+        currentVersion: "1.0.0",
+        error: "Failed to fetch",
+      });
+      const { container } = render(
+        <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />
+      );
+      await waitFor(() => screen.getByTestId("update-fail-headline"));
+      const text = container.textContent || "";
+      // 하드코딩된 옛 release entry 의 핵심 문구 — FAILED banner 에 절대 등장 X.
+      expect(text).not.toContain("에이전트 트레이더 v1 첫 공개");
+      expect(text).not.toContain("2026-05-08");
+      // "새 버전이 있습니다" 라벨도 등장 X (UPDATE_AVAILABLE 전용).
+      expect(text).not.toContain("새 버전이 있습니다");
+      // current version 은 명시 표시 (운영자가 어떤 버전을 쓰고 있는지 확인용).
+      expect(text).toContain("v1.0.0");
+    });
+
+    it("shows current version 'v0.0.0-unknown' when prop is fallback", async () => {
+      // _readCurrentVersion 의 fallback 이 의도적으로 부자연스러운 값임을 검증.
+      // 실 build 에서는 vite.config.js 가 inject 하므로 이 fallback 은 도달 X.
+      const check = _mockCheck(UPDATE_STATES.FAILED, {
+        currentVersion: "0.0.0-unknown",
+        error: "x",
+      });
+      render(
+        <UpdateBanner
+          currentVersion="0.0.0-unknown"
+          checkImpl={check}
+          openImpl={vi.fn()}
+        />
+      );
+      await waitFor(() => screen.getByTestId("update-fail-detail"));
+      expect(screen.getByTestId("update-fail-detail").textContent).toContain(
+        "v0.0.0-unknown"
+      );
+    });
+  });
+
   it("renders all 3 safety badges in every state", async () => {
     const states = [
       UPDATE_STATES.UP_TO_DATE,

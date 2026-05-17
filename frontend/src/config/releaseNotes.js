@@ -1,17 +1,33 @@
-// Release notes — VersionBadge / ReleaseNotesModal에서 사용.
+// Local notes — *초기 안내 (welcome)* 와 *릴리스 노트 (release update)* 의
+// 두 개념을 별개로 표현.
 //
-// 새 버전 release 시 본 배열의 *맨 앞*에 신규 entry 추가. `appInfo.version`이
-// 본 배열의 첫 entry version과 일치해야 한다 (테스트로 lock).
+// fix/update-banner-stale-release-notes: 기존 단일 RELEASE_NOTES 배열은
+// "첫 공개" 안내 1건만 들고 있었는데, 이게 GitHub Release fetch 실패 시
+// *마치 최신 업데이트인 것처럼* 보이는 혼선이 있었다. 본 PR 에서:
 //
-// safetyNotes는 *반드시* 포함 — "수익 보장 X / 실거래 미허가 / Paper/Shadow
-// 검증 필수" 같은 운영 정책을 매 release마다 명시.
+//   - `WELCOME_NOTES` 배열 — *초기 안내* 만. `kind: "welcome"` 명시.
+//     ReleaseNotesModal 이 이를 노출할 때 "초기 안내" 배지 + ack 시
+//     localStorage 에 영구 저장 → 같은 안내 재팝업 0건 (welcome 전용
+//     storage key 사용으로 ack 누락 가능성도 최소화).
+//   - `RELEASE_NOTES` 배열 — *실 릴리스 변경 내역*. 본 PR 시점 배열 비어 있음
+//     (배포된 GitHub Release 없음). 새 릴리스가 publish 되면 운영자가
+//     docs/release_notes.md 와 함께 본 배열에도 entry 추가.
+//
+// GitHub Release fetch 실패 시 UpdateBanner 는 *RELEASE_NOTES 와 무관하게*
+// "최신 버전 확인 불가" 만 노출 — 본 모듈의 WELCOME 안내가 *최신 업데이트
+// 처럼 둔갑하지 않도록* UpdateBanner 는 본 모듈을 import 하지 않는다.
 
-export const RELEASE_NOTES = [
+// 초기 안내 — 앱 첫 실행 / 새 버전 첫 접속 시 1회 노출용.
+export const WELCOME_NOTES = [
   {
+    kind:    "welcome",
     version: "1.0.0",
     label:   "Agent Trader v1",
     date:    "2026-05-08",
-    title:   "에이전트 트레이더 v1 첫 공개",
+    title:   "에이전트 트레이더 v1 · 초기 안내",
+    // 본 안내는 *최신 릴리스 변경 내역이 아니라* 첫 사용자 / 베타테스터에게
+    // 보여주는 *프로그램 안내* 다. ReleaseNotesModal 이 "초기 안내" 배지 표시.
+    isInitialAnnouncement: true,
     highlights: [
       "AI 에이전트 중심 대시보드 — 시장 / 전략 / 리스크를 6개 역할로 분리",
       "Mock / Paper / Virtual / Shadow 기반 자동매매 검증 환경",
@@ -33,8 +49,18 @@ export const RELEASE_NOTES = [
   },
 ];
 
+// 실 릴리스 변경 내역 — GitHub Release 와 동기화. 본 PR 시점 배열은
+// *의도적으로 비어 있음* (배포된 release 없음, 향후 추가).
+export const RELEASE_NOTES = [];
 
-// 본 모듈에서 *최신* (top entry)을 빠르게 가져오는 helper.
+
+// 최신 *릴리스 노트* — RELEASE_NOTES 만 본다. WELCOME 은 별개.
+// 본 PR 시점에는 항상 null (RELEASE_NOTES 비어 있음).
 export function latestReleaseNote() {
   return RELEASE_NOTES[0] || null;
+}
+
+// 최신 *초기 안내* — WELCOME_NOTES 최상단. ReleaseNotesModal 이 사용.
+export function latestWelcomeNote() {
+  return WELCOME_NOTES[0] || null;
 }
