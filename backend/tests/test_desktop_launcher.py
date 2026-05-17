@@ -6,13 +6,11 @@
 
 from __future__ import annotations
 
-import io
 import logging
 import os
 import pathlib
 import sys
 
-import pytest
 
 # backend/ 를 sys.path 에 — pytest 가 root 에서 실행될 때.
 _BACKEND_DIR = pathlib.Path(__file__).resolve().parent.parent

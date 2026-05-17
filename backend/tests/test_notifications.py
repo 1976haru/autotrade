@@ -15,14 +15,12 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
 import pytest
 
 from app.notifications.channels import (
     NoOpChannel,
     TelegramChannel,
-    build_channel_from_settings,
 )
 from app.notifications.service import (
     NotificationService,

@@ -10,10 +10,10 @@ CLAUDE.md 절대 원칙:
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.core.config import get_settings
 from app.notifications import (

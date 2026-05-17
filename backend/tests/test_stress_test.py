@@ -22,10 +22,8 @@ from pathlib import Path
 import pytest
 
 from app.analytics.stress_test import (
-    StressCandidateInput,
     StressResult,
     StressScenario,
-    StressTestConfig,
     StressVerdict,
     apply_crash,
     apply_data_gap,

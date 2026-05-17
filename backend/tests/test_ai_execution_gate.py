@@ -24,7 +24,6 @@ from app.risk.ai_execution_gate import (
     AIExecutionDecision,
     AIExecutionInput,
     AIExecutionPolicy,
-    AIExecutionResult,
     build_default_blocked_policy,
     build_policy_status,
     evaluate_ai_execution,

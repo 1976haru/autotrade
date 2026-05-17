@@ -24,8 +24,6 @@ from sqlalchemy.orm import Session
 
 from app.agents.execution_recommender import (
     ExecutionProposal,
-    ExecutionRecommenderAgent,
-    PrecheckOutcome,
     ProposalOrderType,
     ProposalSide,
     RecommendInput,

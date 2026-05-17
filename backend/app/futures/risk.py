@@ -7,7 +7,6 @@ from app.futures.margin_rules import (
     LiquidationRiskRule,
     MarginRuleDecision,
 )
-from app.futures.simulation import compute_initial_margin
 from app.futures.types import FuturesOrderRequest, FuturesPosition
 
 

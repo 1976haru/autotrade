@@ -33,7 +33,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Callable, Sequence
+from typing import Any, Sequence
 
 from app.backtest.engine import BacktestEngine
 from app.backtest.types import BacktestConfig, Bar

@@ -25,7 +25,6 @@ from app.agents.execution_recommender import (
     ExecutionProposal,
     ExecutionRecommenderAgent,
     PrecheckOutcome,
-    ProposalOrderType,
     ProposalSide,
     RecommendInput,
     RecommendResult,
@@ -34,7 +33,7 @@ from app.agents.execution_recommender import (
     recommend_proposals,
     submit_proposal,
 )
-from app.brokers.base import OrderSide, OrderType
+from app.brokers.base import OrderSide
 from app.core.modes import OperationMode
 
 

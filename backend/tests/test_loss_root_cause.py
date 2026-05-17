@@ -16,7 +16,6 @@ from app.analytics.loss_root_cause import (
     RootCauseCategory,
     RootCauseSeverity,
     RootCauseTag,
-    RootCauseTagAssignment,
     RootCauseThresholds,
     category_for_tag,
     evaluate_loss_root_cause,

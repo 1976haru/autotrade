@@ -169,7 +169,6 @@ def test_emergency_stop_toggle_does_not_raise_even_if_notification_path_fails(
     client, monkeypatch,
 ):
     """알림 hook은 try/except로 감싸 있어야 한다 — 강제 raise해도 200."""
-    from app.api import routes_risk
 
     def bad_build_event(**kwargs):  # noqa: ARG001
         raise RuntimeError("notification builder crashed")

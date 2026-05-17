@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field, replace
-from datetime import timedelta
 from enum import StrEnum
 from typing import Any, Sequence
 

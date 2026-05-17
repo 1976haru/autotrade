@@ -22,7 +22,7 @@ CLAUDE.md 절대 원칙 (테스트로 lock):
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 

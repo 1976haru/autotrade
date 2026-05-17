@@ -48,20 +48,20 @@ MockBrokerAdapter)을 묶어 "데이터 입력 → 전략 신호 → Agent 종�
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
-from app.backtest.types import Bar, Signal
+from app.backtest.types import Bar
 from app.brokers.base import BrokerAdapter, OrderSide, OrderType, OrderRequest
 from app.core.modes import OperationMode
 from app.execution.order_router import route_order, OrderRoutingResult
 from app.execution.paper_trader import assert_paper_broker
 from app.risk.risk_manager import RiskDecision, RiskManager
-from app.strategies.base import SignalAction, StrategyContext, StrategySignal
+from app.strategies.base import StrategyContext, StrategySignal
 from app.strategies.concrete import STRATEGY_REGISTRY, build_strategy
 
 
