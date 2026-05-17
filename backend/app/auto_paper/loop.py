@@ -9,6 +9,15 @@ feat/step2-05-pre-market-gate: `start()` 이전에 *Pre-market checklist* (#80)
 상태에서 자동 시작이 *불가능*. 차단 사유 (`blocking_reasons`) 는 응답 +
 audit log 양쪽에 carry — secret 노출 0건.
 
+feat/step2-06-paper-broker-wiring: `tick()` 이 호출자 주입 `paper_tick_handler`
+(`PaperTickHandler` 프로토콜) 를 호출. 본 모듈은 `app.brokers.*` /
+`app.execution.executor` / `app.execution.order_router` / `OrderExecutor` /
+`route_order` 를 *어떤 경로로도 import 하지 않는다* — handler 의 구현체가
+*paper-only* (VirtualOrder ledger / PaperBroker / mock fill engine) 만 사용
+하도록 caller 책임. state == RUNNING 이 아닐 때 `tick()` 은 `LoopNotRunningError`
+로 즉시 실패 → handler 호출 *0건* → 신규 가상 후보 생성 *0건* (정책 + 테스트
+로 lock).
+
 상태 머신 (feat/step2-01-auto-paper-states — 체크리스트 표준 정렬):
     PAUSED          — 초기 대기 / 일시정지 (시작 가능)
     RUNNING         — 자동 Paper Loop 진행 중
@@ -51,7 +60,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
 from functools import lru_cache
-from typing import Any
+from typing import Any, Callable, Optional
 
 
 _log = logging.getLogger("autotrade.auto_paper")
@@ -101,6 +110,44 @@ class LoopPreMarketBlockedError(RuntimeError):
         super().__init__(
             f"pre_market_blocked: verdict={verdict} reasons=[{joined}]"
         )
+
+
+@dataclass(frozen=True)
+class PaperTickContext:
+    """feat/step2-06: tick handler 에 전달되는 read-only 컨텍스트.
+
+    handler 가 본 dataclass 의 필드만 사용하므로 caller 와 loop 의 결합도 분리.
+    `is_paper_only=True` 영구 — handler 구현체가 본 invariant 를 *반드시* 따르고
+    실 broker 호출을 하지 않아야 한다 (정책 + 테스트로 lock).
+    """
+    cycle_count:       int
+    state:             str           # 항상 "RUNNING" — 다른 상태에선 tick 0건
+    tick_at:           str           # ISO 8601 UTC
+    tick_interval_sec: float
+    is_paper_only:     bool = True
+
+    def __post_init__(self) -> None:
+        if self.is_paper_only is not True:
+            raise ValueError(
+                "PaperTickContext.is_paper_only must be True — "
+                "this loop is PAPER/VIRTUAL only, never live broker."
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "cycle_count":       self.cycle_count,
+            "state":             self.state,
+            "tick_at":           self.tick_at,
+            "tick_interval_sec": self.tick_interval_sec,
+            "is_paper_only":     self.is_paper_only,
+        }
+
+
+# Tick handler 시그니처 — `PaperTickContext` 받아 가상 주문/체결 처리.
+# 반환값은 무시 (handler 의 부수효과 — VirtualOrder ledger / PaperBroker /
+# counter 등 — 만 의미 있음). caller 가 본 함수 안에서 broker.place_order /
+# route_order / OrderExecutor 호출 금지 (정적 grep 가드 + 정책).
+PaperTickHandler = Callable[["PaperTickContext"], None]
 
 
 @dataclass(frozen=True)
@@ -175,7 +222,19 @@ class AutoPaperLoop:
     last_tick_at 갱신. 실제 strategy / AI / RiskManager 호출은 미포함.
     """
 
-    def __init__(self, *, tick_interval_sec: float = 30.0):
+    def __init__(
+        self,
+        *,
+        tick_interval_sec: float = 30.0,
+        paper_tick_handler: Optional[PaperTickHandler] = None,
+    ):
+        """`paper_tick_handler` 가 주어지면 `tick()` 이 RUNNING 상태일 때만 호출.
+
+        기본 (None) = no-op — cycle 카운트만 증가. 실 운영자는 명시적으로
+        VirtualOrder ledger / PaperBroker wrapper 를 주입해 가상 주문 / 가상
+        체결을 기록. handler 가 broker / route_order / OrderExecutor 를 *호출
+        하면 안 됨* — 정책 + 정적 grep 가드.
+        """
         self._lock = threading.Lock()
         self._state: AutoPaperState = AutoPaperState.PAUSED
         self._cycle_count: int = 0
@@ -185,6 +244,7 @@ class AutoPaperLoop:
         self._emergency_at: datetime | None = None
         self._last_error: str | None = None
         self._tick_interval_sec: float = float(tick_interval_sec)
+        self._paper_tick_handler: PaperTickHandler | None = paper_tick_handler
 
     def start(self, *, pre_market: PreMarketSummary | None = None) -> AutoPaperStatus:
         """자동 시작.
@@ -268,6 +328,17 @@ class AutoPaperLoop:
             return self._snapshot_unlocked()
 
     def tick(self) -> AutoPaperStatus:
+        """RUNNING 상태일 때만 cycle 증가 + `paper_tick_handler` 호출.
+
+        feat/step2-06-paper-broker-wiring: handler 가 등록되어 있고 state ==
+        RUNNING 일 때만 handler 가 호출된다. *PAUSED / STOPPED / EMERGENCY_STOP
+        상태에서는 LoopNotRunningError 가 즉시 raise* → handler 호출 0건 →
+        신규 가상 후보 생성 0건 (정책 + 테스트로 lock).
+
+        handler 호출은 *lock 해제 후* — DB session / 외부 sleep 등을 handler
+        가 안전하게 사용 가능 + state 변경 race 차단 (handler 가 stop/emergency
+        를 다른 thread 에서 호출해도 안전).
+        """
         with self._lock:
             if self._state != AutoPaperState.RUNNING:
                 raise LoopNotRunningError(
@@ -276,7 +347,30 @@ class AutoPaperLoop:
                 )
             self._cycle_count += 1
             self._last_tick_at = datetime.now(timezone.utc)
-            return self._snapshot_unlocked()
+            snapshot = self._snapshot_unlocked()
+            ctx = PaperTickContext(
+                cycle_count=self._cycle_count,
+                state=self._state.value,
+                tick_at=self._last_tick_at.isoformat(),
+                tick_interval_sec=self._tick_interval_sec,
+            )
+            handler = self._paper_tick_handler
+        # Lock 해제 후 handler 호출 — re-entrancy 차단.
+        if handler is not None:
+            try:
+                handler(ctx)
+            except Exception as exc:  # noqa: BLE001
+                # handler 실패는 *cycle 무효화하지 않음* — 운영 흐름 보존.
+                # 단, 에러는 audit log 에 기록 + `_last_error` 에 캐시.
+                _log.warning(
+                    "[auto-paper] paper_tick_handler raised: %s: %s",
+                    type(exc).__name__, exc,
+                )
+                with self._lock:
+                    self._last_error = (
+                        f"paper_tick_handler {type(exc).__name__}: {exc!s}"
+                    )
+        return snapshot
 
     def status(self) -> AutoPaperStatus:
         with self._lock:
