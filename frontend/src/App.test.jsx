@@ -100,11 +100,26 @@ const _emptyApi = new Proxy({}, {
 
 
 let _activeApi = _offlineApi;
+// fix/frontend-app-test-backend-client-mock: BackendOfflineBanner →
+// useBackendStatus 가 client 에서 getBackendBaseUrl / discoverBackendBaseUrl /
+// setBackendBaseUrl 을 import 한다. mock 에 누락되면 App 전체가
+// ErrorBoundary 로 떨어져 smoke test 가 실패한다. 본 mock 은 default 포트
+// (8000) 발견 성공을 시뮬해 viaFallback=false 분기를 탄다.
 vi.mock("./services/backend/client", () => ({
   backendApi: new Proxy({}, {
     get: (_t, prop) => (...args) => _activeApi[prop](...args),
   }),
   formatBackendErrorDetail: (s) => (typeof s === "string" ? s : ""),
+  getBackendBaseUrl: () => "http://127.0.0.1:8000",
+  setBackendBaseUrl: () => {},
+  resetBackendBaseUrl: () => {},
+  discoverBackendBaseUrl: async () => ({
+    ok: true,
+    baseUrl: "http://127.0.0.1:8000",
+    port: 8000,
+    viaHealth: false,
+  }),
+  backendFetch: async () => null,
 }));
 
 

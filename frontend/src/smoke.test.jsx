@@ -20,11 +20,24 @@ const _offlineApi = new Proxy({}, {
   get: () => () => Promise.reject(new Error("Failed to fetch")),
 });
 
+// fix/frontend-app-test-backend-client-mock: useBackendStatus 가 client 에서
+// getBackendBaseUrl / discoverBackendBaseUrl / setBackendBaseUrl 을 import 한다.
+// mock 에 누락되면 App 전체가 ErrorBoundary 로 떨어진다.
 vi.mock("./services/backend/client", () => ({
   backendApi: new Proxy({}, {
     get: (_t, prop) => (...args) => _offlineApi[prop](...args),
   }),
   formatBackendErrorDetail: (s) => (typeof s === "string" ? s : ""),
+  getBackendBaseUrl: () => "http://127.0.0.1:8000",
+  setBackendBaseUrl: () => {},
+  resetBackendBaseUrl: () => {},
+  discoverBackendBaseUrl: async () => ({
+    ok: true,
+    baseUrl: "http://127.0.0.1:8000",
+    port: 8000,
+    viaHealth: false,
+  }),
+  backendFetch: async () => null,
 }));
 
 
