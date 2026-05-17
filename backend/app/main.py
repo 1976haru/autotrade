@@ -169,9 +169,28 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 
+# fix/step1-backend-autoconnect-final: Tauri 데스크톱 webview 는 *cross-origin*
+# 으로 backend 에 fetch 한다 (webview origin = `tauri://localhost` /
+# `https://tauri.localhost` / `http://tauri.localhost`). 기존 cors_origins 는
+# dev 서버 (localhost:5173, 127.0.0.1:5173) 만 포함해 EXE 모드에서 *모든
+# fetch 가 CORS 차단* 으로 실패 → frontend 가 backend 를 "offline" 으로 오인.
+#
+# 본 정규식은 *backend 가 127.0.0.1 loopback 에만 listen 하는 EXE 운영* 가정
+# 하에 안전: Tauri webview 의 모든 변형 origin 을 허용 (cross-PC 접근은
+# 127.0.0.1 listen 으로 차단). cors_origin_list (env 명시) 는 그대로 유지 —
+# dev 서버 / staging 추가 origin 도 동작.
+_TAURI_ORIGIN_REGEX = (
+    r"^(tauri://localhost"
+    r"|https?://tauri\.localhost"
+    r"|tauri://[^/]+"
+    r"|https?://localhost(:\d+)?"
+    r"|https?://127\.0\.0\.1(:\d+)?)$"
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origin_list,
+    allow_origin_regex=_TAURI_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

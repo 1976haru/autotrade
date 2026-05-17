@@ -7,32 +7,49 @@ import {
 } from "../services/backend/client";
 
 
-// fix/desktop-nonblocking-migration-health: db_ready=false 인 동안 본 hook 은
-// N초마다 /api/status 를 재호출해 db_ready=true 가 되는 즉시 React state 가
-// 자동 갱신되도록 한다. backend offline 으로 *오인하지 않고* "초기 DB 준비 중"
-// 배너가 자연스럽게 "연결 완료" 로 전환됨.
+// fix/step1-backend-autoconnect-final: 명시적 connection state 머신.
+// 기존 (error / loading) bool 조합으로는 *처음 폴링 실패*(CONNECTING) 와 *영구
+// 오프라인*(OFFLINE) 을 구분 못 함 → frontend 가 backend 가 살아있는데도
+// "Demo Mode / Backend 미연결" 로 stuck. ConnectionState 가 단일 진실.
+export const CONNECTION_STATES = Object.freeze({
+  CONNECTING:   "CONNECTING",      // 초기 / 재시도 중. 아직 한 번도 성공 못 함.
+  DB_PREPARING: "DB_PREPARING",    // /api/status OK 지만 db_ready=false (alembic 진행).
+  CONNECTED:    "CONNECTED",       // /api/status OK + db_ready=true.
+  OFFLINE:      "OFFLINE",         // (예약) 영구 실패 — 본 PR 시점에는 사용 안 함 (계속 재시도).
+});
+
+// db_ready=false 일 때 재폴링 간격.
 const _DB_PENDING_REPOLL_MS = 2_000;
+// CONNECTED 상태에서 periodic refresh — mode flip 감지용 (10초마다).
+const _CONNECTED_REFRESH_MS = 10_000;
+// CONNECTING 상태에서 retry backoff: 1s, 2s, 4s, 5s (cap).
+const _RETRY_BACKOFF_MS = [1_000, 2_000, 4_000, 5_000];
+
+
+function _retryDelayForAttempt(attempt /* 1-based */) {
+  const idx = Math.min(attempt - 1, _RETRY_BACKOFF_MS.length - 1);
+  return _RETRY_BACKOFF_MS[Math.max(0, idx)];
+}
 
 
 /**
- * useBackendStatus — fetch backend `/api/status` (default_mode, safety flags,
- * mode_capabilities) on mount.
+ * useBackendStatus — backend 자동 발견 + 연결 상태 머신.
  *
- * fix/frontend-detects-fallback-backend-port: 8000 이 stale port 충돌로 실패해도
- * 8001/8002 로 자동 fallback discover. 성공한 baseUrl 을 backendApi (전역
- * client) 에 반영하므로 *이후 모든* API 호출 (audit / agents / dashboard /
- * auto-paper) 이 같은 포트를 사용한다.
- *
- * fix/desktop-nonblocking-migration-health: payload 의 db_ready / migration_status
- * 를 read-only carry. db_ready=false 면 N초마다 재폴링.
+ * 핵심: backend sidecar 가 EXE 부팅 직후에는 listen 안 함 → 첫 fetch 실패는
+ * 정상. 본 hook 은 *영구* retry (지수 backoff) 로 backend 가 살아나는 즉시
+ * connected 상태로 전환. discoverBackendBaseUrl 이 8000 → 8001 → 8002 fallback
+ * 을 매번 다시 시도하므로 sidecar 가 8001 로 bind 한 경우도 자동 잡힘.
  *
  * 반환:
- *   - status: GET /api/status payload (default_mode / safety_flags 등) 또는 null
- *   - loading: boolean
- *   - error:   string (빈 문자열 = no error)
- *   - baseUrl: 현재 backend baseUrl (port fallback 후 결정된 값)
- *   - viaFallback: true 면 8000 외 fallback port 에 연결됨
- *   - dbReady: 편의 — `status?.db_ready === true` (null/undefined 면 false)
+ *   - status: GET /api/status payload 또는 null (아직 한 번도 성공 못 한 경우)
+ *   - loading: 첫 응답 도착 전까지만 true (backwards compat)
+ *   - error: 마지막 시도 실패 메시지 (재시도 진행 중에도 set — UI 가 자체 분기)
+ *   - baseUrl: 발견된 backend baseUrl
+ *   - viaFallback: 8000 외 fallback port 사용 중이면 true
+ *   - dbReady: status?.db_ready === true 편의 boolean
+ *   - connectionState: CONNECTION_STATES enum (UI 분기 핵심)
+ *   - attemptCount: 재시도 횟수 (진단)
+ *   - lastAttemptError: 마지막 실패 사유 (진단)
  */
 export function useBackendStatus() {
   const [status,  setStatus]  = useState(null);
@@ -40,49 +57,83 @@ export function useBackendStatus() {
   const [error,   setError]   = useState("");
   const [baseUrl, setBaseUrl] = useState(getBackendBaseUrl());
   const [viaFallback, setViaFallback] = useState(false);
+  const [connectionState, setConnectionState] = useState(CONNECTION_STATES.CONNECTING);
+  const [attemptCount, setAttemptCount] = useState(0);
+  const [lastAttemptError, setLastAttemptError] = useState("");
 
   useEffect(() => {
     let cancelled = false;
-    let repollTimer = null;
+    let timer = null;
+    let attempts = 0;
 
-    const fetchStatus = async () => {
+    const scheduleRetry = (delayMs) => {
+      if (cancelled) return;
+      timer = setTimeout(tryConnect, delayMs);  // eslint-disable-line no-use-before-define
+    };
+
+    const tryConnect = async () => {
+      if (cancelled) return;
+      attempts += 1;
       try {
+        // 매 시도마다 *전체* discover (8000 → 8001 → 8002) 다시 — sidecar 가
+        // 늦게 listen 한 경우 / 다른 포트로 bind 한 경우 자동 대응.
+        const disc = await discoverBackendBaseUrl();
+        if (cancelled) return;
+        if (!disc.ok) {
+          throw new Error(disc.error || "discovery failed");
+        }
+        setBaseUrl(disc.baseUrl);
+        setViaFallback(disc.baseUrl !== "http://127.0.0.1:8000");
+
         const s = await backendApi.getStatus();
         if (cancelled) return;
         setStatus(s);
-        // db_ready=false 면 backend 는 살아있지만 alembic 진행 중 — N초 후
-        // 다시 fetch 해 자동 전환 트리거.
+        setError("");                    // 성공하면 stale error clear.
+        setLastAttemptError("");
+        setAttemptCount(attempts);
         if (s && s.db_ready === false) {
-          repollTimer = setTimeout(fetchStatus, _DB_PENDING_REPOLL_MS);
+          setConnectionState(CONNECTION_STATES.DB_PREPARING);
+          scheduleRetry(_DB_PENDING_REPOLL_MS);
+        } else {
+          setConnectionState(CONNECTION_STATES.CONNECTED);
+          // 주기적 refresh — mode 변경 / safety flag 변경 감지.
+          scheduleRetry(_CONNECTED_REFRESH_MS);
         }
       } catch (e) {
-        if (!cancelled) {
-          // /api/status 가 실패하면 backend offline 의심 — error 라벨만 표시.
-          setError(e?.message || String(e));
-        }
+        if (cancelled) return;
+        const msg = e?.message || String(e);
+        setLastAttemptError(msg);
+        setAttemptCount(attempts);
+        // backwards compat — `error` 도 set (기존 UI 가 error 로 분기).
+        // 단, status 가 null 이면 *아직 한 번도 성공 못 함* → CONNECTING.
+        // status 가 있었는데 일시 실패면 (예: 일시 network blip) 이전 status
+        // 유지하면서 CONNECTING 표시.
+        setError(msg);
+        setConnectionState(CONNECTION_STATES.CONNECTING);
+        scheduleRetry(_retryDelayForAttempt(attempts));
       } finally {
         if (!cancelled) setLoading(false);
       }
     };
 
-    (async () => {
-      // 1단계: multi-port discover (8000 → 8001 → 8002).
-      const disc = await discoverBackendBaseUrl();
-      if (cancelled) return;
-      if (disc.ok) {
-        setBaseUrl(disc.baseUrl);
-        setViaFallback(disc.baseUrl !== "http://127.0.0.1:8000");
-      }
-      // 2단계: 발견된 baseUrl 로 /api/status fetch (db_ready=false 면 자동 재폴링).
-      fetchStatus();
-    })();
+    tryConnect();
 
     return () => {
       cancelled = true;
-      if (repollTimer != null) clearTimeout(repollTimer);
+      if (timer != null) clearTimeout(timer);
     };
   }, []);
 
   const dbReady = status?.db_ready === true;
-  return { status, loading, error, baseUrl, viaFallback, dbReady };
+  return {
+    status,
+    loading,
+    error,
+    baseUrl,
+    viaFallback,
+    dbReady,
+    connectionState,
+    attemptCount,
+    lastAttemptError,
+  };
 }
