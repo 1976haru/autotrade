@@ -14,7 +14,7 @@ import { AiExecutionPolicyCard, useAiExecutionPolicy } from "./AiExecutionPolicy
 
 // 45: AI Execution policy card는 자체 hook으로 fetch — AISignal 본체에서
 // 분리해 mount 비용 / re-render 영향을 격리.
-function _AiExecutionPolicyMount() {
+function AiExecutionPolicyMount() {
   const { policy, loading, error } = useAiExecutionPolicy();
   return <AiExecutionPolicyCard policy={policy} loading={loading} error={error} />;
 }
@@ -61,7 +61,7 @@ export function AISignal({ activeStratIds }) {
 
       {/* 45: AI 자동 실행 정책 카드 — 기본 비활성, read-only 표시.
           토글 / 활성화 버튼은 의도적으로 추가하지 않는다. */}
-      <_AiExecutionPolicyMount />
+      <AiExecutionPolicyMount />
 
       {/* 입력 */}
       <Card>

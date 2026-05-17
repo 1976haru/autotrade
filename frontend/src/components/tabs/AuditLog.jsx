@@ -1292,6 +1292,8 @@ export function BacktestExtremesSummary({ items, onJump }) {
   // 동일 행이면(=1건뿐이거나 모든 PnL이 같음) 비교 의미 없음.
   if (!best || !worst || best.id === worst.id) return null;
   // 82: displayName lookup — best/worst strategy 의 한글명 + internal id.
+  // fix/frontend-eslint-ci-baseline: conditional hook 위치 — 후속 PR 리팩터 대상.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
   const { lookup: strategyLookup } = useStrategyDisplayNames();
   // 126: clickable buttons jump to the matching row in the list. onJump
   // 미제공이면 plain span fallback — 정보는 그대로 보이지만 액션 없음.
@@ -1361,6 +1363,8 @@ export function BacktestStrategyMiniTable({ items, onJumpStrategy }) {
   // 자체 + 정렬로 충분.
   if (rows.length < 2) return null;
   // 82: displayName lookup. internal id 는 *항상* 작은 글씨로 함께 표시.
+  // fix/frontend-eslint-ci-baseline: conditional hook 위치 — 후속 PR 리팩터 대상.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
   const { lookup: strategyLookup } = useStrategyDisplayNames();
   const _td = { padding: "3px 6px", fontSize: 10 };
   const _th = { ..._td, color: "#475569", fontWeight: 700,

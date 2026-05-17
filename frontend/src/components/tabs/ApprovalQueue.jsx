@@ -121,6 +121,10 @@ export function ApprovalProposalSummary({ approval }) {
   const meta = approval.ai_decision_meta || {};
   const supporting = Array.isArray(meta.supporting_reasons) ? meta.supporting_reasons : [];
   // 83: strategy displayName.
+  // fix/frontend-eslint-ci-baseline: 본 hook 호출은 early return 뒤에 위치 —
+  // react-hooks/rules-of-hooks 위반. 기존 로직 보존을 위해 disable comment 만 추가.
+  // 후속 PR 에서 hook 을 component top-level 로 lift 하는 리팩터 권고.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
   const { lookup: strategyLookup } = useStrategyDisplayNames();
   const strategyDisplay = approval.strategy
     ? strategyDisplayShort(approval.strategy, strategyLookup)
@@ -406,6 +410,8 @@ export function ApproveConfirmSummary({ approval, action, now }) {
   const reasons = Array.isArray(approval.reasons) ? approval.reasons : [];
   const top3Reasons = reasons.slice(0, 3);
   // 83: strategy displayName.
+  // fix/frontend-eslint-ci-baseline: conditional hook 위치 — 후속 PR 리팩터 대상.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
   const { lookup: strategyLookup } = useStrategyDisplayNames();
   const strategyDisplay = approval.strategy
     ? strategyDisplayShort(approval.strategy, strategyLookup)

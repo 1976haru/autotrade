@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../services/backend/client", () => ({
   backendApi: {
-    alphaDecayEvaluate: vi.fn(),
+    signalAlphaDecayEvaluate: vi.fn(),
     alphaDecayFreshness: vi.fn(),
   },
 }));
@@ -90,7 +90,7 @@ beforeEach(() => {
       backendApi[k].mockReset();
     }
   }
-  backendApi.alphaDecayEvaluate.mockResolvedValue(_FRESH_RESULT);
+  backendApi.signalAlphaDecayEvaluate.mockResolvedValue(_FRESH_RESULT);
   backendApi.alphaDecayFreshness.mockResolvedValue({
     age_minutes: 10, verdict: "DECAYING",
     actionable: true, actionable_strict: true,
@@ -285,18 +285,18 @@ describe("SignalAlphaDecayCard — 버튼 / 상호작용", () => {
 
 describe("SignalAlphaDecayCard — API 통합", () => {
   it("'다시 평가' 클릭 시 backendApi 호출", async () => {
-    backendApi.alphaDecayEvaluate.mockResolvedValue(_EXPIRED_RESULT);
+    backendApi.signalAlphaDecayEvaluate.mockResolvedValue(_EXPIRED_RESULT);
     const { getByTestId } = render(<SignalAlphaDecayCard />);
     fireEvent.click(getByTestId("signal-alpha-decay-evaluate-btn"));
     await waitFor(() => {
       expect(getByTestId("signal-alpha-decay-headline").textContent)
         .toContain("만료");
     });
-    expect(backendApi.alphaDecayEvaluate).toHaveBeenCalled();
+    expect(backendApi.signalAlphaDecayEvaluate).toHaveBeenCalled();
   });
 
   it("API 에러 시 error 메시지 표시", async () => {
-    backendApi.alphaDecayEvaluate.mockRejectedValue(new Error("backend down"));
+    backendApi.signalAlphaDecayEvaluate.mockRejectedValue(new Error("backend down"));
     const { getByTestId } = render(<SignalAlphaDecayCard />);
     fireEvent.click(getByTestId("signal-alpha-decay-evaluate-btn"));
     await waitFor(() => {

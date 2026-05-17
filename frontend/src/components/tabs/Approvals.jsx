@@ -324,7 +324,7 @@ export function HistoryRow({ a, focused = false, expanded = false, onClick }) {
 }
 
 
-function _OrderSummary({ approval }) {
+function OrderSummary({ approval }) {
   // 83: strategy displayName. AI hero summary 줄에 한글명 + (internal id).
   const { lookup: strategyLookup } = useStrategyDisplayNames();
   return (
@@ -421,10 +421,10 @@ export function ApprovalDecisionModal({
     ? (
       <>
         <ApproveConfirmSummary approval={approval} action={action} />
-        <_OrderSummary approval={approval} />
+        <OrderSummary approval={approval} />
       </>
     )
-    : <_OrderSummary approval={approval} />;
+    : <OrderSummary approval={approval} />;
   const description = `${meta.description} 감사 추적을 위해 운영자명과 사유를 남겨주세요 — 기록된 값은 영구 저장되어 사고 분석 시 사용됩니다.`;
   return (
     <DecisionDialog
