@@ -587,3 +587,93 @@ or specify lib.path
   / [`.ps1`](../scripts/start_kis_paper_test_windows.ps1) — EXE 없는 실행 보조 (#89)
 - [`scripts/build_backend_sidecar.ps1`](../scripts/build_backend_sidecar.ps1) — **#90 sidecar PyInstaller 빌드** (신규)
 - [`scripts/build_windows_installer.ps1`](../scripts/build_windows_installer.ps1) — **#90 end-to-end installer 빌드** (신규)
+
+---
+
+## §1-02 백엔드 자동 실행 실패 UI 점검 결과 (2026-05-17)
+
+본 점검은 EXE / Tauri 데스크톱 모드에서 사용자(비개발자)가 *uvicorn / `cd
+backend`* 같은 개발자용 안내를 *보지 않도록* 한다는 정책 검증 — **read-only**,
+**코드 변경 0건**.
+
+### 점검 결과 (8 항목 모두 PASS)
+
+| # | 점검 항목 | 결과 | 검증 위치 |
+|---|---|---|---|
+| 1 | EXE/Tauri 모드에서 `"uvicorn app.main:app --reload"` 문구 0건 | ✅ | `BackendOfflineBanner.test.jsx:161` (`.not.toContain("uvicorn")`) |
+| 2 | EXE/Tauri 모드에서 `"cd backend"` 문구 0건 | ✅ | `BackendOfflineBanner.test.jsx:162` (`.not.toContain("cd backend")`) |
+| 3 | "백엔드 자동 실행 중입니다" 안내 표시 | ✅ | `BackendOfflineBanner.jsx:79` + `data-testid="desktop-backend-launching-banner"` |
+| 4 | "재시도" 버튼 표시 | ✅ | `BackendOfflineBanner.jsx:88-103` + `data-testid="btn-retry-connection"` + test:169 |
+| 5 | "로그 보기" 버튼 표시 | ✅ | `BackendOfflineBanner.jsx:104-118` + `data-testid="btn-show-connection-log"` + test:170 |
+| 6 | `%APPDATA%\Autotrade\logs` 경로 안내 | ✅ | `BackendOfflineBanner.jsx:173` (`백엔드 sidecar 로그 (%APPDATA%\Autotrade\logs\desktop-backend.log)`) |
+| 7 | `CONNECTED` 상태에서 오프라인 배너 숨김 | ✅ | `BackendOfflineBanner.jsx:261-294` (`return null` for `CONNECTED` + 기본 포트) |
+| 8 | 업데이트 확인 실패 ↔ backend 연결 실패 분리 | ✅ | `UpdateCheckerCard.jsx` 가 `backend` / `offline` / `isDesktopApp` 참조 0건 — 독립 컴포넌트 / 독립 testid (`update-checker-error`) |
+
+### UI 분기 흐름 (`BackendOfflineBanner.jsx`)
+
+```
+if (loading)                                   → null (배너 X)
+if (connectionState === CONNECTED)
+    if (viaFallback)                            → 초록 fallback 배지 (8001/8002)
+    else                                         → null (정상 — 시각 노이즈 X)
+if (connectionState === DB_PREPARING)          → 노란 _DbPreparingBanner (migration 진행)
+if (connectionState === CONNECTING)
+    if (isDesktopApp())                         → 🔄 _DesktopBanner (자동 실행 / 재시도 / 로그 보기)
+    if (isDemoBuild())                          → 🧪 demo-mode-banner (GitHub Pages)
+    else (local dev)                            → ⚠ backend-offline-banner (uvicorn 안내)
+```
+
+핵심: **`isDesktopApp()` 분기가 `isDemoBuild()` 와 dev fallback 보다 *먼저*
+실행** — EXE 사용자는 *절대* uvicorn / `cd backend` 문구를 보지 않는다.
+test line 161-162 가 이 invariant 를 lock.
+
+### 관련 컴포넌트
+
+- `_DesktopBanner` (`BackendOfflineBanner.jsx:32-209`):
+  - "🔄 백엔드 자동 실행 중입니다" 헤더
+  - "첫 실행 시 DB 초기화(alembic migration)로 최대 1~2분이 걸릴 수 있습니다." 안내
+  - "최대 90초간 자동 재시도하며, 그래도 안 되면 아래 '재시도' 또는 '로그
+    보기' 를 눌러 backend-YYYYMMDD.log 의 startup 진행 상황을 확인하세요."
+  - 재시도 button (`btn-retry-connection`) — `window.location.reload()` 호출
+  - 로그 보기 button (`btn-show-connection-log`) — frontend 연결 시도 로그
+    + Tauri sidecar 로그 panel (`%APPDATA%\Autotrade\logs\desktop-backend.log`)
+  - "데스크톱 모드 · KIS 모의 · 실거래 OFF" 안전 배지 (`desktop-mode-badge`)
+- `_DbPreparingBanner` (`BackendOfflineBanner.jsx:214-244`): backend OK 지만
+  alembic migration 진행 중 — 노란 톤, "백엔드 죽었다" 오인 방지.
+
+### 테스트 결과
+
+```bash
+cd frontend
+npx vitest run src/components/BackendOfflineBanner.test.jsx \
+                src/desktop/backendLauncher.test.js \
+                src/store/useBackendStatus.test.js
+# → Test Files  3 passed (3), Tests 89 passed (89), Duration 3.99s
+
+npm run build
+# → ✓ built in 163ms (dist/index.html 1.60 kB / index-*.js 659 kB)
+```
+
+추가 검증:
+- `scripts/security_scan.py` → **scanned files 848 / HIGH 0 / MEDIUM 0 / LOW 0
+  / INFO 0 — ✅ No findings.**
+- `backend/tests/test_repository_hygiene.py` → **39 passed**.
+
+### 안전 invariant
+
+- ✅ `BackendOfflineBanner.jsx` 가 `broker.place_order` / `route_order` /
+  `OrderExecutor` import 0건 (frontend 컴포넌트 — backend 코드 import 불가).
+- ✅ `backendLauncher.js` 가 매수 / 매도 / 실거래 트리거 호출 0건 — 모듈
+  docstring §9 가 carry.
+- ✅ `%APPDATA%\Autotrade\logs\desktop-backend.log` 경로의 secret 패턴은
+  `backendLogReader.js` 가 `[REDACTED]` 마스킹 (test 라인 196-215 가 lock).
+- ✅ `.env` / `.env.example` 변경 0건 — 안전 flag 4종 default 유지
+  (`KIS_IS_PAPER=true` / `ENABLE_LIVE_TRADING=false` / `ENABLE_AI_EXECUTION=false`
+  / `ENABLE_FUTURES_LIVE_TRADING=false`).
+
+### 결론
+
+**코드 수정 0건 — UI 분기 정책이 이미 정확히 구현됨.** 본 PR 은 점검 결과
+기록만. EXE 재빌드 *불필요*. 후속 PR 에서 `BackendOfflineBanner.jsx` 또는
+`isDesktopApp()` 분기 로직 변경 시 본 섹션 + test invariants (`.not.toContain
+("uvicorn")` / `.not.toContain("cd backend")`) *동시* 갱신 필요.
