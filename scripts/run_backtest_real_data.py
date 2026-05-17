@@ -70,6 +70,13 @@ from app.backtest.real_data.loader import (  # noqa: E402
     load_real_ohlcv,
     summarize_load_results,
 )
+# #3-09: universe + filter policy — 단계적 확장 (sample10 → liquidity_top50/100/300).
+from app.backtest.real_data.universe import (  # noqa: E402
+    SymbolFilterPolicy,
+    UniverseDataNotAvailableError,
+    UniverseKind,
+    resolve_universe,
+)
 
 
 _log = logging.getLogger("autotrade.real_data_runner")
@@ -231,14 +238,103 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--max-drawdown-pct",   type=float, default=0.15)
     p.add_argument("--dry-run", action="store_true",
                    help="파일 작성 X — stdout 요약만.")
+
+    # ── #3-09: universe + symbol filter policy ────────────────────────────
+    p.add_argument(
+        "--universe", default=None,
+        choices=[k.value for k in UniverseKind],
+        help=(
+            "종목 universe 선택. sample10 (default, 1차 검증용 10종) / "
+            "liquidity_top50 / liquidity_top100 / liquidity_top300 "
+            "(거래대금 상위 — *별도 데이터 source 주입 PR 필요*) / "
+            "custom (--symbols 직접 입력)."
+        ),
+    )
+    p.add_argument(
+        "--symbols", nargs="*", default=None,
+        help="--universe custom 일 때 운영자 명시 종목 list (6-digit).",
+    )
+    # 종목 필터 정책 — universe=liquidity_top* 에 적용.
+    p.add_argument("--min-avg-volume",        type=int, default=0,
+                   help="최소 평균 거래량 (주식 수). 0 = 비활성.")
+    p.add_argument("--min-avg-trading-value", type=int, default=0,
+                   help="최소 평균 거래대금 (KRW). 0 = 비활성.")
+    p.add_argument("--exclude-suspended",     action="store_true", default=True,
+                   help="거래정지 종목 제외 (default true).")
+    p.add_argument("--exclude-managed",       action="store_true", default=True,
+                   help="관리종목 제외 (default true).")
+    p.add_argument("--exclude-etf-etn",       action="store_true", default=True,
+                   help="ETF/ETN 제외 (default true).")
+    p.add_argument("--exclude-spac",          action="store_true", default=True,
+                   help="SPAC 제외 (default true).")
+    p.add_argument("--min-listed-days",       type=int,   default=180,
+                   help="상장 minimum days (default 180 — 6개월 미만 제외).")
+    p.add_argument("--max-missing-ratio",     type=float, default=0.05,
+                   help="데이터 결측 max ratio (default 0.05 = 5%%).")
     return p.parse_args(argv)
+
+
+def _build_filter_policy(args: argparse.Namespace) -> SymbolFilterPolicy:
+    """CLI args → SymbolFilterPolicy."""
+    return SymbolFilterPolicy(
+        min_avg_volume=int(args.min_avg_volume),
+        min_avg_trading_value=int(args.min_avg_trading_value),
+        exclude_suspended=bool(args.exclude_suspended),
+        exclude_managed=bool(args.exclude_managed),
+        exclude_etf_etn=bool(args.exclude_etf_etn),
+        exclude_spac=bool(args.exclude_spac),
+        min_listed_days=int(args.min_listed_days),
+        max_missing_ratio=float(args.max_missing_ratio),
+    )
+
+
+def _resolve_universe_symbols(args: argparse.Namespace) -> list[str]:
+    """args → universe 적용 후 symbol list.
+
+    우선순위:
+    1. legacy `--symbol` (반복) — 그대로 사용 (backwards compat).
+    2. `--universe` 옵션 — universe.resolve_universe() 호출.
+    3. default = `sample10` (REPRESENTATIVE_SYMBOLS).
+    """
+    if args.symbol:
+        return list(args.symbol)
+    if args.universe:
+        kind = UniverseKind(args.universe)
+        policy = _build_filter_policy(args)
+        custom = list(args.symbols) if (args.symbols and kind == UniverseKind.CUSTOM) else None
+        try:
+            resolution = resolve_universe(
+                kind, policy=policy, custom_symbols=custom,
+                liquidity_source=None,   # 본 PR 시점 None — opt-in PR 에서 wiring.
+            )
+        except UniverseDataNotAvailableError as e:
+            print(f"[ERR] {e}", file=sys.stderr)
+            print(
+                "[hint] LIQUIDITY_TOP* 옵션은 별도 데이터 source 주입 PR 후에만 "
+                "사용 가능. 본 PR 시점 default = sample10 (10종).",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        _log.info(
+            "[universe] kind=%s symbols=%d policy=%s",
+            resolution.kind.value, resolution.symbol_count,
+            resolution.policy.to_dict(),
+        )
+        if resolution.symbol_count == 0:
+            print(
+                "[ERR] universe 필터 통과 종목 0개 — *억지로 후보를 만들지 않음*. "
+                "필터 정책을 완화하거나 다른 universe 선택.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        return resolution.symbols
+    # default = sample10.
+    return [s.symbol for s in REPRESENTATIVE_SYMBOLS]
 
 
 def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     """전체 백테스트 매트릭스 실행 + 결과 dict 반환. caller 가 파일 작성 분기."""
-    symbols = list(args.symbol) if args.symbol else [
-        s.symbol for s in REPRESENTATIVE_SYMBOLS
-    ]
+    symbols = _resolve_universe_symbols(args)
     requested_strategies = (
         list(args.strategies) if args.strategies else list(STRATEGY_REGISTRY.keys())
     )

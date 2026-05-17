@@ -125,3 +125,9 @@ JSON 최상위 + 각 candidate 객체 invariant (테스트로 lock):
 - paper_candidate_config.json 의 모든 객체 (최상위 + 각 candidate) 가
   `is_order_signal=false` / `auto_apply_allowed=false` / `is_live_authorization=false`
   invariant.
+
+## universe 확장 정책 (#3-09)
+
+본 모듈도 `--universe sample10/liquidity_top50/100/300/custom` + 8 필터 옵션을
+지원. 정책 / CLI / 단계적 확장 가이드:
+[`docs/real_data_expansion_plan.md`](real_data_expansion_plan.md) (#3-09).
