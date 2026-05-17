@@ -16,22 +16,30 @@ import { backendApi } from "../../services/backend/client";
 // feat/step2-01-auto-paper-states: 체크리스트 표준 4 상태 (PAUSED / RUNNING /
 // STOPPED / EMERGENCY_STOP). 레거시 IDLE / EMERGENCY 도 동일 라벨로 매핑 —
 // 옛 backend 가 IDLE / EMERGENCY 를 emit 해도 UI 가 깨지지 않도록.
+//
+// feat/step2-market-waiting-mode: 한국장 시작 전 대기 (WAITING_MARKET) /
+// 장 종료 후 또는 주말 (MARKET_CLOSED) 두 상태 추가. 09:00 KST 가 되면
+// backend 가 lazy 로 WAITING_MARKET → RUNNING 으로 promote (polling 갱신).
 const _STATE_COLOR = {
   PAUSED:         "#94a3b8",
   IDLE:           "#94a3b8",   // legacy alias
+  WAITING_MARKET: "#3b82f6",   // 신규: 장 시작 대기 (파랑)
   RUNNING:        "#22c55e",
   STOPPED:        "#fbbf24",
   EMERGENCY_STOP: "#ef4444",
   EMERGENCY:      "#ef4444",   // legacy alias
+  MARKET_CLOSED:  "#64748b",   // 신규: 장 종료 / 휴장 (회색)
 };
 
 const _STATE_LABEL = {
   PAUSED:         "대기 (일시정지)",
   IDLE:           "대기 (일시정지)",
+  WAITING_MARKET: "장 시작 대기 중",
   RUNNING:        "AI Paper Auto Loop 진행 중",
   STOPPED:        "정지됨",
   EMERGENCY_STOP: "긴급정지됨",
   EMERGENCY:      "긴급정지됨",
+  MARKET_CLOSED:  "장 종료 · 휴장 (다음 영업일 09:00 KST 부터 시작 가능)",
 };
 
 const POLL_INTERVAL_MS = 5_000;
@@ -228,6 +236,55 @@ export function AutoPaperLoopCard({
         />
       </div>
 
+      {/* feat/step2-market-waiting-mode: WAITING_MARKET 안내 배너. */}
+      {state === "WAITING_MARKET" && (
+        <div
+          data-testid="auto-paper-market-waiting-banner"
+          style={{
+            padding: "8px 12px",
+            marginBottom: 10,
+            background: "#eff6ff",
+            border: "1px solid #bfdbfe",
+            borderRadius: "var(--r-md)",
+            color: "#1e3a8a",
+            fontSize: "var(--fs-sm)",
+          }}
+        >
+          <div style={{ fontWeight: "var(--fw-bold)", marginBottom: 4 }}>
+            ⏳ 장 시작 대기 중
+          </div>
+          <div style={{ fontSize: "var(--fs-xs)" }}>
+            한국 주식시장 정규장(09:00 KST)이 시작되면 자동으로 AI Paper
+            Auto Loop가 RUNNING 상태로 전환됩니다. 그 전까지는 신규 가상
+            매매 후보를 생성하지 않습니다.
+          </div>
+        </div>
+      )}
+
+      {/* feat/step2-market-waiting-mode: MARKET_CLOSED 안내 배너. */}
+      {state === "MARKET_CLOSED" && (
+        <div
+          data-testid="auto-paper-market-closed-banner"
+          style={{
+            padding: "8px 12px",
+            marginBottom: 10,
+            background: "#f1f5f9",
+            border: "1px solid #cbd5e1",
+            borderRadius: "var(--r-md)",
+            color: "#334155",
+            fontSize: "var(--fs-sm)",
+          }}
+        >
+          <div style={{ fontWeight: "var(--fw-bold)", marginBottom: 4 }}>
+            🌙 한국장 종료 / 휴장
+          </div>
+          <div style={{ fontSize: "var(--fs-xs)" }}>
+            다음 영업일 09:00 KST 부터 AI Paper Auto Loop를 다시 시작할 수
+            있습니다. 신규 가상 매매 후보 생성은 정지된 상태입니다.
+          </div>
+        </div>
+      )}
+
       {/* feat/step2-05-pre-market-gate: Pre-market BLOCK 차단 배너. */}
       {preMarketBlocked && (
         <div
@@ -265,14 +322,25 @@ export function AutoPaperLoopCard({
         <button
           data-testid="btn-start-auto-paper"
           onClick={onStart}
-          disabled={busy || state === "RUNNING" || preMarketBlocked}
+          disabled={
+            busy
+            || state === "RUNNING"
+            || state === "WAITING_MARKET"  // feat/step2-market-waiting-mode: 이미 대기 중
+            || preMarketBlocked
+          }
           style={{
             padding: "8px 16px",
             borderRadius: "var(--r-md)",
-            background: (state === "RUNNING" || preMarketBlocked) ? "#94a3b8" : "#22c55e",
+            background:
+              (state === "RUNNING" || state === "WAITING_MARKET" || preMarketBlocked)
+                ? "#94a3b8"
+                : "#22c55e",
             color: "#fff",
             border: "none",
-            cursor: (state === "RUNNING" || preMarketBlocked) ? "not-allowed" : "pointer",
+            cursor:
+              (state === "RUNNING" || state === "WAITING_MARKET" || preMarketBlocked)
+                ? "not-allowed"
+                : "pointer",
             fontWeight: "var(--fw-bold)",
           }}
         >

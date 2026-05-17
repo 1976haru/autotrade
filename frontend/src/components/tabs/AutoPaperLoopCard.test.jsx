@@ -294,4 +294,75 @@ describe("<AutoPaperLoopCard>", () => {
       }
     });
   });
+
+
+  // ==========================================================
+  // feat/step2-market-waiting-mode: 장 시작 대기 / 장 종료 / 휴장 표시
+  // ==========================================================
+
+  describe("Market waiting mode", () => {
+    it("WAITING_MARKET → '장 시작 대기 중' 라벨 + 안내 배너 표시", async () => {
+      const api = _mockApi({ state: "WAITING_MARKET", cycle_count: 0 });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("state-pill").textContent).toMatch(/장 시작 대기 중/)
+      );
+      const banner = screen.getByTestId("auto-paper-market-waiting-banner");
+      expect(banner.textContent).toMatch(/장 시작 대기 중/);
+      expect(banner.textContent).toMatch(/09:00 KST/);
+    });
+
+    it("WAITING_MARKET → 시작 버튼 비활성화 (이미 대기 중)", async () => {
+      const api = _mockApi({ state: "WAITING_MARKET", cycle_count: 0 });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("btn-start-auto-paper").disabled).toBe(true)
+      );
+    });
+
+    it("MARKET_CLOSED → '장 종료 · 휴장' 라벨 + 안내 배너 표시", async () => {
+      const api = _mockApi({ state: "MARKET_CLOSED", cycle_count: 0 });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("state-pill").textContent).toMatch(/장 종료/)
+      );
+      const banner = screen.getByTestId("auto-paper-market-closed-banner");
+      expect(banner.textContent).toMatch(/한국장 종료/);
+      expect(banner.textContent).toMatch(/09:00 KST/);
+    });
+
+    it("MARKET_CLOSED → 정지 버튼 비활성화 (이미 진행 중 아님)", async () => {
+      const api = _mockApi({ state: "MARKET_CLOSED", cycle_count: 0 });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("btn-stop-auto-paper").disabled).toBe(true)
+      );
+    });
+
+    it("RUNNING → 두 신규 배너 모두 표시 안 됨", async () => {
+      const api = _mockApi({ state: "RUNNING", cycle_count: 1 });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      expect(screen.queryByTestId("auto-paper-market-waiting-banner")).toBeNull();
+      expect(screen.queryByTestId("auto-paper-market-closed-banner")).toBeNull();
+    });
+
+    it("PAUSED → 두 신규 배너 모두 표시 안 됨", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      expect(screen.queryByTestId("auto-paper-market-waiting-banner")).toBeNull();
+      expect(screen.queryByTestId("auto-paper-market-closed-banner")).toBeNull();
+    });
+
+    it("WAITING_MARKET / MARKET_CLOSED 배너에 금지 라벨 0건", async () => {
+      const api = _mockApi({ state: "WAITING_MARKET", cycle_count: 0 });
+      const { container } = render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      const banned = ["Place Order", "지금 매수", "지금 매도", "실거래 시작", "ENABLE_LIVE_TRADING"];
+      for (const b of banned) {
+        expect(container.textContent).not.toContain(b);
+      }
+    });
+  });
 });

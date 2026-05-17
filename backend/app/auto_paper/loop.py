@@ -62,16 +62,30 @@ from enum import StrEnum
 from functools import lru_cache
 from typing import Any, Callable, Optional
 
+from app.scheduler.market_clock import MarketPhase, current_market_phase
+
 
 _log = logging.getLogger("autotrade.auto_paper")
 
 
 class AutoPaperState(StrEnum):
-    """체크리스트 표준 4 상태. 레거시 IDLE / EMERGENCY 는 alias."""
-    PAUSED         = "PAUSED"
-    RUNNING        = "RUNNING"
-    STOPPED        = "STOPPED"
-    EMERGENCY_STOP = "EMERGENCY_STOP"
+    """체크리스트 표준 상태 + 시장시간 기반 대기 상태.
+
+    feat/step2-market-waiting-mode: 한국장 시간 기준 *장 시작 전* /
+    *장 종료 후 / 주말* 진입 시 사용되는 두 신규 상태 추가:
+    - WAITING_MARKET — 평일 09:00 KST 이전 (장 시작 대기). 09:00 KST 가 되면
+      자동으로 RUNNING 으로 promote (status() 호출 시 lazy 검사).
+    - MARKET_CLOSED — 평일 15:30 KST 이후 또는 주/공휴 (휴장). 운영자가
+      stop() / reset() 으로 명시 종료 후 다음 영업일에 다시 start() 가능.
+
+    레거시 IDLE / EMERGENCY 는 PAUSED / EMERGENCY_STOP 의 deprecated alias.
+    """
+    PAUSED          = "PAUSED"
+    WAITING_MARKET  = "WAITING_MARKET"   # 신규: 평일 09:00 전 대기
+    RUNNING         = "RUNNING"
+    STOPPED         = "STOPPED"
+    EMERGENCY_STOP  = "EMERGENCY_STOP"
+    MARKET_CLOSED   = "MARKET_CLOSED"    # 신규: 평일 15:30 후 또는 주말
 
     # Deprecated aliases — Python StrEnum 이 같은 value 를 정의하면 첫 번째
     # member 의 alias 가 된다. AutoPaperState.IDLE is AutoPaperState.PAUSED.
@@ -246,19 +260,31 @@ class AutoPaperLoop:
         self._tick_interval_sec: float = float(tick_interval_sec)
         self._paper_tick_handler: PaperTickHandler | None = paper_tick_handler
 
-    def start(self, *, pre_market: PreMarketSummary | None = None) -> AutoPaperStatus:
+    def start(
+        self,
+        *,
+        pre_market: PreMarketSummary | None = None,
+        now: datetime | None = None,
+    ) -> AutoPaperStatus:
         """자동 시작.
 
         feat/step2-05-pre-market-gate: `pre_market` 이 제공되고
-        `start_allowed=False` 면 `LoopPreMarketBlockedError` 로 차단. 본
-        검증은 EMERGENCY_STOP / ALREADY_RUNNING 가드 *전* 에 수행 — 가장
-        우선 차단.
+        `start_allowed=False` 면 `LoopPreMarketBlockedError` 로 차단.
 
-        `pre_market=None` (legacy / backwards-compat): pre-market 게이트를
-        건너뛴다. 호출자 (API endpoint) 가 운영 정책에 따라 None 허용 여부
-        결정. 본 PR 시점에는 API endpoint 가 *기본적으로 pre_market 페이로드
-        없이도* start 허용 (기존 호출자 무회귀) — 단, frontend 는 항상
-        pre_market 결과를 동봉.
+        feat/step2-market-waiting-mode: 한국장 시간 기반 분기 추가.
+        Pre-market gate / RUNNING / EMERGENCY_STOP 가드 *통과 후* market
+        phase 확인:
+        - PRE_OPEN  (평일 09:00 전)        → WAITING_MARKET (자동 시작 대기)
+        - OPEN      (평일 09:00 ~ 15:30)   → RUNNING
+        - CLOSED    (평일 15:30 후)        → MARKET_CLOSED (당일 운영 종료)
+        - WEEKEND   (토/일)                → MARKET_CLOSED
+
+        WAITING_MARKET 은 *시작 신호* 를 받았으나 장이 열리지 않아 대기 중인
+        의도된 상태 — status() 가 호출될 때마다 lazy 로 phase 를 재확인하고
+        OPEN 으로 전환되면 RUNNING 으로 promote (handler 호출 0건 → 정상).
+
+        Args:
+            now: 시점 테스트 주입용 (default = datetime.now(utc)).
         """
         with self._lock:
             # Pre-market gate (가장 먼저) — start_allowed=False 면 다른 어떤
@@ -283,9 +309,33 @@ class AutoPaperLoop:
                 raise LoopBlockedError(
                     "AutoPaperLoop is in EMERGENCY_STOP; call reset() before start()"
                 )
-            self._state = AutoPaperState.RUNNING
+
+            # feat/step2-market-waiting-mode: market phase 분기.
+            phase = current_market_phase(now)
             self._started_at = datetime.now(timezone.utc)
             self._last_error = None
+
+            if phase == MarketPhase.OPEN:
+                self._state = AutoPaperState.RUNNING
+                _log.info(
+                    "[auto-paper] start → RUNNING (market phase=OPEN)"
+                )
+            elif phase == MarketPhase.PRE_OPEN:
+                self._state = AutoPaperState.WAITING_MARKET
+                _log.info(
+                    "[auto-paper] start → WAITING_MARKET (market phase=PRE_OPEN, "
+                    "Korean market opens at 09:00 KST). status() polling 시 "
+                    "09:00 KST 도달하면 자동 RUNNING 전환."
+                )
+            else:
+                # CLOSED / WEEKEND
+                self._state = AutoPaperState.MARKET_CLOSED
+                _log.info(
+                    "[auto-paper] start → MARKET_CLOSED (market phase=%s). "
+                    "다음 영업일 평일 09:00 KST 부터 재시작 가능 (운영자 명시 reset 후).",
+                    phase.value,
+                )
+
             # Pre-market warnings 만 carry — audit log 에 명시.
             if pre_market is not None and pre_market.warnings:
                 _log.info(
@@ -372,8 +422,33 @@ class AutoPaperLoop:
                     )
         return snapshot
 
-    def status(self) -> AutoPaperStatus:
+    def status(self, *, now: datetime | None = None) -> AutoPaperStatus:
+        """현재 상태 스냅샷.
+
+        feat/step2-market-waiting-mode: state == WAITING_MARKET 인 경우
+        매 호출마다 market_clock 으로 phase 재확인. OPEN 으로 진입했으면
+        *자동* RUNNING 으로 promote (start() 재호출 불필요).
+
+        - PRE_OPEN 유지: WAITING_MARKET 그대로 (별도 동작 없음)
+        - OPEN 전환  : WAITING_MARKET → RUNNING + started_at 갱신 + log
+        - CLOSED / WEEKEND 전환: 09시 전에 시작했는데 status 시점에 이미
+          장 종료 — 극단적 케이스 (예: 9시 직전 시작 후 6시간 후 status).
+          본 PR 에서는 *그대로 WAITING_MARKET 유지* — 운영자가 stop /
+          reset 으로 명시 종료. 자동 MARKET_CLOSED 전환은 후속 PR.
+
+        Args:
+            now: 시점 테스트 주입용 (default = datetime.now(utc)).
+        """
         with self._lock:
+            if self._state == AutoPaperState.WAITING_MARKET:
+                phase = current_market_phase(now)
+                if phase == MarketPhase.OPEN:
+                    self._state = AutoPaperState.RUNNING
+                    self._started_at = datetime.now(timezone.utc)
+                    _log.info(
+                        "[auto-paper] status() lazy-promote: WAITING_MARKET → "
+                        "RUNNING (market phase=OPEN at 09:00 KST)."
+                    )
             return self._snapshot_unlocked()
 
     def _snapshot_unlocked(self) -> AutoPaperStatus:

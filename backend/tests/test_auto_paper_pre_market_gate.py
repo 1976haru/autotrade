@@ -30,6 +30,19 @@ from app.auto_paper.loop import (
 from app.main import app
 
 
+@pytest.fixture(autouse=True)
+def _force_market_open(monkeypatch):
+    """feat/step2-market-waiting-mode 도입 후 호환 — pre-market gate 자체의
+    검증이 목적이므로 market_clock 분기는 OPEN 으로 고정 (시장 시간 분기
+    자체는 `test_auto_paper_market_hours.py` 에서 검증).
+    """
+    from app.scheduler.market_clock import MarketPhase
+    monkeypatch.setattr(
+        "app.auto_paper.loop.current_market_phase",
+        lambda *args, **kwargs: MarketPhase.OPEN,
+    )
+
+
 def _fresh_loop() -> AutoPaperLoop:
     get_auto_paper_loop.cache_clear()
     return get_auto_paper_loop()

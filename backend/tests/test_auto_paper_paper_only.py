@@ -30,6 +30,20 @@ from app.auto_paper.loop import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _force_market_open(monkeypatch):
+    """feat/step2-market-waiting-mode 도입 후 호환 — 본 파일의 핸들러
+    dispatch / VirtualOrder 검증은 *시장 시간 분기 이전* 의 가정 (start →
+    RUNNING) 위에서 동작. market_clock 분기 자체는
+    `test_auto_paper_market_hours.py` 에서 검증.
+    """
+    from app.scheduler.market_clock import MarketPhase
+    monkeypatch.setattr(
+        "app.auto_paper.loop.current_market_phase",
+        lambda *args, **kwargs: MarketPhase.OPEN,
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────
 # 1. PaperTickContext invariants
 # ─────────────────────────────────────────────────────────────────────
