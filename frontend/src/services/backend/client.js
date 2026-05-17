@@ -114,7 +114,15 @@ export const backendApi = {
   // 모든 경로는 PAPER/SIMULATION 한정 — broker.place_order 호출 0건.
   desktopHealth:          () => backendFetch("/api/desktop/health"),
   autoPaperStatus:        () => backendFetch("/api/auto-paper/status"),
-  autoPaperStart:         () => backendFetch("/api/auto-paper/start", { method: "POST" }),
+  // feat/step2-05-pre-market-gate: optional `body` carry — pre_market 결과를
+  // 포함시켜 backend 가 BLOCK 검증. body 미제공 시 backwards-compat.
+  autoPaperStart:         (body = null) => backendFetch(
+    "/api/auto-paper/start",
+    {
+      method: "POST",
+      ...(body != null ? { body: JSON.stringify(body) } : {}),
+    },
+  ),
   autoPaperStop:          () => backendFetch("/api/auto-paper/stop", { method: "POST" }),
   autoPaperEmergencyStop: () =>
     backendFetch("/api/auto-paper/emergency-stop", { method: "POST" }),
