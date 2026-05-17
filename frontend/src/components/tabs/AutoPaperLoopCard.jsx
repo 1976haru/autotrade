@@ -409,7 +409,7 @@ export function AutoPaperLoopCard({
         </div>
       )}
 
-      {/* #2-09: 최근 AI 판단 / Paper 가상 체결 ledger — read-only advisory */}
+      {/* #2-09 + #2-10: 최근 AI 판단 / Paper 가상 체결 ledger — read-only advisory */}
       {ledgerEvents.length > 0 && (
         <div
           data-testid="paper-ledger-panel"
@@ -423,14 +423,107 @@ export function AutoPaperLoopCard({
         >
           <div
             style={{
-              fontSize: "var(--fs-xs)",
-              fontWeight: "var(--fw-bold)",
-              color: "var(--c-text-2)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
               marginBottom: 6,
             }}
           >
-            최근 AI Paper 판단 (advisory — 주문 신호 아님)
+            <div
+              style={{
+                fontSize: "var(--fs-xs)",
+                fontWeight: "var(--fw-bold)",
+                color: "var(--c-text-2)",
+              }}
+            >
+              최근 AI Paper 판단 (advisory — 주문 신호 아님)
+            </div>
+            <span
+              data-testid="paper-ledger-event-count"
+              style={{
+                fontSize: "var(--fs-xs)",
+                color: "var(--c-text-3)",
+              }}
+            >
+              총 {ledgerEvents.length}건 표시
+            </span>
           </div>
+
+          {/* #2-10 신규: 최신 결정 highlight (confidence + risk_flags 강조) */}
+          {ledgerEvents[0] && (
+            <div
+              data-testid="paper-latest-decision"
+              data-decision={ledgerEvents[0].decision_action}
+              style={{
+                marginBottom: 8,
+                padding: "8px 10px",
+                background: "#ffffff",
+                border: "1px solid #cbd5e1",
+                borderRadius: "var(--r-sm)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span
+                  data-testid="badge-paper-only"
+                  style={{
+                    display: "inline-block",
+                    padding: "1px 8px",
+                    borderRadius: 4,
+                    fontWeight: "var(--fw-bold)",
+                    fontSize: "var(--fs-xs)",
+                    background: "#1e3a8a",
+                    color: "#fff",
+                  }}
+                >
+                  Paper 전용 · 실제 주문 아님
+                </span>
+                <span
+                  data-testid="paper-latest-action"
+                  style={{
+                    display: "inline-block",
+                    padding: "1px 8px",
+                    borderRadius: 4,
+                    fontWeight: "var(--fw-bold)",
+                    fontSize: "var(--fs-xs)",
+                    background:
+                      ledgerEvents[0].decision_action === "HOLD" ? "#94a3b8"
+                      : ledgerEvents[0].decision_action === "BUY" ? "#22c55e"
+                      : ledgerEvents[0].decision_action === "SELL" ? "#fbbf24"
+                      : ledgerEvents[0].decision_action === "EXIT" ? "#6b7280"
+                      : "#e2e8f0",
+                    color: "#fff",
+                  }}
+                >
+                  {ledgerEvents[0].decision_action}
+                </span>
+                <span data-testid="paper-latest-strategy"
+                       style={{ fontSize: "var(--fs-xs)", fontWeight: "var(--fw-bold)" }}>
+                  {ledgerEvents[0].strategy}
+                </span>
+                <span data-testid="paper-latest-symbol"
+                       style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-2)" }}>
+                  {ledgerEvents[0].symbol}
+                </span>
+                {ledgerEvents[0].confidence != null && (
+                  <span data-testid="paper-latest-confidence"
+                         style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)" }}>
+                    conf {Math.round(ledgerEvents[0].confidence * 100)}%
+                  </span>
+                )}
+              </div>
+              <div data-testid="paper-latest-reason"
+                    style={{ marginTop: 4, fontSize: "var(--fs-xs)", color: "var(--c-text)" }}>
+                {ledgerEvents[0].reason || "(no reason)"}
+              </div>
+              {Array.isArray(ledgerEvents[0].risk_flags) && ledgerEvents[0].risk_flags.length > 0 && (
+                <div data-testid="paper-latest-risk-flags"
+                      style={{ marginTop: 4, fontSize: "var(--fs-xs)", color: "#b45309" }}>
+                  ⚠ {ledgerEvents[0].risk_flags.join(", ")}
+                </div>
+              )}
+            </div>
+          )}
+
           <div data-testid="paper-ledger-list">
             {ledgerEvents.map((ev) => (
               <div

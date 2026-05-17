@@ -134,6 +134,9 @@ export const backendApi = {
     if (action) qs.append("action", String(action));
     return backendFetch(`/api/auto-paper/ledger?${qs.toString()}`);
   },
+  // #2-10: AI Paper 자동매수/매도 skeleton — read-only latest decision.
+  autoPaperLatestDecision: () =>
+    backendFetch("/api/auto-paper/decision/latest"),
   getRiskPolicy: () => backendFetch("/api/risk/policy"),
   setEmergencyStop: (enabled, decision) => backendFetch("/api/risk/emergency-stop", {
     method: "POST",

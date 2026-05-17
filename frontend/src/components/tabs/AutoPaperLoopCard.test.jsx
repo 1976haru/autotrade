@@ -545,4 +545,106 @@ describe("<AutoPaperLoopCard>", () => {
       expect(screen.queryByTestId("paper-ledger-panel")).toBeNull();
     });
   });
+
+  // ==========================================================
+  // #2-10: AI Paper 자동매수/매도 skeleton UI
+  //   - 최신 결정 highlight (action / strategy / symbol / confidence /
+  //     reason / risk_flags)
+  //   - "Paper 전용 · 실제 주문 아님" 배지
+  //   - event count 표시
+  //   - "매수" / "매도" / "실거래 시작" 버튼 0개
+  // ==========================================================
+
+  describe("Paper latest-decision highlight (#2-10)", () => {
+    const _BUY_EVENT = {
+      event_id: "evt-buy-1",
+      timestamp: "2026-05-18T01:24:00+00:00",
+      loop_state: "RUNNING",
+      strategy: "rsi_reversion",
+      symbol: "000660",
+      decision_action: "BUY",
+      confidence: 0.78,
+      reason: "RSI oversold + reversion confirm",
+      risk_flags: ["low_volume_warning"],
+      paper_order_id: "paper-2026-05-18-001",
+      paper_fill_status: "PAPER_FILLED",
+      virtual_position_delta: 10,
+      pnl_estimate: 0.0,
+      is_order_signal: false,
+      auto_apply_allowed: false,
+      is_live_authorization: false,
+    };
+
+    it("renders latest decision highlight with all 6 required fields", async () => {
+      const api = _mockApi({ state: "RUNNING", cycle_count: 1 }, [_BUY_EVENT]);
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("paper-latest-decision")).toBeTruthy(),
+      );
+      // action / strategy / symbol / confidence / reason / risk_flags 6개 필드.
+      expect(screen.getByTestId("paper-latest-action").textContent).toBe("BUY");
+      expect(screen.getByTestId("paper-latest-strategy").textContent).toContain("rsi_reversion");
+      expect(screen.getByTestId("paper-latest-symbol").textContent).toContain("000660");
+      expect(screen.getByTestId("paper-latest-confidence").textContent).toContain("78%");
+      expect(screen.getByTestId("paper-latest-reason").textContent).toContain("RSI oversold");
+      expect(screen.getByTestId("paper-latest-risk-flags").textContent).toContain("low_volume_warning");
+    });
+
+    it("paper-only safety badge always visible", async () => {
+      const api = _mockApi({ state: "RUNNING", cycle_count: 1 }, [_BUY_EVENT]);
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("badge-paper-only")).toBeTruthy(),
+      );
+      expect(screen.getByTestId("badge-paper-only").textContent).toContain("Paper 전용");
+      expect(screen.getByTestId("badge-paper-only").textContent).toContain("실제 주문 아님");
+    });
+
+    it("event count is displayed", async () => {
+      const api = _mockApi({ state: "RUNNING", cycle_count: 1 }, [
+        _BUY_EVENT,
+        { ..._BUY_EVENT, event_id: "evt-hold-2", decision_action: "HOLD" },
+      ]);
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("paper-ledger-event-count")).toBeTruthy(),
+      );
+      expect(screen.getByTestId("paper-ledger-event-count").textContent).toContain("2");
+    });
+
+    it("no buy/sell/place-order action buttons in ledger UI", async () => {
+      const api = _mockApi({ state: "RUNNING", cycle_count: 1 }, [_BUY_EVENT]);
+      const { container } = render(
+        <AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />,
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("paper-latest-decision")).toBeTruthy(),
+      );
+      // ledger UI 안의 모든 <button> 검사 — BUY/SELL/실거래 라벨 button 0건.
+      // 단, "재시도" 같은 무관한 button 은 본 검사 외이므로 textContent 패턴만 lock.
+      const buttons = container.querySelectorAll("button");
+      for (const b of buttons) {
+        const t = (b.textContent || "").trim();
+        // 운영자 트리거가 *없어야* 할 라벨들.
+        expect(t).not.toMatch(/^(매수|매도|BUY|SELL|EXIT|Place Order|실거래 시작|AI 자동매매 켜기)$/);
+      }
+    });
+
+    it("badge text does not contain forbidden phrases", async () => {
+      const api = _mockApi({ state: "RUNNING", cycle_count: 1 }, [_BUY_EVENT]);
+      const { container } = render(
+        <AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />,
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("paper-latest-decision")).toBeTruthy(),
+      );
+      const banned = [
+        "Place Order", "지금 매수", "지금 매도",
+        "실거래 시작", "ENABLE_LIVE_TRADING", "AI 자동매매 켜기",
+      ];
+      for (const b of banned) {
+        expect(container.textContent).not.toContain(b);
+      }
+    });
+  });
 });
