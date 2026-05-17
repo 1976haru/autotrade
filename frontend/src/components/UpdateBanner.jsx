@@ -17,10 +17,13 @@ import {
 //   - "업데이트" 버튼 = 새 release page 열기 (브라우저). 자동 설치 0건
 //   - "실거래" / "매수" / "매도" / "Place Order" 라벨 0건 (테스트로 lock)
 
-const CURRENT_VERSION_FALLBACK = "1.0.0";
+// fix/update-banner-stale-release-notes: fallback 은 의도적으로 부자연스러운
+// "0.0.0-unknown" — vite.config.js 의 build-time inject 가 작동 안 하면 화면에서
+// 즉시 감지 가능 (stale 1.0.0 이 표시되어 정상값처럼 보이지 않도록).
+const CURRENT_VERSION_FALLBACK = "0.0.0-unknown";
 
 function _readCurrentVersion() {
-  // import.meta.env.VITE_APP_VERSION 또는 build-time inject. 없으면 fallback.
+  // build-time inject (vite.config.js 의 define) — package.json::version.
   if (typeof import.meta !== "undefined" && import.meta.env) {
     const v = import.meta.env.VITE_APP_VERSION;
     if (typeof v === "string" && v.trim()) return v.trim();
@@ -300,7 +303,11 @@ export function UpdateBanner({
     );
   }
 
-  // FAILED
+  // FAILED — GitHub Release fetch 실패.
+  // fix/update-banner-stale-release-notes: 메시지를 "업데이트 확인 실패" 에서
+  // "최신 버전 확인 불가" 로 변경 — backend 연결 실패와 *명확히 다른* 항목
+  // 임을 사용자에게 전달. 또한 이 상태에서는 *어떠한 릴리스 노트도* 표시하지
+  // 않는다 (RELEASE_NOTES 의 stale 안내가 "최신 업데이트"로 둔갑하지 않도록).
   return (
     <div
       data-testid="update-banner"
@@ -308,19 +315,41 @@ export function UpdateBanner({
       style={{
         padding: "10px 14px",
         margin: "8px 12px",
-        background: "#fffbeb",
-        border: "1px solid #fde68a",
+        background: "#f1f5f9",
+        border: "1px solid #cbd5e1",
         borderRadius: "var(--r-md)",
         fontSize: "var(--fs-sm)",
-        color: "#7c2d12",
+        color: "#334155",
       }}
     >
       <_SafetyBadges />
-      <div style={{ marginBottom: 6 }}>
-        ⚠ 업데이트 확인 실패: {result?.error || "unknown error"}
+      <div data-testid="update-fail-headline" style={{ marginBottom: 4, fontWeight: "var(--fw-bold)" }}>
+        ℹ️ 최신 버전 확인 불가
       </div>
+      <div data-testid="update-fail-detail" style={{ marginBottom: 6, fontSize: "var(--fs-xs)" }}>
+        GitHub Release 정보를 가져오지 못했습니다. 네트워크 단절이거나 아직
+        공개된 Release 가 없을 수 있습니다. 현재 설치된 버전(v{currentVersion})은
+        그대로 사용 가능합니다.
+      </div>
+      <div
+        data-testid="update-fail-not-backend"
+        style={{
+          marginBottom: 6,
+          fontSize: "var(--fs-xs)",
+          color: "var(--c-text-3)",
+        }}
+      >
+        ※ 이 메시지는 *백엔드 연결 실패와는 다른 별개 항목* 입니다 (앱 코드 업데이트 확인 전용).
+      </div>
+      <details
+        data-testid="update-fail-tech-detail"
+        style={{ marginBottom: 6, fontSize: "var(--fs-xs)", color: "var(--c-text-3)" }}
+      >
+        <summary>기술 상세</summary>
+        <div style={{ marginTop: 4 }}>error: {result?.error || "unknown error"}</div>
+      </details>
       <div data-testid="update-manual-download" style={{ marginBottom: 6, fontSize: "var(--fs-xs)" }}>
-        수동 다운로드 페이지에서 최신 버전을 받을 수 있습니다.
+        새 버전 공지가 있는지 GitHub Release 페이지에서 직접 확인할 수 있습니다.
       </div>
       <div style={{ display: "flex", gap: 8 }}>
         <button
@@ -347,13 +376,13 @@ export function UpdateBanner({
             padding: "4px 10px",
             borderRadius: "var(--r-md)",
             background: "#fff",
-            color: "#7c2d12",
-            border: "1px solid #fde68a",
+            color: "#334155",
+            border: "1px solid #cbd5e1",
             textDecoration: "none",
             fontSize: "var(--fs-xs)",
           }}
         >
-          수동 다운로드 페이지 열기
+          GitHub Release 페이지 열기
         </a>
       </div>
     </div>

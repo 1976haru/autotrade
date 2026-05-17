@@ -264,33 +264,127 @@ class TestWaitingMarketAutoPromote:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 회귀 방지 — 기존 동작 보존.
+# fix/update-popup-and-market-clock: RUNNING → MARKET_CLOSED 자동 demote.
+# 주말 / 평일 15:30 후에 RUNNING 이 잘못 표시되는 회귀 차단.
 # ─────────────────────────────────────────────────────────────────────────────
 
-class TestExistingBehaviorPreserved:
-    def test_status_during_running_does_not_alter_state(self):
+class TestRunningAutoDemoteOnMarketClose:
+    def test_running_demotes_to_market_closed_on_saturday(self):
+        """RUNNING 으로 시작한 loop 가 주말이 되면 자동 MARKET_CLOSED."""
+        loop = AutoPaperLoop()
+        # 금요일 10:00 KST = OPEN → RUNNING.
+        kst_fri_10_00 = _kst_to_utc(2026, 5, 22, 10, 0)
+        loop.start(now=kst_fri_10_00)
+        assert loop.status(now=kst_fri_10_00).state == "RUNNING"
+
+        # 시간이 흘러 토요일 10:00 KST → WEEKEND → MARKET_CLOSED.
+        sat_10_00 = _kst_to_utc(2026, 5, 23, 10, 0)
+        assert loop.status(now=sat_10_00).state == "MARKET_CLOSED"
+
+    def test_running_demotes_to_market_closed_on_sunday(self):
+        loop = AutoPaperLoop()
+        kst_fri_10_00 = _kst_to_utc(2026, 5, 22, 10, 0)
+        loop.start(now=kst_fri_10_00)
+        sun_10_00 = _kst_to_utc(2026, 5, 24, 10, 0)
+        assert loop.status(now=sun_10_00).state == "MARKET_CLOSED"
+
+    def test_running_demotes_to_market_closed_after_15_30(self):
+        """평일 15:30 이후 → CLOSED → MARKET_CLOSED."""
         loop = AutoPaperLoop()
         kst_10_00 = _kst_to_utc(2026, 5, 18, 10, 0)
         loop.start(now=kst_10_00)
-        # RUNNING 상태에서 status() 가 어떤 phase 입력이든 상태를 바꾸지 않음.
-        sat = _kst_to_utc(2026, 5, 23, 10, 0)
-        status = loop.status(now=sat)
-        assert status.state == "RUNNING"
+        kst_15_31 = _kst_to_utc(2026, 5, 18, 15, 31)
+        assert loop.status(now=kst_15_31).state == "MARKET_CLOSED"
 
+    def test_running_demotes_to_waiting_market_in_pre_open(self):
+        """RUNNING 이 자정을 넘어 다음 평일 PRE_OPEN 으로 진입하면 WAITING_MARKET."""
+        loop = AutoPaperLoop()
+        kst_mon_14_00 = _kst_to_utc(2026, 5, 18, 14, 0)
+        loop.start(now=kst_mon_14_00)
+        # 다음 평일 새벽 03:00 (PRE_OPEN).
+        kst_tue_03_00 = _kst_to_utc(2026, 5, 19, 3, 0)
+        assert loop.status(now=kst_tue_03_00).state == "WAITING_MARKET"
+
+    def test_waiting_market_demotes_to_market_closed_on_weekend(self):
+        """WAITING_MARKET 으로 시작했는데 주말 진입 → MARKET_CLOSED."""
+        loop = AutoPaperLoop()
+        kst_mon_08_50 = _kst_to_utc(2026, 5, 18, 8, 50)
+        loop.start(now=kst_mon_08_50)
+        assert loop.status(now=kst_mon_08_50).state == "WAITING_MARKET"
+        # 가설적 — WAITING_MARKET 유지된 채 주말 진입.
+        sat_10_00 = _kst_to_utc(2026, 5, 23, 10, 0)
+        assert loop.status(now=sat_10_00).state == "MARKET_CLOSED"
+
+    def test_running_stays_running_during_open(self):
+        """OPEN phase 중에는 RUNNING 그대로 유지 (회귀 차단)."""
+        loop = AutoPaperLoop()
+        kst_10_00 = _kst_to_utc(2026, 5, 18, 10, 0)
+        loop.start(now=kst_10_00)
+        kst_14_00 = _kst_to_utc(2026, 5, 18, 14, 0)
+        assert loop.status(now=kst_14_00).state == "RUNNING"
+
+    def test_demoted_state_blocks_tick(self):
+        """주말 demote 후 tick() 차단 — 신규 가상 후보 0건."""
+        called_count = {"n": 0}
+
+        def handler(ctx):
+            called_count["n"] += 1
+
+        loop = AutoPaperLoop(paper_tick_handler=handler)
+        kst_fri_10_00 = _kst_to_utc(2026, 5, 22, 10, 0)
+        loop.start(now=kst_fri_10_00)
+        # RUNNING → tick OK 1회.
+        loop.tick()
+        assert called_count["n"] == 1
+
+        # 토요일로 시간 진행 → status() 가 MARKET_CLOSED 로 demote.
+        sat_10_00 = _kst_to_utc(2026, 5, 23, 10, 0)
+        assert loop.status(now=sat_10_00).state == "MARKET_CLOSED"
+
+        # 이제 tick() 호출 시 LoopNotRunningError → handler 추가 호출 0건.
+        with pytest.raises(LoopNotRunningError):
+            loop.tick()
+        assert called_count["n"] == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 회귀 방지 — operator-driven 상태는 phase 영향 받지 않음.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestExistingBehaviorPreserved:
     def test_status_during_paused_does_not_alter_state(self):
         # 초기 PAUSED 상태에서 status() 가 phase 영향 받지 않음.
         loop = AutoPaperLoop()
         kst_08_50 = _kst_to_utc(2026, 5, 18, 8, 50)
         assert loop.status(now=kst_08_50).state == "PAUSED"
 
+    def test_status_during_paused_does_not_alter_on_weekend(self):
+        """PAUSED 는 operator-driven — 주말이라도 그대로 PAUSED 유지."""
+        loop = AutoPaperLoop()
+        sat = _kst_to_utc(2026, 5, 23, 10, 0)
+        assert loop.status(now=sat).state == "PAUSED"
+
     def test_status_during_emergency_stop_does_not_alter_state(self):
         loop = AutoPaperLoop()
         kst_10_00 = _kst_to_utc(2026, 5, 18, 10, 0)
         loop.start(now=kst_10_00)
         loop.emergency_stop()
-        # 09:00 KST 에 status() 호출해도 EMERGENCY_STOP 유지.
+        # 09:00 KST 에 status() 호출해도 EMERGENCY_STOP 유지 (주말이든 평일이든).
         kst_09_00 = _kst_to_utc(2026, 5, 18, 9, 0)
         assert loop.status(now=kst_09_00).state == "EMERGENCY_STOP"
+        sat = _kst_to_utc(2026, 5, 23, 10, 0)
+        assert loop.status(now=sat).state == "EMERGENCY_STOP"
+
+    def test_status_during_stopped_does_not_alter_state(self):
+        loop = AutoPaperLoop()
+        kst_10_00 = _kst_to_utc(2026, 5, 18, 10, 0)
+        loop.start(now=kst_10_00)
+        loop.stop()
+        # operator stop — phase 영향 0.
+        kst_14_00 = _kst_to_utc(2026, 5, 18, 14, 0)
+        assert loop.status(now=kst_14_00).state == "STOPPED"
+        sat = _kst_to_utc(2026, 5, 23, 10, 0)
+        assert loop.status(now=sat).state == "STOPPED"
 
     def test_status_during_market_closed_does_not_promote(self):
         # MARKET_CLOSED 상태는 lazy promote 대상이 아님 (start() 재호출 필요).

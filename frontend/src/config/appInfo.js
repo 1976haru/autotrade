@@ -10,7 +10,22 @@
 //   - v1.x.0: 기능 추가
 //   - v2.0.0: 구조가 크게 바뀌는 대규모 변경
 //
-// `package.json::version`과 본 `version` 필드는 일치시킨다 (CI lint로 검증 가능).
+// 버전 단일 진실 (fix/update-banner-stale-release-notes): build-time 에
+// `vite.config.js` 가 `package.json::version` 을 `VITE_APP_VERSION` 으로 주입.
+// 본 모듈은 그 값을 읽으며, 주입 실패 시 fallback 은 의도적으로 부자연스러운
+// "0.0.0-unknown" — 화면에서 스테일 정보가 정상 버전처럼 표시되지 않도록.
+
+function _readBuildTimeVersion() {
+  try {
+    if (typeof import.meta !== "undefined" && import.meta.env) {
+      const v = import.meta.env.VITE_APP_VERSION;
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+  } catch {
+    // import.meta 미사용 환경 — fallback 으로 진행.
+  }
+  return "0.0.0-unknown";
+}
 
 export const APP_INFO = Object.freeze({
   // 한글 표시명
@@ -20,8 +35,8 @@ export const APP_INFO = Object.freeze({
   // 화면 헤더 / 탭 타이틀에 쓰는 full display name
   displayName:  "에이전트 트레이더 v1",
   displayEn:    "Agent Trader v1",
-  // 내부 SEMVER. package.json과 일치해야 함.
-  version:      "1.0.0",
+  // 내부 SEMVER — build-time inject from package.json (단일 진실).
+  version:      _readBuildTimeVersion(),
   // 마이너 라벨 — 모달 / 배지에 짧게 노출
   releaseLabel: "v1",
   // 한 줄 소개
