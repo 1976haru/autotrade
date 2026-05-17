@@ -255,11 +255,12 @@ python scripts/security_scan.py
 `.gitignore` 로 커밋 차단. 자세한 정책 / 지표 정의 / 한계 점:
 [`docs/backtest_strategy_report.md`](docs/backtest_strategy_report.md).
 
-### 실제 데이터 기반 검증 파이프라인 (Step 3-02 ~ 3-05)
+### 실제 데이터 기반 검증 파이프라인 (Step 3-02 ~ 3-06)
 
 `MockMarketData` 가 아닌 *실제 / 준실제* OHLCV 데이터로 6 전략 baseline +
-parameter grid search + walk-forward 과최적화 탐지 + stress test 까지
-1회 명령으로 실행 가능. 각 단계 산출물은 다음 단계 CLI 의 input 으로 carry.
+parameter grid search + walk-forward 과최적화 탐지 + stress test 를 1회
+명령으로 실행 가능. 각 단계 산출물은 다음 단계 CLI 의 input 으로 carry.
+모든 단계 metric 은 **표준화된 14 키** (`app.analytics.metrics`) 사용.
 
 ```bash
 # 3-02 — 실제 데이터 baseline 백테스트 (CSV → yfinance fallback).
@@ -279,7 +280,9 @@ python scripts/run_stress_test.py \
 
 각 단계 결과의 모든 JSON 객체는 `is_order_signal=false` /
 `auto_apply_allowed=false` / `is_live_authorization=false` invariant. 산출물은
-`reports/*` gitignore — git 미커밋. 자세한 정책:
+`reports/*` gitignore — git 미커밋. 14 표준 metric 키 정의 + 빈 거래 / 손실 0 /
+JSON 직렬화 정책: [`docs/performance_metrics.md`](docs/performance_metrics.md)
+(3-06). 단계별 정책:
 [`docs/real_data_backtest.md`](docs/real_data_backtest.md) (3-02) /
 [`docs/parameter_optimization.md`](docs/parameter_optimization.md) (3-03) /
 [`docs/walk_forward_validation.md`](docs/walk_forward_validation.md) (3-04) /
