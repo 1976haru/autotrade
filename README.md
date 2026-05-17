@@ -300,6 +300,7 @@ JSON 직렬화 정책: [`docs/performance_metrics.md`](docs/performance_metrics.
 [`docs/stress_test.md`](docs/stress_test.md) (3-05) /
 [`docs/paper_candidate_aggregator.md`](docs/paper_candidate_aggregator.md) (3-07) /
 [`docs/strategy_optimization_report.md`](docs/strategy_optimization_report.md) (3-08) /
+[`docs/real_data_expansion_plan.md`](docs/real_data_expansion_plan.md) (3-09) /
 [`docs/agent_strategy_input_schema.md`](docs/agent_strategy_input_schema.md) (4-01) /
 [`docs/strategy_combination_recommendation.md`](docs/strategy_combination_recommendation.md) (4-02) /
 [`docs/overfit_warning_agent.md`](docs/overfit_warning_agent.md) (4-03).

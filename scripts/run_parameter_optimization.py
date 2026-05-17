@@ -49,6 +49,12 @@ from app.backtest.real_data import (  # noqa: E402
     iter_param_grid,
     total_combinations,
 )
+from app.backtest.real_data.universe import (  # noqa: E402
+    SymbolFilterPolicy,
+    UniverseDataNotAvailableError,
+    UniverseKind,
+    resolve_universe,
+)
 from app.backtest.real_data.loader import (  # noqa: E402
     load_real_ohlcv,
     summarize_load_results,
@@ -216,14 +222,73 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--min-expectancy-krw", type=float, default=0.0)
     p.add_argument("--dry-run", action="store_true",
                    help="파일 작성 X — stdout 요약만.")
+
+    # ── #3-09: universe + symbol filter policy ────────────────────────────
+    p.add_argument(
+        "--universe", default=None,
+        choices=[k.value for k in UniverseKind],
+        help=(
+            "종목 universe 선택. sample10 (default) / liquidity_top50/100/300 "
+            "(별도 데이터 source 주입 PR 필요) / custom (--symbols)."
+        ),
+    )
+    p.add_argument(
+        "--symbols", nargs="*", default=None,
+        help="--universe custom 일 때 6-digit 종목 list.",
+    )
+    p.add_argument("--min-avg-volume",        type=int,   default=0)
+    p.add_argument("--min-avg-trading-value", type=int,   default=0)
+    p.add_argument("--exclude-suspended",     action="store_true", default=True)
+    p.add_argument("--exclude-managed",       action="store_true", default=True)
+    p.add_argument("--exclude-etf-etn",       action="store_true", default=True)
+    p.add_argument("--exclude-spac",          action="store_true", default=True)
+    p.add_argument("--min-listed-days",       type=int,   default=180)
+    p.add_argument("--max-missing-ratio",     type=float, default=0.05)
     return p.parse_args(argv)
+
+
+def _build_filter_policy(args: argparse.Namespace) -> SymbolFilterPolicy:
+    return SymbolFilterPolicy(
+        min_avg_volume=int(args.min_avg_volume),
+        min_avg_trading_value=int(args.min_avg_trading_value),
+        exclude_suspended=bool(args.exclude_suspended),
+        exclude_managed=bool(args.exclude_managed),
+        exclude_etf_etn=bool(args.exclude_etf_etn),
+        exclude_spac=bool(args.exclude_spac),
+        min_listed_days=int(args.min_listed_days),
+        max_missing_ratio=float(args.max_missing_ratio),
+    )
+
+
+def _resolve_universe_symbols(args: argparse.Namespace) -> list[str]:
+    """run_backtest_real_data 와 동일 우선순위: --symbol > --universe > sample10."""
+    if args.symbol:
+        return list(args.symbol)
+    if args.universe:
+        kind = UniverseKind(args.universe)
+        policy = _build_filter_policy(args)
+        custom = list(args.symbols) if (args.symbols and kind == UniverseKind.CUSTOM) else None
+        try:
+            resolution = resolve_universe(
+                kind, policy=policy, custom_symbols=custom,
+                liquidity_source=None,
+            )
+        except UniverseDataNotAvailableError as e:
+            print(f"[ERR] {e}", file=sys.stderr)
+            raise SystemExit(2)
+        if resolution.symbol_count == 0:
+            print(
+                "[ERR] universe 필터 통과 종목 0개 — *억지로 후보 만들지 않음*.",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        return resolution.symbols
+    return [s.symbol for s in REPRESENTATIVE_SYMBOLS]
 
 
 def run_optimization(args: argparse.Namespace) -> dict[str, Any]:
     """전체 grid search 매트릭스 실행 + 결과 dict 반환."""
-    symbols = list(args.symbol) if args.symbol else [
-        s.symbol for s in REPRESENTATIVE_SYMBOLS
-    ]
+    symbols = _resolve_universe_symbols(args)
     requested_strategies = (
         list(args.strategies) if args.strategies else list(STRATEGY_REGISTRY.keys())
     )
