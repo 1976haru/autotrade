@@ -18,12 +18,6 @@ from pathlib import Path
 
 import pytest
 
-# scripts/ 디렉토리 PYTHONPATH 에 추가.
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_SCRIPTS_DIR = _REPO_ROOT / "scripts"
-sys.path.insert(0, str(_SCRIPTS_DIR))
-
-
 from app.backtest.real_data import (
     BacktestVerdict,
     FilterThresholds,
@@ -31,6 +25,12 @@ from app.backtest.real_data import (
     classify_backtest_metrics,
 )
 from app.strategies.concrete import STRATEGY_REGISTRY
+
+# scripts/ 디렉토리 PYTHONPATH 에 추가 — `_import_cli()` 가 런타임에 사용.
+# `app.*` 모듈은 본 backend 패키지에 포함되어 있어 sys.path 조정 *전*에 import 가능.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_SCRIPTS_DIR = _REPO_ROOT / "scripts"
+sys.path.insert(0, str(_SCRIPTS_DIR))
 
 
 def _import_cli():
