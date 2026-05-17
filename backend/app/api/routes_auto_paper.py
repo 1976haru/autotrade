@@ -5,15 +5,26 @@ polling 하는 health. PAPER/SIMULATION 한정 — live broker / OrderExecutor /
 route_order import 0건.
 
 응답은 Secret / API key / 계좌번호 0건. 안전 flag 라벨만 carry.
+
+feat/step2-05-pre-market-gate: `POST /api/auto-paper/start` 는 optional
+body `{ pre_market: { start_allowed, verdict, blocking_reasons, warnings } }`
+를 받아 `start_allowed=False` 면 409 + blocking_reasons 로 차단. body 가
+없으면 (legacy compat) 게이트 건너뜀 — frontend 는 항상 동봉.
 """
 
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from app.auto_paper.loop import (
     LoopAlreadyRunningError,
+    LoopBlockedError,
     LoopNotRunningError,
+    LoopPreMarketBlockedError,
+    PreMarketSummary,
     get_auto_paper_loop,
 )
 from app.core.config import get_settings
@@ -46,17 +57,71 @@ def desktop_health() -> dict:
 _AP = APIRouter(prefix="/auto-paper", tags=["auto-paper"])
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Pre-market gate payload schema
+# ─────────────────────────────────────────────────────────────────────
+
+
+class _PreMarketBody(BaseModel):
+    """Pre-market checklist 결과의 compact carry — frontend → start 호출.
+
+    full `PreMarketCheckResult` 의 부분집합. `app.governance.pre_market_check`
+    와 결합도 분리.
+    """
+    start_allowed:    bool       = Field(..., description="False 면 start() 차단")
+    verdict:          str        = Field(
+        default="",
+        description="READY_TO_START / WARN_BUT_START_ALLOWED / DO_NOT_START",
+    )
+    blocking_reasons: list[str]  = Field(default_factory=list)
+    warnings:         list[str]  = Field(default_factory=list)
+
+
+class _StartBody(BaseModel):
+    """`POST /auto-paper/start` body. 모두 optional — body 없이도 호출 가능."""
+    pre_market: Optional[_PreMarketBody] = None
+
+
 @_AP.get("/status")
 def get_status() -> dict:
     return get_auto_paper_loop().status().to_dict()
 
 
 @_AP.post("/start")
-def post_start() -> dict:
+def post_start(body: _StartBody | None = None) -> dict:
+    """자동 시작.
+
+    feat/step2-05-pre-market-gate: `body.pre_market.start_allowed=False` 면
+    `409 Conflict` + detail.blocking_reasons 로 차단. blocking_reasons 는
+    Secret 0건 (pre_market_check 모듈이 라벨만 emit). frontend 가 표시.
+    """
     loop = get_auto_paper_loop()
+    pm: PreMarketSummary | None = None
+    if body is not None and body.pre_market is not None:
+        pm = PreMarketSummary(
+            start_allowed=body.pre_market.start_allowed,
+            verdict=body.pre_market.verdict,
+            blocking_reasons=list(body.pre_market.blocking_reasons),
+            warnings=list(body.pre_market.warnings),
+        )
     try:
-        snap = loop.start()
+        snap = loop.start(pre_market=pm)
+    except LoopPreMarketBlockedError as e:
+        # Pre-market BLOCK — 차단 사유 구조화 응답.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error":            "pre_market_blocked",
+                "message":          str(e),
+                "verdict":          e.verdict,
+                "blocking_reasons": e.blocking_reasons,
+            },
+        )
     except LoopAlreadyRunningError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except LoopBlockedError as e:
+        # EMERGENCY_STOP 상태에서 start() 차단 — 운영자가 reset() 호출 후
+        # 재시도해야 함. 409 Conflict 로 표현 (이미 다른 상태에 잠겨 있음).
         raise HTTPException(status_code=409, detail=str(e))
     return snap.to_dict()
 
