@@ -255,6 +255,37 @@ python scripts/security_scan.py
 `.gitignore` 로 커밋 차단. 자세한 정책 / 지표 정의 / 한계 점:
 [`docs/backtest_strategy_report.md`](docs/backtest_strategy_report.md).
 
+### 전략별 파라미터 최적화 + Paper 운용 후보 추천
+
+본 명령은 baseline 백테스트 *위에* 얹는 검증 단계 — 6 전략 각각의 핵심
+파라미터를 grid 로 탐색해 수수료·슬리피지 반영 후 *기대값 양수* 인 후보만
+점수화하고, 최대 2개 전략을 Paper 운용 *후보* 로 추천한다. **자동 적용 0건** —
+모든 채택은 별도 PR + 별도 검증 필요.
+
+```bash
+# 기본 실행 (repo root)
+python scripts/run_strategy_optimization.py
+
+# 옵션 — 기간 / 비용 / 부분 실행 / walk-forward 실 실행
+python scripts/run_strategy_optimization.py \
+    --symbol 005930 --start 2026-01-01 --end 2027-12-31 \
+    --output-dir reports/strategy_optimization \
+    --run-walk-forward
+
+# 테스트
+python -m pytest backend/tests/test_strategy_optimization.py -q
+```
+
+산출 파일 3종 (`reports/strategy_optimization/` — `.gitignore` 차단):
+- `optimization_summary.json` — 전체 grid + 카테고리 + paper_candidates + walk-forward plan
+- `optimization_ranking.csv` — total_score 내림차순
+- `paper_candidates.md` — 운영자 검토용 markdown
+
+카테고리: `PASS` / `LOW_QUALITY` / `NEGATIVE_EXPECTANCY` / `INSUFFICIENT_DATA`.
+점수화: expectancy (30) + profit_factor (25) + win_rate (15) + MDD (20) +
+trade_count (10) = 0~100. 자세한 정책:
+[`docs/strategy_optimization.md`](docs/strategy_optimization.md).
+
 ### DB 마이그레이션 (Alembic)
 
 ```bash
