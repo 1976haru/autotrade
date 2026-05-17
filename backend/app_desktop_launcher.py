@@ -383,6 +383,20 @@ def run(argv: list[str] | None = None) -> int:
         _inject_env_keys(parsed, log)
     _print_safety_snapshot(log, env_path)
 
+    # fix/desktop-nonblocking-migration-health: 데스크톱 EXE 흐름에서는
+    # `migration_nonblocking=True` 로 lifespan 이 alembic migration 을
+    # background thread 로 실행 → `/health` 와 `/api/status` 가 첫 응답부터
+    # 200 응답 → frontend launcher 가 "초기 DB 준비 중" UI 를 그릴 수 있음.
+    # 운영자가 .env 에 명시 false 로 설정한 경우는 *그대로 존중* (override 0건).
+    if "MIGRATION_NONBLOCKING" not in os.environ:
+        os.environ["MIGRATION_NONBLOCKING"] = "true"
+        log.info("env: MIGRATION_NONBLOCKING=true (desktop default — backend startup non-blocking)")
+    else:
+        log.info(
+            "env: MIGRATION_NONBLOCKING=%s (operator override preserved)",
+            os.environ.get("MIGRATION_NONBLOCKING"),
+        )
+
     host, port = _parse_args(argv)
     log.info("backend bind: %s:%d (requested)", host, port)
 

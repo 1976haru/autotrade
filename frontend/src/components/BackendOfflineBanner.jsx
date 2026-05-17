@@ -208,9 +208,54 @@ function _DesktopBanner({ readBackendLogImpl = readBackendLog } = {}) {
   );
 }
 
+// fix/desktop-nonblocking-migration-health: backend 가 응답하지만 alembic
+// migration 이 진행 중 (db_ready=false) 일 때 표시되는 배너. *backend offline
+// 배너와 별개* — 사용자가 "백엔드 죽었다" 로 오인하지 않게 노란 안내 톤.
+function _DbPreparingBanner({ status }) {
+  const migStatus = status?.migration_status || "running";
+  const startedAt = status?.migration_started_at || null;
+  return (
+    <div
+      data-testid="backend-db-preparing-banner"
+      data-migration-status={migStatus}
+      style={{
+        padding: "10px 14px",
+        margin: "10px 12px",
+        background: "#fefce8",
+        border: "1px solid #fde68a",
+        borderRadius: "var(--r-lg)",
+        color: "#854d0e",
+        fontSize: "var(--fs-sm)",
+        lineHeight: "var(--lh-loose)",
+      }}
+    >
+      <div style={{ fontWeight: "var(--fw-bold)", marginBottom: 4 }}>
+        ⏳ 초기 DB 준비 중입니다
+      </div>
+      <div style={{ color: "var(--c-text-2)", marginBottom: 4 }}>
+        백엔드는 정상 응답 중이며 데이터베이스 마이그레이션이 진행 중입니다.
+        <b> 최대 1~2분이 걸릴 수 있으며</b>, 완료 후 자동으로 연결 완료 상태로 전환됩니다.
+      </div>
+      <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)" }}>
+        migration_status: <code>{migStatus}</code>
+        {startedAt ? <> · started_at: <code>{startedAt}</code></> : null}
+      </div>
+    </div>
+  );
+}
+
+
 export function BackendOfflineBanner() {
-  const { error, loading, baseUrl, viaFallback } = useBackendStatus();
+  const { status, error, loading, baseUrl, viaFallback } = useBackendStatus();
   if (loading) return null;
+
+  // fix/desktop-nonblocking-migration-health: backend 가 응답해도 (no error)
+  // db_ready=false 면 "백엔드 offline" 으로 오인하지 않고 *DB 준비 중* 배너
+  // 노출. useBackendStatus 가 N초마다 재폴링하므로 db_ready=true 가 되면
+  // 본 분기를 빠져나가 정상 연결 완료 UI 로 자동 전환.
+  if (!error && status && status.db_ready === false) {
+    return <_DbPreparingBanner status={status} />;
+  }
 
   // fix/frontend-detects-fallback-backend-port: connected 상태에서 fallback
   // 포트면 작은 초록 배지 — "✅ Backend 연결 완료: 8001". 기본 포트 (8000)

@@ -93,4 +93,59 @@ describe("useBackendStatus", () => {
     expect(result.current.baseUrl).toBe("http://127.0.0.1:8002");
     expect(result.current.viaFallback).toBe(true);
   });
+
+  // ============================================================
+  // fix/desktop-nonblocking-migration-health: db_ready 재폴링
+  // ============================================================
+
+  it("exposes dbReady=true when status.db_ready=true", async () => {
+    backendApi.getStatus.mockResolvedValue({
+      default_mode: "PAPER",
+      db_ready: true,
+      migration_status: "completed",
+    });
+
+    const { result } = renderHook(() => useBackendStatus());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.dbReady).toBe(true);
+    expect(result.current.status.db_ready).toBe(true);
+    expect(result.current.status.migration_status).toBe("completed");
+  });
+
+  it("exposes dbReady=false when status.db_ready=false", async () => {
+    backendApi.getStatus.mockResolvedValue({
+      default_mode: "PAPER",
+      db_ready: false,
+      migration_status: "running",
+    });
+
+    const { result } = renderHook(() => useBackendStatus());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.dbReady).toBe(false);
+    expect(result.current.status.db_ready).toBe(false);
+  });
+
+  it("dbReady=false when status omits db_ready (backwards compat — no false alarm)", async () => {
+    // 옛 backend (pre-fix) 가 db_ready 필드를 안 보내면 dbReady=false.
+    // *backend offline 으로 오인되면 안 되지만* BackendOfflineBanner 측 분기
+    // (`status.db_ready === false`) 가 *strict* 비교라 trigger 되지 않음.
+    backendApi.getStatus.mockResolvedValue({ default_mode: "SIMULATION" });
+
+    const { result } = renderHook(() => useBackendStatus());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.dbReady).toBe(false);
+    expect(result.current.status.db_ready).toBeUndefined();
+  });
+
+  // 주의: db_ready=false → db_ready=true 자동 전환 (re-poll) 의 *동적* 동작은
+  // jsdom + React act + 실 timer 조합으로 안정적으로 테스트하기 어렵다. 본
+  // 전환은 두 단으로 별도 검증:
+  //  1) useBackendStatus 가 status.db_ready 를 *carry* 한다 — 위 dbReady=true /
+  //     false 테스트로 검증.
+  //  2) launcher 가 db_ready=false 응답을 받으면 DB_PREPARING 으로 분류하고,
+  //     이후 db_ready=true 응답이 오면 READY 로 자동 전환한다 —
+  //     backendLauncher.test.js "emits DB_PREPARING ... then READY" 로 검증.
 });

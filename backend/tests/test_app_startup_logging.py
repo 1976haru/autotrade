@@ -50,8 +50,14 @@ def startup_log_capture() -> dict:
     # 를 갈아치워도 named logger 의 handler list 는 보존된다.
     target_logger = logging.getLogger("autotrade.startup")
     prev_level = target_logger.level
+    prev_disabled = target_logger.disabled
     target_logger.addHandler(handler)
     target_logger.setLevel(logging.INFO)
+    # 앞선 다른 test 모듈이 TestClient lifespan 으로 alembic 을 실행했다면
+    # alembic.ini 의 fileConfig 가 *disable_existing_loggers=True* default 로
+    # autotrade.startup 을 disabled=True 로 설정해 둠. 본 fixture 는 record
+    # 를 받기 위해 명시적으로 enable.
+    target_logger.disabled = False
 
     # apply_migrations 를 no-op 으로 — fileConfig 호출 자체를 우회.
     import app.main as main_module
@@ -67,6 +73,7 @@ def startup_log_capture() -> dict:
         main_module.apply_migrations = original_apply  # type: ignore[assignment]
         target_logger.removeHandler(handler)
         target_logger.setLevel(prev_level)
+        target_logger.disabled = prev_disabled
 
     messages = [r.getMessage() for r in captured]
     return {
