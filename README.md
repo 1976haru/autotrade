@@ -255,12 +255,13 @@ python scripts/security_scan.py
 `.gitignore` 로 커밋 차단. 자세한 정책 / 지표 정의 / 한계 점:
 [`docs/backtest_strategy_report.md`](docs/backtest_strategy_report.md).
 
-### 실제 데이터 기반 검증 파이프라인 (Step 3-02 ~ 3-06)
+### 실제 데이터 기반 검증 파이프라인 (Step 3-02 ~ 3-07)
 
 `MockMarketData` 가 아닌 *실제 / 준실제* OHLCV 데이터로 6 전략 baseline +
-parameter grid search + walk-forward 과최적화 탐지 + stress test 를 1회
-명령으로 실행 가능. 각 단계 산출물은 다음 단계 CLI 의 input 으로 carry.
-모든 단계 metric 은 **표준화된 14 키** (`app.analytics.metrics`) 사용.
+parameter grid search + walk-forward 과최적화 탐지 + stress test → 통합
+paper 후보 export 까지 1회 명령으로 실행 가능. 각 단계 산출물은 다음 단계
+CLI 의 input 으로 carry. 모든 단계 metric 은 **표준화된 14 키**
+(`app.analytics.metrics`) 사용.
 
 ```bash
 # 3-02 — 실제 데이터 baseline 백테스트 (CSV → yfinance fallback).
@@ -276,6 +277,14 @@ python scripts/run_walk_forward_validation.py \
 # 3-05 — Stress test (10 시나리오 × 후보 매트릭스).
 python scripts/run_stress_test.py \
     --from-walk-forward reports/walk_forward/walk_forward_summary.json
+
+# 3-07 — Paper 후보 통합 export (모든 단계 통과 후보만 상위 N=2).
+python scripts/run_paper_candidate_aggregator.py \
+    --from-backtest     reports/backtest_real/real_data_backtest_summary.json \
+    --from-optimization reports/parameter_optimization/parameter_optimization_summary.json \
+    --from-walk-forward reports/walk_forward/walk_forward_summary.json \
+    --from-stress-test  reports/stress_test/stress_test_summary.json
+# → reports/strategy_optimization/paper_candidate_config.json
 ```
 
 각 단계 결과의 모든 JSON 객체는 `is_order_signal=false` /
@@ -286,7 +295,12 @@ JSON 직렬화 정책: [`docs/performance_metrics.md`](docs/performance_metrics.
 [`docs/real_data_backtest.md`](docs/real_data_backtest.md) (3-02) /
 [`docs/parameter_optimization.md`](docs/parameter_optimization.md) (3-03) /
 [`docs/walk_forward_validation.md`](docs/walk_forward_validation.md) (3-04) /
-[`docs/stress_test.md`](docs/stress_test.md) (3-05).
+[`docs/stress_test.md`](docs/stress_test.md) (3-05) /
+[`docs/paper_candidate_aggregator.md`](docs/paper_candidate_aggregator.md) (3-07).
+
+**Paper 후보 export 는 자동 실거래 활성화가 아닙니다.** `paper_candidate_config.json`
+은 운영자 검토 자료 — 검토 후 *수동* 으로 Paper Auto Loop 에 입력. 후보가
+없으면 `candidates: []` + `reasons_no_candidate` 채워서 파일 생성 (억지 생성 X).
 
 산출물 (`reports/`, gitignore): per-단계 `*_summary.json` + `*_ranking.csv` +
 `*_report.md`. 각 단계 결과의 모든 JSON 객체는
