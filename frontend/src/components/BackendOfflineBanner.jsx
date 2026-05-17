@@ -79,8 +79,10 @@ function _DesktopBanner({ readBackendLogImpl = readBackendLog } = {}) {
         🔄 백엔드 자동 실행 중입니다
       </div>
       <div style={{ color: "var(--c-text-2)", marginBottom: 8 }}>
-        앱이 backend sidecar 를 자동으로 시작하고 있습니다. 최대 30 초간 자동 재시도합니다.
-        그래도 안 되면 아래 "재시도" 또는 "로그 보기" 를 눌러주세요.
+        앱이 backend sidecar 를 자동으로 시작하고 있습니다.
+        <b> 첫 실행 시 DB 초기화(alembic migration)로 최대 1~2분이 걸릴 수 있습니다.</b>
+        {" "}최대 90초간 자동 재시도하며, 그래도 안 되면 아래 "재시도" 또는 "로그 보기" 를
+        눌러 backend-YYYYMMDD.log 의 startup 진행 상황을 확인하세요.
       </div>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
         <button
