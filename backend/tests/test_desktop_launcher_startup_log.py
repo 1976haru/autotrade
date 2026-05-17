@@ -18,7 +18,6 @@ import pathlib
 import sys
 from unittest.mock import patch
 
-import pytest
 
 _BACKEND_DIR = pathlib.Path(__file__).resolve().parent.parent
 if str(_BACKEND_DIR) not in sys.path:

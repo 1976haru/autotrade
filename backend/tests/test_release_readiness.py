@@ -13,7 +13,6 @@ from app.governance.release_readiness import (
     ReleaseKind,
     ReleaseReadinessInput,
     ReleaseReadinessResult,
-    ReleaseReadinessThresholds,
     ReleaseReadinessVerdict,
     evaluate_release_readiness,
     render_markdown_report,

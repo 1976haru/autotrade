@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from app.risk.portfolio_correlation_guard import (
-    CorrelatedPair,
     PairSeverity,
     PortfolioCorrelationInput,
     PortfolioCorrelationResult,

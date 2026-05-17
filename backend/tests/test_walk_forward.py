@@ -22,12 +22,9 @@ from pathlib import Path
 import pytest  # noqa: F401 — used by fixtures
 
 from app.analytics.walk_forward import (
-    CandidateInputRecord,
     FoldResult,
     WalkForwardConfig,
     WalkForwardMode,
-    WalkForwardResult,
-    WalkForwardSplit,
     WalkForwardVerdict,
     evaluate_walk_forward,
     generate_splits,

@@ -12,14 +12,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import pytest
-from sqlalchemy import select
 
 from app.db.models import EmergencyStopEvent, OrderAuditLog, PendingApproval
 from app.monitoring.api_metrics import ApiMetricsRegistry, get_api_metrics
 from app.monitoring.service import (
     MonitoringService,
-    MonitoringThresholds,
     notify_alerts,
 )
 from app.monitoring.types import (

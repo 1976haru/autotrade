@@ -343,7 +343,6 @@ def loss_tags_review(
 
 
 from app.analytics.signal_alpha_decay import (
-    FreshnessVerdict,
     SignalAlphaDecayInput,
     SignalAlphaDecayResult,
     SignalAlphaDecayThresholds,

@@ -31,7 +31,6 @@ from app.agents.risk_auditor import (
     RiskAuditorAgent,
     RiskAuditorInput,
     RiskAuditorReport,
-    RiskEvent,
     RiskEventSeverity,
     RiskEventType,
     audit_risk,

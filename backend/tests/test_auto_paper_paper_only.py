@@ -15,7 +15,6 @@ from __future__ import annotations
 import inspect
 import logging
 import re
-import threading
 from pathlib import Path
 from typing import Any
 
@@ -23,10 +22,8 @@ import pytest
 
 from app.auto_paper.loop import (
     AutoPaperLoop,
-    AutoPaperState,
     LoopNotRunningError,
     PaperTickContext,
-    get_auto_paper_loop,
 )
 
 

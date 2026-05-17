@@ -28,7 +28,6 @@ from app.agents.agent_memory import (
     save_memory,
     search_memory,
 )
-from app.db.models import AgentMemory
 
 
 _AGENT_PATH = Path(__file__).resolve().parents[1] / "app" / "agents" / "agent_memory.py"

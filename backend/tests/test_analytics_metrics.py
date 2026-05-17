@@ -14,10 +14,8 @@ import math
 import re
 from pathlib import Path
 
-import pytest
 
 from app.analytics.metrics import (
-    DEFAULT_MIN_TRADE_COUNT_FOR_FULL,
     PERFORMANCE_METRIC_KEYS,
     annualize_return,
     assert_required_keys_present,

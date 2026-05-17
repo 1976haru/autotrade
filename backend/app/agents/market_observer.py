@@ -46,7 +46,7 @@ from app.agents.base import (
     AgentOutput,
     AgentRole,
 )
-from app.agents.market_regime import RegimeOutput, classify_market_regime
+from app.agents.market_regime import RegimeOutput
 
 
 # ====================================================================

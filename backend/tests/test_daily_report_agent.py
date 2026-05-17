@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace as _NS
 
@@ -19,7 +19,6 @@ import pytest
 from app.agents.base import AgentContext, AgentDecision, AgentRole
 from app.agents.daily_report_agent import (
     DailyReportAgent,
-    DailyReportFinding,
     DailyReportInput,
     DailyReportOutput,
     DailyReportStats,
@@ -36,12 +35,7 @@ from app.agents.daily_report_agent import (
     load_virtual_orders_for_date,
 )
 from app.db.models import (
-    AgentDecisionLog,
-    EmergencyStopEvent,
-    FuturesOrderAuditLog,
     OrderAuditLog,
-    PendingApproval,
-    VirtualOrder,
 )
 
 
@@ -628,7 +622,6 @@ class TestAPI:
     def test_preview_does_not_create_audit_rows(self, client):
         from sqlalchemy import select
 
-        from app.db.models import OrderAuditLog
         db = client.test_db_factory()
         try:
             before = len(db.execute(select(OrderAuditLog)).all())

@@ -26,7 +26,6 @@ from app.agents.base import (
     AgentBase,
     AgentContext,
     AgentDecision,
-    AgentMetadata,
     AgentOutput,
     AgentRole,
 )

@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -15,8 +15,6 @@ from app.analytics.signal_alpha_decay import (
     FreshnessVerdict,
     SignalAlphaDecayInput,
     SignalAlphaDecayResult,
-    SignalAlphaDecayThresholds,
-    SignalDecayBucket,
     SignalSamplePoint,
     compute_signal_age_minutes,
     evaluate_signal_alpha_decay,

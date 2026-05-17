@@ -8,7 +8,6 @@ invariant:
 
 from __future__ import annotations
 
-import pytest
 
 from app.backtest.real_data.grid_search import (
     PARAMETER_GRIDS,
@@ -16,7 +15,7 @@ from app.backtest.real_data.grid_search import (
     total_combinations,
     validate_grid_keys,
 )
-from app.strategies.concrete import STRATEGY_REGISTRY, build_strategy
+from app.strategies.concrete import build_strategy
 
 
 class TestGridCatalog:

@@ -20,7 +20,6 @@ from app.db.migration_runner import (
     _redact_error_message,
     db_is_ready,
     get_migration_status,
-    get_migration_thread_for_tests,
     reset_status_for_tests,
     run_migration_blocking,
     start_migration_in_background,

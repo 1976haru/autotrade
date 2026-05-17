@@ -25,11 +25,9 @@ import pytest
 from app.backtest.types import Bar
 from app.futures.strategies import (
     FuturesContractSizingHint,
-    FuturesExitPlan,
     FuturesRolloverPlan,
     FuturesSignal,
     FuturesSignalAction,
-    FuturesSignalExplanation,
     FuturesStrategyBase,
     FuturesStrategyContext,
 )

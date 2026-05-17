@@ -50,7 +50,7 @@ from app.risk.ai_permission_gate import (
     AiPermissionFlags,
     evaluate_ai_permission,
 )
-from app.risk.risk_manager import RiskDecision, RiskManager
+from app.risk.risk_manager import RiskManager
 
 
 # AI Assist trade_reason 표준 문자열. audit row의 trade_reason 컬럼에 저장돼
