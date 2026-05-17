@@ -146,27 +146,27 @@ describe("<ReleaseNotesModal>", () => {
 
 
 describe("useReleaseNotesAutoPopup", () => {
-  function _Probe() {
+  function Probe() {
     const { open } = useReleaseNotesAutoPopup();
     return <div data-testid="auto-popup-state">{open ? "OPEN" : "CLOSED"}</div>;
   }
 
   it("opens on first visit (no ack)", async () => {
-    const { findByTestId } = render(<_Probe />);
+    const { findByTestId } = render(<Probe />);
     const el = await findByTestId("auto-popup-state");
     await waitFor(() => expect(el.textContent).toBe("OPEN"));
   });
 
   it("opens when ack version differs from welcome note version", async () => {
     _writeLastSeenVersion("0.9.0");
-    const { findByTestId } = render(<_Probe />);
+    const { findByTestId } = render(<Probe />);
     const el = await findByTestId("auto-popup-state");
     await waitFor(() => expect(el.textContent).toBe("OPEN"));
   });
 
   it("does NOT open when ack matches welcome note version", async () => {
     _writeLastSeenVersion(latestWelcomeNote().version);
-    const { findByTestId } = render(<_Probe />);
+    const { findByTestId } = render(<Probe />);
     const el = await findByTestId("auto-popup-state");
     // hook은 mount 시 1회 평가 — 짧게 기다린 후 여전히 CLOSED여야 함.
     await new Promise((r) => setTimeout(r, 50));
@@ -182,7 +182,7 @@ describe("useReleaseNotesAutoPopup", () => {
         latestWelcomeNote().version,
       );
     }
-    const { findByTestId } = render(<_Probe />);
+    const { findByTestId } = render(<Probe />);
     const el = await findByTestId("auto-popup-state");
     await new Promise((r) => setTimeout(r, 50));
     expect(el.textContent).toBe("CLOSED");

@@ -594,7 +594,11 @@ export const backendApi = {
   // 94: Signal Alpha Decay — *신호 단위* 신선도 분석 (read-only).
   // 본 endpoint 는 어떤 주문도 발행하지 않는다. EXPIRED verdict 인 신호는
   // 신규 진입 근거로 사용 금지.
-  alphaDecayEvaluate: (body) =>
+  // fix/frontend-eslint-ci-baseline: 이전엔 `alphaDecayEvaluate` 라는 동일 이름 →
+  // #77 governance 의 같은 이름과 *충돌* (object literal duplicate key — 후자가
+  // 전자를 override 해 governance 호출이 실제로는 analytics 로 가는 버그).
+  // 의미 차이를 보존하도록 `signalAlphaDecayEvaluate` 로 분리.
+  signalAlphaDecayEvaluate: (body) =>
     backendFetch("/api/analytics/alpha-decay/evaluate", {
       method: "POST",
       body: JSON.stringify(body || {}),

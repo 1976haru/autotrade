@@ -97,7 +97,7 @@ function AppShell() {
       <BackendOfflineBanner />
       {/* #63: 홈화면 설치 안내 — standalone 또는 dismiss된 세션에선 노출 X. */}
       <PwaInstallHint />
-      <_ReleaseNotesAutoPopup />
+      <ReleaseNotesAutoPopup />
       <div style={{ flex:1, overflowY:"auto", padding:"14px 14px 90px", scrollbarWidth:"thin" }}>
         <ErrorBoundary label="현재 탭">
           {renderTab()}
@@ -119,7 +119,7 @@ function AppShell() {
 
 // 새 버전 첫 접속 시 release notes modal 자동 팝업. 사용자가 닫으면 (또는
 // "이번 버전 공지 확인" 버튼 클릭) localStorage에 lastSeenVersion 저장.
-function _ReleaseNotesAutoPopup() {
+function ReleaseNotesAutoPopup() {
   const { open, closeModal } = useReleaseNotesAutoPopup();
   return <ReleaseNotesModal open={open} onClose={closeModal} />;
 }

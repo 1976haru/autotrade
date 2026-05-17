@@ -194,7 +194,7 @@ export function SignalAlphaDecayCard({
     setLoading(true);
     setError("");
     try {
-      const r = await backendApi.alphaDecayEvaluate(inputOverride || {});
+      const r = await backendApi.signalAlphaDecayEvaluate(inputOverride || {});
       setResult(r);
     } catch (e) {
       setError(e?.message || "Signal Alpha Decay 평가 실패");

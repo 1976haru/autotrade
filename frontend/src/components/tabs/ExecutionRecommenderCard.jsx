@@ -46,7 +46,7 @@ function _Field({ label, value }) {
 }
 
 
-function _ProposalRow({ proposal, onPrecheck, onSubmit, busy }) {
+function ProposalRow({ proposal, onPrecheck, onSubmit, busy }) {
   // 83: strategy displayName.
   const { lookup: strategyLookup } = useStrategyDisplayNames();
   const strategyDisplay = proposal.strategy
@@ -342,7 +342,7 @@ export function ExecutionRecommenderCard({
       ) : (
         <div data-testid="exec-rec-proposals">
           {proposals.map((p) => (
-            <_ProposalRow key={p.proposal_id} proposal={p}
+            <ProposalRow key={p.proposal_id} proposal={p}
                           onPrecheck={onPrecheck} onSubmit={onSubmit} />
           ))}
         </div>

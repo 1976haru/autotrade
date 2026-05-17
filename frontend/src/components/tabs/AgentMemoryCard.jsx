@@ -51,7 +51,7 @@ const _SEVERITY_COLOR = {
 };
 
 
-function _MemoryRow({ rec, onOpen, onArchive }) {
+function MemoryRow({ rec, onOpen, onArchive }) {
   // 83: strategy displayName.
   const { lookup: strategyLookup } = useStrategyDisplayNames();
   const sevColor = _SEVERITY_COLOR[rec.severity] || "#94a3b8";
@@ -115,7 +115,7 @@ function _MemoryRow({ rec, onOpen, onArchive }) {
 }
 
 
-function _MemoryDetail({ rec, onClose }) {
+function MemoryDetail({ rec, onClose }) {
   // 83: strategy displayName.
   const { lookup: strategyLookup } = useStrategyDisplayNames();
   if (!rec) return null;
@@ -170,7 +170,7 @@ function _MemoryDetail({ rec, onClose }) {
 }
 
 
-function _AddMemoryForm({ onSaved }) {
+function AddMemoryForm({ onSaved }) {
   const [title, setTitle] = useState("");
   const [summary, setSummary] = useState("");
   const [strategy, setStrategy] = useState("");
@@ -389,7 +389,7 @@ export function AgentMemoryCard({ compact = false }) {
       </div>
 
       {/* 운영 메모 추가 폼 — compact에서는 숨김 */}
-      {!compact && <_AddMemoryForm onSaved={() => refresh()} />}
+      {!compact && <AddMemoryForm onSaved={() => refresh()} />}
 
       {/* 안내 */}
       <div data-testid="agent-memory-notice"
@@ -419,7 +419,7 @@ export function AgentMemoryCard({ compact = false }) {
       {items.length > 0 && (
         <div data-testid="agent-memory-list">
           {items.map((rec) => (
-            <_MemoryRow key={rec.id} rec={rec}
+            <MemoryRow key={rec.id} rec={rec}
                          onOpen={setSelected}
                          onArchive={handleArchive} />
           ))}
@@ -427,7 +427,7 @@ export function AgentMemoryCard({ compact = false }) {
       )}
 
       {selected && (
-        <_MemoryDetail rec={selected} onClose={() => setSelected(null)} />
+        <MemoryDetail rec={selected} onClose={() => setSelected(null)} />
       )}
     </Card>
   );

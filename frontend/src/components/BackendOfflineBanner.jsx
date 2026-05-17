@@ -29,7 +29,7 @@ export function isDemoBuild() {
   return v === "true" || v === true;
 }
 
-function _DesktopBanner({ readBackendLogImpl = readBackendLog } = {}) {
+function DesktopBanner({ readBackendLogImpl = readBackendLog } = {}) {
   const [showLog, setShowLog] = useState(false);
   const [logSnapshot, setLogSnapshot] = useState([]);
   const [backendLog, setBackendLog] = useState(null); // null = not loaded
@@ -301,7 +301,7 @@ export function BackendOfflineBanner() {
   // CONNECTING: 아직 연결 못 함 (계속 재시도 중).
   // EXE/Tauri 데스크톱 모드 — sidecar 자동 spawn 흐름. uvicorn 안내 *0건*.
   if (isDesktopApp()) {
-    return <_DesktopBanner />;
+    return <DesktopBanner />;
   }
 
   if (isDemoBuild()) {
