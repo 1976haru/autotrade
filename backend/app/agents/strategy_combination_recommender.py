@@ -196,6 +196,9 @@ class StrategyCombinationRecommendation:
         "/ is_live_authorization=False / auto_start_paper_trader=False."
     )
     metadata:                   dict[str, Any]           = field(default_factory=dict)
+    # 4-04 장세 필터 적용 시 carry — None 이면 미적용. 본 필드 변경은
+    # backwards-compat (default None).
+    regime_context:             dict[str, Any] | None    = None
 
     # 절대 invariant — 4 다중 가드.
     is_order_signal:            bool = False
@@ -254,6 +257,10 @@ class StrategyCombinationRecommendation:
             "operator_notes":           list(self.operator_notes),
             "advisory_disclaimer":      self.advisory_disclaimer,
             "metadata":                 dict(self.metadata),
+            "regime_context":           (
+                dict(self.regime_context) if self.regime_context is not None
+                else None
+            ),
             # 최상위 invariant (JSON consumer 안전).
             "is_order_signal":          False,
             "auto_apply_allowed":       False,

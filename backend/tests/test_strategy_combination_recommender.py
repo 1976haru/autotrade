@@ -352,6 +352,18 @@ class TestInvariants:
             assert dec_d["auto_apply_allowed"]    is False
             assert dec_d["is_live_authorization"] is False
 
+    def test_regime_context_defaults_to_none_backwards_compat(self):
+        """4-04 신규 필드 `regime_context` — 미적용 시 default None
+        (backwards compat). 4-04 이전 caller 가 그대로 동작."""
+        report = _build_report([_entry()])
+        rec = build_combination_recommendation(operator_report=report)
+        # 직접 인스턴스화 시점에 default None.
+        assert rec.regime_context is None
+        d = rec.to_dict()
+        # to_dict() 에 carry 됨 — None.
+        assert "regime_context" in d
+        assert d["regime_context"] is None
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 6. Action enum invariants
