@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 
-import { useBackendStatus } from "../store/useBackendStatus";
+import { CONNECTION_STATES, useBackendStatus } from "../store/useBackendStatus";
 import {
   clearConnectionLog,
   getConnectionLog,
@@ -246,22 +246,19 @@ function _DbPreparingBanner({ status }) {
 
 
 export function BackendOfflineBanner() {
-  const { status, error, loading, baseUrl, viaFallback } = useBackendStatus();
+  const { status, error, loading, baseUrl, viaFallback, connectionState }
+    = useBackendStatus();
   if (loading) return null;
 
-  // fix/desktop-nonblocking-migration-health: backend 가 응답해도 (no error)
-  // db_ready=false 면 "백엔드 offline" 으로 오인하지 않고 *DB 준비 중* 배너
-  // 노출. useBackendStatus 가 N초마다 재폴링하므로 db_ready=true 가 되면
-  // 본 분기를 빠져나가 정상 연결 완료 UI 로 자동 전환.
-  if (!error && status && status.db_ready === false) {
-    return <_DbPreparingBanner status={status} />;
-  }
+  // fix/step1-backend-autoconnect-final: 단일 진실 = connectionState.
+  // 기존 `error` boolean 분기는 *backend 가 살아있어도 첫 시도가 실패하면*
+  // 영구 offline 으로 인식했음. 이제는:
+  //  - CONNECTED → 어떤 배너도 안 보여줌 (정상). fallback port 면 작은 초록 배지.
+  //  - DB_PREPARING → 노란 "초기 DB 준비 중" 배너.
+  //  - CONNECTING → desktop 모드 "백엔드 자동 실행 중" / 그 외 dev 안내.
+  //    *재시도가 계속 진행* 되므로 사용자가 "X 분 째 시도 중" 진단을 볼 수 있음.
 
-  // fix/frontend-detects-fallback-backend-port: connected 상태에서 fallback
-  // 포트면 작은 초록 배지 — "✅ Backend 연결 완료: 8001". 기본 포트 (8000)
-  // 면 invisible (current behavior). 본 상태는 update fetch 실패와 *별개* —
-  // UpdateBanner 자체가 별도 컴포넌트로 격리됨.
-  if (!error) {
+  if (connectionState === CONNECTION_STATES.CONNECTED) {
     if (viaFallback && baseUrl) {
       const portMatch = String(baseUrl).match(/:(\d+)/);
       const portLabel = portMatch ? portMatch[1] : baseUrl;
@@ -292,9 +289,16 @@ export function BackendOfflineBanner() {
         </div>
       );
     }
+    // 기본 포트 8000 + CONNECTED → 배너 없음 (정상 상태는 시각 노이즈 X).
     return null;
   }
 
+  // DB_PREPARING: backend 응답 OK, alembic 진행 중.
+  if (connectionState === CONNECTION_STATES.DB_PREPARING && status) {
+    return <_DbPreparingBanner status={status} />;
+  }
+
+  // CONNECTING: 아직 연결 못 함 (계속 재시도 중).
   // EXE/Tauri 데스크톱 모드 — sidecar 자동 spawn 흐름. uvicorn 안내 *0건*.
   if (isDesktopApp()) {
     return <_DesktopBanner />;

@@ -5,26 +5,51 @@ import { BackendOfflineBanner } from "./BackendOfflineBanner";
 
 
 // 213: useBackendStatus는 useEffect로 fetch — 모킹해서 deterministic하게.
+// fix/step1-backend-autoconnect-final: connectionState 추가 — 기본은 CONNECTED.
+// vi.mock 은 hoist 되므로 enum 도 factory 내부에 inline.
 const _statusHook = {
   status: null,
   loading: false,
   error: "",
   baseUrl: "http://127.0.0.1:8000",
   viaFallback: false,
+  connectionState: "CONNECTED",
 };
 vi.mock("../store/useBackendStatus", () => ({
+  CONNECTION_STATES: {
+    CONNECTING:   "CONNECTING",
+    DB_PREPARING: "DB_PREPARING",
+    CONNECTED:    "CONNECTED",
+    OFFLINE:      "OFFLINE",
+  },
   useBackendStatus: () => _statusHook,
 }));
+const _CS = {
+  CONNECTING:   "CONNECTING",
+  DB_PREPARING: "DB_PREPARING",
+  CONNECTED:    "CONNECTED",
+  OFFLINE:      "OFFLINE",
+};
 
 
 function _set(overrides) {
-  Object.assign(_statusHook, {
+  // 명시 안 한 status/error 조합에서 합리적인 connectionState 자동 추론.
+  const merged = {
     status: null,
     loading: false,
     error: "",
     baseUrl: "http://127.0.0.1:8000",
     viaFallback: false,
-  }, overrides);
+    connectionState: _CS.CONNECTED,
+    ...overrides,
+  };
+  // 명시적 override 가 없으면 error / db_ready 로 추론.
+  if (!Object.prototype.hasOwnProperty.call(overrides || {}, "connectionState")) {
+    if (merged.error) merged.connectionState = _CS.CONNECTING;
+    else if (merged.status?.db_ready === false) merged.connectionState = _CS.DB_PREPARING;
+    else merged.connectionState = _CS.CONNECTED;
+  }
+  Object.assign(_statusHook, merged);
 }
 
 
@@ -273,11 +298,101 @@ describe("<BackendOfflineBanner>", () => {
       _set({
         status: { db_ready: false, migration_status: "running" },
         error: "Failed to fetch",
+        connectionState: _CS.CONNECTING,
       });
       const { queryByTestId } = render(<BackendOfflineBanner />);
       expect(queryByTestId("backend-db-preparing-banner")).toBeNull();
       // 비-desktop 환경에서는 빨간 backend-offline-banner 가 떠야 함.
       expect(queryByTestId("backend-offline-banner")).toBeTruthy();
+    });
+  });
+
+
+  // ==========================================================
+  // fix/step1-backend-autoconnect-final: ConnectionState 분기
+  // ==========================================================
+
+  describe("ConnectionState branching (single source of truth)", () => {
+    it("CONNECTED + default port 8000 → no banner shown", () => {
+      _set({
+        status: { default_mode: "PAPER", db_ready: true },
+        connectionState: _CS.CONNECTED,
+        viaFallback: false,
+      });
+      const { queryByTestId } = render(<BackendOfflineBanner />);
+      expect(queryByTestId("backend-offline-banner")).toBeNull();
+      expect(queryByTestId("desktop-backend-launching-banner")).toBeNull();
+      expect(queryByTestId("backend-db-preparing-banner")).toBeNull();
+      expect(queryByTestId("backend-connected-fallback-banner")).toBeNull();
+    });
+
+    it("CONNECTED + fallback port 8001 → green connected fallback banner", () => {
+      _set({
+        status: { default_mode: "PAPER", db_ready: true },
+        baseUrl: "http://127.0.0.1:8001",
+        viaFallback: true,
+        connectionState: _CS.CONNECTED,
+      });
+      const { getByTestId, queryByTestId } = render(<BackendOfflineBanner />);
+      const banner = getByTestId("backend-connected-fallback-banner");
+      expect(banner.textContent).toContain("8001");
+      // *offline 배너 안 보임* — error 가 없으니까.
+      expect(queryByTestId("backend-offline-banner")).toBeNull();
+    });
+
+    it("DB_PREPARING → DB preparing banner, no offline banner", () => {
+      _set({
+        status: { db_ready: false, migration_status: "running" },
+        connectionState: _CS.DB_PREPARING,
+        error: "",
+      });
+      const { getByTestId, queryByTestId } = render(<BackendOfflineBanner />);
+      expect(getByTestId("backend-db-preparing-banner")).toBeTruthy();
+      expect(queryByTestId("backend-offline-banner")).toBeNull();
+    });
+
+    it("CONNECTING in EXE/desktop mode → desktop launching banner (not offline)", () => {
+      // EXE 모드 — sidecar 가 아직 응답 안 함. desktop 안내가 떠야 하고
+      // uvicorn / cd backend 안내 문구는 *절대* 안 떠야 함.
+      window.__TAURI_INTERNALS__ = { invoke: vi.fn(async () => "") };
+      _set({
+        error: "Failed to fetch",
+        connectionState: _CS.CONNECTING,
+      });
+      const { getByTestId, queryByTestId, container } = render(<BackendOfflineBanner />);
+      expect(getByTestId("desktop-backend-launching-banner")).toBeTruthy();
+      // 로컬 dev 용 빨간 offline 안내는 *EXE 모드에서 절대 떠선 안 됨*.
+      expect(queryByTestId("backend-offline-banner")).toBeNull();
+      // EXE 모드에서 "uvicorn" / "cd backend" 안내 금지.
+      expect(container.textContent).not.toContain("uvicorn");
+      expect(container.textContent).not.toContain("cd backend");
+    });
+
+    it("CONNECTED in EXE/desktop mode → no desktop launching banner", () => {
+      window.__TAURI_INTERNALS__ = { invoke: vi.fn(async () => "") };
+      _set({
+        status: { default_mode: "PAPER", db_ready: true },
+        connectionState: _CS.CONNECTED,
+      });
+      const { queryByTestId } = render(<BackendOfflineBanner />);
+      expect(queryByTestId("desktop-backend-launching-banner")).toBeNull();
+    });
+
+    it("never shows 'Place Order' / 실거래 시작 in any state (invariant)", () => {
+      const banned = ["Place Order", "지금 매수", "지금 매도", "실거래 시작",
+                      "ENABLE_LIVE_TRADING"];
+      for (const state of [_CS.CONNECTING, _CS.DB_PREPARING, _CS.CONNECTED, _CS.OFFLINE]) {
+        _set({
+          status: state === _CS.DB_PREPARING ? { db_ready: false } : { db_ready: true },
+          connectionState: state,
+          error: state === _CS.CONNECTING ? "Failed to fetch" : "",
+        });
+        const { container, unmount } = render(<BackendOfflineBanner />);
+        for (const b of banned) {
+          expect(container.textContent).not.toContain(b);
+        }
+        unmount();
+      }
     });
   });
 });

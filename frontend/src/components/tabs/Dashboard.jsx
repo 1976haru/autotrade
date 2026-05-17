@@ -551,10 +551,14 @@ export function Dashboard({
     // class CSS를 이기므로 layout 관련 인라인 속성은 두지 않는다.
     <div className="dashboard-body">
 
-      {/* #59: 데이터 출처 banner — backend unreachable 시 demo / offline 자동 분기.
-          (BackendOfflineBanner는 App level full-screen 안내; 본 banner는
-          Dashboard 컨텍스트에서 데이터 출처를 한 줄로 라벨링.) */}
-      {(_backendStatus.error || _backendStatus.loading === false) && (
+      {/* #59 + fix/step1-backend-autoconnect-final: 데이터 출처 banner.
+          기존 (error || !loading) 조건은 *backend 가 살아있어도 첫 시도가 실패
+          하면* 영구 demo/offline 표시 → "Backend 미연결" stuck. 이제는
+          connectionState === CONNECTING 또는 OFFLINE 일 때만 표시.
+          CONNECTED / DB_PREPARING 상태에서는 본 banner 숨김 — BackendOfflineBanner
+          이 별도 작은 배지로 fallback port 안내. */}
+      {(_backendStatus.connectionState === "CONNECTING"
+        || _backendStatus.connectionState === "OFFLINE") && (
         <div className="dashboard-span-full">
           <BackendDataSourceBanner
             loading={_backendStatus.loading}

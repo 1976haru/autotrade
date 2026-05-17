@@ -6,7 +6,7 @@ import {
   discoverBackendBaseUrl,
   getBackendBaseUrl,
 } from "../services/backend/client";
-import { useBackendStatus } from "./useBackendStatus";
+import { CONNECTION_STATES, useBackendStatus } from "./useBackendStatus";
 
 
 vi.mock("../services/backend/client", () => ({
@@ -148,4 +148,69 @@ describe("useBackendStatus", () => {
   //  2) launcher 가 db_ready=false 응답을 받으면 DB_PREPARING 으로 분류하고,
   //     이후 db_ready=true 응답이 오면 READY 로 자동 전환한다 —
   //     backendLauncher.test.js "emits DB_PREPARING ... then READY" 로 검증.
+
+  // ============================================================
+  // fix/step1-backend-autoconnect-final: connectionState 노출
+  // ============================================================
+
+  it("exposes connectionState=CONNECTED when /api/status succeeds with db_ready=true", async () => {
+    backendApi.getStatus.mockResolvedValue({ default_mode: "PAPER", db_ready: true });
+    const { result } = renderHook(() => useBackendStatus());
+    await waitFor(() => expect(result.current.connectionState).toBe(CONNECTION_STATES.CONNECTED));
+  });
+
+  it("exposes connectionState=DB_PREPARING when /api/status succeeds with db_ready=false", async () => {
+    backendApi.getStatus.mockResolvedValue({ default_mode: "PAPER", db_ready: false });
+    const { result } = renderHook(() => useBackendStatus());
+    await waitFor(() => expect(result.current.connectionState).toBe(CONNECTION_STATES.DB_PREPARING));
+  });
+
+  it("exposes connectionState=CONNECTED when /api/status succeeds without db_ready (legacy backend)", async () => {
+    backendApi.getStatus.mockResolvedValue({ default_mode: "SIMULATION" });
+    const { result } = renderHook(() => useBackendStatus());
+    await waitFor(() => expect(result.current.connectionState).toBe(CONNECTION_STATES.CONNECTED));
+  });
+
+  it("connectionState=CONNECTING when discovery fails (keeps retrying)", async () => {
+    discoverBackendBaseUrl.mockResolvedValue({ ok: false, error: "no ports reachable" });
+    const { result } = renderHook(() => useBackendStatus());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.connectionState).toBe(CONNECTION_STATES.CONNECTING);
+    expect(result.current.lastAttemptError).toContain("no ports");
+    expect(result.current.attemptCount).toBeGreaterThan(0);
+  });
+
+  it("connectionState=CONNECTING when /api/status fails after successful discovery", async () => {
+    backendApi.getStatus.mockRejectedValue(new Error("status-500"));
+    const { result } = renderHook(() => useBackendStatus());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.connectionState).toBe(CONNECTION_STATES.CONNECTING);
+    expect(result.current.lastAttemptError).toBe("status-500");
+  });
+
+  it("CONNECTION_STATES enum is frozen and exposes 4 states", () => {
+    expect(Object.keys(CONNECTION_STATES).sort()).toEqual([
+      "CONNECTED", "CONNECTING", "DB_PREPARING", "OFFLINE",
+    ]);
+    expect(Object.isFrozen(CONNECTION_STATES)).toBe(true);
+  });
+
+  it("attemptCount increments on retry — keeps retrying instead of giving up", async () => {
+    // 첫 시도 실패, 두 번째 시도 성공 시 attemptCount >= 2 이어야 한다.
+    let calls = 0;
+    backendApi.getStatus.mockImplementation(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("first-attempt-fails");
+      return { default_mode: "PAPER", db_ready: true };
+    });
+
+    const { result } = renderHook(() => useBackendStatus());
+    // 결국 CONNECTED 로 도달 (재시도가 동작) — 1초 backoff 이내.
+    await waitFor(
+      () => expect(result.current.connectionState).toBe(CONNECTION_STATES.CONNECTED),
+      { timeout: 5_000 },
+    );
+    expect(result.current.attemptCount).toBeGreaterThanOrEqual(2);
+    expect(result.current.error).toBe("");  // 성공하면 stale error clear.
+  }, 10_000);
 });
