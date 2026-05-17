@@ -29,6 +29,10 @@ from app.auto_paper.loop import (
 )
 from app.auto_paper.ledger import get_ledger
 from app.auto_paper.events import DecisionAction
+from app.auto_paper.decisions import (
+    AIRecommendationInput,
+    process_ai_recommendation,
+)
 from app.core.config import get_settings
 
 
@@ -232,6 +236,119 @@ def get_events_endpoint(
     return _serialize_ledger_response(
         limit=limit, state=state, strategy=strategy, symbol=symbol, action=action,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# #2-10: AI Paper 자동매수/매도 skeleton — tick + decision/latest
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class _AIRecommendationBody(BaseModel):
+    """단일 AI advisory recommendation 입력 (paper-only — broker 호출 0건)."""
+    strategy:         str
+    symbol:           str
+    direction:        str                         # "BUY" / "SELL" / "EXIT" / "HOLD" / "NO_OP"
+    reason:           str
+    confidence:       Optional[float]             = None
+    risk_flags:       Optional[list[str]]         = None
+    params:           Optional[dict]              = None
+    current_position: int                         = 0
+    # 캘러가 metadata 에 secret 패턴 넣으면 ledger 가 거부 (SecretInLedgerError → 400).
+    metadata:         Optional[dict]              = None
+
+
+class _TickBody(BaseModel):
+    """`POST /tick` 입력 — N 개 recommendation 일괄 처리."""
+    recommendations:    list[_AIRecommendationBody]
+    virtual_trade_size: int                         = 1
+    auto_fill:          bool                        = True
+
+
+@_AP.post("/tick")
+def post_tick(body: _TickBody) -> dict:
+    """AI advisory recommendation 일괄 처리 → Paper ledger 기록.
+
+    *Paper 전용* — 실 broker 호출 0건. 본 endpoint 가 호출하는 모든 흐름:
+    - `convert_to_paper_decision()` — dataclass 변환만
+    - `record_paper_event()` — in-memory ledger append
+
+    loop_state 는 항상 현재 loop 의 state 를 사용 (caller 가 별도 주입 불가) —
+    `RUNNING` 이 아닐 때 BUY/SELL/EXIT 시도 시 ledger 가 거부 (`LedgerStateError`
+    → 409).
+    """
+    loop = get_auto_paper_loop()
+    state = loop.status().state
+
+    decisions_out: list[dict] = []
+    errors_out:    list[dict] = []
+    for r in body.recommendations:
+        try:
+            rec = AIRecommendationInput(
+                strategy=r.strategy,
+                symbol=r.symbol,
+                direction=r.direction,
+                reason=r.reason,
+                confidence=r.confidence,
+                risk_flags=list(r.risk_flags or []),
+                params=dict(r.params or {}),
+                current_position=int(r.current_position),
+                metadata=dict(r.metadata or {}),
+            )
+        except ValueError as e:
+            errors_out.append({
+                "strategy":   r.strategy,
+                "symbol":     r.symbol,
+                "direction":  r.direction,
+                "error":      f"invalid_input: {e}",
+            })
+            continue
+        try:
+            decision, _event = process_ai_recommendation(
+                rec,
+                loop_state=state,
+                virtual_trade_size=int(body.virtual_trade_size),
+                auto_fill=bool(body.auto_fill),
+                record=True,
+            )
+            decisions_out.append(decision.to_dict())
+        except Exception as e:   # noqa: BLE001 — ledger guards (state / secret) 둘 다 포함.
+            errors_out.append({
+                "strategy":   r.strategy,
+                "symbol":     r.symbol,
+                "direction":  r.direction,
+                "error":      f"{type(e).__name__}: {e}",
+            })
+
+    return {
+        "is_order_signal":        False,
+        "auto_apply_allowed":     False,
+        "is_live_authorization":  False,
+        "advisory_disclaimer": (
+            "AI Paper 자동매수/매도 skeleton — Paper 가상 체결만, 실 broker 호출 0건."
+        ),
+        "loop_state":    state,
+        "decision_count": len(decisions_out),
+        "decisions":     decisions_out,
+        "error_count":   len(errors_out),
+        "errors":        errors_out,
+    }
+
+
+@_AP.get("/decision/latest")
+def get_latest_decision() -> dict:
+    """가장 최근 ledger event 단일 반환 — 운영자 카드용."""
+    events = get_ledger().recent(limit=1)
+    latest = events[-1].to_dict() if events else None
+    return {
+        "is_order_signal":        False,
+        "auto_apply_allowed":     False,
+        "is_live_authorization":  False,
+        "advisory_disclaimer": (
+            "최근 AI Paper 판단 — advisory, 실 broker 호출 0건."
+        ),
+        "has_decision": latest is not None,
+        "decision":     latest,
+    }
 
 
 router.include_router(_AP)
