@@ -12,13 +12,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { AutoPaperLoopCard } from "./AutoPaperLoopCard";
 
 
-function _mockApi(initialStatus = { state: "IDLE", cycle_count: 0 }) {
+function _mockApi(initialStatus = { state: "PAUSED", cycle_count: 0 }) {
   return {
     autoPaperStatus: vi.fn(async () => initialStatus),
     autoPaperStart: vi.fn(async () => ({ state: "RUNNING", cycle_count: 0 })),
     autoPaperStop: vi.fn(async () => ({ state: "STOPPED", cycle_count: 5 })),
-    autoPaperEmergencyStop: vi.fn(async () => ({ state: "EMERGENCY", cycle_count: 5 })),
-    autoPaperReset: vi.fn(async () => ({ state: "IDLE", cycle_count: 0 })),
+    autoPaperEmergencyStop: vi.fn(async () => ({ state: "EMERGENCY_STOP", cycle_count: 5 })),
+    autoPaperReset: vi.fn(async () => ({ state: "PAUSED", cycle_count: 0 })),
     desktopHealth: vi.fn(async () => ({
       ok: true,
       safety_flags: {
@@ -54,7 +54,7 @@ describe("<AutoPaperLoopCard>", () => {
   });
 
   it("clicking 시작 button calls autoPaperStart", async () => {
-    const api = _mockApi({ state: "IDLE", cycle_count: 0 });
+    const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
     render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
     fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
@@ -86,7 +86,7 @@ describe("<AutoPaperLoopCard>", () => {
   });
 
   it("stop button disabled when not RUNNING", async () => {
-    const api = _mockApi({ state: "IDLE", cycle_count: 0 });
+    const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
     render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() =>
       expect(screen.getByTestId("btn-stop-auto-paper").disabled).toBe(true)

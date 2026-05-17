@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.auto_paper.loop import (
     LoopAlreadyRunningError,
+    LoopBlockedError,
     LoopNotRunningError,
     get_auto_paper_loop,
 )
@@ -57,6 +58,10 @@ def post_start() -> dict:
     try:
         snap = loop.start()
     except LoopAlreadyRunningError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except LoopBlockedError as e:
+        # EMERGENCY_STOP 상태에서 start() 차단 — 운영자가 reset() 호출 후
+        # 재시도해야 함. 409 Conflict 로 표현 (이미 다른 상태에 잠겨 있음).
         raise HTTPException(status_code=409, detail=str(e))
     return snap.to_dict()
 

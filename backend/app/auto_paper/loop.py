@@ -3,11 +3,28 @@
 EXE 의 *시작/정지/긴급정지* 3 버튼이 호출하는 API 의 backing service.
 *PAPER/SIMULATION 한정* — live broker / OrderExecutor / route_order import 0건.
 
-상태 머신:
-    IDLE         — 초기, 아직 한 번도 시작 안 됨
-    RUNNING      — 시작됨, tick 진행 중
-    STOPPED      — 사용자가 정지 (재시작 가능)
-    EMERGENCY    — 긴급정지 (재시작 가능, 단 운영자 명시 reset 필요)
+상태 머신 (feat/step2-01-auto-paper-states — 체크리스트 표준 정렬):
+    PAUSED          — 초기 대기 / 일시정지 (시작 가능)
+    RUNNING         — 자동 Paper Loop 진행 중
+    STOPPED         — 사용자가 명시 정지 (재시작 가능)
+    EMERGENCY_STOP  — 긴급정지 (start() 차단 — `reset()` 후에만 재시작 가능)
+
+전이 매트릭스:
+    PAUSED         ─start()──────────> RUNNING
+    RUNNING        ─stop()───────────> STOPPED
+    RUNNING        ─emergency_stop()─> EMERGENCY_STOP
+    STOPPED        ─start()──────────> RUNNING
+    STOPPED        ─emergency_stop()─> EMERGENCY_STOP
+    PAUSED         ─emergency_stop()─> EMERGENCY_STOP
+    EMERGENCY_STOP ─start()──────────> ❌ LoopBlockedError
+    EMERGENCY_STOP ─reset()──────────> PAUSED  (운영자 명시 reset)
+
+레거시 호환:
+- `AutoPaperState.IDLE` / `AutoPaperState.EMERGENCY` 는 PAUSED /
+  EMERGENCY_STOP 의 deprecated alias (Python StrEnum 의 동일 value 정의 →
+  member alias). 정적 import 만 호환 — 신규 코드는 canonical 이름 사용.
+- API / status payload 는 항상 canonical 문자열 (PAUSED / EMERGENCY_STOP) 만
+  emit.
 
 tick 동작 (본 PR placeholder):
 - cycle 카운트 증가, last_tick_at 갱신
@@ -17,6 +34,7 @@ invariants (테스트로 lock):
 - AutoPaperStatus.is_order_signal=False / auto_apply_allowed=False
 - start() / tick() / stop() / emergency_stop() 모두 broker import 안 함
 - ENABLE_LIVE_TRADING / ENABLE_AI_EXECUTION 안전 flag 변경 0건
+- EMERGENCY_STOP 상태에서 start() 호출 차단 (LoopBlockedError)
 """
 
 from __future__ import annotations
@@ -30,10 +48,16 @@ from typing import Any
 
 
 class AutoPaperState(StrEnum):
-    IDLE       = "IDLE"
-    RUNNING    = "RUNNING"
-    STOPPED    = "STOPPED"
-    EMERGENCY  = "EMERGENCY"
+    """체크리스트 표준 4 상태. 레거시 IDLE / EMERGENCY 는 alias."""
+    PAUSED         = "PAUSED"
+    RUNNING        = "RUNNING"
+    STOPPED        = "STOPPED"
+    EMERGENCY_STOP = "EMERGENCY_STOP"
+
+    # Deprecated aliases — Python StrEnum 이 같은 value 를 정의하면 첫 번째
+    # member 의 alias 가 된다. AutoPaperState.IDLE is AutoPaperState.PAUSED.
+    IDLE      = "PAUSED"
+    EMERGENCY = "EMERGENCY_STOP"
 
 
 class LoopAlreadyRunningError(RuntimeError):
@@ -42,6 +66,14 @@ class LoopAlreadyRunningError(RuntimeError):
 
 class LoopNotRunningError(RuntimeError):
     """RUNNING 이 아닌데 stop()/tick() 호출."""
+
+
+class LoopBlockedError(RuntimeError):
+    """EMERGENCY_STOP 상태에서 start() 호출 차단.
+
+    운영자가 명시적으로 `reset()` 을 호출한 뒤 다시 `start()` 해야 한다 —
+    긴급정지의 의도가 자동 재시작으로 우회되지 않도록.
+    """
 
 
 @dataclass(frozen=True)
@@ -92,7 +124,7 @@ class AutoPaperLoop:
 
     def __init__(self, *, tick_interval_sec: float = 30.0):
         self._lock = threading.Lock()
-        self._state: AutoPaperState = AutoPaperState.IDLE
+        self._state: AutoPaperState = AutoPaperState.PAUSED
         self._cycle_count: int = 0
         self._last_tick_at: datetime | None = None
         self._started_at: datetime | None = None
@@ -106,6 +138,12 @@ class AutoPaperLoop:
             if self._state == AutoPaperState.RUNNING:
                 raise LoopAlreadyRunningError(
                     "AutoPaperLoop is already RUNNING; call stop() first"
+                )
+            if self._state == AutoPaperState.EMERGENCY_STOP:
+                # 운영자가 긴급정지를 한 뒤 *명시적으로 reset()* 을 호출해야만
+                # 다시 start() 가능. 자동 재시작 차단 — 긴급정지 의도 보존.
+                raise LoopBlockedError(
+                    "AutoPaperLoop is in EMERGENCY_STOP; call reset() before start()"
                 )
             self._state = AutoPaperState.RUNNING
             self._started_at = datetime.now(timezone.utc)
@@ -124,14 +162,16 @@ class AutoPaperLoop:
             return self._snapshot_unlocked()
 
     def emergency_stop(self) -> AutoPaperStatus:
+        """어떤 상태에서든 EMERGENCY_STOP 으로 전이. start() 차단까지 carry."""
         with self._lock:
-            self._state = AutoPaperState.EMERGENCY
+            self._state = AutoPaperState.EMERGENCY_STOP
             self._emergency_at = datetime.now(timezone.utc)
             return self._snapshot_unlocked()
 
     def reset(self) -> AutoPaperStatus:
+        """EMERGENCY_STOP / STOPPED → PAUSED. 운영자 명시 호출 후에만 재시작 가능."""
         with self._lock:
-            self._state = AutoPaperState.IDLE
+            self._state = AutoPaperState.PAUSED
             self._stopped_at = None
             self._emergency_at = None
             self._last_error = None

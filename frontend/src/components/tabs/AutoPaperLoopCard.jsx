@@ -13,18 +13,25 @@ import { backendApi } from "../../services/backend/client";
 // 정지 버튼  → POST /api/auto-paper/stop
 // 긴급정지   → POST /api/auto-paper/emergency-stop
 
+// feat/step2-01-auto-paper-states: 체크리스트 표준 4 상태 (PAUSED / RUNNING /
+// STOPPED / EMERGENCY_STOP). 레거시 IDLE / EMERGENCY 도 동일 라벨로 매핑 —
+// 옛 backend 가 IDLE / EMERGENCY 를 emit 해도 UI 가 깨지지 않도록.
 const _STATE_COLOR = {
-  IDLE:       "#94a3b8",
-  RUNNING:    "#22c55e",
-  STOPPED:    "#fbbf24",
-  EMERGENCY:  "#ef4444",
+  PAUSED:         "#94a3b8",
+  IDLE:           "#94a3b8",   // legacy alias
+  RUNNING:        "#22c55e",
+  STOPPED:        "#fbbf24",
+  EMERGENCY_STOP: "#ef4444",
+  EMERGENCY:      "#ef4444",   // legacy alias
 };
 
 const _STATE_LABEL = {
-  IDLE:       "대기",
-  RUNNING:    "AI Paper Auto Loop 진행 중",
-  STOPPED:    "정지됨",
-  EMERGENCY:  "긴급정지됨",
+  PAUSED:         "대기 (일시정지)",
+  IDLE:           "대기 (일시정지)",
+  RUNNING:        "AI Paper Auto Loop 진행 중",
+  STOPPED:        "정지됨",
+  EMERGENCY_STOP: "긴급정지됨",
+  EMERGENCY:      "긴급정지됨",
 };
 
 const POLL_INTERVAL_MS = 5_000;
@@ -98,7 +105,8 @@ export function AutoPaperLoopCard({
     [apiClient, refresh]
   );
 
-  const state = status?.state || "IDLE";
+  // feat/step2-01-auto-paper-states: 초기 default = PAUSED (canonical).
+  const state = status?.state || "PAUSED";
   const stateColor = _STATE_COLOR[state] || "#94a3b8";
   const stateLabel = _STATE_LABEL[state] || state;
   const liveOff = safety?.enable_live_trading === false;
