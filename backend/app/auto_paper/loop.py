@@ -3,6 +3,12 @@
 EXE 의 *시작/정지/긴급정지* 3 버튼이 호출하는 API 의 backing service.
 *PAPER/SIMULATION 한정* — live broker / OrderExecutor / route_order import 0건.
 
+feat/step2-05-pre-market-gate: `start()` 이전에 *Pre-market checklist* (#80)
+의 verdict 를 검증 — `start_allowed=False` (DO_NOT_START / BLOCK) 면
+`LoopPreMarketBlockedError` 로 차단. 운영자가 사전 점검을 통과하지 못한
+상태에서 자동 시작이 *불가능*. 차단 사유 (`blocking_reasons`) 는 응답 +
+audit log 양쪽에 carry — secret 노출 0건.
+
 상태 머신 (feat/step2-01-auto-paper-states — 체크리스트 표준 정렬):
     PAUSED          — 초기 대기 / 일시정지 (시작 가능)
     RUNNING         — 자동 Paper Loop 진행 중
@@ -39,12 +45,16 @@ invariants (테스트로 lock):
 
 from __future__ import annotations
 
+import logging
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
 from functools import lru_cache
 from typing import Any
+
+
+_log = logging.getLogger("autotrade.auto_paper")
 
 
 class AutoPaperState(StrEnum):
@@ -74,6 +84,49 @@ class LoopBlockedError(RuntimeError):
     운영자가 명시적으로 `reset()` 을 호출한 뒤 다시 `start()` 해야 한다 —
     긴급정지의 의도가 자동 재시작으로 우회되지 않도록.
     """
+
+
+class LoopPreMarketBlockedError(RuntimeError):
+    """Pre-market checklist (#80) DO_NOT_START → start() 차단.
+
+    `start_allowed=False` 인 verdict 를 받으면 `blocking_reasons` 와 함께
+    raise. 운영자가 사전 점검을 통과한 뒤에만 다시 시도 가능.
+    """
+
+    def __init__(self, *, verdict: str, blocking_reasons: list[str]):
+        # 영문 + 한글 메시지 — log + API response 양쪽에서 사람이 읽을 수 있게.
+        self.verdict = verdict
+        self.blocking_reasons = list(blocking_reasons)
+        joined = "; ".join(blocking_reasons) if blocking_reasons else "no detail"
+        super().__init__(
+            f"pre_market_blocked: verdict={verdict} reasons=[{joined}]"
+        )
+
+
+@dataclass(frozen=True)
+class PreMarketSummary:
+    """`evaluate_pre_market_check()` 결과를 *압축* 한 carry 객체.
+
+    full `PreMarketCheckResult` 를 받지 않고 *필요한 4 필드*만 보존 —
+    auto_paper 모듈이 `app.governance.pre_market_check` 를 *import 하지
+    않도록* 결합도 최소화. 호출자 (API endpoint) 가 변환 책임.
+
+    `start_allowed=False` 면 `start()` 가 `LoopPreMarketBlockedError` 로
+    차단. `True` 면 `verdict` 와 `warnings` 를 audit log 에 carry 만.
+    """
+
+    start_allowed:     bool
+    verdict:           str             = ""     # READY_TO_START / WARN_BUT_START_ALLOWED / DO_NOT_START
+    blocking_reasons:  list[str]       = field(default_factory=list)
+    warnings:          list[str]       = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "start_allowed":    self.start_allowed,
+            "verdict":          self.verdict,
+            "blocking_reasons": list(self.blocking_reasons),
+            "warnings":         list(self.warnings),
+        }
 
 
 @dataclass(frozen=True)
@@ -133,8 +186,33 @@ class AutoPaperLoop:
         self._last_error: str | None = None
         self._tick_interval_sec: float = float(tick_interval_sec)
 
-    def start(self) -> AutoPaperStatus:
+    def start(self, *, pre_market: PreMarketSummary | None = None) -> AutoPaperStatus:
+        """자동 시작.
+
+        feat/step2-05-pre-market-gate: `pre_market` 이 제공되고
+        `start_allowed=False` 면 `LoopPreMarketBlockedError` 로 차단. 본
+        검증은 EMERGENCY_STOP / ALREADY_RUNNING 가드 *전* 에 수행 — 가장
+        우선 차단.
+
+        `pre_market=None` (legacy / backwards-compat): pre-market 게이트를
+        건너뛴다. 호출자 (API endpoint) 가 운영 정책에 따라 None 허용 여부
+        결정. 본 PR 시점에는 API endpoint 가 *기본적으로 pre_market 페이로드
+        없이도* start 허용 (기존 호출자 무회귀) — 단, frontend 는 항상
+        pre_market 결과를 동봉.
+        """
         with self._lock:
+            # Pre-market gate (가장 먼저) — start_allowed=False 면 다른 어떤
+            # 검증도 시도하지 않고 즉시 차단. blocking_reasons 를 carry.
+            if pre_market is not None and not pre_market.start_allowed:
+                _log.warning(
+                    "[auto-paper] start blocked by pre-market: verdict=%s "
+                    "reasons=%s",
+                    pre_market.verdict, pre_market.blocking_reasons,
+                )
+                raise LoopPreMarketBlockedError(
+                    verdict=pre_market.verdict,
+                    blocking_reasons=pre_market.blocking_reasons,
+                )
             if self._state == AutoPaperState.RUNNING:
                 raise LoopAlreadyRunningError(
                     "AutoPaperLoop is already RUNNING; call stop() first"
@@ -148,6 +226,18 @@ class AutoPaperLoop:
             self._state = AutoPaperState.RUNNING
             self._started_at = datetime.now(timezone.utc)
             self._last_error = None
+            # Pre-market warnings 만 carry — audit log 에 명시.
+            if pre_market is not None and pre_market.warnings:
+                _log.info(
+                    "[auto-paper] start with pre-market warnings: verdict=%s "
+                    "warnings=%s",
+                    pre_market.verdict, pre_market.warnings,
+                )
+            elif pre_market is not None:
+                _log.info(
+                    "[auto-paper] start with pre-market verdict=%s",
+                    pre_market.verdict,
+                )
             return self._snapshot_unlocked()
 
     def stop(self) -> AutoPaperStatus:

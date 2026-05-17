@@ -143,4 +143,155 @@ describe("<AutoPaperLoopCard>", () => {
       expect(screen.getByTestId("auto-paper-error").textContent).toMatch(/backend unreachable/)
     );
   });
+
+
+  // ==========================================================
+  // feat/step2-05-pre-market-gate: Pre-market BLOCK 차단
+  // ==========================================================
+
+  describe("Pre-market gate", () => {
+    it("PASS — preMarketCheckResult.start_allowed=true → start button enabled, no banner", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      const { queryByTestId, getByTestId } = render(
+        <AutoPaperLoopCard
+          apiClient={api}
+          pollIntervalMs={0}
+          preMarketCheckResult={{
+            start_allowed:    true,
+            verdict:          "READY_TO_START",
+            blocking_reasons: [],
+            warnings:         [],
+          }}
+        />
+      );
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      expect(getByTestId("btn-start-auto-paper").disabled).toBe(false);
+      expect(queryByTestId("auto-paper-premarket-blocked-banner")).toBeNull();
+    });
+
+    it("WARN — start_allowed=true with warnings → start enabled (no block)", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      const { queryByTestId, getByTestId } = render(
+        <AutoPaperLoopCard
+          apiClient={api}
+          pollIntervalMs={0}
+          preMarketCheckResult={{
+            start_allowed:    true,
+            verdict:          "WARN_BUT_START_ALLOWED",
+            blocking_reasons: [],
+            warnings:         ["watchlist 적음"],
+          }}
+        />
+      );
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      expect(getByTestId("btn-start-auto-paper").disabled).toBe(false);
+      expect(queryByTestId("auto-paper-premarket-blocked-banner")).toBeNull();
+    });
+
+    it("BLOCK — start_allowed=false → start button disabled + block banner", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      const { getByTestId } = render(
+        <AutoPaperLoopCard
+          apiClient={api}
+          pollIntervalMs={0}
+          preMarketCheckResult={{
+            start_allowed:    false,
+            verdict:          "DO_NOT_START",
+            blocking_reasons: ["API 미응답", "watchlist 0개"],
+            warnings:         [],
+          }}
+        />
+      );
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      const btn = getByTestId("btn-start-auto-paper");
+      expect(btn.disabled).toBe(true);
+      const banner = getByTestId("auto-paper-premarket-blocked-banner");
+      expect(banner.textContent).toContain("Pre-market 점검 미통과");
+      const reasons = getByTestId("auto-paper-premarket-block-reasons");
+      expect(reasons.textContent).toContain("API 미응답");
+      expect(reasons.textContent).toContain("watchlist 0개");
+    });
+
+    it("BLOCK — click 시작 button does not call autoPaperStart", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      const { getByTestId } = render(
+        <AutoPaperLoopCard
+          apiClient={api}
+          pollIntervalMs={0}
+          preMarketCheckResult={{
+            start_allowed:    false,
+            verdict:          "DO_NOT_START",
+            blocking_reasons: ["test"],
+          }}
+        />
+      );
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      fireEvent.click(getByTestId("btn-start-auto-paper"));
+      // disabled 버튼은 onClick fire 하지 않음 — autoPaperStart 호출 0건.
+      expect(api.autoPaperStart).not.toHaveBeenCalled();
+    });
+
+    it("PASS — click 시작 forwards pre_market payload to autoPaperStart", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      const pm = {
+        start_allowed:    true,
+        verdict:          "READY_TO_START",
+        blocking_reasons: [],
+        warnings:         ["minor warn"],
+      };
+      const { getByTestId } = render(
+        <AutoPaperLoopCard
+          apiClient={api}
+          pollIntervalMs={0}
+          preMarketCheckResult={pm}
+        />
+      );
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      fireEvent.click(getByTestId("btn-start-auto-paper"));
+      await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
+      // 첫 호출 인자 — pre_market 객체.
+      const callArgs = api.autoPaperStart.mock.calls[0][0];
+      expect(callArgs).toEqual({
+        pre_market: {
+          start_allowed:    true,
+          verdict:          "READY_TO_START",
+          blocking_reasons: [],
+          warnings:         ["minor warn"],
+        },
+      });
+    });
+
+    it("preMarketCheckResult=null (legacy) → start enabled, no banner, no body", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      const { getByTestId, queryByTestId } = render(
+        <AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />
+      );
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      expect(queryByTestId("auto-paper-premarket-blocked-banner")).toBeNull();
+      fireEvent.click(getByTestId("btn-start-auto-paper"));
+      await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
+      // pre_market=null 이면 body=null 로 호출.
+      expect(api.autoPaperStart.mock.calls[0][0]).toBeNull();
+    });
+
+    it("BLOCK banner has no banned phrases", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      const { container } = render(
+        <AutoPaperLoopCard
+          apiClient={api}
+          pollIntervalMs={0}
+          preMarketCheckResult={{
+            start_allowed:    false,
+            verdict:          "DO_NOT_START",
+            blocking_reasons: ["test"],
+          }}
+        />
+      );
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      const banned = ["Place Order", "지금 매수", "지금 매도", "실거래 시작", "ENABLE_LIVE_TRADING"];
+      for (const b of banned) {
+        expect(container.textContent).not.toContain(b);
+      }
+    });
+  });
 });
