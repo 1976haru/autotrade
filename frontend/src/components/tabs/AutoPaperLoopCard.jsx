@@ -76,6 +76,8 @@ export function AutoPaperLoopCard({
   const [safety, setSafety] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // #2-09: Paper Loop advisory ledger — 최근 AI 판단 / 가상 체결 noise-low 표시.
+  const [ledgerEvents, setLedgerEvents] = useState([]);
 
   const refresh = useCallback(async () => {
     try {
@@ -88,6 +90,18 @@ export function AutoPaperLoopCard({
       setError(null);
     } catch (err) {
       setError(err?.message || String(err));
+    }
+    // ledger 는 *별도* — 실패해도 main status 표시는 살아있어야 함.
+    if (typeof apiClient.autoPaperLedger === "function") {
+      try {
+        const r = await apiClient.autoPaperLedger({ limit: 10 });
+        if (r && Array.isArray(r.events)) {
+          // 최신이 위로 오도록 reverse.
+          setLedgerEvents([...r.events].reverse());
+        }
+      } catch {
+        // ledger 가 없는 환경 (테스트 mock 등) — 조용히 무시.
+      }
     }
   }, [apiClient]);
 
@@ -392,6 +406,84 @@ export function AutoPaperLoopCard({
           }}
         >
           {error}
+        </div>
+      )}
+
+      {/* #2-09: 최근 AI 판단 / Paper 가상 체결 ledger — read-only advisory */}
+      {ledgerEvents.length > 0 && (
+        <div
+          data-testid="paper-ledger-panel"
+          style={{
+            marginTop: 12,
+            padding: 10,
+            background: "#f8fafc",
+            border: "1px solid #e2e8f0",
+            borderRadius: "var(--r-md)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: "var(--fs-xs)",
+              fontWeight: "var(--fw-bold)",
+              color: "var(--c-text-2)",
+              marginBottom: 6,
+            }}
+          >
+            최근 AI Paper 판단 (advisory — 주문 신호 아님)
+          </div>
+          <div data-testid="paper-ledger-list">
+            {ledgerEvents.map((ev) => (
+              <div
+                key={ev.event_id}
+                data-testid={`paper-ledger-event-${ev.event_id}`}
+                data-decision={ev.decision_action}
+                data-loop-state={ev.loop_state}
+                style={{
+                  fontSize: "var(--fs-xs)",
+                  color: "var(--c-text)",
+                  padding: "4px 0",
+                  borderBottom: "1px dashed #e2e8f0",
+                }}
+              >
+                <code style={{ color: "var(--c-text-3)" }}>
+                  {ev.timestamp?.slice(11, 19) || ""}
+                </code>{" "}
+                <span
+                  data-testid={`paper-ledger-action-${ev.event_id}`}
+                  style={{
+                    display: "inline-block",
+                    padding: "1px 6px",
+                    borderRadius: 4,
+                    fontWeight: "var(--fw-bold)",
+                    background:
+                      ev.decision_action === "HOLD" ? "#94a3b8"
+                      : ev.decision_action === "BUY" ? "#22c55e"
+                      : ev.decision_action === "SELL" ? "#fbbf24"
+                      : ev.decision_action === "EXIT" ? "#6b7280"
+                      : "#e2e8f0",
+                    color: "#fff",
+                    marginRight: 4,
+                  }}
+                >
+                  {ev.decision_action}
+                </span>
+                <b>{ev.strategy}</b>
+                {" · "}
+                {ev.symbol}
+                {ev.paper_fill_status && ev.paper_fill_status !== "NA"
+                  ? ` · 가상체결: ${ev.paper_fill_status}`
+                  : ""}
+                {ev.reason ? ` — ${ev.reason}` : ""}
+              </div>
+            ))}
+          </div>
+          <div
+            data-testid="paper-ledger-disclaimer"
+            style={{ marginTop: 6, fontSize: "var(--fs-xs)", color: "var(--c-text-3)" }}
+          >
+            본 ledger 는 *advisory* — Paper 가상 체결 / AI 판단만 기록.
+            실 broker 호출 0건, is_order_signal=false.
+          </div>
         </div>
       )}
 

@@ -27,6 +27,8 @@ from app.auto_paper.loop import (
     PreMarketSummary,
     get_auto_paper_loop,
 )
+from app.auto_paper.ledger import get_ledger
+from app.auto_paper.events import DecisionAction
 from app.core.config import get_settings
 
 
@@ -144,6 +146,92 @@ def post_emergency_stop() -> dict:
 @_AP.post("/reset")
 def post_reset() -> dict:
     return get_auto_paper_loop().reset().to_dict()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# #2-09: Paper Auto Loop ledger (read-only)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _serialize_ledger_response(
+    *,
+    limit:    int            = 50,
+    state:    str | None     = None,
+    strategy: str | None     = None,
+    symbol:   str | None     = None,
+    action:   str | None     = None,
+) -> dict:
+    """단일 직렬화 — `/ledger` 와 `/events` alias 가 공유."""
+    ledger = get_ledger()
+    # decision_action filter — enum 값 검증.
+    action_enum: DecisionAction | None = None
+    if action is not None:
+        try:
+            action_enum = DecisionAction(action.upper())
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"invalid decision_action: {action!r}",
+            )
+    if any(v is not None for v in (state, strategy, symbol, action_enum)):
+        events = ledger.filter_by(
+            loop_state=state, strategy=strategy, symbol=symbol,
+            decision_action=action_enum,
+        )
+        events = events[-max(1, int(limit)):]
+    else:
+        events = ledger.recent(limit=max(1, int(limit)))
+    return {
+        "is_order_signal":        False,
+        "auto_apply_allowed":     False,
+        "is_live_authorization":  False,
+        "advisory_disclaimer": (
+            "Paper Auto Loop 의 advisory ledger — Paper 가상 체결 / AI 판단만 "
+            "기록. 실 broker 호출 0건."
+        ),
+        "events":      [e.to_dict() for e in events],
+        "event_count": len(events),
+        "stats":       ledger.stats(),
+        "filters": {
+            "limit":    int(limit),
+            "state":    state,
+            "strategy": strategy,
+            "symbol":   symbol,
+            "action":   action,
+        },
+    }
+
+
+@_AP.get("/ledger")
+def get_ledger_endpoint(
+    limit:    int            = 50,
+    state:    str | None     = None,
+    strategy: str | None     = None,
+    symbol:   str | None     = None,
+    action:   str | None     = None,
+) -> dict:
+    """Paper Auto Loop ledger — 최근 event read-only.
+
+    응답 invariant: `is_order_signal=False` / `auto_apply_allowed=False` /
+    `is_live_authorization=False` carry. Secret / API key / 계좌번호 필드 0건.
+    """
+    return _serialize_ledger_response(
+        limit=limit, state=state, strategy=strategy, symbol=symbol, action=action,
+    )
+
+
+@_AP.get("/events")
+def get_events_endpoint(
+    limit:    int            = 50,
+    state:    str | None     = None,
+    strategy: str | None     = None,
+    symbol:   str | None     = None,
+    action:   str | None     = None,
+) -> dict:
+    """ledger alias — 운영자 친화 두 번째 경로 (`/events`)."""
+    return _serialize_ledger_response(
+        limit=limit, state=state, strategy=strategy, symbol=symbol, action=action,
+    )
 
 
 router.include_router(_AP)
