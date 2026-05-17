@@ -208,4 +208,76 @@ describe("<BackendOfflineBanner>", () => {
       expect(content.textContent).not.toContain("sk-ant-AAAAAAAAAAAAAAAA");
     });
   });
+
+
+  // ==========================================================
+  // DB-preparing banner — fix/desktop-nonblocking-migration-health
+  // ==========================================================
+  describe("DB preparing banner (db_ready=false carry)", () => {
+    it("shows DB preparing banner when status.db_ready=false (no error)", () => {
+      _set({
+        status: {
+          default_mode: "SIMULATION",
+          db_ready: false,
+          migration_status: "running",
+          migration_started_at: "2026-05-17T09:00:00+00:00",
+        },
+      });
+      const { getByTestId, queryByTestId } = render(<BackendOfflineBanner />);
+      const banner = getByTestId("backend-db-preparing-banner");
+      expect(banner.getAttribute("data-migration-status")).toBe("running");
+      expect(banner.textContent).toContain("초기 DB 준비 중");
+      // *offline 배너 0건* — backend 가 살아있다는 표현.
+      expect(queryByTestId("backend-offline-banner")).toBeNull();
+      expect(queryByTestId("desktop-backend-launching-banner")).toBeNull();
+    });
+
+    it("hides DB preparing banner once db_ready=true", () => {
+      _set({
+        status: {
+          default_mode: "PAPER",
+          db_ready: true,
+          migration_status: "completed",
+        },
+      });
+      const { queryByTestId } = render(<BackendOfflineBanner />);
+      expect(queryByTestId("backend-db-preparing-banner")).toBeNull();
+    });
+
+    it("hides DB preparing banner for old payload missing db_ready (backwards compat)", () => {
+      // db_ready 필드 자체가 없는 옛 payload → *전혀 표시 안 함* (오해 차단).
+      _set({ status: { default_mode: "PAPER" } });
+      const { queryByTestId } = render(<BackendOfflineBanner />);
+      expect(queryByTestId("backend-db-preparing-banner")).toBeNull();
+    });
+
+    it("DB preparing banner has no banned phrases (invariant)", () => {
+      _set({
+        status: { db_ready: false, migration_status: "running" },
+      });
+      const { container } = render(<BackendOfflineBanner />);
+      const text = container.textContent;
+      // 실거래 / 주문 트리거 라벨이 본 배너에 들어가면 안 됨.
+      const banned = ["Place Order", "지금 매수", "지금 매도", "실거래 시작",
+                      "ENABLE_LIVE_TRADING"];
+      for (const b of banned) {
+        expect(text).not.toContain(b);
+      }
+    });
+
+    it("DB preparing banner does NOT mask underlying error (error overrides)", () => {
+      // backend 가 *완전히 죽었으면* db_ready 가 옛 값 false 일 수 있지만,
+      // /api/status 가 fetch 실패하면 error 가 set 됨 — 본 케이스는 평소처럼
+      // offline 배너 / desktop 배너 흐름을 보여야 함 (db_ready 분기에 빠지지
+      // 않음).
+      _set({
+        status: { db_ready: false, migration_status: "running" },
+        error: "Failed to fetch",
+      });
+      const { queryByTestId } = render(<BackendOfflineBanner />);
+      expect(queryByTestId("backend-db-preparing-banner")).toBeNull();
+      // 비-desktop 환경에서는 빨간 backend-offline-banner 가 떠야 함.
+      expect(queryByTestId("backend-offline-banner")).toBeTruthy();
+    });
+  });
 });

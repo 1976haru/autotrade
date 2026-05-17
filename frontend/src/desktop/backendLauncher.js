@@ -12,20 +12,22 @@
 //     보내지 않음), 만약 들어와도 본 모듈은 *저장 / 출력 / 렌더링 0건*.
 //
 // 상태 머신:
-//   IDLE        — 초기, polling 시작 전
-//   CONNECTING  — polling 중, 아직 응답 없음
-//   READY       — backend healthy + readiness 응답 OK
-//   NEEDS_ENV   — backend healthy 지만 KIS .env 미설정 (KIS 모드 불가)
-//   UNSAFE      — backend healthy 지만 ENABLE_LIVE_TRADING=true 등 위험 flag
-//   FAILED      — 일정 시간 polling 실패
+//   IDLE          — 초기, polling 시작 전
+//   CONNECTING    — polling 중, 아직 응답 없음
+//   DB_PREPARING  — backend 응답 OK 지만 db_ready=false (alembic migration 중)
+//   READY         — backend healthy + DB ready + readiness 응답 OK
+//   NEEDS_ENV     — backend healthy 지만 KIS .env 미설정 (KIS 모드 불가)
+//   UNSAFE        — backend healthy 지만 ENABLE_LIVE_TRADING=true 등 위험 flag
+//   FAILED        — 일정 시간 polling 실패
 
 export const LAUNCHER_STATES = Object.freeze({
-  IDLE:       "IDLE",
-  CONNECTING: "CONNECTING",
-  READY:      "READY",
-  NEEDS_ENV:  "NEEDS_ENV",
-  UNSAFE:     "UNSAFE",
-  FAILED:     "FAILED",
+  IDLE:         "IDLE",
+  CONNECTING:   "CONNECTING",
+  DB_PREPARING: "DB_PREPARING",
+  READY:        "READY",
+  NEEDS_ENV:    "NEEDS_ENV",
+  UNSAFE:       "UNSAFE",
+  FAILED:       "FAILED",
 });
 
 const DEFAULT_BACKEND_URL = "http://127.0.0.1:8000";
@@ -60,8 +62,16 @@ export function isDesktopApp() {
 }
 
 /** classify the backend snapshot into a launcher state. */
-export function classifyLauncherState({ statusOk, readiness, safety }) {
+export function classifyLauncherState({ statusOk, readiness, safety, status }) {
   if (!statusOk) return LAUNCHER_STATES.CONNECTING;
+
+  // fix/desktop-nonblocking-migration-health: backend 가 살아있어도 alembic
+  // migration 이 *진행 중* 이면 db_ready=false 로 carry. *backend offline 으로
+  // 오인하지 않고* "초기 DB 준비 중" 상태로 표시. db_ready=true 가 되면 본
+  // 분기를 빠져나가 정상 READY/NEEDS_ENV/UNSAFE 판단으로 자동 전환.
+  if (status && status.db_ready === false) {
+    return LAUNCHER_STATES.DB_PREPARING;
+  }
 
   const flags = safety || readiness?.safety_flags || {};
   const enableLive   = flags.enable_live_trading === true;
@@ -83,25 +93,27 @@ export function classifyLauncherState({ statusOk, readiness, safety }) {
 /** human-readable label for UI. */
 export function launcherStateLabel(state) {
   switch (state) {
-    case LAUNCHER_STATES.IDLE:       return "대기 중";
-    case LAUNCHER_STATES.CONNECTING: return "백엔드 연결 중";
-    case LAUNCHER_STATES.READY:      return "백엔드 연결 완료";
-    case LAUNCHER_STATES.NEEDS_ENV:  return "한투 모의투자 API 설정 필요";
-    case LAUNCHER_STATES.UNSAFE:     return "안전 flag 위반 — 모의 테스트 차단";
-    case LAUNCHER_STATES.FAILED:     return "백엔드 실행 실패 — 재시작 또는 설정 확인 필요";
-    default:                          return state;
+    case LAUNCHER_STATES.IDLE:         return "대기 중";
+    case LAUNCHER_STATES.CONNECTING:   return "백엔드 연결 중";
+    case LAUNCHER_STATES.DB_PREPARING: return "초기 DB 준비 중";
+    case LAUNCHER_STATES.READY:        return "백엔드 연결 완료";
+    case LAUNCHER_STATES.NEEDS_ENV:    return "한투 모의투자 API 설정 필요";
+    case LAUNCHER_STATES.UNSAFE:       return "안전 flag 위반 — 모의 테스트 차단";
+    case LAUNCHER_STATES.FAILED:       return "백엔드 실행 실패 — 재시작 또는 설정 확인 필요";
+    default:                            return state;
   }
 }
 
 /** color hint for UI. */
 export function launcherStateColor(state) {
   switch (state) {
-    case LAUNCHER_STATES.READY:      return "#22c55e";
-    case LAUNCHER_STATES.NEEDS_ENV:  return "#fbbf24";
-    case LAUNCHER_STATES.UNSAFE:     return "#ef4444";
-    case LAUNCHER_STATES.FAILED:     return "#ef4444";
-    case LAUNCHER_STATES.CONNECTING: return "#7dd3fc";
-    default:                          return "#94a3b8";
+    case LAUNCHER_STATES.READY:        return "#22c55e";
+    case LAUNCHER_STATES.NEEDS_ENV:    return "#fbbf24";
+    case LAUNCHER_STATES.UNSAFE:       return "#ef4444";
+    case LAUNCHER_STATES.FAILED:       return "#ef4444";
+    case LAUNCHER_STATES.CONNECTING:   return "#7dd3fc";
+    case LAUNCHER_STATES.DB_PREPARING: return "#fbbf24";
+    default:                            return "#94a3b8";
   }
 }
 
@@ -269,6 +281,7 @@ export function startBackendPoll({
       statusOk: true,
       readiness: probe.readiness,
       safety: probe.safety,
+      status: probe.status,
     });
     onUpdate?.({
       state: newState,
@@ -373,6 +386,13 @@ export function summarizeForCard(snapshot) {
         hint = "백엔드가 시작될 때까지 잠시만 기다려주세요... " +
                "(첫 실행 시 DB 초기화로 최대 1~2분 소요될 수 있습니다.)";
       }
+      break;
+    case LAUNCHER_STATES.DB_PREPARING:
+      // fix/desktop-nonblocking-migration-health: backend 가 응답하지만 alembic
+      // migration 이 백그라운드에서 진행 중인 상태. *offline 아님* — db_ready
+      // 가 true 로 바뀌면 다음 polling 에서 자동 READY 전환.
+      hint = "초기 DB 준비 중입니다. 최대 1~2분 걸릴 수 있습니다. " +
+             "백엔드는 정상 응답 중이며 DB 마이그레이션 완료 후 자동으로 연결 완료로 전환됩니다.";
       break;
     default:
       hint = "";

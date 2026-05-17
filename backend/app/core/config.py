@@ -27,6 +27,14 @@ class Settings(BaseSettings):
     enable_fill_polling:           bool = False
     fill_polling_interval_seconds: int  = 5
 
+    # fix/desktop-nonblocking-migration-health: 데스크톱 EXE 운영자가 첫 실행 시
+    # alembic migration 으로 1~2분 멈춰 보이는 문제 해결을 위한 *opt-in* flag.
+    # True 이면 lifespan 이 migration 을 background thread 로 띄우고 즉시 yield
+    # → `/health` + `/api/status` 가 첫 응답부터 200 응답. False (default) 이면
+    # 기존 동기 동작 유지 — 모든 기존 test / CI / script 가 무회귀.
+    # 본 flag 는 *주문 / 안전 flag 와 무관* — 단지 startup 흐름 분기.
+    migration_nonblocking: bool = False
+
     # RiskPolicy thresholds — operator-tunable without code changes.
     # Defaults match RiskPolicy() defaults, so unset env vars preserve behavior.
     risk_max_order_notional:   int = 1_000_000

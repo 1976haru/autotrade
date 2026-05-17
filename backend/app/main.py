@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -34,6 +35,13 @@ from app.api.routes_virtual import router as virtual_router
 from app.api.routes_watchlists import router as watchlists_router
 from app.api.routes_kis_paper import router as kis_paper_router  # #89
 from app.core.config import get_settings
+from app.db.migration_runner import (
+    MigrationState,
+    db_is_ready,
+    get_migration_status,
+    run_migration_blocking,
+    start_migration_in_background,
+)
 from app.db.session import apply_migrations
 from app.execution.fill_poller import FillPoller
 from app.monitoring.middleware import ApiMetricsMiddleware
@@ -53,41 +61,108 @@ _startup_logger = logging.getLogger("autotrade.startup")
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    """FastAPI lifespan.
+
+    Two startup modes (config flag `migration_nonblocking`):
+
+    *Blocking (default — preserves existing tests / CI / scripts)*
+      lifespan 진입 시 alembic migration 을 *동기적으로* 실행하고 yield. 모든
+      기존 TestClient 흐름이 변경 없이 동작 (route handler 가 DB 를 만들어진
+      상태로 신뢰).
+
+    *Non-blocking (opt-in — 데스크톱 EXE 운영자 흐름)*
+      `MIGRATION_NONBLOCKING=true` 일 때 migration 을 *background daemon thread*
+      에서 실행하고 즉시 yield. `/health` 와 `/api/status` 가 첫 응답부터 200
+      → frontend launcher 가 "초기 DB 준비 중" UI 를 그릴 수 있음. fill_poller
+      는 별도 asyncio task 가 migration 완료 후 start.
+    """
+    cfg = get_settings()
     _startup_logger.info(
-        "[startup] lifespan begin — alembic migration starting "
-        "(첫 실행 시 DB 초기화로 1~2분 걸릴 수 있습니다)"
+        "[startup] lifespan begin — migration_nonblocking=%s",
+        cfg.migration_nonblocking,
     )
-    try:
-        apply_migrations()
-    except Exception:
-        # migration 실패 시 stack trace 전체를 로그에 남긴다 — launcher 의
-        # FileHandler 와 stderr 양쪽으로 propagate. Secret 노출 0건 (alembic
-        # 메시지에는 connection string redact 가 SQLAlchemy 측에서 처리).
-        _startup_logger.exception("[startup] alembic migration FAILED")
-        raise
-    _startup_logger.info("[startup] alembic migration complete")
 
     poller: FillPoller | None = None
-    cfg = get_settings()
-    if cfg.enable_fill_polling:
+    poller_starter_task: asyncio.Task | None = None
+
+    def _build_and_start_poller() -> FillPoller:
         from app.api.deps import get_broker
         from app.db.session import SessionLocal
-        poller = FillPoller(
+        p = FillPoller(
             broker_factory=get_broker,
             session_factory=SessionLocal,
             interval=cfg.fill_polling_interval_seconds,
         )
-        poller.start()
+        p.start()
+        return p
 
-    _startup_logger.info(
-        "[startup] backend ready — uvicorn accepting requests on /health, "
-        "/api/status, /api/kis-paper/readiness"
-    )
+    if cfg.migration_nonblocking:
+        # ──────────────────────────────────────────────────────────────
+        # 데스크톱 EXE 흐름: migration 을 background thread 로 → 즉시 yield.
+        # /health 와 /api/status 는 migration 진행 중에도 200 응답.
+        # ──────────────────────────────────────────────────────────────
+        start_migration_in_background(apply_migrations)
+        if cfg.enable_fill_polling:
+            async def _start_poller_when_db_ready() -> None:
+                nonlocal poller
+                # migration 종료 (COMPLETED or FAILED) 까지 polling.
+                while True:
+                    mig = get_migration_status()
+                    if mig.state == MigrationState.COMPLETED:
+                        poller = _build_and_start_poller()
+                        _startup_logger.info(
+                            "[startup] fill_poller started after migration complete"
+                        )
+                        return
+                    if mig.state in (MigrationState.FAILED, MigrationState.SKIPPED):
+                        _startup_logger.warning(
+                            "[startup] fill_poller NOT started (migration state=%s)",
+                            mig.state.value,
+                        )
+                        return
+                    await asyncio.sleep(1.0)
+            poller_starter_task = asyncio.create_task(_start_poller_when_db_ready())
+
+        _startup_logger.info(
+            "[startup] backend ready (non-blocking) — /health and /api/status "
+            "respond immediately; DB migration running in background"
+        )
+    else:
+        # ──────────────────────────────────────────────────────────────
+        # 기존 동기 흐름: migration 완료까지 blocking, 그 후 yield.
+        # 모든 기존 TestClient / CI / script 가 변경 없이 동작.
+        # ──────────────────────────────────────────────────────────────
+        _startup_logger.info(
+            "[startup] alembic migration starting "
+            "(첫 실행 시 DB 초기화로 1~2분 걸릴 수 있습니다)"
+        )
+        run_migration_blocking(apply_migrations)
+        mig = get_migration_status()
+        if mig.state == MigrationState.FAILED:
+            # run_migration_blocking 은 traceback 을 log 에 남기고 *return*.
+            # 기존 동기 흐름은 lifespan startup 실패를 raise 로 표현해야 하므로
+            # 여기서 RuntimeError 로 escalate — 단, 메시지에 secret 0건.
+            raise RuntimeError(
+                f"alembic migration failed: {mig.error_type or 'Unknown'}"
+            )
+        _startup_logger.info("[startup] alembic migration complete")
+        if cfg.enable_fill_polling:
+            poller = _build_and_start_poller()
+        _startup_logger.info(
+            "[startup] backend ready — uvicorn accepting requests on /health, "
+            "/api/status, /api/kis-paper/readiness"
+        )
 
     try:
         yield
     finally:
         _startup_logger.info("[shutdown] lifespan exit")
+        if poller_starter_task is not None and not poller_starter_task.done():
+            poller_starter_task.cancel()
+            try:
+                await poller_starter_task
+            except (asyncio.CancelledError, Exception):
+                pass
         if poller is not None:
             await poller.stop()
 
@@ -146,6 +221,17 @@ def root() -> dict:
 # /api/status 실패 시 fallback 으로 호출하는 *최소* liveness probe.
 # 어떤 DB / monitoring 서비스 의존성 없이 즉시 200 — sidecar 가 살아있다는
 # 사실만 확인. Secret / API key / 계좌번호 포함 0건.
+#
+# fix/desktop-nonblocking-migration-health: `db_ready` / `migration_status`
+# 를 추가 — DB 호출 없이 module-level singleton 만 read 하므로 응답 속도는
+# 영향 없음. migration 진행 중에도 본 endpoint 는 200 응답.
 @app.get("/health")
 def health() -> dict:
-    return {"ok": True, "status": "ok", "app": settings.app_name}
+    mig = get_migration_status()
+    return {
+        "ok":               True,
+        "status":           "ok",
+        "app":              settings.app_name,
+        "db_ready":         db_is_ready(),
+        "migration_status": mig.state.value,
+    }

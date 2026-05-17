@@ -532,3 +532,191 @@ describe("startBackendPoll default timeout", () => {
     expect(updates).toContain(LAUNCHER_STATES.FAILED);
   });
 });
+
+
+// ============================================================
+// 8. DB_PREPARING state — fix/desktop-nonblocking-migration-health
+// ============================================================
+
+describe("classifyLauncherState DB_PREPARING (db_ready=false carry)", () => {
+  it("returns DB_PREPARING when statusOk=true but db_ready=false", () => {
+    const state = classifyLauncherState({
+      statusOk: true,
+      status: { db_ready: false, migration_status: "running" },
+      safety: { kis_is_paper: true },
+    });
+    expect(state).toBe(LAUNCHER_STATES.DB_PREPARING);
+  });
+
+  it("does NOT return DB_PREPARING when db_ready=true", () => {
+    const state = classifyLauncherState({
+      statusOk: true,
+      status: { db_ready: true, migration_status: "completed" },
+      safety: { kis_is_paper: true },
+    });
+    expect(state).toBe(LAUNCHER_STATES.READY);
+  });
+
+  it("does NOT mistake missing db_ready for DB_PREPARING (backwards compat)", () => {
+    // 옛 backend (pre-fix) 는 db_ready 필드 자체를 안 보내므로 *undefined* —
+    // 본 분기에 들어가면 안 됨. status 가 아예 없는 경우도 마찬가지.
+    const stateNoField = classifyLauncherState({
+      statusOk: true,
+      status: { other_field: 1 },
+      safety: { kis_is_paper: true },
+    });
+    expect(stateNoField).toBe(LAUNCHER_STATES.READY);
+
+    const stateNullStatus = classifyLauncherState({
+      statusOk: true,
+      safety: { kis_is_paper: true },
+    });
+    expect(stateNullStatus).toBe(LAUNCHER_STATES.READY);
+  });
+
+  it("DB_PREPARING takes priority over UNSAFE (operator sees real cause)", () => {
+    // 안전 flag 위반보다 *DB 준비 중* 이 더 즉각적인 정보. 사용자 입장에서는
+    // 첫 5초 동안은 "왜 안 뜨지?" 의 답이 더 중요.
+    const state = classifyLauncherState({
+      statusOk: true,
+      status: { db_ready: false },
+      safety: { enable_live_trading: true, kis_is_paper: false },
+    });
+    expect(state).toBe(LAUNCHER_STATES.DB_PREPARING);
+  });
+});
+
+
+describe("DB_PREPARING UI hooks", () => {
+  it("launcherStateLabel returns Korean label for DB_PREPARING", () => {
+    expect(launcherStateLabel(LAUNCHER_STATES.DB_PREPARING)).toContain("DB");
+    expect(launcherStateLabel(LAUNCHER_STATES.DB_PREPARING)).toContain("준비");
+  });
+
+  it("launcherStateColor returns a warning color (not red, not green)", () => {
+    const c = launcherStateColor(LAUNCHER_STATES.DB_PREPARING);
+    // DB 준비 중은 *경고* 색이지 위험 색이 아님 — frontend invariant.
+    expect(c).not.toBe(launcherStateColor(LAUNCHER_STATES.FAILED));
+    expect(c).not.toBe(launcherStateColor(LAUNCHER_STATES.READY));
+  });
+
+  it("summarizeForCard DB_PREPARING hint mentions 자동 전환 + canStartTest=false", () => {
+    const out = summarizeForCard({ state: LAUNCHER_STATES.DB_PREPARING });
+    expect(out.hint).toContain("DB 준비");
+    expect(out.hint).toContain("자동");
+    expect(out.canStartTest).toBe(false);
+  });
+
+  it("summarizeForCard DB_PREPARING hint has no banned phrases (invariant)", () => {
+    const banned = ["Place Order", "지금 매수", "지금 매도", "실거래 시작"];
+    const out = summarizeForCard({ state: LAUNCHER_STATES.DB_PREPARING });
+    for (const b of banned) {
+      expect(out.hint).not.toContain(b);
+    }
+  });
+});
+
+
+describe("startBackendPoll DB_PREPARING transition", () => {
+  it("emits DB_PREPARING when /api/status returns db_ready=false, then READY when true", async () => {
+    let callCount = 0;
+    const fetchImpl = vi.fn(async (url) => {
+      callCount += 1;
+      if (url.endsWith("/api/status")) {
+        // 첫 호출 → db_ready=false (migration 진행 중)
+        // 두 번째 호출 → db_ready=true (완료)
+        if (callCount <= 2) {
+          return {
+            ok: true,
+            json: async () => ({
+              db_ready:           false,
+              migration_status:   "running",
+              safety_flags:       { kis_is_paper: true, enable_live_trading: false },
+            }),
+          };
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            db_ready:           true,
+            migration_status:   "completed",
+            safety_flags:       { kis_is_paper: true, enable_live_trading: false },
+          }),
+        };
+      }
+      // readiness probe — 단순 200 반환.
+      if (url.endsWith("/api/kis-paper/readiness")) {
+        return {
+          ok: true,
+          json: async () => ({ can_run_kis_paper: true, can_run_mock: true }),
+        };
+      }
+      return { ok: false, status: 404 };
+    });
+
+    const updates = [];
+    await new Promise((resolve) => {
+      const ctl = startBackendPoll({
+        intervalMs: 5,
+        timeoutMs: 5_000,
+        fetchImpl,
+        onUpdate(snap) {
+          updates.push(snap.state);
+          if (snap.state === LAUNCHER_STATES.READY) {
+            ctl.cancel();
+            resolve();
+          }
+        },
+      });
+      setTimeout(() => { ctl.cancel(); resolve(); }, 500);
+    });
+
+    // DB_PREPARING 가 *최소 1회* 발생한 후 READY 로 전환.
+    expect(updates).toContain(LAUNCHER_STATES.DB_PREPARING);
+    expect(updates).toContain(LAUNCHER_STATES.READY);
+    const idxDb = updates.indexOf(LAUNCHER_STATES.DB_PREPARING);
+    const idxReady = updates.indexOf(LAUNCHER_STATES.READY);
+    expect(idxReady).toBeGreaterThan(idxDb);
+  });
+
+  it("DB_PREPARING is NOT classified as FAILED before timeout", async () => {
+    // db_ready=false 응답이 계속 와도 timeout 전에는 FAILED 로 가지 않음 —
+    // backend 가 *살아있다* 는 표현.
+    const fetchImpl = vi.fn(async (url) => {
+      if (url.endsWith("/api/status")) {
+        return {
+          ok: true,
+          json: async () => ({
+            db_ready: false,
+            migration_status: "running",
+            safety_flags: { kis_is_paper: true },
+          }),
+        };
+      }
+      return { ok: false, status: 404 };
+    });
+
+    const updates = [];
+    await new Promise((resolve) => {
+      const ctl = startBackendPoll({
+        intervalMs: 5,
+        timeoutMs: 5_000,
+        fetchImpl,
+        onUpdate(snap) {
+          updates.push(snap.state);
+          if (updates.length >= 3) {
+            ctl.cancel();
+            resolve();
+          }
+        },
+      });
+      setTimeout(() => { ctl.cancel(); resolve(); }, 500);
+    });
+
+    // 모든 update 가 DB_PREPARING 여야 함 — FAILED 0건.
+    expect(updates.length).toBeGreaterThanOrEqual(1);
+    expect(updates).not.toContain(LAUNCHER_STATES.FAILED);
+    expect(updates).not.toContain(LAUNCHER_STATES.READY);
+    expect(updates).toContain(LAUNCHER_STATES.DB_PREPARING);
+  });
+});
