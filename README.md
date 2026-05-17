@@ -218,6 +218,43 @@ npm run test:watch # 개발 중 watch 모드
 npm run build
 ```
 
+### 최소 6개 전략 백테스트 실행 방법
+
+본 명령은 등록된 6개 단타 전략 (`sma_crossover` / `rsi_reversion` /
+`vwap_strategy` / `orb_vwap` / `volume_breakout` / `pullback_rebreak`) 을
+모두 baseline 백테스트하고, 결과를 `reports/backtest/` 에 JSON / CSV / Markdown
+으로 저장한다.
+
+```bash
+# 기본 실행 (repo root 에서)
+python scripts/run_backtest_all_strategies.py
+
+# 옵션: 기간 / 심볼 / 비용 / 부분 실행
+python scripts/run_backtest_all_strategies.py \
+    --symbol 005930 \
+    --start 2026-01-01 --end 2027-12-31 \
+    --commission-bps 15 --tax-bps 23 --slippage-bps 5 \
+    --output-dir reports/backtest
+
+python scripts/run_backtest_all_strategies.py \
+    --strategies sma_crossover rsi_reversion
+
+# 테스트 + 보안 스캔
+python -m pytest backend/tests/test_backtest_all_strategies.py -q
+python scripts/security_scan.py
+```
+
+산출 파일 3종:
+- `reports/backtest/strategy_backtest_summary.json` — 전체 지표 + run_meta
+- `reports/backtest/strategy_backtest_ranking.csv` — risk_adjusted_score 순위
+- `reports/backtest/strategy_backtest_report.md` — 운영자 검토용 markdown
+
+**본 절차는 실거래가 아닙니다.** broker / OrderExecutor / route_order / KIS
+실 API / Anthropic / Telegram 호출 0건. `ENABLE_LIVE_TRADING` /
+`ENABLE_AI_EXECUTION` / `KIS_IS_PAPER` 환경변수 변경 0건. 산출 파일은
+`.gitignore` 로 커밋 차단. 자세한 정책 / 지표 정의 / 한계 점:
+[`docs/backtest_strategy_report.md`](docs/backtest_strategy_report.md).
+
 ### DB 마이그레이션 (Alembic)
 
 ```bash
