@@ -12,13 +12,24 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { AutoPaperLoopCard } from "./AutoPaperLoopCard";
 
 
-function _mockApi(initialStatus = { state: "PAUSED", cycle_count: 0 }) {
+function _mockApi(
+  initialStatus = { state: "PAUSED", cycle_count: 0 },
+  ledgerEvents = [],
+) {
   return {
     autoPaperStatus: vi.fn(async () => initialStatus),
     autoPaperStart: vi.fn(async () => ({ state: "RUNNING", cycle_count: 0 })),
     autoPaperStop: vi.fn(async () => ({ state: "STOPPED", cycle_count: 5 })),
     autoPaperEmergencyStop: vi.fn(async () => ({ state: "EMERGENCY_STOP", cycle_count: 5 })),
     autoPaperReset: vi.fn(async () => ({ state: "PAUSED", cycle_count: 0 })),
+    autoPaperLedger: vi.fn(async () => ({
+      events: ledgerEvents,
+      event_count: ledgerEvents.length,
+      is_order_signal: false,
+      auto_apply_allowed: false,
+      is_live_authorization: false,
+      advisory_disclaimer: "Paper Auto Loop advisory ledger",
+    })),
     desktopHealth: vi.fn(async () => ({
       ok: true,
       safety_flags: {
@@ -413,6 +424,125 @@ describe("<AutoPaperLoopCard>", () => {
       await waitFor(() =>
         expect(screen.getByTestId("state-pill").textContent).toContain("긴급정지"),
       );
+    });
+  });
+
+  // ==========================================================
+  // #2-09: Paper Loop ledger UI — 최근 AI 판단 + 가상 체결 표시
+  //   - autoPaperLedger 가 events 를 반환하면 paper-ledger-panel 렌더.
+  //   - events 가 비어있으면 panel 자체 렌더 X (시각 노이즈 방지).
+  //   - HOLD / BUY / SELL / EXIT 각 action 의 라벨 정확히 표시.
+  //   - 금지 라벨 (Place Order / 지금 매수 / ENABLE_*) 0건.
+  // ==========================================================
+
+  describe("Paper ledger UI (#2-09)", () => {
+    it("ledger 비어있으면 panel 미표시", async () => {
+      const api = _mockApi({ state: "RUNNING", cycle_count: 1 }, []);
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperLedger).toHaveBeenCalled());
+      expect(screen.queryByTestId("paper-ledger-panel")).toBeNull();
+    });
+
+    it("ledger event 가 있으면 panel + advisory disclaimer 표시", async () => {
+      const events = [
+        {
+          event_id: "evt-001",
+          timestamp: "2026-05-18T01:23:45+00:00",
+          loop_state: "RUNNING",
+          strategy: "sma_crossover",
+          symbol: "005930",
+          decision_action: "HOLD",
+          confidence: 0.55,
+          reason: "trend not confirmed",
+          risk_flags: [],
+          paper_order_id: null,
+          paper_fill_status: "NA",
+          virtual_position_delta: 0,
+          pnl_estimate: 0.0,
+          is_order_signal: false,
+          auto_apply_allowed: false,
+          is_live_authorization: false,
+        },
+        {
+          event_id: "evt-002",
+          timestamp: "2026-05-18T01:24:00+00:00",
+          loop_state: "RUNNING",
+          strategy: "rsi_reversion",
+          symbol: "000660",
+          decision_action: "BUY",
+          confidence: 0.78,
+          reason: "RSI oversold + reversion confirm",
+          risk_flags: [],
+          paper_order_id: "paper-2026-05-18-001",
+          paper_fill_status: "PAPER_FILLED",
+          virtual_position_delta: 10,
+          pnl_estimate: 0.0,
+          is_order_signal: false,
+          auto_apply_allowed: false,
+          is_live_authorization: false,
+        },
+      ];
+      const api = _mockApi({ state: "RUNNING", cycle_count: 2 }, events);
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("paper-ledger-panel")).toBeTruthy(),
+      );
+      const list = screen.getByTestId("paper-ledger-list");
+      expect(list.textContent).toContain("HOLD");
+      expect(list.textContent).toContain("BUY");
+      expect(list.textContent).toContain("sma_crossover");
+      expect(list.textContent).toContain("rsi_reversion");
+      expect(list.textContent).toContain("PAPER_FILLED");
+      // advisory disclaimer.
+      const dis = screen.getByTestId("paper-ledger-disclaimer");
+      expect(dis.textContent).toMatch(/advisory/);
+      expect(dis.textContent).toMatch(/is_order_signal=false/);
+    });
+
+    it("ledger UI 에 금지 라벨 0건 (Place Order / 지금 매수 / 실거래 시작 / ENABLE_LIVE_TRADING)", async () => {
+      const events = [
+        {
+          event_id: "evt-x",
+          timestamp: "2026-05-18T01:23:45+00:00",
+          loop_state: "RUNNING",
+          strategy: "sma_crossover",
+          symbol: "005930",
+          decision_action: "BUY",
+          confidence: 0.78,
+          reason: "test",
+          risk_flags: [],
+          paper_order_id: "p-1",
+          paper_fill_status: "PAPER_FILLED",
+          virtual_position_delta: 5,
+          pnl_estimate: 0.0,
+          is_order_signal: false,
+          auto_apply_allowed: false,
+          is_live_authorization: false,
+        },
+      ];
+      const api = _mockApi({ state: "RUNNING", cycle_count: 1 }, events);
+      const { container } = render(
+        <AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />,
+      );
+      await waitFor(() =>
+        expect(screen.getByTestId("paper-ledger-panel")).toBeTruthy(),
+      );
+      const banned = [
+        "Place Order", "지금 매수", "지금 매도", "실거래 시작",
+        "ENABLE_LIVE_TRADING", "AI 자동매매 켜기",
+      ];
+      for (const b of banned) {
+        expect(container.textContent).not.toContain(b);
+      }
+    });
+
+    it("autoPaperLedger 가 없는 mock 환경에서도 안전하게 동작 (no throw)", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      delete api.autoPaperLedger;
+      // throw 없이 렌더되어야.
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      expect(screen.queryByTestId("paper-ledger-panel")).toBeNull();
     });
   });
 });

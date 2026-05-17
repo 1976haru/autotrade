@@ -128,6 +128,12 @@ export const backendApi = {
     backendFetch("/api/auto-paper/emergency-stop", { method: "POST" }),
   autoPaperReset:         () =>
     backendFetch("/api/auto-paper/reset", { method: "POST" }),
+  // #2-09: Paper Loop advisory ledger — read-only.
+  autoPaperLedger: ({ limit = 20, action = null } = {}) => {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (action) qs.append("action", String(action));
+    return backendFetch(`/api/auto-paper/ledger?${qs.toString()}`);
+  },
   getRiskPolicy: () => backendFetch("/api/risk/policy"),
   setEmergencyStop: (enabled, decision) => backendFetch("/api/risk/emergency-stop", {
     method: "POST",
