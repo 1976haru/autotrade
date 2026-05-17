@@ -437,20 +437,40 @@ def run(argv: list[str] | None = None) -> int:
         log.error("install dependencies via: pip install -r backend/requirements.txt")
         return 2
 
+    # fix/desktop-backend-startup-readiness: uvicorn.run 진입 직전 명시 marker.
+    # 본 로그 라인은 사용자가 desktop-backend.log 를 열어볼 때 "여기까지 진행"
+    # 을 알려준다. 이후 단계는 (1) uvicorn 자체 logger 가 "Started server
+    # process" / "Waiting for application startup" / "Application startup
+    # complete" 를 emit, (2) FastAPI lifespan 이 "[startup] alembic migration
+    # starting" / "complete" / "backend ready" 를 emit. 모두 같은 root logger
+    # → 같은 FileHandler 에 기록.
+    log.info(
+        "uvicorn.run starting on %s:%d — FastAPI lifespan will run alembic "
+        "migration next (첫 실행 시 1~2분 걸릴 수 있음)",
+        host, chosen_port,
+    )
+
     try:
+        # log_config=None: uvicorn 의 자체 dictConfig 호출을 *건너뛰어* 본
+        # launcher 의 root logger (FileHandler + StreamHandler) 가 유지된다.
+        # 결과적으로 uvicorn 의 "Started server process" / "Application startup
+        # complete" 같은 boot marker 가 desktop-backend.log 에 기록된다.
         uvicorn.run(
             "app.main:app",
             host=host,
             port=chosen_port,
             log_level="info",
             access_log=False,
+            log_config=None,
         )
     except SystemExit as exc:   # pragma: no cover — uvicorn raises on signal
         log.info("backend exited (SystemExit code=%s)", exc.code)
         return int(exc.code or 0)
     except Exception as exc:   # pragma: no cover — defensive
-        log.error("backend crashed: %s", exc)
+        # stack trace 전체를 log 에 — migration 실패시 stderr 원문 보존.
+        log.exception("backend crashed: %s", exc)
         return 3
+    log.info("backend uvicorn returned normally")
     return 0
 
 

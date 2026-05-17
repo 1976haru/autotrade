@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -40,9 +41,31 @@ from app.monitoring.middleware import ApiMetricsMiddleware
 settings = get_settings()
 
 
+# fix/desktop-backend-startup-readiness: 데스크톱 launcher 가 backend startup
+# 진행 단계를 desktop-backend.log 에서 명확히 확인할 수 있도록 명시 로그 marker
+# 를 alembic migration 시작 / 종료 / FastAPI 준비완료 시점에 emit 한다. uvicorn
+# 의 자체 로그 ("Started server process", "Waiting for application startup",
+# "Application startup complete") 는 launcher 가 `log_config=None` 으로 root
+# logger 에 propagate 시켜 동일 파일에 기록되므로 사용자 / 운영자는 첫 실행시
+# migration 지연 여부 / 실패 원인을 한눈에 본다.
+_startup_logger = logging.getLogger("autotrade.startup")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    apply_migrations()
+    _startup_logger.info(
+        "[startup] lifespan begin — alembic migration starting "
+        "(첫 실행 시 DB 초기화로 1~2분 걸릴 수 있습니다)"
+    )
+    try:
+        apply_migrations()
+    except Exception:
+        # migration 실패 시 stack trace 전체를 로그에 남긴다 — launcher 의
+        # FileHandler 와 stderr 양쪽으로 propagate. Secret 노출 0건 (alembic
+        # 메시지에는 connection string redact 가 SQLAlchemy 측에서 처리).
+        _startup_logger.exception("[startup] alembic migration FAILED")
+        raise
+    _startup_logger.info("[startup] alembic migration complete")
 
     poller: FillPoller | None = None
     cfg = get_settings()
@@ -56,9 +79,15 @@ async def lifespan(_app: FastAPI):
         )
         poller.start()
 
+    _startup_logger.info(
+        "[startup] backend ready — uvicorn accepting requests on /health, "
+        "/api/status, /api/kis-paper/readiness"
+    )
+
     try:
         yield
     finally:
+        _startup_logger.info("[shutdown] lifespan exit")
         if poller is not None:
             await poller.stop()
 

@@ -29,8 +29,15 @@ export const LAUNCHER_STATES = Object.freeze({
 });
 
 const DEFAULT_BACKEND_URL = "http://127.0.0.1:8000";
-const DEFAULT_TIMEOUT_MS  = 30_000;    // 30s 안에 살아나지 않으면 FAILED
+// fix/desktop-backend-startup-readiness: 첫 실행 시 alembic migration 이 1~2분
+// 소요될 수 있어 기존 30s timeout 으로는 "DB 준비 중" 인데 FAILED 로 단정되는
+// 회귀가 발생. 90s 로 늘려 첫 실행 migration 을 허용 — 이후 실행은 보통 수초
+// 이내 READY 로 진입. KIS rate limit 영향 없음 (로컬 polling).
+const DEFAULT_TIMEOUT_MS  = 90_000;    // 90s 안에 살아나지 않으면 FAILED
 const DEFAULT_INTERVAL_MS = 1_000;     // 1s 간격 polling — KIS rate limit 무관 (로컬)
+// CONNECTING 상태에서 elapsed 가 이 임계를 넘으면 hint 가 "초기 DB 준비 중"
+// 으로 격상되어 사용자가 첫 실행 migration 지연임을 인지한다.
+const DB_PREP_HINT_THRESHOLD_MS = 5_000;
 
 // fix/desktop-sidecar-port-fallback: 8000 이 stale 프로세스에 점유된 경우
 // backend launcher 가 8001/8002 로 fallback bind 한다. frontend 도 동일 순서로
@@ -331,7 +338,7 @@ export function summarizeForCard(snapshot) {
       hint: "백엔드 연결 대기",
     };
   }
-  const { state } = snapshot;
+  const { state, elapsedMs } = snapshot;
   const canStartTest =
     state === LAUNCHER_STATES.READY || state === LAUNCHER_STATES.NEEDS_ENV;
   let hint = "";
@@ -348,11 +355,24 @@ export function summarizeForCard(snapshot) {
              "중 하나가 켜져 있습니다. 모의 테스트는 차단됩니다 — .env 에서 false 로 변경.";
       break;
     case LAUNCHER_STATES.FAILED:
-      hint = "백엔드 sidecar 가 시작되지 않았습니다. 앱을 재시작하거나 " +
-             "scripts/build_backend_sidecar.ps1 로 sidecar 를 재빌드하세요.";
+      // fix/desktop-backend-startup-readiness: 90s timeout 후에도 응답이
+      // 없다면 단순 "재빌드" 안내보다 *로그 파일 위치* 를 명확히 제시한다.
+      // %APPDATA%\Autotrade\logs\backend-YYYYMMDD.log 가 단일 진실.
+      hint = "백엔드가 90초 안에 응답하지 않았습니다. " +
+             "%APPDATA%\\Autotrade\\logs\\backend-YYYYMMDD.log 를 열어 " +
+             "alembic migration 실패 / uvicorn 부팅 오류 / 포트 충돌 메시지를 확인하세요. " +
+             "필요 시 앱을 재시작하거나 scripts/build_backend_sidecar.ps1 로 sidecar 를 재빌드.";
       break;
     case LAUNCHER_STATES.CONNECTING:
-      hint = "백엔드가 시작될 때까지 잠시만 기다려주세요...";
+      // 첫 실행 alembic migration 은 1~2분 걸릴 수 있어 단순 "기다려주세요" 보다
+      // 사용자에게 명시적 안내. elapsed 가 짧으면 일반 안내, 길어지면 DB 안내.
+      if (typeof elapsedMs === "number" && elapsedMs >= DB_PREP_HINT_THRESHOLD_MS) {
+        hint = "초기 DB 준비 중입니다. 최대 1~2분 걸릴 수 있습니다. " +
+               "%APPDATA%\\Autotrade\\logs 의 backend-*.log 에서 진행 상황을 확인할 수 있습니다.";
+      } else {
+        hint = "백엔드가 시작될 때까지 잠시만 기다려주세요... " +
+               "(첫 실행 시 DB 초기화로 최대 1~2분 소요될 수 있습니다.)";
+      }
       break;
     default:
       hint = "";

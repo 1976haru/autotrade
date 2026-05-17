@@ -456,4 +456,79 @@ describe("summarizeForCard", () => {
       }
     }
   });
+
+  // fix/desktop-backend-startup-readiness
+  it("CONNECTING hint mentions first-run DB init delay", () => {
+    const out = summarizeForCard({ state: LAUNCHER_STATES.CONNECTING });
+    expect(out.hint).toMatch(/DB|1~2분|1-2분/);
+  });
+
+  it("CONNECTING hint escalates to '초기 DB 준비 중' after threshold elapsed", () => {
+    // < 5s elapsed → 짧은 일반 안내
+    const early = summarizeForCard({
+      state: LAUNCHER_STATES.CONNECTING,
+      elapsedMs: 1_000,
+    });
+    expect(early.hint).toContain("잠시만");
+
+    // >= 5s elapsed → DB 준비 중 격상 + 로그 위치 안내
+    const escalated = summarizeForCard({
+      state: LAUNCHER_STATES.CONNECTING,
+      elapsedMs: 10_000,
+    });
+    expect(escalated.hint).toContain("초기 DB 준비 중");
+    expect(escalated.hint).toContain("1~2분");
+    expect(escalated.hint).toContain("Autotrade");
+  });
+
+  it("FAILED hint points to backend log file location", () => {
+    const out = summarizeForCard({ state: LAUNCHER_STATES.FAILED });
+    expect(out.hint).toContain("Autotrade");
+    expect(out.hint).toContain("backend-");
+    // 90s timeout 안내가 포함되어 사용자가 "내가 너무 빨리 포기?" 의심 안 함.
+    expect(out.hint).toContain("90");
+  });
+});
+
+
+// ============================================================
+// 7. timeout default — fix/desktop-backend-startup-readiness
+// ============================================================
+
+describe("startBackendPoll default timeout", () => {
+  it("uses 90s default timeout (first-run alembic migration tolerance)", async () => {
+    // 단순 검증: timeout 을 명시 안 했을 때 90s 가 되는지 확인. 30 → 50초
+    // 사이에는 FAILED 가 emit 되지 *않아야* 한다. nowImpl 로 시간을 빠르게
+    // forward 한다.
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 500 }));
+    let timeNow = 0;
+    const updates = [];
+    await new Promise((resolve) => {
+      const ctl = startBackendPoll({
+        intervalMs: 5,
+        // timeoutMs 명시 안 함 — default 사용.
+        fetchImpl,
+        nowImpl: () => {
+          // 매 호출마다 시간을 60초 점프 — 2번째 tick 까지는 120s
+          // (default 90s 초과). 1번째 tick=0s, 2번째=60s, 3번째=120s.
+          const v = timeNow;
+          timeNow += 60_000;
+          return v;
+        },
+        onUpdate(snap) {
+          updates.push(snap.state);
+          if (snap.state === LAUNCHER_STATES.FAILED) {
+            ctl.cancel();
+            resolve();
+          }
+        },
+      });
+      // safety: 100ms 안에 안 끝나면 cancel
+      setTimeout(() => { ctl.cancel(); resolve(); }, 200);
+    });
+    // 60s 시점에는 아직 90s 안이므로 CONNECTING 이어야 하고,
+    // 120s 시점에 FAILED 로 전환. 즉 첫 update 는 CONNECTING.
+    expect(updates[0]).toBe(LAUNCHER_STATES.CONNECTING);
+    expect(updates).toContain(LAUNCHER_STATES.FAILED);
+  });
 });
