@@ -13,18 +13,25 @@ import { backendApi } from "../../services/backend/client";
 // 정지 버튼  → POST /api/auto-paper/stop
 // 긴급정지   → POST /api/auto-paper/emergency-stop
 
+// feat/step2-01-auto-paper-states: 체크리스트 표준 4 상태 (PAUSED / RUNNING /
+// STOPPED / EMERGENCY_STOP). 레거시 IDLE / EMERGENCY 도 동일 라벨로 매핑 —
+// 옛 backend 가 IDLE / EMERGENCY 를 emit 해도 UI 가 깨지지 않도록.
 const _STATE_COLOR = {
-  IDLE:       "#94a3b8",
-  RUNNING:    "#22c55e",
-  STOPPED:    "#fbbf24",
-  EMERGENCY:  "#ef4444",
+  PAUSED:         "#94a3b8",
+  IDLE:           "#94a3b8",   // legacy alias
+  RUNNING:        "#22c55e",
+  STOPPED:        "#fbbf24",
+  EMERGENCY_STOP: "#ef4444",
+  EMERGENCY:      "#ef4444",   // legacy alias
 };
 
 const _STATE_LABEL = {
-  IDLE:       "대기",
-  RUNNING:    "AI Paper Auto Loop 진행 중",
-  STOPPED:    "정지됨",
-  EMERGENCY:  "긴급정지됨",
+  PAUSED:         "대기 (일시정지)",
+  IDLE:           "대기 (일시정지)",
+  RUNNING:        "AI Paper Auto Loop 진행 중",
+  STOPPED:        "정지됨",
+  EMERGENCY_STOP: "긴급정지됨",
+  EMERGENCY:      "긴급정지됨",
 };
 
 const POLL_INTERVAL_MS = 5_000;
@@ -52,6 +59,10 @@ function _Pill({ label, value, color, testid }) {
 export function AutoPaperLoopCard({
   apiClient = backendApi,
   pollIntervalMs = POLL_INTERVAL_MS,
+  // feat/step2-05-pre-market-gate: pre-market checklist 결과 carry.
+  // `start_allowed === false` 면 시작 버튼 비활성화 + 차단 배너 노출 +
+  // start() 호출 시 backend 에도 동일 payload 동봉 (서버 단 거절).
+  preMarketCheckResult = null,
 } = {}) {
   const [status, setStatus] = useState(null);
   const [safety, setSafety] = useState(null);
@@ -79,6 +90,14 @@ export function AutoPaperLoopCard({
     return () => clearInterval(t);
   }, [refresh, pollIntervalMs]);
 
+  // feat/step2-05-pre-market-gate: Pre-market BLOCK 판정.
+  // `start_allowed === false` 가 명시적일 때만 차단 — null / undefined 는 미평가.
+  const preMarketBlocked = preMarketCheckResult != null
+    && preMarketCheckResult.start_allowed === false;
+  const preMarketReasons = preMarketBlocked
+    ? (preMarketCheckResult.blocking_reasons || [])
+    : [];
+
   const wrap = (fn) => async () => {
     setBusy(true);
     try {
@@ -91,14 +110,29 @@ export function AutoPaperLoopCard({
     }
   };
 
-  const onStart = useCallback(wrap(apiClient.autoPaperStart), [apiClient, refresh]);
+  // 시작 버튼: pre-market 결과를 backend 에 동봉. 서버가 최종 거절 권한.
+  const onStart = useCallback(wrap(async () => {
+    const body = preMarketCheckResult != null
+      ? {
+          pre_market: {
+            start_allowed:    preMarketCheckResult.start_allowed === true,
+            verdict:          preMarketCheckResult.verdict || "",
+            blocking_reasons: preMarketCheckResult.blocking_reasons || [],
+            warnings:         preMarketCheckResult.warnings || [],
+          },
+        }
+      : null;
+    // apiClient.autoPaperStart 는 (body=null) 시 body 미전송 (기존 호환).
+    return apiClient.autoPaperStart(body);
+  }), [apiClient, refresh, preMarketCheckResult]);
   const onStop = useCallback(wrap(apiClient.autoPaperStop), [apiClient, refresh]);
   const onEmergencyStop = useCallback(
     wrap(apiClient.autoPaperEmergencyStop),
     [apiClient, refresh]
   );
 
-  const state = status?.state || "IDLE";
+  // feat/step2-01-auto-paper-states: 초기 default = PAUSED (canonical).
+  const state = status?.state || "PAUSED";
   const stateColor = _STATE_COLOR[state] || "#94a3b8";
   const stateLabel = _STATE_LABEL[state] || state;
   const liveOff = safety?.enable_live_trading === false;
@@ -194,18 +228,51 @@ export function AutoPaperLoopCard({
         />
       </div>
 
+      {/* feat/step2-05-pre-market-gate: Pre-market BLOCK 차단 배너. */}
+      {preMarketBlocked && (
+        <div
+          data-testid="auto-paper-premarket-blocked-banner"
+          style={{
+            padding: "8px 12px",
+            marginBottom: 10,
+            background: "#fef2f2",
+            border: "1px solid #fecaca",
+            borderRadius: "var(--r-md)",
+            color: "#7f1d1d",
+            fontSize: "var(--fs-sm)",
+          }}
+        >
+          <div style={{ fontWeight: "var(--fw-bold)", marginBottom: 4 }}>
+            ⚠ Pre-market 점검 미통과 — 자동 시작 불가
+          </div>
+          {preMarketReasons.length > 0 && (
+            <ul
+              data-testid="auto-paper-premarket-block-reasons"
+              style={{ margin: 0, paddingLeft: 18, fontSize: "var(--fs-xs)" }}
+            >
+              {preMarketReasons.slice(0, 5).map((r, i) => (
+                <li key={i}>{r}</li>
+              ))}
+            </ul>
+          )}
+          <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)", marginTop: 4 }}>
+            Pre-market 카드에서 사유를 해결한 뒤 다시 점검 → 시작 시도하세요.
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }} data-testid="control-buttons">
         <button
           data-testid="btn-start-auto-paper"
           onClick={onStart}
-          disabled={busy || state === "RUNNING"}
+          disabled={busy || state === "RUNNING" || preMarketBlocked}
           style={{
             padding: "8px 16px",
             borderRadius: "var(--r-md)",
-            background: state === "RUNNING" ? "#94a3b8" : "#22c55e",
+            background: (state === "RUNNING" || preMarketBlocked) ? "#94a3b8" : "#22c55e",
             color: "#fff",
             border: "none",
-            cursor: state === "RUNNING" ? "not-allowed" : "pointer",
+            cursor: (state === "RUNNING" || preMarketBlocked) ? "not-allowed" : "pointer",
             fontWeight: "var(--fw-bold)",
           }}
         >

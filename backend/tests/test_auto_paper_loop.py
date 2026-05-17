@@ -1,9 +1,14 @@
 """AI Paper Auto Loop service + API 테스트.
 
+feat/step2-01-auto-paper-states: 체크리스트 표준 상태 (PAUSED / RUNNING /
+STOPPED / EMERGENCY_STOP) 정렬. 레거시 IDLE / EMERGENCY 는 *member alias* 로
+보존.
+
 CLAUDE.md invariant 강제:
 - broker / OrderExecutor / route_order import 0건 (정적 grep)
 - AutoPaperStatus.is_order_signal=False / auto_apply_allowed=False / forced_paper=True 불변
 - start / tick / stop / emergency-stop 어떤 경로도 broker.place_order 호출 0건
+- EMERGENCY_STOP 상태에서 start() 차단 (자동 재시작 우회 금지)
 """
 
 from __future__ import annotations
@@ -16,8 +21,10 @@ from fastapi.testclient import TestClient
 
 from app.auto_paper.loop import (
     AutoPaperLoop,
+    AutoPaperState,
     AutoPaperStatus,
     LoopAlreadyRunningError,
+    LoopBlockedError,
     LoopNotRunningError,
     get_auto_paper_loop,
 )
@@ -28,7 +35,7 @@ class TestAutoPaperStatusInvariants:
     def test_is_order_signal_false_invariant(self):
         with pytest.raises(ValueError):
             AutoPaperStatus(
-                state="IDLE", cycle_count=0,
+                state="PAUSED", cycle_count=0,
                 last_tick_at=None, started_at=None, stopped_at=None,
                 emergency_at=None, last_error=None, tick_interval_sec=30.0,
                 forced_paper=True,
@@ -38,7 +45,7 @@ class TestAutoPaperStatusInvariants:
     def test_auto_apply_allowed_false_invariant(self):
         with pytest.raises(ValueError):
             AutoPaperStatus(
-                state="IDLE", cycle_count=0,
+                state="PAUSED", cycle_count=0,
                 last_tick_at=None, started_at=None, stopped_at=None,
                 emergency_at=None, last_error=None, tick_interval_sec=30.0,
                 forced_paper=True,
@@ -48,7 +55,7 @@ class TestAutoPaperStatusInvariants:
     def test_forced_paper_must_be_true(self):
         with pytest.raises(ValueError):
             AutoPaperStatus(
-                state="IDLE", cycle_count=0,
+                state="PAUSED", cycle_count=0,
                 last_tick_at=None, started_at=None, stopped_at=None,
                 emergency_at=None, last_error=None, tick_interval_sec=30.0,
                 forced_paper=False,
@@ -60,11 +67,58 @@ def _fresh_loop() -> AutoPaperLoop:
     return get_auto_paper_loop()
 
 
+# ─────────────────────────────────────────────────────────────────────
+# 1. 체크리스트 표준 4 상태 + 레거시 alias
+# ─────────────────────────────────────────────────────────────────────
+
+
+class TestAutoPaperStateEnum:
+    def test_canonical_state_values(self):
+        """체크리스트 표준 4 상태."""
+        assert AutoPaperState.PAUSED.value == "PAUSED"
+        assert AutoPaperState.RUNNING.value == "RUNNING"
+        assert AutoPaperState.STOPPED.value == "STOPPED"
+        assert AutoPaperState.EMERGENCY_STOP.value == "EMERGENCY_STOP"
+
+    def test_legacy_idle_is_alias_for_paused(self):
+        """기존 코드가 AutoPaperState.IDLE 을 import 해도 동작 — alias."""
+        assert AutoPaperState.IDLE is AutoPaperState.PAUSED
+        assert AutoPaperState.IDLE.value == "PAUSED"
+
+    def test_legacy_emergency_is_alias_for_emergency_stop(self):
+        """EMERGENCY → EMERGENCY_STOP alias."""
+        assert AutoPaperState.EMERGENCY is AutoPaperState.EMERGENCY_STOP
+        assert AutoPaperState.EMERGENCY.value == "EMERGENCY_STOP"
+
+    def test_status_payload_emits_canonical_strings_only(self):
+        """API 응답 / to_dict 는 canonical 만 emit — 레거시 'IDLE' / 'EMERGENCY' 0건."""
+        loop = _fresh_loop()
+        d = loop.status().to_dict()
+        # 초기 상태 = PAUSED.
+        assert d["state"] == "PAUSED"
+        loop.start()
+        loop.emergency_stop()
+        d2 = loop.status().to_dict()
+        assert d2["state"] == "EMERGENCY_STOP"
+        # 레거시 문자열 emit 0건.
+        all_values = " ".join(str(v) for v in d2.values())
+        assert "IDLE" not in all_values
+        assert (
+            "EMERGENCY_STOP" in all_values
+            and " EMERGENCY " not in all_values   # bare "EMERGENCY" 단독 emit 안 함
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 2. 기본 service 동작 (기존)
+# ─────────────────────────────────────────────────────────────────────
+
+
 class TestAutoPaperLoopService:
-    def test_initial_state_is_idle(self):
+    def test_initial_state_is_paused(self):
         loop = _fresh_loop()
         s = loop.status()
-        assert s.state == "IDLE"
+        assert s.state == "PAUSED"
         assert s.cycle_count == 0
         assert s.forced_paper is True
 
@@ -104,9 +158,9 @@ class TestAutoPaperLoopService:
     def test_emergency_stop_from_any_state(self):
         loop = _fresh_loop()
         s = loop.emergency_stop()
-        assert s.state == "EMERGENCY"
+        assert s.state == "EMERGENCY_STOP"
         s2 = loop.emergency_stop()
-        assert s2.state == "EMERGENCY"
+        assert s2.state == "EMERGENCY_STOP"
 
     def test_emergency_stop_blocks_tick(self):
         loop = _fresh_loop()
@@ -122,11 +176,11 @@ class TestAutoPaperLoopService:
         s = loop.start()
         assert s.state == "RUNNING"
 
-    def test_reset_returns_to_idle(self):
+    def test_reset_returns_to_paused(self):
         loop = _fresh_loop()
         loop.emergency_stop()
         s = loop.reset()
-        assert s.state == "IDLE"
+        assert s.state == "PAUSED"
 
     def test_status_snapshot_has_no_secrets(self):
         loop = _fresh_loop()
@@ -140,6 +194,84 @@ class TestAutoPaperLoopService:
         ):
             for key in d.keys():
                 assert forbidden not in str(key).lower()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 3. 필수 전이 매트릭스 (체크리스트 요구)
+# ─────────────────────────────────────────────────────────────────────
+
+
+class TestRequiredTransitions:
+    """체크리스트 6 필수 전이 + EMERGENCY_STOP block."""
+
+    def test_paused_to_running(self):
+        """PAUSED → RUNNING (초기 시작)."""
+        loop = _fresh_loop()
+        assert loop.status().state == "PAUSED"
+        loop.start()
+        assert loop.status().state == "RUNNING"
+
+    def test_running_to_stopped(self):
+        """RUNNING → STOPPED."""
+        loop = _fresh_loop()
+        loop.start()
+        loop.stop()
+        assert loop.status().state == "STOPPED"
+
+    def test_running_to_emergency_stop(self):
+        """RUNNING → EMERGENCY_STOP."""
+        loop = _fresh_loop()
+        loop.start()
+        loop.emergency_stop()
+        assert loop.status().state == "EMERGENCY_STOP"
+
+    def test_stopped_to_running(self):
+        """STOPPED → RUNNING (재시작)."""
+        loop = _fresh_loop()
+        loop.start()
+        loop.stop()
+        loop.start()
+        assert loop.status().state == "RUNNING"
+
+    def test_paused_to_emergency_stop(self):
+        """PAUSED → EMERGENCY_STOP (시작 전 긴급정지)."""
+        loop = _fresh_loop()
+        assert loop.status().state == "PAUSED"
+        loop.emergency_stop()
+        assert loop.status().state == "EMERGENCY_STOP"
+
+    def test_emergency_stop_blocks_start(self):
+        """EMERGENCY_STOP 상태에서 start() 차단 — LoopBlockedError."""
+        loop = _fresh_loop()
+        loop.emergency_stop()
+        assert loop.status().state == "EMERGENCY_STOP"
+        with pytest.raises(LoopBlockedError):
+            loop.start()
+        # 차단 후에도 상태는 그대로.
+        assert loop.status().state == "EMERGENCY_STOP"
+
+    def test_emergency_stop_reset_then_start(self):
+        """EMERGENCY_STOP → reset() → PAUSED → start() → RUNNING.
+        운영자 명시 reset() 만 우회 가능."""
+        loop = _fresh_loop()
+        loop.emergency_stop()
+        loop.reset()
+        assert loop.status().state == "PAUSED"
+        loop.start()
+        assert loop.status().state == "RUNNING"
+
+    def test_running_emergency_then_blocked_start(self):
+        """전체 흐름: RUNNING → EMERGENCY_STOP → start() 차단."""
+        loop = _fresh_loop()
+        loop.start()
+        loop.emergency_stop()
+        with pytest.raises(LoopBlockedError):
+            loop.start()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 4. API 통합
+# ─────────────────────────────────────────────────────────────────────
 
 
 @pytest.fixture
@@ -165,7 +297,7 @@ class TestAutoPaperApi:
         r = client.get("/api/auto-paper/status")
         assert r.status_code == 200
         body = r.json()
-        assert body["state"] == "IDLE"
+        assert body["state"] == "PAUSED"
         assert body["forced_paper"] is True
         assert body["is_order_signal"] is False
 
@@ -189,14 +321,30 @@ class TestAutoPaperApi:
     def test_emergency_stop_idempotent(self, client):
         r = client.post("/api/auto-paper/emergency-stop")
         assert r.status_code == 200
-        assert r.json()["state"] == "EMERGENCY"
+        assert r.json()["state"] == "EMERGENCY_STOP"
         r2 = client.post("/api/auto-paper/emergency-stop")
         assert r2.status_code == 200
 
-    def test_reset_returns_idle(self, client):
+    def test_reset_returns_paused(self, client):
         client.post("/api/auto-paper/emergency-stop")
         r = client.post("/api/auto-paper/reset")
-        assert r.json()["state"] == "IDLE"
+        assert r.json()["state"] == "PAUSED"
+
+    def test_emergency_stop_blocks_start_via_api(self, client):
+        """EMERGENCY_STOP 상태에서 POST /start 가 409 — 자동 재시작 우회 차단."""
+        client.post("/api/auto-paper/emergency-stop")
+        r = client.post("/api/auto-paper/start")
+        # FastAPI 가 LoopBlockedError 를 LoopAlreadyRunningError 와 같은 409 로
+        # 변환할 수 있도록 routes_auto_paper.py 가 catch — 본 테스트가 회귀 lock.
+        assert r.status_code == 409
+        # 상태는 EMERGENCY_STOP 그대로.
+        r2 = client.get("/api/auto-paper/status")
+        assert r2.json()["state"] == "EMERGENCY_STOP"
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 5. 정적 import guard (broker / 외부 API 호출 0건)
+# ─────────────────────────────────────────────────────────────────────
 
 
 class TestStaticImportGuards:
