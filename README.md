@@ -255,11 +255,11 @@ python scripts/security_scan.py
 `.gitignore` 로 커밋 차단. 자세한 정책 / 지표 정의 / 한계 점:
 [`docs/backtest_strategy_report.md`](docs/backtest_strategy_report.md).
 
-### 실제 데이터 기반 검증 파이프라인 (Step 3-02 ~ 3-04)
+### 실제 데이터 기반 검증 파이프라인 (Step 3-02 ~ 3-05)
 
 `MockMarketData` 가 아닌 *실제 / 준실제* OHLCV 데이터로 6 전략 baseline +
-parameter grid search + walk-forward 과최적화 탐지를 수행한다. 각 단계는
-독립 CLI 로 1회 명령 실행 가능.
+parameter grid search + walk-forward 과최적화 탐지 + stress test 까지
+1회 명령으로 실행 가능. 각 단계 산출물은 다음 단계 CLI 의 input 으로 carry.
 
 ```bash
 # 3-02 — 실제 데이터 baseline 백테스트 (CSV → yfinance fallback).
@@ -269,12 +269,21 @@ python scripts/run_backtest_real_data.py
 python scripts/run_parameter_optimization.py
 
 # 3-04 — Walk-forward 검증 (train/validation 분리, OVERFIT_RISK 탐지).
-python scripts/run_walk_forward_validation.py
-
-# 3-04 — 3-03 결과를 직접 입력.
 python scripts/run_walk_forward_validation.py \
     --from-paper-config reports/parameter_optimization/paper_candidate_config.json
+
+# 3-05 — Stress test (10 시나리오 × 후보 매트릭스).
+python scripts/run_stress_test.py \
+    --from-walk-forward reports/walk_forward/walk_forward_summary.json
 ```
+
+각 단계 결과의 모든 JSON 객체는 `is_order_signal=false` /
+`auto_apply_allowed=false` / `is_live_authorization=false` invariant. 산출물은
+`reports/*` gitignore — git 미커밋. 자세한 정책:
+[`docs/real_data_backtest.md`](docs/real_data_backtest.md) (3-02) /
+[`docs/parameter_optimization.md`](docs/parameter_optimization.md) (3-03) /
+[`docs/walk_forward_validation.md`](docs/walk_forward_validation.md) (3-04) /
+[`docs/stress_test.md`](docs/stress_test.md) (3-05).
 
 산출물 (`reports/`, gitignore): per-단계 `*_summary.json` + `*_ranking.csv` +
 `*_report.md`. 각 단계 결과의 모든 JSON 객체는
