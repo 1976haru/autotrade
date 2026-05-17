@@ -94,6 +94,63 @@ class TestAutoPaperStateEnum:
         assert AutoPaperState.STOPPED.value == "STOPPED"
         assert AutoPaperState.EMERGENCY_STOP.value == "EMERGENCY_STOP"
 
+    def test_six_canonical_states_lock(self):
+        """#2-01 표준 모델 — 정확히 6 개 canonical state 가 존재한다.
+
+        새 state 추가 / 삭제는 본 테스트 + state machine 다이어그램 +
+        frontend Korean 라벨 + `AutoPaperLoopCard.test.jsx` 6-state 라벨 lock
+        *동시* 갱신 PR 외에서는 금지.
+        """
+        canonical_values = {
+            AutoPaperState.PAUSED.value,
+            AutoPaperState.WAITING_MARKET.value,
+            AutoPaperState.RUNNING.value,
+            AutoPaperState.STOPPED.value,
+            AutoPaperState.EMERGENCY_STOP.value,
+            AutoPaperState.MARKET_CLOSED.value,
+        }
+        assert canonical_values == {
+            "PAUSED", "WAITING_MARKET", "RUNNING", "STOPPED",
+            "EMERGENCY_STOP", "MARKET_CLOSED",
+        }
+        # member 수 = 6 canonical + 2 alias (IDLE, EMERGENCY) = 8 member.
+        # 단 set(AutoPaperState) 는 alias 를 제외한 6 개만 반환 (StrEnum 동작).
+        unique_members = set(AutoPaperState)
+        assert len(unique_members) == 6, (
+            f"expected 6 canonical states, got {len(unique_members)}: "
+            f"{sorted(s.value for s in unique_members)}"
+        )
+
+    def test_two_legacy_aliases_lock(self):
+        """#2-01 표준 모델 — 정확히 2 deprecated alias 가 존재한다.
+
+        IDLE → PAUSED, EMERGENCY → EMERGENCY_STOP. 새 alias 추가는 별도
+        옵트인 PR + 본 lock 테스트 갱신 필요.
+
+        Python StrEnum 의 `__members__` 는 canonical + alias 모두 포함하며,
+        alias 는 canonical member 와 *동일 instance* — `__members__["IDLE"]
+        is __members__["PAUSED"]`.
+        """
+        # IDLE → PAUSED.
+        assert AutoPaperState.IDLE is AutoPaperState.PAUSED
+        # EMERGENCY → EMERGENCY_STOP.
+        assert AutoPaperState.EMERGENCY is AutoPaperState.EMERGENCY_STOP
+
+        canonical_names = {"PAUSED", "WAITING_MARKET", "RUNNING", "STOPPED",
+                           "EMERGENCY_STOP", "MARKET_CLOSED"}
+        legacy_alias_names = {"IDLE", "EMERGENCY"}
+        # __members__ 는 canonical + alias 모두 등록 (8개).
+        all_member_names = set(AutoPaperState.__members__.keys())
+        # canonical + alias *외* 의 member 가 등록되면 본 어설션이 실패.
+        assert all_member_names == canonical_names | legacy_alias_names, (
+            f"unexpected enum members. "
+            f"extras: {sorted(all_member_names - (canonical_names | legacy_alias_names))}, "
+            f"missing: {sorted((canonical_names | legacy_alias_names) - all_member_names)}"
+        )
+        # alias 가 canonical 과 *동일 instance* — value 동일 + identity 동일.
+        assert AutoPaperState.__members__["IDLE"] is AutoPaperState.__members__["PAUSED"]
+        assert AutoPaperState.__members__["EMERGENCY"] is AutoPaperState.__members__["EMERGENCY_STOP"]
+
     def test_legacy_idle_is_alias_for_paused(self):
         """기존 코드가 AutoPaperState.IDLE 을 import 해도 동작 — alias."""
         assert AutoPaperState.IDLE is AutoPaperState.PAUSED

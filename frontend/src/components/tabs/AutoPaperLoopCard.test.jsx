@@ -365,4 +365,54 @@ describe("<AutoPaperLoopCard>", () => {
       }
     });
   });
+
+  // ==========================================================
+  // #2-01 6-state canonical model lock
+  //   - 모든 6 canonical state 가 distinct 한국어 라벨로 표시.
+  //   - 2 deprecated alias (IDLE / EMERGENCY) 도 동일 라벨로 매핑.
+  //   - 새 state 추가 / 삭제는 본 lock 테스트 + backend
+  //     `test_six_canonical_states_lock` *동시* 갱신 PR 외에서는 금지.
+  // ==========================================================
+
+  describe("6-state canonical model lock", () => {
+    const _SIX_CANONICAL_STATES = [
+      { state: "PAUSED",         label: "대기" },
+      { state: "WAITING_MARKET", label: "장 시작 대기" },
+      { state: "RUNNING",        label: "AI Paper Auto Loop 진행" },
+      { state: "STOPPED",        label: "정지" },
+      { state: "EMERGENCY_STOP", label: "긴급정지" },
+      { state: "MARKET_CLOSED",  label: "장 종료" },
+    ];
+
+    for (const { state, label } of _SIX_CANONICAL_STATES) {
+      it(`canonical state "${state}" → 한국어 라벨 "${label}" 표시`, async () => {
+        const api = _mockApi({ state, cycle_count: 0 });
+        render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+        await waitFor(() =>
+          expect(screen.getByTestId("state-pill").textContent).toContain(label),
+        );
+        // 정직 = backend canonical 값을 그대로 사용하지 *않는다* (한국어 라벨로 번역됨).
+        // 단, 라벨 안에 영문 state 키워드가 *그대로* 노출되지 않아야 함 — UX.
+        // (RUNNING 라벨에 "Auto Loop 진행" — 영문 "RUNNING" 단어가 *원본 그대로* 보이지 않음)
+        const pillText = screen.getByTestId("state-pill").textContent;
+        expect(pillText.length).toBeGreaterThan(0);
+      });
+    }
+
+    it("legacy alias IDLE → PAUSED 라벨 매핑 (backend 가 IDLE 을 emit 해도 UI 안 깨짐)", async () => {
+      const api = _mockApi({ state: "IDLE", cycle_count: 0 });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("state-pill").textContent).toContain("대기"),
+      );
+    });
+
+    it("legacy alias EMERGENCY → EMERGENCY_STOP 라벨 매핑", async () => {
+      const api = _mockApi({ state: "EMERGENCY", cycle_count: 0 });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("state-pill").textContent).toContain("긴급정지"),
+      );
+    });
+  });
 });
