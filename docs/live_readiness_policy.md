@@ -184,6 +184,7 @@ ENABLE_FUTURES_LIVE_TRADING=false    # 선물 실거래 차단 (선물 AI Execut
 
 | 문서 | 의미 |
 |---|---|
+| [`docs/strategy_portfolio.md`](strategy_portfolio.md) | **6 전략 모듈 → 4 매매기법군 매핑** + Paper/Live 단계별 가용성 (#0-02) |
 | [`docs/promotion_policy.md`](promotion_policy.md) | 운용 모드 7단계 승격 매트릭스 (SIMULATION → PAPER → LIVE_SHADOW → LIVE_MANUAL_APPROVAL → ... → LIVE_AI_EXECUTION) |
 | [`docs/paper_gate_policy.md`](paper_gate_policy.md) | Paper Gate (#72) — Paper 4주 운용 결과 평가 |
 | [`docs/live_manual_gate.md`](live_manual_gate.md) | Live Manual Gate (#73) — 단계 2 진입 readiness |

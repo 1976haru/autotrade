@@ -38,6 +38,7 @@ npm run dev -- --host 0.0.0.0
 
 - 📋 **[`docs/deployment_checklist.md`](docs/deployment_checklist.md)** — 0단계(목표 확정) ~ 12단계(실거래 전 최종 점검) 연번 체크리스트
 - 🚦🔒 **[`docs/live_readiness_policy.md`](docs/live_readiness_policy.md)** — **AI Paper 자동매매 vs AI Live 실전 단계 분리 (최상위 안전 경계)** — 4 단계 (AI Paper Auto Trading / AI Live Manual Approval / AI Live Canary / AI Live Auto Execution) + 단계별 진입 조건 + 금지 문구 4종 + 영구 안전 default (#0-01)
+- 🧩📚 **[`docs/strategy_portfolio.md`](docs/strategy_portfolio.md)** — **6 전략 모듈 → 4 매매기법군 매핑** (추세추종/Momentum · 평균회귀/Reversion · VWAP/장중 기준가 · 장초반 돌파/Pullback-Rebreak) + 10 컬럼 매트릭스 + Paper/Live 단계별 가용성 + 안전 문구 4종 (#0-02)
 - 🌐 [`docs/deployment_strategy.md`](docs/deployment_strategy.md) — 전체 배포 / 운영 정책
 - 📱 [`docs/mobile_access_guide.md`](docs/mobile_access_guide.md) — LAN / Tailscale 접속 절차
 - 📲 [`docs/pwa_installation.md`](docs/pwa_installation.md) — 스마트폰 홈화면 PWA 설치 + Service Worker 캐시 정책 + 오프라인 제한 (#63)
