@@ -1854,7 +1854,7 @@ live_activation_blockers / promotion_policy / CLAUDE / README / final_completion
 - ✓ 핵심 키워드: "영구 BLOCKED" / "futures_allowed=False" / "FUTURES_AI_EXECUTION"
 - ✓ 자동 롤오버 금지 / 만기일 근처 AI 자동매매 금지 명시
 - ✓ `ENABLE_FUTURES_LIVE_TRADING` 변경 0건 — 본 문서는 *문서*에서만 언급 (코드 mutate 0건)
-- ✓ Secret 패턴 0건 (KIS_APP_KEY=value-shape / sk-... / Bearer ...)
+- ✓ Secret 패턴 0건 (`KIS_APP_KEY=<masked>` / sk-... / Bearer ...)
 - ✓ 실제 broker API 호출 코드 0개 추가
 - ✓ `app/` 운영 코드 변경 0건 — 본 PR은 문서 + 정적 doc 가드 테스트만
 

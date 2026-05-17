@@ -23,7 +23,6 @@ import pytest
 from app.analytics.paper_candidate_aggregator import (
     AggregatedCandidate,
     AggregationInputs,
-    PaperCandidateConfig,
     PipelineStage,
     aggregate_candidates,
     build_paper_candidate_config,
