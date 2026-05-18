@@ -6,10 +6,30 @@ import pytest
 from app.brokers.base import BrokerAdapter, OrderRequest, OrderSide
 from app.brokers.kis import KisBrokerAdapter
 from app.brokers.kis_client import KisClient
+from app.core.config import get_settings
 
 
 def run(coro):
     return asyncio.run(coro)
+
+
+# fix/ci-green-baseline-final: tests in this file construct `KisBrokerAdapter()`
+# with no explicit credentials and expect the *documented* default behaviour
+# (empty creds → `has_credentials()=False`, `get_price` raises). On a dev box
+# whose `.env` carries real `KIS_APP_KEY` / `KIS_APP_SECRET` / `KIS_ACCOUNT_NO`,
+# `Settings()` picks those values up and the documented-default assertions
+# fail. Clear those env vars + the cached settings before each test so behaviour
+# matches CI's clean-env baseline.
+@pytest.fixture(autouse=True)
+def _clean_kis_env(monkeypatch):
+    # Pydantic-settings reads BOTH process env AND `.env` file. Process env
+    # takes precedence, so explicit empty strings here override any local
+    # `.env` value without touching the file on disk.
+    for var in ("KIS_APP_KEY", "KIS_APP_SECRET", "KIS_ACCOUNT_NO"):
+        monkeypatch.setenv(var, "")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def _stub_kis_client(
