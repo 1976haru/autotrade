@@ -282,6 +282,10 @@ def bridge_explanation_to_paper_decisions(
     # #4-09: Risk veto priority — Risk 거절이 AI 추천보다 *항상* 우선.
     risk_officer_rejects: dict[tuple[str, str], str] | None = None,
     extra_risk_flags:     dict[tuple[str, str], list[str]] | None = None,
+    # #4-10: Agent decision log — db_session 주어지면 각 PaperDecision 을
+    # AgentDecisionLog 한 행으로 영구화 (append-only, mode="PAPER").
+    db_session:           Any = None,    # sqlalchemy.orm.Session — None=skip
+    chain_id:             str | None = None,
 ) -> BridgeReport:
     """4-05 explanation + 가상 포지션 + loop state → PaperDecision list.
 
@@ -482,7 +486,7 @@ def bridge_explanation_to_paper_decisions(
         summary_parts.append(f"blocked={events_blocked}")
     summary = " | ".join(summary_parts) + " — advisory only"
 
-    return BridgeReport(
+    bridge_report = BridgeReport(
         generated_at=now.isoformat(),
         schema_version=BRIDGE_SCHEMA_VERSION,
         loop_state=loop_state,
@@ -500,8 +504,24 @@ def bridge_explanation_to_paper_decisions(
             "sizing_applied":     sizing_policy is not None,
             "sizing_results":     [s.to_dict() for s in sizing_results],
             "risk_veto":          veto_report.to_dict(),
+            "decision_log_written": False,
+            "decision_log_count": 0,
         },
     )
+
+    # #4-10: db_session 주어지면 모든 PaperDecision 을 AgentDecisionLog 에 기록.
+    if db_session is not None and decisions:
+        from app.auto_paper.decision_log import record_bridge_report
+        rows = record_bridge_report(
+            db_session,
+            bridge_report=bridge_report,
+            explanation=explanation,
+            chain_id=chain_id,
+        )
+        bridge_report.metadata["decision_log_written"] = True
+        bridge_report.metadata["decision_log_count"] = len(rows)
+
+    return bridge_report
 
 
 def _count_explanation_entries(exp: PaperStartExplanation) -> int:
