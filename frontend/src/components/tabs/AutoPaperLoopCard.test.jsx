@@ -260,9 +260,10 @@ describe("<AutoPaperLoopCard>", () => {
       await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
       fireEvent.click(getByTestId("btn-start-auto-paper"));
       await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
-      // 첫 호출 인자 — pre_market 객체.
+      // 첫 호출 인자 — pre_market + risk_profile (#4-RiskProfileUI: BALANCED 기본값).
       const callArgs = api.autoPaperStart.mock.calls[0][0];
       expect(callArgs).toEqual({
+        risk_profile: "BALANCED",
         pre_market: {
           start_allowed:    true,
           verdict:          "READY_TO_START",
@@ -272,7 +273,7 @@ describe("<AutoPaperLoopCard>", () => {
       });
     });
 
-    it("preMarketCheckResult=null (legacy) → start enabled, no banner, no body", async () => {
+    it("preMarketCheckResult=null (legacy) → start enabled, no banner, payload carries risk_profile only", async () => {
       const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
       const { getByTestId, queryByTestId } = render(
         <AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />
@@ -281,8 +282,10 @@ describe("<AutoPaperLoopCard>", () => {
       expect(queryByTestId("auto-paper-premarket-blocked-banner")).toBeNull();
       fireEvent.click(getByTestId("btn-start-auto-paper"));
       await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
-      // pre_market=null 이면 body=null 로 호출.
-      expect(api.autoPaperStart.mock.calls[0][0]).toBeNull();
+      // #4-RiskProfileUI: pre_market=null 이라도 body 는 risk_profile 만 포함.
+      expect(api.autoPaperStart.mock.calls[0][0]).toEqual({
+        risk_profile: "BALANCED",
+      });
     });
 
     it("BLOCK banner has no banned phrases", async () => {
@@ -878,6 +881,126 @@ describe("<AutoPaperLoopCard>", () => {
       expect(screen.getByTestId("badge-not-order-signal")).toBeTruthy();
       expect(screen.getByTestId("badge-paper-mode")).toBeTruthy();
       expect(screen.getByTestId("badge-no-auto-apply")).toBeTruthy();
+    });
+  });
+
+  describe("#4-RiskProfileUI risk profile selector", () => {
+    it("renders the selector with BALANCED selected by default", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      const selector = screen.getByTestId("agent-risk-profile-selector");
+      expect(selector).toBeTruthy();
+      const group = screen.getByTestId("risk-profile-radiogroup");
+      expect(group.getAttribute("data-selected")).toBe("BALANCED");
+    });
+
+    it("clicking CONSERVATIVE card switches selection", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      fireEvent.click(screen.getByTestId("risk-profile-card-CONSERVATIVE"));
+      expect(screen.getByTestId("risk-profile-radiogroup")
+        .getAttribute("data-selected")).toBe("CONSERVATIVE");
+    });
+
+    it("clicking AGGRESSIVE card switches selection + shows safety warning", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      fireEvent.click(screen.getByTestId("risk-profile-card-AGGRESSIVE"));
+      expect(screen.getByTestId("risk-profile-radiogroup")
+        .getAttribute("data-selected")).toBe("AGGRESSIVE");
+      const warn = screen.getByTestId("risk-profile-aggressive-warning");
+      expect(warn.textContent).toContain("실거래 안전장치를 우회하지 않습니다");
+    });
+
+    it("default BALANCED selection is included in start payload", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
+      await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
+      expect(api.autoPaperStart.mock.calls[0][0])
+        .toEqual({ risk_profile: "BALANCED" });
+    });
+
+    it("CONSERVATIVE selection is forwarded to start payload", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      fireEvent.click(screen.getByTestId("risk-profile-card-CONSERVATIVE"));
+      fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
+      await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
+      expect(api.autoPaperStart.mock.calls[0][0])
+        .toEqual({ risk_profile: "CONSERVATIVE" });
+    });
+
+    it("AGGRESSIVE selection is forwarded to start payload", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      fireEvent.click(screen.getByTestId("risk-profile-card-AGGRESSIVE"));
+      fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
+      await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
+      expect(api.autoPaperStart.mock.calls[0][0])
+        .toEqual({ risk_profile: "AGGRESSIVE" });
+    });
+
+    it("selector + start payload include risk_profile alongside pre_market", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      const pm = {
+        start_allowed:    true,
+        verdict:          "READY_TO_START",
+        blocking_reasons: [],
+        warnings:         [],
+      };
+      render(
+        <AutoPaperLoopCard
+          apiClient={api} pollIntervalMs={0}
+          preMarketCheckResult={pm}
+        />,
+      );
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      fireEvent.click(screen.getByTestId("risk-profile-card-AGGRESSIVE"));
+      fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
+      await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
+      const payload = api.autoPaperStart.mock.calls[0][0];
+      expect(payload.risk_profile).toBe("AGGRESSIVE");
+      expect(payload.pre_market.start_allowed).toBe(true);
+    });
+
+    it("selector disabled while RUNNING — clicks do not change selection", async () => {
+      const api = _mockApi({ state: "RUNNING", cycle_count: 3 });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      const conservativeCard = screen.getByTestId(
+        "risk-profile-card-CONSERVATIVE",
+      );
+      // disabled button click is a no-op; selection should stay BALANCED.
+      fireEvent.click(conservativeCard);
+      expect(screen.getByTestId("risk-profile-radiogroup")
+        .getAttribute("data-selected")).toBe("BALANCED");
+    });
+
+    it("AGGRESSIVE selected — no Place Order / 지금 매수 / 실거래 시작 anywhere in DOM", async () => {
+      const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+      const { container } = render(
+        <AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />,
+      );
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      fireEvent.click(screen.getByTestId("risk-profile-card-AGGRESSIVE"));
+      const text = container.textContent || "";
+      const forbidden = [
+        "지금 매수", "지금 매도", "Place Order",
+        "실거래 시작", "실거래 활성화 시작",
+        "ENABLE_LIVE_TRADING=true", "ENABLE_AI_EXECUTION=true",
+        "ENABLE_FUTURES_LIVE_TRADING=true",
+        "AI 자동매매 켜기",
+      ];
+      for (const f of forbidden) {
+        expect(text).not.toContain(f);
+      }
     });
   });
 });

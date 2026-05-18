@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { Card, SectionLabel } from "../common";
+import AgentRiskProfileSelector, {
+  DEFAULT_RISK_PROFILE,
+} from "../AgentRiskProfileSelector";
 import { backendApi } from "../../services/backend/client";
 
 // AI Paper Auto Loop card — EXE 원클릭 시작/정지/긴급정지.
@@ -77,6 +80,9 @@ export function AutoPaperLoopCard({
   const [busy, setBusy] = useState(false);
   // #2-09: Paper Loop advisory ledger — 최근 AI 판단 / 가상 체결 noise-low 표시.
   const [ledgerEvents, setLedgerEvents] = useState([]);
+  // #4-RiskProfileUI: 사용자가 선택한 AI 운용 성향 — 기본값 BALANCED.
+  // start 시점에 backend POST /api/auto-paper/start 요청 body 에 동봉.
+  const [riskProfile, setRiskProfile] = useState(DEFAULT_RISK_PROFILE);
 
   const refresh = useCallback(async () => {
     try {
@@ -131,21 +137,25 @@ export function AutoPaperLoopCard({
     }
   };
 
-  // 시작 버튼: pre-market 결과를 backend 에 동봉. 서버가 최종 거절 권한.
+  // 시작 버튼: pre-market 결과 + 선택된 risk_profile 을 backend 에 동봉.
+  // 서버가 최종 거절 권한 (pre_market BLOCK / EMERGENCY_STOP 등).
   const onStart = useCallback(wrap(async () => {
-    const body = preMarketCheckResult != null
-      ? {
-          pre_market: {
-            start_allowed:    preMarketCheckResult.start_allowed === true,
-            verdict:          preMarketCheckResult.verdict || "",
-            blocking_reasons: preMarketCheckResult.blocking_reasons || [],
-            warnings:         preMarketCheckResult.warnings || [],
-          },
-        }
-      : null;
-    // apiClient.autoPaperStart 는 (body=null) 시 body 미전송 (기존 호환).
+    // 항상 body 생성 — risk_profile 은 반드시 carry (기본값 BALANCED).
+    const body = {
+      risk_profile: riskProfile,
+      ...(preMarketCheckResult != null
+        ? {
+            pre_market: {
+              start_allowed:    preMarketCheckResult.start_allowed === true,
+              verdict:          preMarketCheckResult.verdict || "",
+              blocking_reasons: preMarketCheckResult.blocking_reasons || [],
+              warnings:         preMarketCheckResult.warnings || [],
+            },
+          }
+        : {}),
+    };
     return apiClient.autoPaperStart(body);
-  }), [apiClient, refresh, preMarketCheckResult]);
+  }), [apiClient, refresh, preMarketCheckResult, riskProfile]);
   const onStop = useCallback(wrap(apiClient.autoPaperStop), [apiClient, refresh]);
   const onEmergencyStop = useCallback(
     wrap(apiClient.autoPaperEmergencyStop),
@@ -399,6 +409,19 @@ export function AutoPaperLoopCard({
           </div>
         </div>
       )}
+
+      {/* #4-RiskProfileUI: 시작 *전* 운용 성향 선택. RUNNING 중에는 비활성. */}
+      <div style={{ marginBottom: 12 }}>
+        <AgentRiskProfileSelector
+          value={riskProfile}
+          onChange={setRiskProfile}
+          disabled={
+            busy
+            || state === "RUNNING"
+            || state === "WAITING_MARKET"
+          }
+        />
+      </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }} data-testid="control-buttons">
         <button
