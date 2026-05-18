@@ -137,6 +137,11 @@ export const backendApi = {
   // #2-10: AI Paper 자동매수/매도 skeleton — read-only latest decision.
   autoPaperLatestDecision: () =>
     backendFetch("/api/auto-paper/decision/latest"),
+  // #4-05: Paper 실행 전 최종 설명 카드 — advisory, read-only.
+  paperStartExplanation: (body = {}) => backendFetch(
+    "/api/agents/paper-start-explanation",
+    { method: "POST", body: JSON.stringify(body || {}) },
+  ),
   getRiskPolicy: () => backendFetch("/api/risk/policy"),
   setEmergencyStop: (enabled, decision) => backendFetch("/api/risk/emergency-stop", {
     method: "POST",
