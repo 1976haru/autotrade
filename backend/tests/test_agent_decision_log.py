@@ -20,7 +20,6 @@ import re
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -45,7 +44,6 @@ from app.auto_paper.decision_log import (
 from app.auto_paper.ledger import reset_ledger_for_tests
 from app.auto_paper.position_sizer import PositionSizingPolicy
 from app.db.models import AgentDecisionLog, Base
-from app.main import app as fastapi_app
 
 
 _MODULE_PATH = (
@@ -493,9 +491,14 @@ class TestQuery:
 
 
 class TestApi:
+    """API tests use the conftest `client` fixture so that the test DB
+    contains all SQLAlchemy tables (including `agent_decision_log`) created
+    via `Base.metadata.create_all`. On CI, the real `database_url` may point
+    at a fresh DB that has not run alembic — using the conftest fixture
+    isolates the test from that environment difference.
+    """
 
-    def test_get_decision_log_returns_envelope(self):
-        client = TestClient(fastapi_app)
+    def test_get_decision_log_returns_envelope(self, client):
         r = client.get("/api/auto-paper/decision-log?limit=10")
         assert r.status_code == 200, r.text
         body = r.json()
@@ -505,13 +508,14 @@ class TestApi:
         assert body["is_order_signal"] is False
         assert body["auto_apply_allowed"] is False
         assert body["is_live_authorization"] is False
+        # Empty test DB → entries=[]; envelope still valid.
         assert isinstance(body["entries"], list)
+        assert body["entries"] == []
         assert isinstance(body["summary"], dict)
         # disclaimer phrase always present.
         assert "advisory" in body["advisory_disclaimer"]
 
-    def test_get_decision_log_rejects_invalid_limit(self):
-        client = TestClient(fastapi_app)
+    def test_get_decision_log_rejects_invalid_limit(self, client):
         r = client.get("/api/auto-paper/decision-log?limit=0")
         assert r.status_code == 422   # Query ge=1.
 
