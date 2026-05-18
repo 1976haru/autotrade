@@ -282,6 +282,9 @@ def bridge_explanation_to_paper_decisions(
     # #4-09: Risk veto priority — Risk 거절이 AI 추천보다 *항상* 우선.
     risk_officer_rejects: dict[tuple[str, str], str] | None = None,
     extra_risk_flags:     dict[tuple[str, str], list[str]] | None = None,
+    # #4-RiskProfileApply: AI 운용 성향의 flag-derived veto 허용 한도.
+    # default 0 = 기존 동작 (1개 flag 라도 BUY 차단).
+    risk_veto_max_flags:  int = 0,
     # #4-10: Agent decision log — db_session 주어지면 각 PaperDecision 을
     # AgentDecisionLog 한 행으로 영구화 (append-only, mode="PAPER").
     db_session:           Any = None,    # sqlalchemy.orm.Session — None=skip
@@ -324,6 +327,7 @@ def bridge_explanation_to_paper_decisions(
         loop_state=loop_state,
         risk_officer_rejects=risk_officer_rejects,
         extra_risk_flags=extra_risk_flags,
+        risk_veto_max_flags=int(risk_veto_max_flags),
         now=now,
     )
     veto_index: dict[tuple[str, str], RiskVetoDecision] = {

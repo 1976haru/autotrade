@@ -127,6 +127,9 @@ def consume_agent_recommendations(
     db_session:               Any                           = None,
     chain_id:                 str | None                    = None,
     now:                      datetime | None               = None,
+    # #4-RiskProfileApply: 운영자가 선택한 AI 운용 성향 — None / 알 수 없는
+    # 값 → BALANCED (기본값). 명시 sizing_policy 가 주어지면 우선.
+    risk_profile:             Any                           = None,
 ) -> ConsumerResult:
     """1 cycle 동안 Agent 추천 → PaperDecision → ledger + AgentDecisionLog.
 
@@ -135,6 +138,12 @@ def consume_agent_recommendations(
 
     RUNNING 이 아니거나 provider 가 None / explanation 미반환 시 0 decision
     으로 안전 종료.
+
+    #4-RiskProfileApply:
+        risk_profile 이 None / "" / unknown → BALANCED (4-08 default).
+        명시 sizing_policy 와 risk_profile 둘 다 주어지면 **sizing_policy
+        우선** (운영자 명시 override 보존). 성향이 적용되면 응답
+        metadata.risk_profile / metadata.risk_veto_max_flags carry.
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -212,6 +221,27 @@ def consume_agent_recommendations(
         except Exception:  # noqa: BLE001
             positions = []
 
+    # #4-RiskProfileApply: 성향 → sizing_policy + risk_veto threshold 변환.
+    # caller 가 명시 sizing_policy 를 준 경우 그대로 사용, 아니면 성향 기반 변환.
+    effective_sizing_policy = sizing_policy
+    profile_label: str | None = None
+    risk_veto_max_flags: int = 0
+    max_concurrent_candidates: int = 0
+    if risk_profile is not None:
+        try:
+            from app.agents.risk_profile import (
+                policy_for as _profile_policy_for,
+                sizing_policy_for as _profile_sizing_for,
+            )
+            profile_policy = _profile_policy_for(risk_profile)
+            profile_label = profile_policy.profile.value
+            risk_veto_max_flags = int(profile_policy.risk_veto_max_flags)
+            max_concurrent_candidates = int(profile_policy.max_concurrent_candidates)
+            if effective_sizing_policy is None:
+                effective_sizing_policy = _profile_sizing_for(risk_profile)
+        except Exception:  # noqa: BLE001 — risk_profile import 실패 시 fallback.
+            effective_sizing_policy = sizing_policy   # 그대로 유지.
+
     # 5. bridge 호출 — 4-07 / 4-08 / 4-09 / 4-10 통합.
     report = bridge_explanation_to_paper_decisions(
         explanation=explanation,
@@ -220,9 +250,10 @@ def consume_agent_recommendations(
         virtual_trade_size=int(virtual_trade_size),
         auto_fill=bool(auto_fill),
         record=True,
-        sizing_policy=sizing_policy,
+        sizing_policy=effective_sizing_policy,
         risk_officer_rejects=risk_officer_rejects,
         extra_risk_flags=extra_risk_flags,
+        risk_veto_max_flags=risk_veto_max_flags,
         db_session=db_session,
         chain_id=chain_id,
     )
@@ -253,6 +284,9 @@ def consume_agent_recommendations(
             "decision_log_written": bool(
                 report.metadata.get("decision_log_written")
             ),
+            "risk_profile":      profile_label,
+            "risk_veto_max_flags": risk_veto_max_flags,
+            "max_concurrent_candidates": max_concurrent_candidates,
         },
     )
 

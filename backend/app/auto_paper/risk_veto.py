@@ -124,6 +124,24 @@ _BLOCK_ALL_REASONS: set[RiskVetoReason] = {
 }
 
 
+# #4-RiskProfileApply: 항상 차단되는 reasons — risk_profile threshold 와
+# *무관* 하게 신규 진입 차단.
+_ALWAYS_BLOCK_REASONS: set[RiskVetoReason] = {
+    RiskVetoReason.EMERGENCY_STOP,
+    RiskVetoReason.PRE_MARKET_BLOCK,
+    RiskVetoReason.RISK_OFFICER_REJECT,
+}
+
+# flag-derived reasons — risk_profile.max_flags 임계값으로 *완화* 가능한 set.
+_FLAG_DERIVED_REASONS: set[RiskVetoReason] = {
+    RiskVetoReason.STALE_DATA,
+    RiskVetoReason.DUPLICATE_SIGNAL,
+    RiskVetoReason.HIGH_CORRELATION,
+    RiskVetoReason.OVERFIT_RISK,
+    RiskVetoReason.LOW_LIQUIDITY,
+}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Dataclasses
 # ─────────────────────────────────────────────────────────────────────────────
@@ -283,8 +301,16 @@ def _build_decision(
     global_reasons:   list[RiskVetoReason],
     officer_reason:   str | None,
     extra_flags:      list[str],
+    risk_veto_max_flags: int = 0,
 ) -> RiskVetoDecision:
-    """단일 전략에 대한 veto 결정 — global + entry-level 통합."""
+    """단일 전략에 대한 veto 결정 — global + entry-level 통합.
+
+    #4-RiskProfileApply: `risk_veto_max_flags` 가 N > 0 이면 *flag-derived*
+    reasons (STALE_DATA / DUPLICATE_SIGNAL / HIGH_CORRELATION / OVERFIT_RISK /
+    LOW_LIQUIDITY) 가 N개 이하인 경우 *완화* (BLOCK 안 함). RiskOfficer /
+    EMERGENCY_STOP / PRE_MARKET_BLOCK 는 항상 BLOCK — 본 threshold 의 영향 X.
+    `risk_veto_max_flags=0` (default) → 기존 동작 그대로 (1개라도 차단).
+    """
     reasons: list[RiskVetoReason] = list(global_reasons)
     detail: list[str] = []
 
@@ -308,6 +334,28 @@ def _build_decision(
         if RiskVetoReason.OVERFIT_RISK not in reasons:
             reasons.append(RiskVetoReason.OVERFIT_RISK)
         detail.append("overfit_verdict=OVERFIT_RISK")
+
+    # #4-RiskProfileApply: flag-derived reasons 가 threshold 이하면 *완화*.
+    # always-block reasons (EMERGENCY_STOP / PRE_MARKET_BLOCK / RISK_OFFICER)
+    # 는 본 완화의 영향을 받지 *않는다*.
+    flag_derived_count = sum(1 for r in reasons if r in _FLAG_DERIVED_REASONS)
+    has_always_block = any(r in _ALWAYS_BLOCK_REASONS for r in reasons)
+    if (not has_always_block
+            and flag_derived_count > 0
+            and flag_derived_count <= int(risk_veto_max_flags)):
+        # flag-derived reasons 만 있고 *허용 한도 이내* → veto 미발생.
+        # 단 reasons / detail 은 carry — 운영자가 사유를 *볼 수* 있어야 함.
+        detail.append(
+            f"risk_profile relaxed: {flag_derived_count} flag(s) "
+            f"<= max={int(risk_veto_max_flags)}"
+        )
+        return RiskVetoDecision(
+            strategy=exp.strategy, symbol=exp.symbol,
+            vetoed=False, reasons=[],
+            severity=RiskVetoSeverity.NONE,
+            allow_exit_if_holding=True,
+            detail_lines=detail,
+        )
 
     ordered = _sort_reasons(reasons)
     severity = _severity_for_reasons(ordered)
@@ -343,6 +391,7 @@ def evaluate_risk_veto(
     loop_state:            str,
     risk_officer_rejects:  dict[tuple[str, str], str] | None = None,
     extra_risk_flags:      dict[tuple[str, str], list[str]] | None = None,
+    risk_veto_max_flags:   int = 0,
     now:                   datetime | None = None,
 ) -> RiskVetoReport:
     """`PaperStartExplanation` + loop_state + RiskOfficer rejects → veto 평가.
@@ -355,6 +404,12 @@ def evaluate_risk_veto(
         risk_officer_rejects: `(strategy, symbol) → reason 문자열`.
         extra_risk_flags: 추가 flag carry — UI / caller 가 명시 (예: KIS
             stale-data 감지 결과). 4-05 의 entry.risk_flags 와 *합집합*.
+        risk_veto_max_flags: AI 운용 성향 임계값 (#4-RiskProfileApply).
+            flag-derived reasons (STALE_DATA / DUPLICATE_SIGNAL /
+            HIGH_CORRELATION / OVERFIT_RISK / LOW_LIQUIDITY) 가 이 값 이하면
+            *완화* (veto 미발생). always-block reasons (EMERGENCY_STOP /
+            PRE_MARKET_BLOCK / RISK_OFFICER_REJECT) 는 영향 X. default=0
+            (기존 동작 — 1개라도 차단).
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -389,6 +444,7 @@ def evaluate_risk_veto(
                 global_reasons=global_reasons,
                 officer_reason=officer_reason,
                 extra_flags=extra_flags,
+                risk_veto_max_flags=int(risk_veto_max_flags),
             ),
         )
 

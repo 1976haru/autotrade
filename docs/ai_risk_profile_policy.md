@@ -111,14 +111,75 @@ adapter 함수만 제공 — caller (예: `auto_paper/agent_consumer` 후속 PR)
 - ✅ `is_live_authorization=False` 영구 — 어떤 프리셋도 실거래 허가 아님
 - ✅ AGGRESSIVE 도 *Paper 단계의 임계값 조정* 만 — 실거래 흐름 절대 우회 못함
 
-## 9. 후속 PR 권고
+## 9. 적용 (#4-RiskProfileApply)
+
+본 절은 *프리셋이 실제 판단에 반영되는 경로* 를 정의한다 (별도 PR 에서 추가):
+
+### 9.1 Consumer 통합
+
+`consume_agent_recommendations(..., risk_profile=...)`:
+
+```python
+result = consume_agent_recommendations(
+    loop_state="RUNNING",
+    recommendation_provider=...,
+    risk_profile=RiskProfile.AGGRESSIVE,   # 또는 "aggressive" / "CONSERVATIVE" 등
+    ...
+)
+# result.metadata["risk_profile"] == "AGGRESSIVE"
+# result.metadata["risk_veto_max_flags"] == 2
+```
+
+- `risk_profile` 가 주어지면 `sizing_policy_for(profile)` 으로 4-08
+  `PositionSizingPolicy` 자동 도출 → bridge 의 `sizing_policy` 인자.
+- `risk_veto_max_flags` 가 bridge → `evaluate_risk_veto` 까지 전파.
+- 명시 `sizing_policy` 인자가 함께 주어지면 *operator override 우선* —
+  profile 라벨은 metadata 에 carry 만.
+
+### 9.2 Risk veto 통합
+
+`evaluate_risk_veto(..., risk_veto_max_flags=N)`:
+
+- `risk_veto_max_flags=0` (CONSERVATIVE): 어떤 flag 1개라도 BLOCK (기존 동작).
+- `risk_veto_max_flags=1` (BALANCED): flag 1개 까지 허용, 2개 이상 BLOCK.
+- `risk_veto_max_flags=2` (AGGRESSIVE): flag 2개 까지 허용, 3개 이상 BLOCK.
+- `EMERGENCY_STOP` / `PRE_MARKET_BLOCK` / `RISK_OFFICER_REJECT` 는 임계값과
+  *무관* 하게 항상 BLOCK — 본 완화의 영향을 받지 *않는다*.
+
+### 9.3 Position size 차이
+
+동일한 high-confidence 입력에서 (`equity=1억`, `price=70k`, `confidence=0.95`):
+- CONSERVATIVE → 가장 작은 quantity
+- BALANCED → 중간
+- AGGRESSIVE → 가장 큰 quantity
+순서는 `CONS < BAL < AGG` 영구 (`TestPositionSizeOrdering`).
+
+### 9.4 Confidence threshold 차이
+
+`confidence=0.35` 입력에서:
+- CONSERVATIVE (임계 0.60) → quantity=0 → HOLD
+- BALANCED (임계 0.40) → quantity=0 → HOLD
+- AGGRESSIVE (임계 0.30) → quantity > 0 → BUY
+
+(`TestConfidenceThreshold`)
+
+### 9.5 안전 invariant (적용 후에도 영구)
+
+| 항목 | 검증 위치 |
+|---|---|
+| 어떤 프리셋도 broker spy 호출 0건 | `TestSafetyInvariants` (3 parametrized) |
+| 모든 AgentDecisionLog row `mode="PAPER"` | `test_agent_decision_log_rows_are_paper_mode` |
+| `is_order_signal=False` / `auto_apply_allowed=False` / `is_live_authorization=False` carry | 위 |
+| EMERGENCY_STOP / PRE_MARKET_BLOCK / RISK_OFFICER_REJECT 모든 프리셋에서 BLOCK | `TestRiskVetoFlagThreshold` 4 cases |
+| 명시 sizing_policy 가 risk_profile 보다 우선 | `TestExplicitOverridePrecedence` |
+| 비RUNNING + 모든 프리셋 → 0 decisions / 0 log row | `TestNonRunningProfileInert` (parametrized profile × state) |
+
+## 10. 후속 PR 권고
 
 - **API endpoint** — `GET /api/agents/risk-profiles` (catalog) + 사용자 선택
   저장 / 호출.
 - **AutoPaperLoopCard UI** — 3 라디오 버튼 (보수적 / 안정적 / 공격적) + 선택된
   프리셋의 임계값 미리보기 + "공격적이어도 실거래 활성화 아님" disclaimer.
-- **agent_consumer 통합** — `consume_agent_recommendations(profile=...)` 인자로
-  4-08 sizing_policy 와 4-09 veto_policy 를 자동 carry.
 - **operator override** — 운영자가 본 프리셋 위에 추가 override 를 원하면
   별도 옵트인 PR (사용자 명시 승인 필요).
 - **per-strategy profile** — 본 PR 은 전체 portfolio 1 프리셋. 후속 PR 에서
