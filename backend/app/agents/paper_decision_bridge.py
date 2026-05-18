@@ -68,6 +68,12 @@ from app.auto_paper.position_sizer import (
     SizingResult,
     compute_position_size,
 )
+from app.auto_paper.risk_veto import (
+    RiskVetoDecision,
+    RiskVetoReport,
+    RiskVetoSeverity,
+    evaluate_risk_veto,
+)
 
 
 BRIDGE_SCHEMA_VERSION = "1.0"
@@ -216,6 +222,44 @@ def _bucket_reason(exp: StrategyExplanation) -> str:
     return f"[{bucket_label}] {rationale}"
 
 
+def _apply_veto(
+    *,
+    direction: str,
+    veto:      RiskVetoDecision,
+    position:  PositionSnapshot | None,
+) -> tuple[str, str | None]:
+    """위험 거절을 direction 에 적용 — *위험이 AI 추천보다 우선*.
+
+    Returns (new_direction, block_reason_or_None).
+
+    Severity 매트릭스:
+    - `BLOCK` (EMERGENCY_STOP / PRE_MARKET_BLOCK): BUY/SELL/EXIT 모두 차단 → HOLD.
+    - `BLOCK_NEW_ENTRY` (RiskOfficer / risk_flags): BUY/SELL 차단 → HOLD,
+       EXIT 은 *위험 축소 목적* 으로 보유 포지션에 한해 허용.
+    """
+    pos_qty = int(position.quantity) if position is not None else 0
+    label = ", ".join(r.value for r in veto.reasons) or "RISK_VETO"
+    reason = (
+        f"{veto.strategy}/{veto.symbol}: risk veto [{label}] "
+        f"severity={veto.severity.value}"
+    )
+
+    if veto.severity == RiskVetoSeverity.BLOCK:
+        if direction in (AIDirection.BUY, AIDirection.SELL, AIDirection.EXIT):
+            return AIDirection.HOLD, reason + " — 모든 trade 차단"
+        return direction, None
+
+    # BLOCK_NEW_ENTRY — BUY/SELL 차단, EXIT 는 보유 시 허용.
+    if direction in (AIDirection.BUY, AIDirection.SELL):
+        return AIDirection.HOLD, reason + " — 신규 진입 차단"
+    if direction == AIDirection.EXIT:
+        if pos_qty > 0 and veto.allow_exit_if_holding:
+            # 보유 + 위험 축소 EXIT — 허용 (block_reason 없음).
+            return direction, None
+        return AIDirection.HOLD, reason + " — EXIT 불가 (포지션 없음)"
+    return direction, None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Main bridge
 # ─────────────────────────────────────────────────────────────────────────────
@@ -235,6 +279,9 @@ def bridge_explanation_to_paper_decisions(
     price_lookup:       dict[tuple[str, str], float] | None = None,
     account_equity:     float | None                  = None,
     confidence_lookup:  dict[tuple[str, str], float] | None = None,
+    # #4-09: Risk veto priority — Risk 거절이 AI 추천보다 *항상* 우선.
+    risk_officer_rejects: dict[tuple[str, str], str] | None = None,
+    extra_risk_flags:     dict[tuple[str, str], list[str]] | None = None,
 ) -> BridgeReport:
     """4-05 explanation + 가상 포지션 + loop state → PaperDecision list.
 
@@ -267,6 +314,18 @@ def bridge_explanation_to_paper_decisions(
     events_blocked:   int = 0
     block_reasons:    list[str] = []
 
+    # #4-09: Risk veto 평가 — AI 추천 변환 *전*에 위험 거절이 우선.
+    veto_report: RiskVetoReport = evaluate_risk_veto(
+        explanation=explanation,
+        loop_state=loop_state,
+        risk_officer_rejects=risk_officer_rejects,
+        extra_risk_flags=extra_risk_flags,
+        now=now,
+    )
+    veto_index: dict[tuple[str, str], RiskVetoDecision] = {
+        (d.strategy, d.symbol): d for d in veto_report.decisions
+    }
+
     # 1. EMERGENCY_STOP — 어떤 변환 / 기록도 수행하지 않음.
     if loop_state == _EMERGENCY_LOOP_STATE:
         block_reasons.append(
@@ -282,7 +341,10 @@ def bridge_explanation_to_paper_decisions(
             events_blocked=0,    # 시도 자체를 안 함 — 차단 카운트도 0
             block_reasons=block_reasons,
             summary="EMERGENCY_STOP — 모든 AI Paper 판단 변환 / 기록 영구 차단.",
-            metadata={"input_entries": _count_explanation_entries(explanation)},
+            metadata={
+                "input_entries": _count_explanation_entries(explanation),
+                "risk_veto":     veto_report.to_dict(),
+            },
         )
 
     # 2. explanation.verdict 가 DO_NOT_START → 모든 trade 차단.
@@ -316,6 +378,17 @@ def bridge_explanation_to_paper_decisions(
         direction = _explanation_to_direction(
             exp, position, allow_trade=allow_trade,
         )
+
+        # #4-09: Risk veto 적용 — AI 방향 결정 *직후* 위험 거절 검사.
+        veto = veto_index.get((exp.strategy, exp.symbol))
+        if veto is not None and veto.vetoed:
+            direction, veto_block_reason = _apply_veto(
+                direction=direction,
+                veto=veto,
+                position=position,
+            )
+            if veto_block_reason:
+                block_reasons.append(veto_block_reason)
 
         # #4-08: position sizing — sizing_policy 주어지면 동적 계산.
         effective_trade_size = int(virtual_trade_size)
@@ -368,6 +441,13 @@ def bridge_explanation_to_paper_decisions(
                      "sizing_quantity": sizing_result.quantity}
                     if sizing_result is not None else {}
                 ),
+                **(
+                    {"risk_veto":          True,
+                     "risk_veto_reasons":  [r.value for r in veto.reasons],
+                     "risk_veto_severity": veto.severity.value}
+                    if (veto is not None and veto.vetoed) else
+                    {"risk_veto": False}
+                ),
             },
         )
         try:
@@ -419,6 +499,7 @@ def bridge_explanation_to_paper_decisions(
             "verdict_allow_trade": verdict_allows_trade,
             "sizing_applied":     sizing_policy is not None,
             "sizing_results":     [s.to_dict() for s in sizing_results],
+            "risk_veto":          veto_report.to_dict(),
         },
     )
 

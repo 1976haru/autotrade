@@ -766,3 +766,253 @@ class TestBridgePositionSizing:
         assert len(exits) == 1
         # EXIT virtual_position_delta is negative (sell-side).
         assert exits[0].virtual_position_delta < 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# #4-09: Risk veto integration — RiskOfficer / risk_flags 가 AI 추천보다 우선.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# NOTE: RiskVetoReason values are checked via metadata string contents (e.g.
+# 'STALE_DATA'), so we don't import the enum here.
+
+
+def _direct_explanation(*, verdict=ExplanationVerdict.READY_TO_REVIEW,
+                        recommended=None, watchlist=None, excluded=None,
+                        market_regime="TREND_UP"):
+    """Build PaperStartExplanation directly so 4-05 redistribution doesn't move
+    watchlist entries with risk_flags to excluded.
+    """
+    return PaperStartExplanation(
+        generated_at="2026-05-18T00:00:00+00:00",
+        schema_version="1.0",
+        verdict=verdict,
+        recommended_explanations=list(recommended or []),
+        watchlist_explanations=list(watchlist or []),
+        excluded_explanations=list(excluded or []),
+        market_regime=market_regime,
+        regime_confidence=0.8,
+        regime_reasons=[],
+        regime_risk_flags=[],
+        regime_allowed_tactics=[],
+        regime_blocked_tactics=[],
+        overfit_count=0,
+        overfit_strategies=[],
+        headline="test",
+        risk_summary=[],
+        operator_note="",
+        next_actions=[],
+        can_start_paper=True,
+        blocking_reasons=[],
+    )
+
+
+def _se(strategy, symbol, *, bucket="recommended", risk_flags=None,
+        overfit_verdict=None):
+    return StrategyExplanation(
+        strategy=strategy, symbol=symbol,
+        bucket=bucket,
+        paper_candidate_status="READY_FOR_PAPER",
+        rationale_lines=["test"],
+        risk_flags=list(risk_flags or []),
+        overfit_verdict=overfit_verdict,
+    )
+
+
+class TestRiskVetoIntegration:
+    """4-09 — RiskOfficer / risk_flags / pre-market BLOCK 가 AI BUY/SELL 차단.
+
+    EXIT 은 보유 시 *위험 축소* 목적으로 허용 (EMERGENCY_STOP / pre-market
+    제외).
+    """
+
+    def test_risk_officer_reject_blocks_buy(self):
+        exp = _direct_explanation(recommended=[_se("sma_crossover", "005930")])
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING", positions=[],
+            risk_officer_rejects={("sma_crossover", "005930"): "낮은 신뢰도"},
+        )
+        buys = [d for d in report.decisions if d.action == DecisionAction.BUY]
+        holds = [d for d in report.decisions if d.action == DecisionAction.HOLD]
+        assert len(buys) == 0
+        assert len(holds) >= 1
+        joined = " ".join(report.block_reasons)
+        assert "RISK_OFFICER_REJECT" in joined
+        # PaperDecision metadata carries veto info.
+        assert holds[0].metadata.get("risk_veto") is True
+        assert "RISK_OFFICER_REJECT" in holds[0].metadata["risk_veto_reasons"]
+
+    def test_risk_officer_reject_blocks_sell(self):
+        # SELL bucket case: watchlist + exit_condition → would be EXIT, but
+        # without holding the bridge routes to HOLD. We test the BLOCK_NEW_ENTRY
+        # severity against EXIT direction.
+        exp = _direct_explanation(watchlist=[
+            _se("sma_crossover", "005930", bucket="watchlist"),
+        ])
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING",
+            positions=[PositionSnapshot(strategy="sma_crossover",
+                                         symbol="005930",
+                                         quantity=10, exit_condition=True)],
+            risk_officer_rejects={("sma_crossover", "005930"): "리스크 거절"},
+        )
+        # Even with holding + exit_condition, BLOCK_NEW_ENTRY allows EXIT.
+        # That's the spec — EXIT is risk-reducing. Verify exit allowed.
+        exits = [d for d in report.decisions if d.action == DecisionAction.EXIT]
+        # EXIT permitted (risk reducing) even under RiskOfficer reject.
+        assert len(exits) == 1
+
+    def test_emergency_stop_blocks_all_trade_actions(self):
+        exp = _direct_explanation(recommended=[_se("sma_crossover", "005930")])
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="EMERGENCY_STOP", positions=[],
+            risk_officer_rejects={},
+        )
+        # EMERGENCY_STOP short-circuits — 0 decisions.
+        assert report.decisions == []
+        assert report.events_recorded == 0
+        # risk_veto metadata still carries (global veto).
+        veto = report.metadata["risk_veto"]
+        assert veto["has_global_veto"] is True
+        assert "EMERGENCY_STOP" in veto["global_veto_reasons"]
+
+    def test_pre_market_block_blocks_buy(self):
+        exp = _direct_explanation(
+            verdict=ExplanationVerdict.DO_NOT_START,
+            recommended=[_se("sma_crossover", "005930")],
+        )
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING", positions=[],
+        )
+        buys = [d for d in report.decisions if d.action == DecisionAction.BUY]
+        assert len(buys) == 0
+        veto = report.metadata["risk_veto"]
+        assert "PRE_MARKET_BLOCK" in veto["global_veto_reasons"]
+
+    def test_stale_data_flag_blocks_buy(self):
+        exp = _direct_explanation(recommended=[
+            _se("sma_crossover", "005930", risk_flags=["stale_data"]),
+        ])
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING", positions=[],
+        )
+        buys = [d for d in report.decisions if d.action == DecisionAction.BUY]
+        assert len(buys) == 0
+        joined = " ".join(report.block_reasons)
+        assert "STALE_DATA" in joined
+
+    def test_high_correlation_flag_blocks_buy(self):
+        exp = _direct_explanation(recommended=[
+            _se("sma_crossover", "005930", risk_flags=["high_correlation"]),
+        ])
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING", positions=[],
+        )
+        buys = [d for d in report.decisions if d.action == DecisionAction.BUY]
+        assert len(buys) == 0
+        joined = " ".join(report.block_reasons)
+        assert "HIGH_CORRELATION" in joined
+
+    def test_overfit_risk_flag_blocks_buy(self):
+        exp = _direct_explanation(recommended=[
+            _se("sma_crossover", "005930", overfit_verdict="OVERFIT_RISK"),
+        ])
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING", positions=[],
+        )
+        buys = [d for d in report.decisions if d.action == DecisionAction.BUY]
+        assert len(buys) == 0
+
+    def test_low_liquidity_flag_blocks_buy(self):
+        # caller can flag low_liquidity via risk_flags or extra_risk_flags.
+        exp = _direct_explanation(recommended=[
+            _se("sma_crossover", "005930", risk_flags=["low_liquidity"]),
+        ])
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING", positions=[],
+        )
+        buys = [d for d in report.decisions if d.action == DecisionAction.BUY]
+        assert len(buys) == 0
+
+    def test_extra_risk_flags_block_buy(self):
+        # Even when entry.risk_flags is empty, caller can carry runtime flags.
+        exp = _direct_explanation(recommended=[_se("sma_crossover", "005930")])
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING", positions=[],
+            extra_risk_flags={
+                ("sma_crossover", "005930"): ["high_correlation"],
+            },
+        )
+        buys = [d for d in report.decisions if d.action == DecisionAction.BUY]
+        assert len(buys) == 0
+
+    def test_exit_allowed_under_block_new_entry(self):
+        """BLOCK_NEW_ENTRY (RiskOfficer + risk_flags) — EXIT 은 보유 시 허용."""
+        exp = _direct_explanation(watchlist=[
+            _se("sma_crossover", "005930", bucket="watchlist",
+                risk_flags=["stale_data"]),
+        ])
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING",
+            positions=[PositionSnapshot(strategy="sma_crossover",
+                                         symbol="005930",
+                                         quantity=10, exit_condition=True)],
+        )
+        exits = [d for d in report.decisions if d.action == DecisionAction.EXIT]
+        assert len(exits) == 1
+
+    def test_exit_blocked_under_emergency_stop(self):
+        """EMERGENCY_STOP — EXIT 도 신규 실행 차단 (bridge short-circuits)."""
+        exp = _direct_explanation(watchlist=[
+            _se("sma_crossover", "005930", bucket="watchlist"),
+        ])
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="EMERGENCY_STOP",
+            positions=[PositionSnapshot(strategy="sma_crossover",
+                                         symbol="005930",
+                                         quantity=10, exit_condition=True)],
+        )
+        # EMERGENCY_STOP → 0 decisions (short-circuit).
+        assert report.decisions == []
+
+    def test_veto_metadata_in_decision(self):
+        exp = _direct_explanation(recommended=[
+            _se("sma_crossover", "005930", risk_flags=["stale_data"]),
+        ])
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING", positions=[],
+        )
+        # vetoed BUY downgraded to HOLD; HOLD decision metadata has risk_veto=True.
+        holds = [d for d in report.decisions if d.action == DecisionAction.HOLD]
+        assert len(holds) == 1
+        meta = holds[0].metadata
+        assert meta["risk_veto"] is True
+        assert "STALE_DATA" in meta["risk_veto_reasons"]
+        assert meta["risk_veto_severity"] == "BLOCK_NEW_ENTRY"
+
+    def test_no_veto_when_clean(self):
+        exp = _direct_explanation(recommended=[_se("sma_crossover", "005930")])
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING", positions=[],
+        )
+        buys = [d for d in report.decisions if d.action == DecisionAction.BUY]
+        assert len(buys) == 1
+        meta = buys[0].metadata
+        assert meta["risk_veto"] is False
+        # Final report metadata always carries the veto report.
+        veto = report.metadata["risk_veto"]
+        assert veto["has_global_veto"] is False
+        assert veto["vetoed_count"] == 0
+
+    def test_priority_emergency_dominates_per_entry(self):
+        """EMERGENCY_STOP 은 risk_flags / RiskOfficer 보다 강함 (short-circuit)."""
+        exp = _direct_explanation(recommended=[
+            _se("sma_crossover", "005930", risk_flags=["stale_data"]),
+        ])
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="EMERGENCY_STOP", positions=[],
+            risk_officer_rejects={("sma_crossover", "005930"): "rejected"},
+        )
+        assert report.decisions == []
+        veto = report.metadata["risk_veto"]
+        assert "EMERGENCY_STOP" in veto["global_veto_reasons"]
