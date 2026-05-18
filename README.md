@@ -89,6 +89,17 @@ npm run dev -- --host 0.0.0.0
 > 외부 공개 서버 / 포트포워딩 / 운영자 `.env` 공유 / 공개 SaaS / GitHub Pages에 실 데이터 — *모두 금지*.
 > 외부 접속은 **Tailscale 우선**, 베타테스터는 *각자 자기 PC*, **LIVE / AI / FUTURES flag는 기본 false**.
 
+## CI 머지 정책 (영구 규칙)
+
+자세한 baseline / 체크 순서: [`docs/ci_green_baseline.md`](docs/ci_green_baseline.md).
+
+- **Backend CI 빨간불이면 기능 PR 머지 금지** — `ruff` + `pytest -q` 둘 다 green 필수.
+- **Frontend CI 빨간불이면 기능 PR 머지 금지** — `npm run lint` 0 errors + `vitest run` 모두 PASS + `npm run build` PASS.
+- **Security Scan 빨간불이면 무조건 머지 금지** — `python scripts/security_scan.py` 가 `HIGH/MEDIUM/LOW/INFO 모두 0 findings` 일 때만.
+- **desktop-release workflow 는 Backend + Frontend CI 가 *모두 green* 인 뒤에만 실행** — 수동 trigger only.
+- **pre-existing failure 는** `docs/ci_green_baseline.md` §8 에 등록 후 별도 fix PR 로 해결 — 새 PR 에서 회피 / 무시 금지.
+- 회피 목적으로 `force-push` / `--no-verify` / 머지 시 `Admin override` 사용 금지 — 원인을 *고치고* 다시 push.
+
 ## 현재 상태
 
 - `frontend/`: React/Vite 기반 관제 UI. 백엔드 라우트와 실연결.

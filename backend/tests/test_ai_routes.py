@@ -3,8 +3,21 @@ from sqlalchemy import select
 
 from app.ai.client import AiClient, AiNotConfiguredError, AiResponse
 from app.api.deps import get_ai_client
+from app.core.config import get_settings
 from app.db.models import AiAnalysisLog
 from app.main import app
+
+
+# fix/ci-green-baseline-final: these tests assert AI analysis audit rows
+# carry mode="SIMULATION" (the documented default). Local `.env` may
+# override DEFAULT_MODE so the assertion fails on a developer box; CI runs
+# without `.env`. Force the documented default for the test scope.
+@pytest.fixture(autouse=True)
+def _clean_default_mode(monkeypatch):
+    monkeypatch.setenv("DEFAULT_MODE", "SIMULATION")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 class _ScriptedClient(AiClient):

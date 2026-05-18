@@ -1,6 +1,24 @@
+import pytest
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.db.models import EmergencyStopEvent, OrderAuditLog
+
+
+# fix/ci-green-baseline-final: this file asserts documented-default safety
+# flags (DEFAULT_MODE=SIMULATION etc). Local dev `.env` may override these;
+# CI runs in a clean env where the docs and the code agree. Force the
+# documented defaults via process env (takes precedence over `.env`).
+@pytest.fixture(autouse=True)
+def _clean_safety_env(monkeypatch):
+    monkeypatch.setenv("DEFAULT_MODE", "SIMULATION")
+    monkeypatch.setenv("ENABLE_LIVE_TRADING", "false")
+    monkeypatch.setenv("ENABLE_AI_EXECUTION", "false")
+    monkeypatch.setenv("ENABLE_FUTURES_LIVE_TRADING", "false")
+    monkeypatch.setenv("KIS_IS_PAPER", "true")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def test_root_returns_app_metadata(client):
