@@ -174,12 +174,37 @@ result = consume_agent_recommendations(
 | 명시 sizing_policy 가 risk_profile 보다 우선 | `TestExplicitOverridePrecedence` |
 | 비RUNNING + 모든 프리셋 → 0 decisions / 0 log row | `TestNonRunningProfileInert` (parametrized profile × state) |
 
-## 10. 후속 PR 권고
+## 10. UI 선택 (#4-RiskProfileUI)
 
-- **API endpoint** — `GET /api/agents/risk-profiles` (catalog) + 사용자 선택
-  저장 / 호출.
-- **AutoPaperLoopCard UI** — 3 라디오 버튼 (보수적 / 안정적 / 공격적) + 선택된
-  프리셋의 임계값 미리보기 + "공격적이어도 실거래 활성화 아님" disclaimer.
+`frontend/src/components/AgentRiskProfileSelector.jsx` 가 3 라디오 카드
+(보수적 / 안정적 / 공격적) + Paper 전용 배지 + AGGRESSIVE 경고 + 영구
+disclaimer 를 노출. `AutoPaperLoopCard` 가 본 selector 를 *시작 버튼 위*
+에 렌더 → 사용자가 선택한 프리셋이 `POST /api/auto-paper/start` body
+의 `risk_profile` 필드로 동봉.
+
+| UI 요소 | testid | 안전 invariant |
+|---|---|---|
+| selector container | `agent-risk-profile-selector` | secret 입력 form 0개, 라벨 button 외 button 0개 |
+| 3 라디오 카드 | `risk-profile-card-{CONSERVATIVE,BALANCED,AGGRESSIVE}` | 카드 자체는 button — 라벨은 "보수적/안정적/공격적" 만, 주문 라벨 0건 |
+| 라디오 상태 | `risk-profile-radiogroup[data-selected]` | 기본값 BALANCED, 알 수 없는 value fallback BALANCED |
+| Paper-only 배지 | `risk-profile-paper-only-badge` | "Paper 전용 · 실거래 아님" 영구 |
+| AGGRESSIVE 경고 | `risk-profile-aggressive-warning` | AGGRESSIVE 선택 시에만 노출, "실거래 안전장치를 우회하지 않습니다" 영구 |
+| 영구 footer note | `risk-profile-footer-note` | `is_order_signal=false` / `auto_apply_allowed=false` / `is_live_authorization=false` 텍스트 carry |
+
+**선택값 전달**: `AutoPaperLoopCard.onStart` 가 `apiClient.autoPaperStart({
+risk_profile: <selected>, ...pre_market })` 형태로 호출. backend 의
+`POST /api/auto-paper/start` body 가 `risk_profile` 을 받아 consumer
+runner 주입 시점에 활용 (별도 후속 PR 에서 wire). 본 PR 은 frontend
+선택 + 전달까지.
+
+**Disabled 동작**: `state ∈ {RUNNING, WAITING_MARKET}` 또는 `busy=true` 시
+selector 카드 비활성화 — RUNNING 중 프리셋 변경 불가 (정책: 한 cycle 끝난 뒤만 변경).
+
+## 11. 후속 PR 권고
+
+- **API endpoint** — `GET /api/agents/risk-profiles` (catalog) + `POST
+  /api/auto-paper/start` 가 `risk_profile` body 필드 수용 (backend 도
+  본 정보를 consumer 에 forward).
 - **operator override** — 운영자가 본 프리셋 위에 추가 override 를 원하면
   별도 옵트인 PR (사용자 명시 승인 필요).
 - **per-strategy profile** — 본 PR 은 전체 portfolio 1 프리셋. 후속 PR 에서
