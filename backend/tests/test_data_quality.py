@@ -426,25 +426,34 @@ def test_cli_runs_with_format_json(tmp_path, monkeypatch):
     """scripts/check_data_quality.py가 --format json + --output으로 정상 실행."""
     # 본 테스트는 default DATABASE_URL(sqlite:///./data/auto_trader.db)가 비어 있어도
     # SessionLocal이 빈 결과를 반환해 evaluate가 EMPTY report를 만들도록 한다.
+    #
+    # fix/ci-data-quality-cross-platform-cwd: 이전 cwd 가
+    # "C:/trade/autotrade" 로 hardcoded 되어 있어 Linux CI / 다른 머신에서
+    # FileNotFoundError. `__file__` 기준 repo root 를 계산해 OS 독립.
+    import json as _json
+    import os
     import subprocess
     import sys
+    from pathlib import Path
+
+    repo_root  = Path(__file__).resolve().parents[2]
+    script_path = repo_root / "scripts" / "check_data_quality.py"
 
     out_path = tmp_path / "report.json"
     proc = subprocess.run(
-        [sys.executable, "scripts/check_data_quality.py",
+        [sys.executable, str(script_path),
          "--symbol", "005930", "--interval", "1m",
          "--date", "2026-05-18",
          "--format", "json",
          "--output", str(out_path)],
-        cwd="C:/trade/autotrade",
+        cwd=str(repo_root),
         capture_output=True, text=True, timeout=30,
-        env={**__import__("os").environ,
+        env={**os.environ,
              "DATABASE_URL": f"sqlite:///{tmp_path}/empty.db"},
     )
     assert proc.returncode == 0, proc.stderr
     assert out_path.exists()
 
-    import json as _json
     payload = _json.loads(out_path.read_text(encoding="utf-8"))
     assert "reports" in payload
     assert "summary" in payload
