@@ -14,6 +14,7 @@ from app.api.routes_ai_assist import router as ai_assist_router
 from app.api.routes_ai_execution import router as ai_execution_router
 from app.api.routes_execution_recommender import router as execution_recommender_router
 from app.api.routes_paper_start_explanation import router as paper_start_explanation_router
+from app.api.routes_paper_decision_bridge import router as paper_decision_bridge_router
 from app.api.routes_agent_memory import router as agent_memory_router
 from app.api.routes_approvals import router as approvals_router
 from app.api.routes_audit import router as audit_router
@@ -224,6 +225,7 @@ app.include_router(ai_assist_router, prefix="/api")
 app.include_router(ai_execution_router, prefix="/api")
 app.include_router(execution_recommender_router, prefix="/api")
 app.include_router(paper_start_explanation_router, prefix="/api")
+app.include_router(paper_decision_bridge_router, prefix="/api")
 app.include_router(agent_memory_router, prefix="/api")
 app.include_router(auto_trader_router, prefix="/api")
 app.include_router(auto_paper_router, prefix="/api")
