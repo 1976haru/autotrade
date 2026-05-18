@@ -580,3 +580,189 @@ class TestSchemaLock:
             loop_state="RUNNING", positions=[],
         )
         assert report.schema_version == BRIDGE_SCHEMA_VERSION
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# #4-08: Position sizing integration
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+from app.auto_paper.position_sizer import (   # noqa: E402
+    PositionSizingPolicy,
+    SizingVerdict,
+)
+
+
+class TestBridgePositionSizing:
+    """sizing_policy 가 주어지면 BUY/SELL/EXIT 의 가상 수량이 동적으로 결정.
+
+    *broker 호출 0건* — sizing 결과는 metadata 와 PaperDecision.virtual_position_delta
+    에만 반영.
+    """
+
+    # Permissive policy so cap doesn't dominate.
+    _POL = PositionSizingPolicy(
+        max_risk_per_trade_pct=0.01,
+        default_stop_loss_pct=0.03,
+        max_position_pct=1.0,
+        max_position_krw=10_000_000_000,
+        min_confidence_threshold=0.40,
+    )
+
+    def test_buy_uses_computed_size_when_policy_given(self):
+        exp = _build_explanation()  # 1 recommended entry, regime=TREND_UP
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING", positions=[],
+            sizing_policy=self._POL,
+            price_lookup={("sma_crossover", "005930"): 70_000.0},
+            account_equity=10_000_000.0,
+            confidence_lookup={("sma_crossover", "005930"): 0.90},
+        )
+        buys = [d for d in report.decisions if d.action == DecisionAction.BUY]
+        assert len(buys) == 1
+        # virtual_position_delta = +quantity (BUY).
+        assert buys[0].virtual_position_delta > 1   # > legacy fixed size of 1
+        # metadata carries sizing.
+        meta = buys[0].metadata
+        assert meta.get("sizing_verdict") in (
+            SizingVerdict.SIZED.value, SizingVerdict.REDUCED.value,
+        )
+        assert int(meta["sizing_quantity"]) == buys[0].virtual_position_delta
+
+    def test_low_confidence_downgrades_to_hold(self):
+        """confidence < threshold → sizing quantity=0 → direction downgrades to HOLD."""
+        exp = _build_explanation()
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING", positions=[],
+            sizing_policy=self._POL,
+            price_lookup={("sma_crossover", "005930"): 70_000.0},
+            account_equity=10_000_000.0,
+            confidence_lookup={("sma_crossover", "005930"): 0.20},
+        )
+        buys = [d for d in report.decisions if d.action == DecisionAction.BUY]
+        holds = [d for d in report.decisions if d.action == DecisionAction.HOLD]
+        assert len(buys) == 0
+        assert len(holds) >= 1
+        joined = " ".join(report.block_reasons)
+        assert "sizing quantity=0" in joined or "BLOCKED_LOW_CONFIDENCE" in joined
+
+    def test_missing_price_blocks_buy(self):
+        """price_lookup 미제공 → price=0 → INSUFFICIENT_DATA → HOLD."""
+        exp = _build_explanation()
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING", positions=[],
+            sizing_policy=self._POL,
+            price_lookup={},   # missing
+            account_equity=10_000_000.0,
+            confidence_lookup={("sma_crossover", "005930"): 0.90},
+        )
+        buys = [d for d in report.decisions if d.action == DecisionAction.BUY]
+        assert len(buys) == 0
+
+    def test_zero_equity_blocks_buy(self):
+        exp = _build_explanation()
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING", positions=[],
+            sizing_policy=self._POL,
+            price_lookup={("sma_crossover", "005930"): 70_000.0},
+            account_equity=0.0,
+            confidence_lookup={("sma_crossover", "005930"): 0.90},
+        )
+        buys = [d for d in report.decisions if d.action == DecisionAction.BUY]
+        assert len(buys) == 0
+
+    def test_sizing_results_in_metadata(self):
+        exp = _build_explanation()
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING", positions=[],
+            sizing_policy=self._POL,
+            price_lookup={("sma_crossover", "005930"): 70_000.0},
+            account_equity=10_000_000.0,
+            confidence_lookup={("sma_crossover", "005930"): 0.90},
+        )
+        assert report.metadata["sizing_applied"] is True
+        sr = report.metadata["sizing_results"]
+        assert isinstance(sr, list)
+        assert len(sr) == 1
+        assert sr[0]["is_order_signal"] is False
+        assert sr[0]["auto_apply_allowed"] is False
+        assert sr[0]["is_live_authorization"] is False
+        assert sr[0]["quantity"] >= 1
+
+    def test_backwards_compat_no_policy_uses_fixed_size(self):
+        """sizing_policy=None → legacy virtual_trade_size 그대로 사용."""
+        exp = _build_explanation()
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING", positions=[],
+            virtual_trade_size=3,
+            # sizing_policy omitted.
+        )
+        buys = [d for d in report.decisions if d.action == DecisionAction.BUY]
+        assert len(buys) == 1
+        assert buys[0].virtual_position_delta == 3
+        assert report.metadata["sizing_applied"] is False
+        assert report.metadata["sizing_results"] == []
+
+    def test_emergency_stop_with_policy_still_blocks_all(self):
+        """EMERGENCY_STOP — sizing_policy 가 있어도 모든 변환 차단 (4-07 invariant)."""
+        exp = _build_explanation()
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="EMERGENCY_STOP", positions=[],
+            sizing_policy=self._POL,
+            price_lookup={("sma_crossover", "005930"): 70_000.0},
+            account_equity=10_000_000.0,
+            confidence_lookup={("sma_crossover", "005930"): 0.90},
+        )
+        assert report.decisions == []
+        assert report.events_recorded == 0
+
+    def test_exit_uses_sizing_when_holding(self):
+        """watchlist + exit_condition + 보유 → EXIT, sizing 적용 시 quantity carry."""
+        # Build a watchlist-bucket explanation directly so the bridge sees an
+        # exit-eligible entry. (4-05 redistribution may move WATCHLIST_ONLY
+        # entries to `excluded`, so we construct PaperStartExplanation manually.)
+        from app.agents.paper_start_explanation import (
+            PaperStartExplanation as _PSE,
+            StrategyExplanation as _SE,
+            ExplanationVerdict as _EV,
+        )
+        exp = _PSE(
+            generated_at="2026-05-18T00:00:00+00:00",
+            schema_version="1.0",
+            verdict=_EV.READY_TO_REVIEW,
+            recommended_explanations=[],
+            watchlist_explanations=[
+                _SE(strategy="sma_crossover", symbol="005930",
+                    bucket="watchlist", paper_candidate_status="WATCHLIST_ONLY",
+                    rationale_lines=["watchlist + exit hint"]),
+            ],
+            excluded_explanations=[],
+            market_regime="TREND_UP",
+            regime_confidence=0.85,
+            regime_reasons=[],
+            regime_risk_flags=[],
+            regime_allowed_tactics=[],
+            regime_blocked_tactics=[],
+            overfit_count=0,
+            overfit_strategies=[],
+            headline="test",
+            risk_summary="test",
+            operator_note="test",
+            next_actions=[],
+            can_start_paper=True,
+            blocking_reasons=[],
+        )
+        report = bridge_explanation_to_paper_decisions(
+            explanation=exp, loop_state="RUNNING",
+            positions=[PositionSnapshot(strategy="sma_crossover",
+                                         symbol="005930",
+                                         quantity=10, exit_condition=True)],
+            sizing_policy=self._POL,
+            price_lookup={("sma_crossover", "005930"): 70_000.0},
+            account_equity=10_000_000.0,
+            confidence_lookup={("sma_crossover", "005930"): 0.90},
+        )
+        exits = [d for d in report.decisions if d.action == DecisionAction.EXIT]
+        assert len(exits) == 1
+        # EXIT virtual_position_delta is negative (sell-side).
+        assert exits[0].virtual_position_delta < 0
