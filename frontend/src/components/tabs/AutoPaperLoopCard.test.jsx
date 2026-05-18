@@ -732,4 +732,152 @@ describe("<AutoPaperLoopCard>", () => {
       }
     });
   });
+
+  describe("#4-11 AI Paper E2E UI flow", () => {
+    /**
+     * 사용자 시나리오 (frontend 면):
+     *  1. 카드가 PAUSED 상태로 마운트.
+     *  2. 시작 버튼 클릭 → autoPaperStart 호출 → 상태 RUNNING 으로 갱신.
+     *  3. 새 status 가 consumer 결과 carry (last_decision_action / count /
+     *     ledger / decision_log) → 화면에 라벨 + 카운트 + 배지 표시.
+     *  4. 카드 전체에 실거래 시작 / 지금 매수 / Place Order 등 금지 라벨 0건.
+     */
+
+    function _mockApiSequence(...statuses) {
+      // 매 호출마다 다음 status 를 반환 (마지막 값 반복).
+      const queue = [...statuses];
+      return {
+        autoPaperStatus: vi.fn(async () =>
+          queue.length > 1 ? queue.shift() : queue[0],
+        ),
+        autoPaperStart: vi.fn(async () => statuses[statuses.length - 1]),
+        autoPaperStop: vi.fn(async () => ({
+          state: "STOPPED", cycle_count: statuses[statuses.length - 1].cycle_count,
+        })),
+        autoPaperEmergencyStop: vi.fn(async () => ({
+          state: "EMERGENCY_STOP", cycle_count: 0,
+        })),
+        autoPaperReset: vi.fn(async () => ({ state: "PAUSED", cycle_count: 0 })),
+        autoPaperLedger: vi.fn(async () => ({
+          events: [],
+          event_count: 0,
+          is_order_signal: false,
+          auto_apply_allowed: false,
+          is_live_authorization: false,
+          advisory_disclaimer: "Paper Auto Loop advisory ledger",
+        })),
+        desktopHealth: vi.fn(async () => ({
+          ok: true,
+          safety_flags: {
+            enable_live_trading: false,
+            enable_ai_execution: false,
+            enable_futures_live_trading: false,
+            kis_is_paper: true,
+          },
+        })),
+      };
+    }
+
+    const _RUNNING_STATUS_AFTER_TICK = {
+      state: "RUNNING",
+      cycle_count: 1,
+      last_tick_at: "2026-05-19T01:00:30+00:00",
+      last_consumed: true,
+      last_decision_count: 1,
+      last_decision_action: "BUY",
+      last_ledger_events: 1,
+      last_decision_log_count: 1,
+      forced_paper: true,
+    };
+
+    it("E2E: start button → RUNNING → consumer strip carries BUY label", async () => {
+      const api = _mockApiSequence(
+        { state: "PAUSED", cycle_count: 0, forced_paper: true },
+        _RUNNING_STATUS_AFTER_TICK,
+      );
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      // 1. 초기 PAUSED 상태가 표시되는지.
+      await waitFor(() =>
+        expect(api.autoPaperStatus).toHaveBeenCalled(),
+      );
+      // 2. 시작 버튼 클릭.
+      fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
+      await waitFor(() =>
+        expect(api.autoPaperStart).toHaveBeenCalledTimes(1),
+      );
+      // 3. 다음 polling 으로 RUNNING 상태 + BUY 라벨 carry.
+      // autoPaperStatus 가 두 번째 호출에서 _RUNNING_STATUS_AFTER_TICK 반환.
+      await waitFor(() =>
+        expect(screen.getByTestId("consumer-action-BUY")).toBeTruthy(),
+      );
+      // 4. 카운트 표시.
+      expect(screen.getByTestId("consumer-decision-count").textContent)
+        .toContain("1");
+      expect(screen.getByTestId("consumer-ledger-events").textContent)
+        .toContain("1");
+      expect(screen.getByTestId("consumer-decision-log-count").textContent)
+        .toContain("1");
+      // 5. Paper-only / 실거래 아님 배지.
+      expect(screen.getByTestId("consumer-paper-only-badge").textContent)
+        .toContain("Paper 전용");
+      expect(screen.getByTestId("consumer-paper-only-badge").textContent)
+        .toContain("실제 주문 아님");
+    });
+
+    it("E2E: BUY label is a span, never an active order button", async () => {
+      const api = _mockApiSequence(_RUNNING_STATUS_AFTER_TICK);
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("consumer-action-BUY")).toBeTruthy(),
+      );
+      const buy = screen.getByTestId("consumer-action-BUY");
+      expect(buy.tagName.toLowerCase()).toBe("strong");
+      // 또한 buy 라벨 자체는 click 가능한 button 이 아니다.
+      expect(buy.tagName.toLowerCase()).not.toBe("button");
+    });
+
+    it("E2E: end-to-end DOM contains zero forbidden order labels", async () => {
+      const api = _mockApiSequence(_RUNNING_STATUS_AFTER_TICK);
+      const { container } = render(
+        <AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />,
+      );
+      await waitFor(() =>
+        expect(api.autoPaperStatus).toHaveBeenCalled(),
+      );
+      const banned = [
+        "지금 매수", "지금 매도", "Place Order", "실거래 시작",
+        "실거래 활성화 시작", "ENABLE_LIVE_TRADING", "ENABLE_AI_EXECUTION",
+        "ENABLE_FUTURES_LIVE_TRADING", "AI 자동매매 켜기",
+      ];
+      for (const b of banned) {
+        expect(container.textContent).not.toContain(b);
+      }
+    });
+
+    it("E2E: required UI elements all present at once", async () => {
+      const api = _mockApiSequence(_RUNNING_STATUS_AFTER_TICK);
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() =>
+        expect(api.autoPaperStatus).toHaveBeenCalled(),
+      );
+      // 시작/정지/긴급정지 버튼.
+      expect(screen.getByTestId("btn-start-auto-paper")).toBeTruthy();
+      expect(screen.getByTestId("btn-stop-auto-paper")).toBeTruthy();
+      expect(screen.getByTestId("btn-emergency-stop")).toBeTruthy();
+      // 상태 pill.
+      expect(screen.getByTestId("state-pill")).toBeTruthy();
+      // consumer strip 의 5 필드.
+      expect(screen.getByTestId("consumer-last-tick")).toBeTruthy();
+      expect(screen.getByTestId("consumer-last-decision-action")).toBeTruthy();
+      expect(screen.getByTestId("consumer-decision-count")).toBeTruthy();
+      expect(screen.getByTestId("consumer-ledger-events")).toBeTruthy();
+      expect(screen.getByTestId("consumer-decision-log-count")).toBeTruthy();
+      // Paper 전용 / 실거래 아님 배지.
+      expect(screen.getByTestId("consumer-paper-only-badge")).toBeTruthy();
+      // 상단 safety badges.
+      expect(screen.getByTestId("badge-not-order-signal")).toBeTruthy();
+      expect(screen.getByTestId("badge-paper-mode")).toBeTruthy();
+      expect(screen.getByTestId("badge-no-auto-apply")).toBeTruthy();
+    });
+  });
 });
