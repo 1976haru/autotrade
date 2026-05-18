@@ -202,6 +202,12 @@ class AutoPaperStatus:
     last_error:          str | None
     tick_interval_sec:   float
     forced_paper:        bool          # 항상 True
+    # #4-Loop-09: consumer 최근 cycle 의 카운터 carry — UI 표시용.
+    last_consumed:           bool = False
+    last_decision_count:     int  = 0
+    last_decision_action:    str | None = None  # 가장 흔한 action (BUY/HOLD/EXIT 등)
+    last_ledger_events:      int  = 0
+    last_decision_log_count: int  = 0
     is_order_signal:     bool = False
     auto_apply_allowed:  bool = False
 
@@ -224,6 +230,11 @@ class AutoPaperStatus:
             "last_error":          self.last_error,
             "tick_interval_sec":   self.tick_interval_sec,
             "forced_paper":        self.forced_paper,
+            "last_consumed":           self.last_consumed,
+            "last_decision_count":     self.last_decision_count,
+            "last_decision_action":    self.last_decision_action,
+            "last_ledger_events":      self.last_ledger_events,
+            "last_decision_log_count": self.last_decision_log_count,
             "is_order_signal":     self.is_order_signal,
             "auto_apply_allowed":  self.auto_apply_allowed,
         }
@@ -241,6 +252,7 @@ class AutoPaperLoop:
         *,
         tick_interval_sec: float = 30.0,
         paper_tick_handler: Optional[PaperTickHandler] = None,
+        agent_consumer_runner: Optional[Callable[[str, datetime], Any]] = None,
     ):
         """`paper_tick_handler` 가 주어지면 `tick()` 이 RUNNING 상태일 때만 호출.
 
@@ -248,6 +260,12 @@ class AutoPaperLoop:
         VirtualOrder ledger / PaperBroker wrapper 를 주입해 가상 주문 / 가상
         체결을 기록. handler 가 broker / route_order / OrderExecutor 를 *호출
         하면 안 됨* — 정책 + 정적 grep 가드.
+
+        #4-Loop-09: `agent_consumer_runner(loop_state, now)` 가 주어지면 RUNNING
+        상태의 매 `tick()` 동안 *Agent recommendation → PaperDecision →
+        ledger + AgentDecisionLog* 흐름을 1회 실행. runner 는
+        `ConsumerResult` 와 호환되는 객체를 반환해야 한다 (decision_count /
+        ledger_events / decision_log_count / consumed / by_action 필드).
         """
         self._lock = threading.Lock()
         self._state: AutoPaperState = AutoPaperState.PAUSED
@@ -259,6 +277,14 @@ class AutoPaperLoop:
         self._last_error: str | None = None
         self._tick_interval_sec: float = float(tick_interval_sec)
         self._paper_tick_handler: PaperTickHandler | None = paper_tick_handler
+        self._agent_consumer_runner: (
+            Optional[Callable[[str, datetime], Any]]
+        ) = agent_consumer_runner
+        self._last_consumer_consumed: bool = False
+        self._last_consumer_decision_count: int = 0
+        self._last_consumer_action: str | None = None
+        self._last_consumer_ledger_events: int = 0
+        self._last_consumer_decision_log_count: int = 0
 
     def start(
         self,
@@ -375,7 +401,20 @@ class AutoPaperLoop:
             self._stopped_at = None
             self._emergency_at = None
             self._last_error = None
+            self._last_consumer_consumed = False
+            self._last_consumer_decision_count = 0
+            self._last_consumer_action = None
+            self._last_consumer_ledger_events = 0
+            self._last_consumer_decision_log_count = 0
             return self._snapshot_unlocked()
+
+    def set_agent_consumer_runner(
+        self,
+        runner: Optional[Callable[[str, datetime], Any]],
+    ) -> None:
+        """#4-Loop-09: runtime 에 consumer runner 주입 / 교체 (테스트 / API용)."""
+        with self._lock:
+            self._agent_consumer_runner = runner
 
     def tick(self) -> AutoPaperStatus:
         """RUNNING 상태일 때만 cycle 증가 + `paper_tick_handler` 호출.
@@ -397,7 +436,6 @@ class AutoPaperLoop:
                 )
             self._cycle_count += 1
             self._last_tick_at = datetime.now(timezone.utc)
-            snapshot = self._snapshot_unlocked()
             ctx = PaperTickContext(
                 cycle_count=self._cycle_count,
                 state=self._state.value,
@@ -405,6 +443,9 @@ class AutoPaperLoop:
                 tick_interval_sec=self._tick_interval_sec,
             )
             handler = self._paper_tick_handler
+            consumer = self._agent_consumer_runner
+            tick_at_dt = self._last_tick_at
+            loop_state_str = self._state.value
         # Lock 해제 후 handler 호출 — re-entrancy 차단.
         if handler is not None:
             try:
@@ -420,6 +461,42 @@ class AutoPaperLoop:
                     self._last_error = (
                         f"paper_tick_handler {type(exc).__name__}: {exc!s}"
                     )
+
+        # #4-Loop-09: consumer runner — Agent recommendation → PaperDecision →
+        # ledger + AgentDecisionLog. 실패해도 cycle 무효화하지 않음.
+        if consumer is not None:
+            try:
+                result = consumer(loop_state_str, tick_at_dt)
+                # result 는 ConsumerResult dataclass — duck-typed.
+                consumed = bool(getattr(result, "consumed", False))
+                decision_count = int(getattr(result, "decision_count", 0) or 0)
+                ledger_events = int(getattr(result, "ledger_events", 0) or 0)
+                decision_log_count = int(
+                    getattr(result, "decision_log_count", 0) or 0
+                )
+                by_action = dict(getattr(result, "by_action", {}) or {})
+                top_action: str | None = None
+                if by_action:
+                    top_action = max(by_action.items(),
+                                     key=lambda kv: kv[1])[0]
+                with self._lock:
+                    self._last_consumer_consumed = consumed
+                    self._last_consumer_decision_count = decision_count
+                    self._last_consumer_action = top_action
+                    self._last_consumer_ledger_events = ledger_events
+                    self._last_consumer_decision_log_count = decision_log_count
+            except Exception as exc:  # noqa: BLE001
+                _log.warning(
+                    "[auto-paper] agent_consumer_runner raised: %s: %s",
+                    type(exc).__name__, exc,
+                )
+                with self._lock:
+                    self._last_error = (
+                        f"agent_consumer_runner {type(exc).__name__}: {exc!s}"
+                    )
+
+        with self._lock:
+            snapshot = self._snapshot_unlocked()
         return snapshot
 
     def status(self, *, now: datetime | None = None) -> AutoPaperStatus:
@@ -502,6 +579,11 @@ class AutoPaperLoop:
             last_error=self._last_error,
             tick_interval_sec=self._tick_interval_sec,
             forced_paper=True,
+            last_consumed=self._last_consumer_consumed,
+            last_decision_count=self._last_consumer_decision_count,
+            last_decision_action=self._last_consumer_action,
+            last_ledger_events=self._last_consumer_ledger_events,
+            last_decision_log_count=self._last_consumer_decision_log_count,
         )
 
 
