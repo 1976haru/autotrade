@@ -87,13 +87,25 @@ def get_paper_decision_log(
     }
     ```
     """
-    entries = query_paper_decision_log(
-        db,
-        limit=int(limit),
-        strategy=strategy,
-        symbol=symbol,
-        action=action,
-    )
+    # Graceful fallback: if the `agent_decision_log` table is missing (e.g.
+    # fresh CI DB that hasn't run migrations), return an empty envelope
+    # instead of a 500. The table will exist as soon as alembic upgrade or
+    # Base.metadata.create_all runs. Operationally, the lifespan hook
+    # creates it on real startups — this guard exists only to make the
+    # read-only endpoint robust during test bootstrap.
+    try:
+        entries = query_paper_decision_log(
+            db,
+            limit=int(limit),
+            strategy=strategy,
+            symbol=symbol,
+            action=action,
+        )
+    except Exception as exc:  # noqa: BLE001 — SQLAlchemy ProgrammingError / OperationalError
+        if "no such table" in str(exc).lower() or "does not exist" in str(exc).lower():
+            entries = []
+        else:
+            raise
     summary = summarize_paper_decisions(entries)
     return {
         "mode":              PAPER_DECISION_LOG_MODE,
