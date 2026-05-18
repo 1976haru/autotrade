@@ -228,6 +228,75 @@ export function AutoPaperLoopCard({
         </span>
       </div>
 
+      {/* #4-Loop-09: 최근 cycle 의 Agent consumer 결과 — read-only carry. */}
+      <div
+        data-testid="auto-paper-consumer-strip"
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: 10,
+          alignItems: "center",
+          marginBottom: 12,
+          fontSize: "var(--fs-xs)",
+          color: "var(--c-text-2)",
+        }}
+      >
+        <span data-testid="consumer-last-tick">
+          마지막 tick:{" "}
+          <code>
+            {status?.last_tick_at
+              ? String(status.last_tick_at).slice(11, 19)
+              : "—"}
+          </code>
+        </span>
+        <span data-testid="consumer-last-decision-action">
+          최근 판단:{" "}
+          {status?.last_decision_action ? (
+            <strong
+              data-testid={`consumer-action-${status.last_decision_action}`}
+              style={{
+                display: "inline-block",
+                padding: "1px 6px",
+                borderRadius: 3,
+                background:
+                  status.last_decision_action === "BUY" ? "#22c55e"
+                  : status.last_decision_action === "SELL" ? "#fbbf24"
+                  : status.last_decision_action === "EXIT" ? "#6b7280"
+                  : status.last_decision_action === "HOLD" ? "#94a3b8"
+                  : "#cbd5e1",
+                color: "#fff",
+              }}
+            >
+              {status.last_decision_action}
+            </strong>
+          ) : (
+            <span>—</span>
+          )}
+        </span>
+        <span data-testid="consumer-decision-count">
+          판단 수: <strong>{status?.last_decision_count ?? 0}</strong>
+        </span>
+        <span data-testid="consumer-ledger-events">
+          ledger 기록: <strong>{status?.last_ledger_events ?? 0}</strong>
+        </span>
+        <span data-testid="consumer-decision-log-count">
+          AgentDecisionLog 기록:{" "}
+          <strong>{status?.last_decision_log_count ?? 0}</strong>
+        </span>
+        <span
+          data-testid="consumer-paper-only-badge"
+          style={{
+            padding: "1px 6px",
+            borderRadius: 3,
+            background: "#bef264",
+            color: "#0f172a",
+            fontWeight: "var(--fw-bold)",
+          }}
+        >
+          Paper 전용 · 실제 주문 아님
+        </span>
+      </div>
+
       <div style={{ marginBottom: 12 }} data-testid="safety-matrix">
         <_Pill
           label="실거래"

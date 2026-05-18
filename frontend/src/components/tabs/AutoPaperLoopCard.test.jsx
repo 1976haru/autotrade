@@ -647,4 +647,89 @@ describe("<AutoPaperLoopCard>", () => {
       }
     });
   });
+
+  describe("#4-Loop-09 consumer strip", () => {
+    const _CONSUMER_STATUS = {
+      state: "RUNNING",
+      cycle_count: 7,
+      last_tick_at: "2026-05-18T14:30:25+00:00",
+      last_consumed: true,
+      last_decision_count: 2,
+      last_decision_action: "BUY",
+      last_ledger_events: 2,
+      last_decision_log_count: 2,
+      forced_paper: true,
+    };
+
+    it("renders consumer strip with last decision fields", async () => {
+      const api = _mockApi(_CONSUMER_STATUS);
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      expect(screen.getByTestId("auto-paper-consumer-strip")).toBeTruthy();
+      expect(screen.getByTestId("consumer-last-tick").textContent)
+        .toContain("14:30:25");
+      expect(screen.getByTestId("consumer-last-decision-action").textContent)
+        .toContain("BUY");
+      expect(screen.getByTestId("consumer-action-BUY").textContent).toBe("BUY");
+      expect(screen.getByTestId("consumer-decision-count").textContent)
+        .toContain("2");
+      expect(screen.getByTestId("consumer-ledger-events").textContent)
+        .toContain("2");
+      expect(screen.getByTestId("consumer-decision-log-count").textContent)
+        .toContain("2");
+    });
+
+    it("renders Paper 전용 · 실제 주문 아님 badge", async () => {
+      const api = _mockApi(_CONSUMER_STATUS);
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      const badge = screen.getByTestId("consumer-paper-only-badge");
+      expect(badge.textContent).toContain("Paper 전용");
+      expect(badge.textContent).toContain("실제 주문 아님");
+    });
+
+    it("falls back to '—' when consumer fields are missing", async () => {
+      const api = _mockApi({
+        state: "PAUSED", cycle_count: 0,
+        forced_paper: true,
+      });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      const strip = screen.getByTestId("auto-paper-consumer-strip");
+      expect(strip).toBeTruthy();
+      // last_tick_at not set → "—".
+      expect(screen.getByTestId("consumer-last-tick").textContent)
+        .toContain("—");
+      // counts default to 0.
+      expect(screen.getByTestId("consumer-decision-count").textContent)
+        .toContain("0");
+    });
+
+    it("BUY/SELL/EXIT in consumer strip are labels, never buttons", async () => {
+      const api = _mockApi(_CONSUMER_STATUS);
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() =>
+        expect(screen.getByTestId("consumer-action-BUY")).toBeTruthy(),
+      );
+      const buyLabel = screen.getByTestId("consumer-action-BUY");
+      expect(buyLabel.tagName.toLowerCase()).toBe("strong");
+    });
+
+    it("consumer strip text never contains forbidden order phrases", async () => {
+      const api = _mockApi(_CONSUMER_STATUS);
+      const { container } = render(
+        <AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />,
+      );
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      const strip = screen.getByTestId("auto-paper-consumer-strip");
+      const banned = [
+        "Place Order", "지금 매수", "지금 매도",
+        "실거래 시작", "ENABLE_LIVE_TRADING", "AI 자동매매 켜기",
+      ];
+      for (const b of banned) {
+        expect(strip.textContent).not.toContain(b);
+        expect(container.textContent).not.toContain(b);
+      }
+    });
+  });
 });
