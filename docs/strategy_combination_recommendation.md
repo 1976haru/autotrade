@@ -186,3 +186,78 @@ python scripts/security_scan.py
 - invariant 필드 (`is_order_signal` / `auto_apply_allowed` /
   `is_live_authorization` / `auto_start_paper_trader`) *추가 / 변경 / 삭제 영구 금지*.
 - API key / Secret / 계좌번호 필드 *영구 금지*.
+
+---
+
+## 14. v2 API — `PaperStrategyCombination` (병행 제공, #4-02 v2)
+
+**v1** (`build_combination_recommendation` + `StrategyCombinationRecommendation`)
+은 4-03/4-04 (`apply_overfit_filter` / `apply_regime_filter`) 의 dependency 로
+유지. v2 는 *사용자 spec 의 더 fine-grained state 매트릭스* 를 제공하는 **별도
+API** (additive — 같은 모듈 안 병행 export).
+
+### 14.1. v2 5-state matrix (`PaperCombinationStatus`)
+
+v1 의 4 state (HAS_RECOMMENDATIONS / ALL_HOLD / NO_CANDIDATES_TODAY /
+NEEDS_OPERATOR_REVIEW) 와 별개로, v2 는 *위험 / 데이터 부족 사유를 분리* :
+
+| Status | 의미 |
+|---|---|
+| `RECOMMEND_PAPER` | 1개 이상 paper 추천 가능 |
+| `WATCH_ONLY` | 후보 있으나 보류 (위험 신호 / 검증 부족 혼합) |
+| `NO_CANDIDATE` | 분석 가능한 후보 0건 (파이프라인 결과 부재) |
+| `REJECTED_BY_RISK` | 모든 후보가 위험 한도 위반 / 검증 미통과로 차단 |
+| `NEED_MORE_DATA` | 모든 후보가 NEED_MORE_DATA — 데이터 부족 |
+
+`BUY` / `SELL` / `EXECUTE` / `PLACE_ORDER` 같은 *주문 방향* 값 0개 — 테스트 lock.
+
+### 14.2. v2 7 출력 필드 (`PaperStrategyCombination.to_dict()`)
+
+사용자 spec 의 7 필드 정확히 매핑:
+
+| 필드 | 의미 |
+|---|---|
+| `recommended_strategies` | `PaperStrategyEntry` list — 추천 후보 (default 최대 2) |
+| `excluded_strategies` | 제외 후보 (OVERFIT_RISK / STRESS_FAILED / REJECTED_BY_RISK) |
+| `watchlist_strategies` | 보류 후보 (READY+risk_flags>=2 / NEED_MORE_DATA / 조합 상한 demote) |
+| `no_candidate_reason` | `str \| None` — 후보 0건 / 모두 차단 시 한국어 사유 |
+| `risk_summary` | `list[str]` — 위험 신호 합집합 + 다양성 경고 |
+| `agent_rationale` | `str` — 운영자 한 줄 요약 |
+| `operator_next_action` | `list[str]` — 다음 행동 권고 |
+
+invariant (`is_order_signal=False` / `auto_apply_allowed=False` /
+`is_live_authorization=False`) 양 레벨 (top + per-entry) 강제.
+
+### 14.3. v2 분류 매트릭스
+
+| paper_candidate_status | risk_flags | bucket | overall 영향 |
+|---|---|---|---|
+| `READY_FOR_PAPER` | < threshold (default 2) | **recommended** | `RECOMMEND_PAPER` |
+| `READY_FOR_PAPER` | ≥ threshold | **watchlist** | (count + 분포에 따라) `WATCH_ONLY` |
+| `NEED_MORE_DATA` | any | **watchlist** | 모두 NEED_MORE_DATA → `NEED_MORE_DATA` |
+| `OVERFIT_RISK` | any | **excluded** | 모두 차단 → `REJECTED_BY_RISK` |
+| `STRESS_FAILED` | any | **excluded** | 위 |
+| `REJECTED_BY_RISK` | any | **excluded** | 위 |
+| `NO_CANDIDATE` | any | **excluded** | 위 |
+| (입력 0건) | — | — | `NO_CANDIDATE` |
+
+`max_recommended` (default 2) 초과 추천 후보는 *watchlist* 로 demote (`rationale`
+에 "조합 상한 초과로 demote" carry).
+
+### 14.4. 동일 종목/전략 쏠림 경고
+
+`recommended_strategies` 가 2개 이상이고:
+- 모두 같은 strategy → `risk_summary` 에 "전략 다양성 부족" carry
+- 모두 같은 symbol → `risk_summary` 에 "분산 효과 제한" carry
+
+### 14.5. v1 ↔ v2 cross-reference
+
+본 모듈은 *같은 파일* (`backend/app/agents/strategy_combination_recommender.py`)
+에서 v1 + v2 *둘 다* export. caller 가 필요에 따라 선택:
+
+- **v1 (`build_combination_recommendation`)** — 4-03 `apply_overfit_filter` /
+  4-04 `apply_regime_filter` 의 입력. *기존 dependency 가 사용*.
+- **v2 (`build_paper_combination_recommendation`)** — 사용자 spec 의 새 state
+  매트릭스 + 7 출력 필드 필요한 새 caller.
+
+향후 정책 통합 시 별도 옵트인 PR 로 v1 → v2 migration 검토.
