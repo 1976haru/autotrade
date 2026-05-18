@@ -618,3 +618,393 @@ class StrategyCombinationRecommenderAgent(AgentBase):
         for r in rec.reasons_no_candidate[:3]:
             reasons.append(f"reason_no_candidate: {r}")
         return summary, reasons
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# #4-02 v2 (Paper combo recommendation) — 사용자 spec 의 새 state 매트릭스 +
+# 출력 필드. *기존 API 와 병행 제공* (additive — 4-03/4-04 dependency 보존).
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+class PaperCombinationStatus(StrEnum):
+    """v2 spec — 6단계가 아닌 5단계, 더 fine-grained 진단 라벨.
+
+    *주문 방향* 값 0개 — `BUY` / `SELL` / `EXECUTE` 등 0건.
+    """
+    RECOMMEND_PAPER     = "RECOMMEND_PAPER"      # 1개 이상 paper 추천 가능
+    WATCH_ONLY          = "WATCH_ONLY"           # 후보 있으나 보류 (위험 신호 / 데이터)
+    NO_CANDIDATE        = "NO_CANDIDATE"         # 후보 0건 (3-07 통과 0)
+    REJECTED_BY_RISK    = "REJECTED_BY_RISK"     # 위험 한도 위반으로 추천 차단
+    NEED_MORE_DATA      = "NEED_MORE_DATA"       # 데이터 부족 — 재평가 권고
+
+
+_PAPER_STATUS_LABEL_KO: dict[PaperCombinationStatus, str] = {
+    PaperCombinationStatus.RECOMMEND_PAPER:
+        "Paper 모의매매 검토 가능한 추천 조합 있음",
+    PaperCombinationStatus.WATCH_ONLY:
+        "후보는 있으나 위험 신호 / 검증 부족 — 관찰만",
+    PaperCombinationStatus.NO_CANDIDATE:
+        "오늘 자동 운용 후보 없음",
+    PaperCombinationStatus.REJECTED_BY_RISK:
+        "위험 한도 위반으로 추천 차단",
+    PaperCombinationStatus.NEED_MORE_DATA:
+        "데이터 부족 — 더 모은 뒤 재평가",
+}
+
+
+@dataclass(frozen=True)
+class PaperStrategyEntry:
+    """단일 (strategy, symbol, params) 의 paper 추천 단위.
+
+    *주문 결정이 아니다* — `is_order_signal=False` 불변 (`__post_init__` 가드).
+    v1 의 `StrategyDecision` 과 별개 — 새 spec 의 출력 필드 정확히 매핑.
+    """
+
+    strategy:                str
+    symbol:                  str
+    params:                  dict[str, Any]
+    paper_candidate_status:  str                  # ReportStatus 값 carry
+    score:                   float
+    rationale:               str                  # 한국어 사유 (`agent_rationale` 출처)
+    risk_flags:              list[str]            = field(default_factory=list)
+
+    # 절대 invariant.
+    is_order_signal:         bool = False
+    auto_apply_allowed:      bool = False
+    is_live_authorization:   bool = False
+
+    def __post_init__(self) -> None:
+        if self.is_order_signal is not False:
+            raise ValueError("PaperStrategyEntry.is_order_signal must be False.")
+        if self.auto_apply_allowed is not False:
+            raise ValueError("PaperStrategyEntry.auto_apply_allowed must be False.")
+        if self.is_live_authorization is not False:
+            raise ValueError("PaperStrategyEntry.is_live_authorization must be False.")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "strategy":                self.strategy,
+            "symbol":                  self.symbol,
+            "params":                  dict(self.params),
+            "paper_candidate_status":  self.paper_candidate_status,
+            "score":                   float(self.score),
+            "rationale":               self.rationale,
+            "risk_flags":              list(self.risk_flags),
+            "is_order_signal":         False,
+            "auto_apply_allowed":      False,
+            "is_live_authorization":   False,
+        }
+
+
+@dataclass(frozen=True)
+class PaperStrategyCombination:
+    """#4-02 v2 — 사용자 spec 의 7 출력 필드 정확히 매핑."""
+
+    generated_at:            str
+    status:                  PaperCombinationStatus
+    recommended_strategies:  list[PaperStrategyEntry]  = field(default_factory=list)
+    excluded_strategies:     list[PaperStrategyEntry]  = field(default_factory=list)
+    watchlist_strategies:    list[PaperStrategyEntry]  = field(default_factory=list)
+    no_candidate_reason:     str | None                = None
+    risk_summary:            list[str]                 = field(default_factory=list)
+    agent_rationale:         str                       = ""
+    operator_next_action:    list[str]                 = field(default_factory=list)
+    advisory_disclaimer:     str                       = (
+        "본 추천은 *Paper 모의매매 검토용 advisory* — 실제 주문이 아니며 자동 "
+        "paper trader 시작 / 자동 실거래 활성화를 수행하지 않습니다. "
+        "운영자가 BotControl / Paper Auto Loop 흐름에서 명시 시작. "
+        "is_order_signal=False / auto_apply_allowed=False / is_live_authorization=False."
+    )
+    metadata:                dict[str, Any]            = field(default_factory=dict)
+
+    # 절대 invariant.
+    is_order_signal:         bool = False
+    auto_apply_allowed:      bool = False
+    is_live_authorization:   bool = False
+
+    def __post_init__(self) -> None:
+        for name, val in (
+            ("is_order_signal",       self.is_order_signal),
+            ("auto_apply_allowed",    self.auto_apply_allowed),
+            ("is_live_authorization", self.is_live_authorization),
+        ):
+            if val is not False:
+                raise ValueError(f"PaperStrategyCombination.{name} must be False.")
+        if not isinstance(self.status, PaperCombinationStatus):
+            raise ValueError("status must be PaperCombinationStatus.")
+        if not isinstance(self.advisory_disclaimer, str) or not self.advisory_disclaimer:
+            raise ValueError("advisory_disclaimer must be non-empty.")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "generated_at":             self.generated_at,
+            "status":                   self.status.value,
+            "status_label_ko":          _PAPER_STATUS_LABEL_KO[self.status],
+            "recommended_strategies":   [e.to_dict() for e in self.recommended_strategies],
+            "excluded_strategies":      [e.to_dict() for e in self.excluded_strategies],
+            "watchlist_strategies":     [e.to_dict() for e in self.watchlist_strategies],
+            "no_candidate_reason":      self.no_candidate_reason,
+            "risk_summary":             list(self.risk_summary),
+            "agent_rationale":          self.agent_rationale,
+            "operator_next_action":     list(self.operator_next_action),
+            "advisory_disclaimer":      self.advisory_disclaimer,
+            "metadata":                 dict(self.metadata),
+            # 최상위 invariant.
+            "is_order_signal":          False,
+            "auto_apply_allowed":       False,
+            "is_live_authorization":    False,
+        }
+
+
+# v2 분류 매트릭스 (#4-02 spec):
+# - READY_FOR_PAPER + risk_flags<=1 → RECOMMEND_PAPER
+# - READY_FOR_PAPER + risk_flags>=2 → WATCH_ONLY (보류)
+# - OVERFIT_RISK / STRESS_FAILED   → REJECTED_BY_RISK (제외)
+# - NEED_MORE_DATA                  → WATCH_ONLY (보류)
+# - REJECTED_BY_RISK                → REJECTED_BY_RISK (제외)
+# - NO_CANDIDATE                    → REJECTED_BY_RISK (제외, 0건 표시는 overall)
+
+
+_REJECT_STATUSES: frozenset[str] = frozenset({
+    ReportStatus.OVERFIT_RISK.value,
+    ReportStatus.STRESS_FAILED.value,
+    ReportStatus.REJECTED_BY_RISK.value,
+})
+
+
+def _classify_paper_entry(
+    item: StrategyAgentInputItem,
+    *,
+    watch_risk_flag_threshold: int = 2,
+) -> tuple[str, str]:
+    """단일 item → (bucket, 한국어 사유). bucket ∈ {RECOMMEND, WATCHLIST, EXCLUDE}."""
+    status = item.paper_candidate_status
+    flag_count = len(item.risk_flags)
+
+    if status == ReportStatus.READY_FOR_PAPER.value:
+        if flag_count >= watch_risk_flag_threshold:
+            return "WATCHLIST", (
+                f"기준 통과했으나 위험 신호 {flag_count}개 ≥ {watch_risk_flag_threshold} — "
+                "추가 관찰 후 결정"
+            )
+        return "RECOMMEND", "검증 단계 통과 + 위험 신호 임계 이내 — Paper 검토 가능"
+
+    if status == ReportStatus.NEED_MORE_DATA.value:
+        return "WATCHLIST", "검증 데이터 부족 — Walk-forward 기간 확장 권고"
+
+    if status in _REJECT_STATUSES:
+        label = {
+            ReportStatus.OVERFIT_RISK.value:     "과최적화 의심 — 검증 구간 성과 저하",
+            ReportStatus.STRESS_FAILED.value:    "스트레스 시나리오 불합격",
+            ReportStatus.REJECTED_BY_RISK.value: "위험 한도 위반 (PF / MDD / 손실 streak)",
+        }[status]
+        return "EXCLUDE", label
+
+    # fallback (NO_CANDIDATE 등).
+    return "EXCLUDE", f"파이프라인 자격 미충족 (status={status})"
+
+
+def _detect_concentration_warnings(
+    recommended: list[PaperStrategyEntry],
+) -> list[str]:
+    """동일 종목 / 동일 전략 쏠림 감지 — risk_summary 에 carry."""
+    warnings: list[str] = []
+    if len(recommended) < 2:
+        return warnings
+    strategies = {e.strategy for e in recommended}
+    symbols    = {e.symbol   for e in recommended}
+    if len(strategies) == 1:
+        warnings.append(
+            f"선정된 추천 조합의 전략이 모두 동일 ({recommended[0].strategy}) — "
+            "전략 다양성 부족"
+        )
+    if len(symbols) == 1:
+        warnings.append(
+            f"선정된 추천 조합의 종목이 모두 동일 ({recommended[0].symbol}) — "
+            "분산 효과 제한"
+        )
+    return warnings
+
+
+def build_paper_combination_recommendation(
+    *,
+    agent_input:              StrategyAgentInput | None = None,
+    operator_report:          OperatorReport     | None = None,
+    inputs:                   ReportInputs       | None = None,
+    max_recommended:          int                       = 2,
+    watch_risk_flag_threshold: int                      = 2,
+    metadata:                 dict[str, Any]    | None  = None,
+    now:                      datetime          | None  = None,
+) -> PaperStrategyCombination:
+    """#4-02 v2 — 사용자 spec 의 7 출력 필드 정확히 매핑한 paper 추천.
+
+    분류 매트릭스:
+    - READY_FOR_PAPER + risk_flags<threshold → recommended (최대 max_recommended)
+    - READY_FOR_PAPER + risk_flags>=threshold → watchlist
+    - NEED_MORE_DATA → watchlist
+    - OVERFIT_RISK / STRESS_FAILED / REJECTED_BY_RISK → excluded
+    - 후보 0건 → status=NO_CANDIDATE + no_candidate_reason
+    - 모두 excluded → status=REJECTED_BY_RISK
+    - 모두 watchlist → status=WATCH_ONLY
+    - 추천 1+ → status=RECOMMEND_PAPER
+
+    *broker 호출 0건* — 본 함수는 결정론적 변환만.
+    """
+    if agent_input is None:
+        agent_input = build_strategy_agent_input(
+            operator_report=operator_report,
+            inputs=inputs or ReportInputs(),
+            now=now,
+        )
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    recommended_pool: list[PaperStrategyEntry] = []
+    watchlist:        list[PaperStrategyEntry] = []
+    excluded:         list[PaperStrategyEntry] = []
+
+    for item in agent_input.items:
+        bucket, rationale = _classify_paper_entry(
+            item, watch_risk_flag_threshold=watch_risk_flag_threshold,
+        )
+        entry = PaperStrategyEntry(
+            strategy=item.strategy,
+            symbol=item.symbol,
+            params=dict(item.params),
+            paper_candidate_status=item.paper_candidate_status,
+            score=float(item.recommendation_context.get("score", 0.0)),
+            rationale=rationale,
+            risk_flags=list(item.risk_flags),
+        )
+        if bucket == "RECOMMEND":
+            recommended_pool.append(entry)
+        elif bucket == "WATCHLIST":
+            watchlist.append(entry)
+        else:
+            excluded.append(entry)
+
+    # 상위 max_recommended 선정 — score desc.
+    recommended_pool.sort(key=lambda e: e.score, reverse=True)
+    recommended_strategies = recommended_pool[:max(0, int(max_recommended))]
+    demoted_from_recommend = recommended_pool[len(recommended_strategies):]
+    # 조합 상한 초과는 watchlist 로 demote.
+    for d in demoted_from_recommend:
+        watchlist.append(PaperStrategyEntry(
+            strategy=d.strategy, symbol=d.symbol, params=dict(d.params),
+            paper_candidate_status=d.paper_candidate_status,
+            score=d.score,
+            rationale=d.rationale + f" (조합 상한 max_recommended={max_recommended} 초과로 demote)",
+            risk_flags=list(d.risk_flags),
+        ))
+
+    # Overall status 결정.
+    no_candidate_reason: str | None = None
+    if not agent_input.items:
+        status = PaperCombinationStatus.NO_CANDIDATE
+        no_candidate_reason = "분석 가능한 후보가 0건 — 파이프라인 결과 부재"
+    elif recommended_strategies:
+        status = PaperCombinationStatus.RECOMMEND_PAPER
+    elif watchlist and not excluded:
+        status = PaperCombinationStatus.WATCH_ONLY
+    elif watchlist:
+        # 일부 watchlist + 일부 excluded — 후보 자격은 있으나 모두 보류성.
+        status = PaperCombinationStatus.WATCH_ONLY
+    elif excluded:
+        # 모두 위험으로 차단.
+        status = PaperCombinationStatus.REJECTED_BY_RISK
+        no_candidate_reason = (
+            f"모든 후보가 위험 한도 위반 / 검증 미통과로 차단 ({len(excluded)}건)"
+        )
+    else:
+        status = PaperCombinationStatus.NO_CANDIDATE
+        no_candidate_reason = "분류 불가 — 데이터 결손 또는 파이프라인 오류"
+
+    # NEED_MORE_DATA 가 dominant 인 경우 — overall 도 NEED_MORE_DATA 로 격하.
+    need_more = sum(
+        1 for e in watchlist
+        if e.paper_candidate_status == ReportStatus.NEED_MORE_DATA.value
+    )
+    if status == PaperCombinationStatus.WATCH_ONLY and need_more > 0 \
+            and need_more == len(watchlist):
+        status = PaperCombinationStatus.NEED_MORE_DATA
+        no_candidate_reason = (
+            "모든 후보가 NEED_MORE_DATA — 검증 기간 / 거래 횟수 확보 필요"
+        )
+
+    # risk_summary — 추천된 항목의 risk_flag 합집합 + 다양성 경고.
+    risk_summary: list[str] = []
+    seen: set[str] = set()
+    for e in recommended_strategies + watchlist:
+        for flag in e.risk_flags:
+            base = flag.split(" (")[0]
+            if base not in seen:
+                seen.add(base)
+                risk_summary.append(base)
+    risk_summary.extend(_detect_concentration_warnings(recommended_strategies))
+
+    # agent_rationale — 운영자 한 줄 요약.
+    if status == PaperCombinationStatus.RECOMMEND_PAPER:
+        names = ", ".join(f"{e.strategy}/{e.symbol}" for e in recommended_strategies)
+        agent_rationale = (
+            f"{len(recommended_strategies)}건 추천 ({names}). "
+            "모두 4단계 검증 통과 + 위험 신호 임계 이내. 본 추천은 advisory."
+        )
+    elif status == PaperCombinationStatus.WATCH_ONLY:
+        agent_rationale = (
+            f"{len(watchlist)}건 후보 모두 보류 — 위험 신호 또는 추가 관찰 필요. "
+            "본 추천은 advisory."
+        )
+    elif status == PaperCombinationStatus.NEED_MORE_DATA:
+        agent_rationale = (
+            "모든 후보의 검증 데이터 부족 — 백테스트 기간 / Walk-forward 확장 권고."
+        )
+    elif status == PaperCombinationStatus.REJECTED_BY_RISK:
+        agent_rationale = (
+            f"모든 후보가 위험 한도 위반 / 검증 미통과로 차단 ({len(excluded)}건)."
+        )
+    else:
+        agent_rationale = (
+            "오늘 자동 운용 후보 없음 — 파이프라인 결과 부재. paper trader 시작 금지."
+        )
+
+    # operator_next_action.
+    next_actions: list[str] = []
+    if status == PaperCombinationStatus.RECOMMEND_PAPER:
+        next_actions.append("추천 전략을 Paper Auto Loop 에 *수동* 입력 (자동 시작 금지)")
+        next_actions.append("Paper 운용 1주~4주 후 결과 검토 후 단계적 확장")
+        if risk_summary:
+            next_actions.append("위험 신호 목록 확인 + AI Agent 일일 보고 모니터링")
+    elif status in (PaperCombinationStatus.WATCH_ONLY, PaperCombinationStatus.NEED_MORE_DATA):
+        next_actions.append("Watchlist 후보의 위험 신호 / 데이터 부족 사유 검토")
+        next_actions.append("백테스트 기간 확장 또는 파라미터 재조정 후 재평가")
+    elif status == PaperCombinationStatus.REJECTED_BY_RISK:
+        next_actions.append("제외 사유 (과최적화 / 스트레스 / 위험 한도) 별로 strategy 별 분석")
+        next_actions.append("Strategy Researcher Agent (#55) 리포트 검토 후 별도 PR")
+    else:  # NO_CANDIDATE
+        next_actions.append(
+            "오늘은 자동 운용 후보 없음 — paper trader 강제 시작 금지"
+        )
+    # 공통 권고.
+    next_actions.append(
+        "본 추천은 *advisory* — 실거래 활성화는 별도 옵트인 절차 필요"
+    )
+
+    return PaperStrategyCombination(
+        generated_at=now.isoformat(),
+        status=status,
+        recommended_strategies=recommended_strategies,
+        excluded_strategies=excluded,
+        watchlist_strategies=watchlist,
+        no_candidate_reason=no_candidate_reason,
+        risk_summary=risk_summary,
+        agent_rationale=agent_rationale,
+        operator_next_action=next_actions,
+        metadata={
+            "pipeline":                  "step4-02-paper-combo-recommendation-v2",
+            "input_schema_version":      INPUT_SCHEMA_VERSION,
+            "max_recommended":           int(max_recommended),
+            "watch_risk_flag_threshold": int(watch_risk_flag_threshold),
+            "source_item_count":         agent_input.item_count,
+            **(metadata or {}),
+        },
+    )
