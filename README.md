@@ -303,7 +303,8 @@ JSON 직렬화 정책: [`docs/performance_metrics.md`](docs/performance_metrics.
 [`docs/real_data_expansion_plan.md`](docs/real_data_expansion_plan.md) (3-09) /
 [`docs/agent_strategy_input_schema.md`](docs/agent_strategy_input_schema.md) (4-01) /
 [`docs/strategy_combination_recommendation.md`](docs/strategy_combination_recommendation.md) (4-02) /
-[`docs/overfit_warning_agent.md`](docs/overfit_warning_agent.md) (4-03).
+[`docs/overfit_warning_agent.md`](docs/overfit_warning_agent.md) (4-03) /
+[`docs/market_regime_strategy_selection.md`](docs/market_regime_strategy_selection.md) (4-04).
 
 **Paper 후보 export 는 자동 실거래 활성화가 아닙니다.** `paper_candidate_config.json`
 은 운영자 검토 자료 — 검토 후 *수동* 으로 Paper Auto Loop 에 입력. 후보가
