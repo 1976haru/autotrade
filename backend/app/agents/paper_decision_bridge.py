@@ -62,6 +62,12 @@ from app.auto_paper.events import (
     PaperLoopEvent,
 )
 from app.auto_paper.ledger import LedgerStateError
+from app.auto_paper.position_sizer import (
+    PositionSizingPolicy,
+    SizingInput,
+    SizingResult,
+    compute_position_size,
+)
 
 
 BRIDGE_SCHEMA_VERSION = "1.0"
@@ -224,6 +230,11 @@ def bridge_explanation_to_paper_decisions(
     auto_fill:          bool                          = True,
     record:             bool                          = True,
     now:                datetime | None               = None,
+    # #4-08: position sizing — None 이면 *legacy fixed virtual_trade_size* 사용.
+    sizing_policy:      PositionSizingPolicy | None   = None,
+    price_lookup:       dict[tuple[str, str], float] | None = None,
+    account_equity:     float | None                  = None,
+    confidence_lookup:  dict[tuple[str, str], float] | None = None,
 ) -> BridgeReport:
     """4-05 explanation + 가상 포지션 + loop state → PaperDecision list.
 
@@ -235,10 +246,21 @@ def bridge_explanation_to_paper_decisions(
     - `explanation.verdict == DO_NOT_START` → 모든 action 차단
     - 그 외 verdict (HOLD / INSUFFICIENT_DATA): HOLD/NO_OP audit 만
     - READY_TO_REVIEW / REVIEW_WITH_WARNING + RUNNING: trade 가능
+
+    #4-08 (position sizing):
+    - `sizing_policy` 가 주어지면 BUY/SELL action 의 `virtual_trade_size` 가
+      `compute_position_size(...)` 결과로 *동적* 결정.
+    - `price_lookup[(strategy, symbol)]` + `account_equity` 가 필요 — 미제공
+      시 sizing 결과 quantity=0 → BUY 변환이 NO_OP/HOLD 로 강등.
+    - `confidence_lookup[(strategy, symbol)]` 미제공 시 default 0.5.
+    - sizing_policy=None (default) → legacy `virtual_trade_size` 그대로 사용
+      (backwards compat).
     """
     if now is None:
         now = datetime.now(timezone.utc)
     pos_list: list[PositionSnapshot] = list(positions or [])
+    price_map = dict(price_lookup or {})
+    conf_map  = dict(confidence_lookup or {})
 
     decisions:        list[PaperDecision] = []
     events_recorded:  int = 0
@@ -287,11 +309,46 @@ def bridge_explanation_to_paper_decisions(
         + list(explanation.excluded_explanations)
     )
 
+    sizing_results: list[SizingResult] = []
+
     for exp in all_entries:
         position = _find_position(pos_list, exp.strategy, exp.symbol)
         direction = _explanation_to_direction(
             exp, position, allow_trade=allow_trade,
         )
+
+        # #4-08: position sizing — sizing_policy 주어지면 동적 계산.
+        effective_trade_size = int(virtual_trade_size)
+        sizing_result: SizingResult | None = None
+        if sizing_policy is not None and direction in (
+            AIDirection.BUY, AIDirection.SELL, AIDirection.EXIT,
+        ):
+            key = (exp.strategy, exp.symbol)
+            price = price_map.get(key, 0.0)
+            equity = float(account_equity or 0.0)
+            confidence = conf_map.get(key, 0.5)
+            sizing_result = compute_position_size(
+                SizingInput(
+                    strategy=exp.strategy, symbol=exp.symbol,
+                    price=price, account_equity=equity,
+                    confidence=confidence,
+                    risk_flag_count=len(exp.risk_flags),
+                    market_regime=explanation.market_regime,
+                    loop_state=loop_state,
+                ),
+                sizing_policy,
+            )
+            sizing_results.append(sizing_result)
+            if sizing_result.quantity == 0:
+                # 수량 0 — direction 을 HOLD 로 강등 (BUY/SELL/EXIT 모두 차단).
+                direction = AIDirection.HOLD
+                block_reasons.append(
+                    f"{exp.strategy}/{exp.symbol}: sizing quantity=0 "
+                    f"({sizing_result.verdict.value})"
+                )
+            else:
+                effective_trade_size = sizing_result.quantity
+
         rec = AIRecommendationInput(
             strategy=exp.strategy,
             symbol=exp.symbol,
@@ -306,13 +363,18 @@ def bridge_explanation_to_paper_decisions(
                 "paper_candidate_status": exp.paper_candidate_status,
                 "overfit_verdict":        exp.overfit_verdict or "",
                 "regime_policy_role":     exp.regime_policy_role or "",
+                **(
+                    {"sizing_verdict": sizing_result.verdict.value,
+                     "sizing_quantity": sizing_result.quantity}
+                    if sizing_result is not None else {}
+                ),
             },
         )
         try:
             decision, _event = process_ai_recommendation(
                 rec,
                 loop_state=loop_state,
-                virtual_trade_size=int(virtual_trade_size),
+                virtual_trade_size=effective_trade_size,
                 auto_fill=bool(auto_fill),
                 record=record,
             )
@@ -355,6 +417,8 @@ def bridge_explanation_to_paper_decisions(
             "by_action":          by_action,
             "allow_trade":        allow_trade,
             "verdict_allow_trade": verdict_allows_trade,
+            "sizing_applied":     sizing_policy is not None,
+            "sizing_results":     [s.to_dict() for s in sizing_results],
         },
     )
 
