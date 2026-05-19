@@ -351,4 +351,118 @@ def get_latest_decision() -> dict:
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# #PaperCandidateWire: 최종 Paper 후보 ↔ Auto Paper Loop 승인 endpoint.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+from app.auto_paper.candidate_registry import (   # noqa: E402
+    ApprovalBlockedError,
+    CandidateNotFoundError,
+    get_candidate_registry,
+)
+
+
+class _ApprovalBody(BaseModel):
+    approved_by:  str
+    note:         Optional[str] = None
+
+
+class _RejectBody(BaseModel):
+    rejected_by:  str
+    note:         Optional[str] = None
+
+
+@_AP.get("/candidates")
+def get_candidates() -> dict:
+    """등록된 모든 Paper 후보 + readiness 상태 — *read-only*.
+
+    `recommended_for_paper=True` 라도 `requires_operator_approval=True` 영구
+    — 본 endpoint 가 반환하는 어떤 후보도 자동으로 사용되지 않는다.
+    """
+    return get_candidate_registry().to_dict()
+
+
+@_AP.post("/candidates/{candidate_id}/approve-paper")
+def approve_candidate(candidate_id: str, body: _ApprovalBody) -> dict:
+    """후보를 *Paper* 용으로 승인 — 위험 라벨 carry 시 차단.
+
+    승인된 후보는 active_candidate 로 사용 가능하지만 실거래로 이어지지 않는다
+    — `is_live_authorization=False` 영구.
+    """
+    try:
+        m = get_candidate_registry().approve(
+            candidate_id, body.approved_by, body.note,
+        )
+    except CandidateNotFoundError as e:
+        raise HTTPException(404, detail={
+            "error": "candidate_not_found",
+            "candidate_id": candidate_id,
+            "message": str(e),
+        })
+    except ApprovalBlockedError as e:
+        raise HTTPException(409, detail={
+            "error": "approval_blocked_risk",
+            "candidate_id": candidate_id,
+            "message": str(e),
+        })
+    except RuntimeError as e:
+        raise HTTPException(409, detail={
+            "error": "approval_state_conflict",
+            "candidate_id": candidate_id,
+            "message": str(e),
+        })
+    return {
+        "candidate":             m.to_dict(),
+        "is_order_signal":       False,
+        "auto_apply_allowed":    False,
+        "is_live_authorization": False,
+        "advisory_disclaimer": (
+            "승인된 후보는 Paper Auto Loop input 으로 사용 가능 — 실거래 활성화는 "
+            "별도 Live Manual Gate / Live Activation PR 후에만."
+        ),
+    }
+
+
+@_AP.post("/candidates/{candidate_id}/reject")
+def reject_candidate(candidate_id: str, body: _RejectBody) -> dict:
+    try:
+        m = get_candidate_registry().reject(
+            candidate_id, body.rejected_by, body.note,
+        )
+    except CandidateNotFoundError as e:
+        raise HTTPException(404, detail={
+            "error": "candidate_not_found",
+            "candidate_id": candidate_id,
+            "message": str(e),
+        })
+    except RuntimeError as e:
+        raise HTTPException(409, detail={
+            "error": "reject_state_conflict",
+            "candidate_id": candidate_id,
+            "message": str(e),
+        })
+    return {
+        "candidate":             m.to_dict(),
+        "is_order_signal":       False,
+        "auto_apply_allowed":    False,
+        "is_live_authorization": False,
+    }
+
+
+@_AP.get("/active-candidate")
+def get_active_candidate() -> dict:
+    """현재 active_candidate — 없으면 has_active=False."""
+    reg = get_candidate_registry()
+    active = reg.active_candidate()
+    return {
+        "has_active":            active is not None,
+        "readiness_state":       reg.readiness_state().value,
+        "active":                active.to_dict() if active else None,
+        "is_order_signal":       False,
+        "auto_apply_allowed":    False,
+        "is_live_authorization": False,
+    }
+
+
 router.include_router(_AP)

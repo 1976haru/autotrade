@@ -208,6 +208,10 @@ class AutoPaperStatus:
     last_decision_action:    str | None = None  # 가장 흔한 action (BUY/HOLD/EXIT 등)
     last_ledger_events:      int  = 0
     last_decision_log_count: int  = 0
+    # #PaperCandidateWire: 후보 readiness 라벨 — AutoPaperState 와 *별개*.
+    # NO_CANDIDATE / WAITING_APPROVAL / CANDIDATE_READY 중 하나.
+    candidate_readiness:     str  = "NO_CANDIDATE"
+    has_active_candidate:    bool = False
     is_order_signal:     bool = False
     auto_apply_allowed:  bool = False
 
@@ -235,6 +239,8 @@ class AutoPaperStatus:
             "last_decision_action":    self.last_decision_action,
             "last_ledger_events":      self.last_ledger_events,
             "last_decision_log_count": self.last_decision_log_count,
+            "candidate_readiness":     self.candidate_readiness,
+            "has_active_candidate":    self.has_active_candidate,
             "is_order_signal":     self.is_order_signal,
             "auto_apply_allowed":  self.auto_apply_allowed,
         }
@@ -569,6 +575,15 @@ class AutoPaperLoop:
             return self._snapshot_unlocked()
 
     def _snapshot_unlocked(self) -> AutoPaperStatus:
+        # #PaperCandidateWire: registry 가 reset 되어도 안전한 lookup.
+        try:
+            from app.auto_paper.candidate_registry import get_candidate_registry
+            reg = get_candidate_registry()
+            readiness = reg.readiness_state().value
+            has_active = reg.active_candidate() is not None
+        except Exception:  # noqa: BLE001 — import / registry 실패 시 안전 fallback.
+            readiness = "NO_CANDIDATE"
+            has_active = False
         return AutoPaperStatus(
             state=self._state.value,
             cycle_count=self._cycle_count,
@@ -584,6 +599,8 @@ class AutoPaperLoop:
             last_decision_action=self._last_consumer_action,
             last_ledger_events=self._last_consumer_ledger_events,
             last_decision_log_count=self._last_consumer_decision_log_count,
+            candidate_readiness=readiness,
+            has_active_candidate=has_active,
         )
 
 
