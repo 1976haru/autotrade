@@ -315,6 +315,7 @@ JSON 직렬화 정책: [`docs/performance_metrics.md`](docs/performance_metrics.
 [`docs/strategy_combo_backtest.md`](docs/strategy_combo_backtest.md) (3-12) /
 [`docs/regime_combo_backtest.md`](docs/regime_combo_backtest.md) (3-13) /
 [`docs/combo_correlation_risk.md`](docs/combo_correlation_risk.md) (3-14) /
+[`docs/final_paper_candidates.md`](docs/final_paper_candidates.md) (3-15) /
 [`docs/agent_strategy_input_schema.md`](docs/agent_strategy_input_schema.md) (4-01) /
 [`docs/strategy_combination_recommendation.md`](docs/strategy_combination_recommendation.md) (4-02) /
 [`docs/overfit_warning_agent.md`](docs/overfit_warning_agent.md) (4-03) /
