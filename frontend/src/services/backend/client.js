@@ -137,6 +137,19 @@ export const backendApi = {
   // #2-10: AI Paper 자동매수/매도 skeleton — read-only latest decision.
   autoPaperLatestDecision: () =>
     backendFetch("/api/auto-paper/decision/latest"),
+  // #PaperCandidateWire: Paper 후보 ↔ Auto Paper Loop 승인 endpoints.
+  autoPaperCandidates: () =>
+    backendFetch("/api/auto-paper/candidates"),
+  autoPaperActiveCandidate: () =>
+    backendFetch("/api/auto-paper/active-candidate"),
+  autoPaperApproveCandidate: (candidateId, body) => backendFetch(
+    `/api/auto-paper/candidates/${encodeURIComponent(candidateId)}/approve-paper`,
+    { method: "POST", body: JSON.stringify(body || {}) },
+  ),
+  autoPaperRejectCandidate: (candidateId, body) => backendFetch(
+    `/api/auto-paper/candidates/${encodeURIComponent(candidateId)}/reject`,
+    { method: "POST", body: JSON.stringify(body || {}) },
+  ),
   // #4-05: Paper 실행 전 최종 설명 카드 — advisory, read-only.
   paperStartExplanation: (body = {}) => backendFetch(
     "/api/agents/paper-start-explanation",
