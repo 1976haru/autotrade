@@ -2,10 +2,18 @@
 
 본 모듈은 실 broker 를 호출하지 *않는다* — `Settings` 값만 읽어서 *코드 단*
 가드를 evaluate 한다. 실제 KIS 연결 확인은 engine 단계의 read-only ping 에서.
+
+fix/desktop-kis-env-readiness-load:
+EXE 흐름에서 `%APPDATA%\\Autotrade\\.env` 로드 상태를 운영자가 진단할 수
+있도록 `env_file_found` / `env_file_loaded` / `env_loaded_path` 3 필드를
+추가. *Secret 원문은 절대 carry 하지 않으며* 경로 + boolean 만 노출.
+필드는 launcher 가 `os.environ` 에 publish 하는 `AUTOTRADE_ENV_FILE_*`
+변수를 read-only 로 읽는다.
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -36,6 +44,11 @@ class KisPaperReadiness:
     kis_key_present:     bool = False
     kis_secret_present:  bool = False
     kis_account_present: bool = False
+    # fix/desktop-kis-env-readiness-load: AppData .env 로드 상태 진단.
+    # *secret 원문 0건* — 경로 + boolean 만.
+    env_file_found:      bool = False
+    env_file_loaded:     bool = False
+    env_loaded_path:     str  = ""
     # 응답 안전 — invariant
     is_order_intent:     bool = False
     is_order_signal:     bool = False
@@ -54,9 +67,20 @@ class KisPaperReadiness:
             "blocked_reasons":      [r.value for r in self.blocked_reasons],
             "detail_messages":      list(self.detail_messages),
             "safety_flags":         dict(self.safety_flags),
+            # 사용자 요청 신규 alias — 동일 boolean 을 다른 키로도 노출.
+            "kis_app_key_present":     self.kis_key_present,
+            "kis_app_secret_present":  self.kis_secret_present,
+            "kis_account_no_present":  self.kis_account_present,
+            "kis_is_paper":            bool(self.safety_flags.get("kis_is_paper", True)),
+            "can_use_kis_paper":       self.can_run_kis_paper,
+            # 기존 키도 유지 (backwards compat).
             "kis_key_present":      self.kis_key_present,
             "kis_secret_present":   self.kis_secret_present,
             "kis_account_present":  self.kis_account_present,
+            # .env 로드 진단 (secret 원문 0건 — 경로 + boolean 만).
+            "env_file_found":       self.env_file_found,
+            "env_file_loaded":      self.env_file_loaded,
+            "env_loaded_path":      self.env_loaded_path,
             "is_order_intent":      False,
             "is_order_signal":      False,
         }
@@ -172,6 +196,16 @@ def evaluate_readiness(settings) -> KisPaperReadiness:
         "kis_is_paper":                  kis_is_paper,
     }
 
+    # fix/desktop-kis-env-readiness-load: launcher 가 publish 한 진단 변수
+    # 를 읽어 readiness 응답에 carry. *secret 원문 0건* — 경로 + boolean 만.
+    env_file_found = (
+        (os.environ.get("AUTOTRADE_ENV_FILE_FOUND") or "").lower() == "true"
+    )
+    env_file_loaded = (
+        (os.environ.get("AUTOTRADE_ENV_FILE_LOADED") or "").lower() == "true"
+    )
+    env_loaded_path = os.environ.get("AUTOTRADE_ENV_FILE_PATH") or ""
+
     return KisPaperReadiness(
         ready=ready,
         can_run_kis_paper=can_run_kis_paper,
@@ -182,4 +216,7 @@ def evaluate_readiness(settings) -> KisPaperReadiness:
         kis_key_present=kis_key_present,
         kis_secret_present=kis_secret_present,
         kis_account_present=kis_account_present,
+        env_file_found=env_file_found,
+        env_file_loaded=env_file_loaded,
+        env_loaded_path=env_loaded_path,
     )
