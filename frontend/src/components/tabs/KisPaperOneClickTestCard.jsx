@@ -278,6 +278,30 @@ export function KisPaperOneClickTestCard({
                   value={readiness.kis_key_present ? "✓ 입력됨" : "❌ 미입력"}
                   testid="kis-paper-key-present"
                   color={readiness.kis_key_present ? "#22c55e" : "#fbbf24"} />
+          <_Field label="KIS Secret 입력됨"
+                  value={readiness.kis_secret_present ? "✓ 입력됨" : "❌ 미입력"}
+                  testid="kis-paper-secret-present"
+                  color={readiness.kis_secret_present ? "#22c55e" : "#fbbf24"} />
+          <_Field label="KIS 계좌번호 입력됨"
+                  value={readiness.kis_account_present ? "✓ 입력됨" : "❌ 미입력"}
+                  testid="kis-paper-account-present"
+                  color={readiness.kis_account_present ? "#22c55e" : "#fbbf24"} />
+          {/* fix/desktop-kis-env-readiness-load: 운영자가 *어떤* .env 가
+              로드되었는지 진단할 수 있도록 경로 + 로드 성공 여부 노출.
+              *Secret 원문 0건* — 경로만. */}
+          <_Field label=".env 발견"
+                  value={readiness.env_file_found ? "✓ 발견" : "❌ 없음"}
+                  testid="kis-paper-env-found"
+                  color={readiness.env_file_found ? "#22c55e" : "#fbbf24"} />
+          <_Field label=".env 로드됨"
+                  value={readiness.env_file_loaded ? "✓ 로드됨" : "❌ 로드 안 됨"}
+                  testid="kis-paper-env-loaded"
+                  color={readiness.env_file_loaded ? "#22c55e" : "#fbbf24"} />
+          {readiness.env_loaded_path && (
+            <_Field label=".env 경로"
+                    value={readiness.env_loaded_path}
+                    testid="kis-paper-env-path" />
+          )}
           <_Field label="KIS Paper 모드 가능"
                   value={readiness.can_run_kis_paper
                     ? "✓ 가능" : "❌ 차단"}

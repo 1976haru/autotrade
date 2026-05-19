@@ -220,6 +220,73 @@ def _inject_env_keys(parsed: dict[str, str], log: logging.Logger) -> int:
     return injected
 
 
+def load_env_via_dotenv(
+    path: Path,
+    log: logging.Logger,
+    *,
+    override: bool = True,
+) -> bool:
+    """`python-dotenv` 의 `load_dotenv(path, override=True)` 로 명시 로드.
+
+    fix/desktop-kis-env-readiness-load:
+    기존 `_inject_env_keys()` 는 *이미 process env 에 존재* 하는 키 (빈 문자열
+    포함) 를 보존했다. Windows EXE 흐름에서 부모 셸이 `KIS_APP_KEY=""` 같은
+    빈 값을 carry 하면 .env 의 실제 값이 덮어쓰이지 *않아* readiness 가 missing
+    으로 보고되는 회귀가 발생.
+
+    본 함수는 `python-dotenv` 의 `override=True` 모드를 사용해 *항상* .env
+    값으로 덮어쓴다. 운영자가 process env 로 명시 override 를 원하면 dotenv
+    호출 *후* set 하면 됨. *Secret 원문은 log 에 절대 출력하지 않음* — 키
+    이름만.
+
+    Returns: 로드 성공 여부 (파일 존재 + 파싱 성공 → True).
+    """
+    try:
+        from dotenv import dotenv_values, load_dotenv
+    except ImportError:   # pragma: no cover — defensive
+        log.warning(
+            "env: python-dotenv unavailable, falling back to custom parser. "
+            "Install via: pip install python-dotenv"
+        )
+        parsed = load_env_file(path)
+        _inject_env_keys(parsed, log)
+        return bool(parsed)
+
+    try:
+        parsed = dotenv_values(str(path))   # 키 이름 로깅용 (값은 미사용)
+    except OSError as exc:
+        log.warning("env: dotenv read failed for %s: %s", path, exc)
+        return False
+
+    ok = load_dotenv(dotenv_path=str(path), override=override)
+    if not ok:
+        log.warning("env: load_dotenv returned False for %s", path)
+        return False
+
+    # 키 이름만 로그에 표시. Secret 값은 절대 출력 X.
+    for key in parsed.keys():
+        if key in _SECRET_KEYS:
+            log.info("env: loaded key=%s (value redacted, override=%s)",
+                     key, override)
+        elif key in _SAFETY_FLAG_KEYS:
+            log.info("env: loaded safety-flag %s=%s (override=%s)",
+                     key, os.environ.get(key, ""), override)
+        else:
+            log.info("env: loaded key=%s (override=%s)", key, override)
+
+    # Settings cache 강제 invalidate — uvicorn 이 app.main 을 import 하기 *전*
+    # 에 호출되어야 함. import 후 lru_cache 가 빈 Settings 를 캐싱하면 endpoint
+    # 가 stale 값을 반환.
+    try:
+        from app.core.config import get_settings
+        get_settings.cache_clear()
+        log.info("env: get_settings.cache_clear() invoked")
+    except Exception as exc:   # noqa: BLE001 — defensive (boot order)
+        log.warning("env: settings cache clear skipped: %s", exc)
+
+    return True
+
+
 def is_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
     """TCP 포트 in-use 여부 — connect 시도가 성공하면 누군가 listen 중."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -378,10 +445,28 @@ def run(argv: list[str] | None = None) -> int:
         log.info("log file: %s", log_path)
 
     env_path = resolve_env_path()
+    env_loaded = False
     if env_path is not None:
-        parsed = load_env_file(env_path)
-        _inject_env_keys(parsed, log)
+        # fix/desktop-kis-env-readiness-load: load_dotenv(override=True) 로
+        # 부모 셸의 빈 값 / leftover 환경변수를 .env 값으로 덮어쓰고, 직후
+        # get_settings.cache_clear() 로 stale Settings 캐시를 무효화한다.
+        env_loaded = load_env_via_dotenv(env_path, log)
+        if not env_loaded:
+            log.warning(
+                "env: load_dotenv reported failure for %s — falling back to "
+                "legacy parser",
+                env_path,
+            )
+            parsed = load_env_file(env_path)
+            _inject_env_keys(parsed, log)
+            env_loaded = bool(parsed)
     _print_safety_snapshot(log, env_path)
+    # readiness API 가 본 정보를 carry 할 수 있도록 process env 로 공개.
+    # *secret 원문 아님* — 파일 경로 + 로드 성공 여부만.
+    if env_path is not None:
+        os.environ["AUTOTRADE_ENV_FILE_PATH"] = str(env_path)
+    os.environ["AUTOTRADE_ENV_FILE_FOUND"] = "true" if env_path is not None else "false"
+    os.environ["AUTOTRADE_ENV_FILE_LOADED"] = "true" if env_loaded else "false"
 
     # fix/desktop-nonblocking-migration-health: 데스크톱 EXE 흐름에서는
     # `migration_nonblocking=True` 로 lifespan 이 alembic migration 을

@@ -64,6 +64,19 @@ def startup_log_capture() -> dict:
     original_apply = main_module.apply_migrations
     main_module.apply_migrations = lambda: None  # type: ignore[assignment]
 
+    # 다른 테스트 (예: test_desktop_launcher_startup_log) 가 process env 에
+    # `MIGRATION_NONBLOCKING=true` 를 남겼다면 lifespan 이 비차단 경로로 분기해
+    # "alembic migration starting" marker 가 emit 되지 않는다 — 본 fixture 는
+    # *블로킹* 경로를 강제하기 위해 명시 false 로 덮어쓰고 종료 시 복원.
+    import os as _os
+    _prev_mig_nb = _os.environ.get("MIGRATION_NONBLOCKING")
+    _os.environ["MIGRATION_NONBLOCKING"] = "false"
+    # Settings cache 도 즉시 무효화 — get_settings() 가 stale 값을 반환하지
+    # 않도록 (다른 테스트의 load_env_via_dotenv 가 cache_clear 한 후 새 Settings
+    # 인스턴스가 `MIGRATION_NONBLOCKING=true` 를 캐싱했을 수 있음).
+    from app.core.config import get_settings as _get_settings
+    _get_settings.cache_clear()
+
     try:
         with TestClient(app) as client:
             health_resp = client.get("/health")
@@ -74,6 +87,11 @@ def startup_log_capture() -> dict:
         target_logger.removeHandler(handler)
         target_logger.setLevel(prev_level)
         target_logger.disabled = prev_disabled
+        if _prev_mig_nb is None:
+            _os.environ.pop("MIGRATION_NONBLOCKING", None)
+        else:
+            _os.environ["MIGRATION_NONBLOCKING"] = _prev_mig_nb
+        _get_settings.cache_clear()
 
     messages = [r.getMessage() for r in captured]
     return {

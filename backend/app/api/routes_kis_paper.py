@@ -54,6 +54,16 @@ class KisPaperReadinessOut(BaseModel):
     kis_key_present:      bool
     kis_secret_present:   bool
     kis_account_present:  bool
+    # fix/desktop-kis-env-readiness-load: 신규 alias + 진단 필드.
+    # *secret 원문 0건* — boolean / 경로만.
+    kis_app_key_present:    bool = False
+    kis_app_secret_present: bool = False
+    kis_account_no_present: bool = False
+    kis_is_paper:           bool = True
+    can_use_kis_paper:      bool = False
+    env_file_found:         bool = False
+    env_file_loaded:        bool = False
+    env_loaded_path:        str  = ""
     is_order_intent:      bool
     is_order_signal:      bool
 
@@ -93,7 +103,18 @@ class KisPaperReportOut(BaseModel):
 
 @router.get("/readiness", response_model=KisPaperReadinessOut)
 def get_kis_paper_readiness() -> KisPaperReadinessOut:
-    """preflight 검사. broker / KIS API 호출 0건 — 환경변수만 평가."""
+    """preflight 검사. broker / KIS API 호출 0건 — 환경변수만 평가.
+
+    fix/desktop-kis-env-readiness-load:
+    매 호출마다 `get_settings.cache_clear()` 를 호출해 *직전에 로드된* .env
+    값을 즉시 반영. 운영자가 .env 파일을 수정하고 UI 의 "준비상태 확인" 을
+    누르면 새 값으로 재평가된다 (재시작 불필요).
+
+    *주의*: cache_clear() 는 Settings *인스턴스* 만 무효화 — process env 의
+    실제 값은 launcher / dotenv 가 갱신해야 보임. 본 endpoint 자체는 .env
+    파일을 읽지 *않는다*.
+    """
+    get_settings.cache_clear()
     settings = get_settings()
     rd = evaluate_readiness(settings)
     return KisPaperReadinessOut(**rd.to_dict())

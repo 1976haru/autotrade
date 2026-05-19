@@ -490,3 +490,97 @@ describe("KisPaperOneClickTestCard — #91 Pre-market Checklist 게이트", () =
     }
   });
 });
+
+
+// ====================================================================
+// fix/desktop-kis-env-readiness-load — .env 로드 진단 + 새 alias
+// ====================================================================
+
+
+describe("KisPaperOneClickTestCard — .env 로드 진단", () => {
+  it("env_file_found / env_file_loaded / env_loaded_path 노출", async () => {
+    backendApi.kisPaperReadiness.mockResolvedValue(_readiness({
+      env_file_found: true,
+      env_file_loaded: true,
+      env_loaded_path: "C:\\Users\\user\\AppData\\Roaming\\Autotrade\\.env",
+    }));
+    const { getByTestId } = render(<KisPaperOneClickTestCard />);
+    await waitFor(() =>
+      expect(getByTestId("kis-paper-env-found").textContent).toContain("발견"));
+    expect(getByTestId("kis-paper-env-loaded").textContent).toContain("로드됨");
+    expect(getByTestId("kis-paper-env-path").textContent)
+      .toContain("AppData\\Roaming\\Autotrade\\.env");
+  });
+
+  it("env 로드 실패 시 ❌ 표시 + 경로 필드 미노출", async () => {
+    backendApi.kisPaperReadiness.mockResolvedValue(_readiness({
+      env_file_found: false,
+      env_file_loaded: false,
+      env_loaded_path: "",
+    }));
+    const { getByTestId, queryByTestId } = render(<KisPaperOneClickTestCard />);
+    await waitFor(() =>
+      expect(getByTestId("kis-paper-env-found").textContent).toContain("없음"));
+    expect(getByTestId("kis-paper-env-loaded").textContent).toContain("로드 안 됨");
+    // 경로가 빈 문자열이면 필드 자체가 렌더되지 않음.
+    expect(queryByTestId("kis-paper-env-path")).toBeNull();
+  });
+
+  it("KIS Secret / 계좌번호 입력 여부 별도 표시", async () => {
+    backendApi.kisPaperReadiness.mockResolvedValue(_readiness({
+      kis_key_present: true,
+      kis_secret_present: false,
+      kis_account_present: true,
+    }));
+    const { getByTestId } = render(<KisPaperOneClickTestCard />);
+    await waitFor(() =>
+      expect(getByTestId("kis-paper-key-present").textContent).toContain("입력됨"));
+    expect(getByTestId("kis-paper-secret-present").textContent).toContain("미입력");
+    expect(getByTestId("kis-paper-account-present").textContent).toContain("입력됨");
+  });
+
+  it("준비상태 확인 버튼 클릭 시 readiness 재조회 (initial + click 2회)", async () => {
+    const { getByTestId } = render(<KisPaperOneClickTestCard />);
+    await waitFor(() =>
+      expect(backendApi.kisPaperReadiness).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      fireEvent.click(getByTestId("kis-paper-btn-readiness"));
+    });
+    await waitFor(() =>
+      expect(backendApi.kisPaperReadiness).toHaveBeenCalledTimes(2));
+  });
+
+  it("env_loaded_path 에 secret 값을 표시하지 *않음* (path 만)", async () => {
+    // 경로 자체가 secret 처럼 보이지 않도록 .env 파일 위치만 표시.
+    backendApi.kisPaperReadiness.mockResolvedValue(_readiness({
+      env_file_found: true,
+      env_file_loaded: true,
+      env_loaded_path: "C:\\Users\\user\\AppData\\Roaming\\Autotrade\\.env",
+    }));
+    const { getByTestId, container } = render(<KisPaperOneClickTestCard />);
+    await waitFor(() => getByTestId("kis-paper-env-path"));
+    const full = container.textContent || "";
+    // secret 패턴 (sk- / Bearer / 한국 계좌번호 형식) 0건.
+    expect(full).not.toMatch(/sk-[A-Za-z0-9]{20,}/);
+    expect(full).not.toMatch(/Bearer\s+eyJ/);
+    // 계좌번호 패턴 (8자리-2자리) — readiness 응답에 carry 0건.
+    expect(full).not.toMatch(/\b\d{8}-\d{2}\b/);
+  });
+
+  it("새 alias 필드 (kis_app_key_present 등) 가 있어도 기존 키와 호환", async () => {
+    // backend 가 신규 alias 만 보내도 (또는 기존 키만 보내도) 카드가
+    // 깨지지 *않아야* 함.
+    backendApi.kisPaperReadiness.mockResolvedValue({
+      ..._readiness(),
+      // 신규 alias 만 set, 기존 키도 같이 (실제 응답 contract).
+      kis_app_key_present: true,
+      kis_app_secret_present: true,
+      kis_account_no_present: true,
+      kis_is_paper: true,
+      can_use_kis_paper: true,
+    });
+    const { getByTestId } = render(<KisPaperOneClickTestCard />);
+    await waitFor(() =>
+      expect(getByTestId("kis-paper-key-present").textContent).toContain("입력됨"));
+  });
+});
