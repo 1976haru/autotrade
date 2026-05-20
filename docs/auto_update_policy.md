@@ -196,3 +196,80 @@ Windows SmartScreen 경고가 뜨면 **"추가 정보" → "실행"** 을 클릭
 | 인터넷 차단 | UpdateBanner = FAILED ("최신 버전 확인 불가"). welcome modal 정상 동작 |
 | backend down | BackendOfflineBanner = 별도. UpdateBanner 는 영향 X |
 | "이번 안내 확인" 후 재실행 | welcome modal 0회. UpdateBanner 는 무관하게 정상 동작 |
+
+## 9. GitHub Release 연동 contract (#5-05)
+
+본 절은 *어떤 GitHub Release artifact 가 UpdateBanner 의 진실인가* 를 명시한다.
+
+### 9-1. 발행 (CI 측, workflow)
+
+`.github/workflows/desktop-release.yml` 가 *수동 trigger only* 로 실행되며,
+다음 invariant 를 준수한다 — `test_repository_hygiene.py` 가 정적으로 lock:
+
+- `workflow_dispatch` 트리거만 사용 (자동 push/tag/schedule 0건)
+- runner = `windows-latest` 한정
+- `inputs.release_tag` 는 sanitize step (SemVer 정규식) 통과 후만 후속 step
+  에 흐른다. 비-SemVer 입력은 즉시 fail-fast.
+- artifact 업로드 경로 = `src-tauri/target/release/bundle/nsis/*-setup.exe` *만*
+- `actions/upload-artifact@v4` + `if-no-files-found: error` 필수 — 빈 결과
+  허용 0건.
+- `create_release=true` 일 때만 `softprops/action-gh-release@v2` 가 *같은*
+  setup.exe 파일을 GitHub Release **draft** 에 첨부. 다른 file 패턴 0건.
+- `inputs.draft=true` 기본값 — 운영자가 GitHub UI 에서 *수동 publish*.
+
+artifact 안전 가드:
+- `.env` / `*.key` / `*.pem` / `*.p12` / `*.pfx` / `*.crt` / `*.cer` /
+  `*.keystore` / `*.jks` 파일이 bundle 에 포함되면 PowerShell safety step
+  이 *FATAL* 로 빌드 차단.
+- secret 패턴 (`sk-...` / `ghp_...` / `Bearer ...`) 도 release notes /
+  workflow source 자체에서 검출되면 차단.
+
+### 9-2. 소비 (앱 측, UpdateBanner)
+
+`frontend/src/desktop/updaterClient.js` 의 `fetchLatestRelease` 가 다음 URL
+을 *유일한 진실* 로 사용:
+
+```
+https://api.github.com/repos/1976haru/autotrade/releases/latest
+```
+
+응답에서 추출되는 필드:
+- `tag_name` → `result.latestVersion`
+- `html_url` → `result.releaseUrl` (release 페이지)
+- `body` → `result.releaseNotes` (sanitize 통과)
+- `assets[].browser_download_url` → `result.setupExeAsset.downloadUrl`
+  (이름이 `*-setup.exe` 인 첫 asset 우선)
+
+UpdateBanner UI 매핑:
+- **UPDATE_AVAILABLE** 상태에서 `setupExeAsset.downloadUrl` 이 있으면 카드
+  하단에 **"setup.exe 직접 받기"** `<a download>` 링크 노출 (testid
+  `link-setup-exe-direct`, `target=_blank` + `rel="noopener noreferrer"`).
+  asset 이 없으면 본 링크 0건 — release 페이지 버튼 (`btn-update-apply`)
+  만으로 fallback.
+- **FAILED** 상태에서는 `link-manual-download` 가 release 페이지
+  (`/releases`) 로 안내. 직접 setup.exe 링크 없음 — 운영자가 release 페이지
+  에서 직접 확인.
+- **UP_TO_DATE** 상태에서는 어떤 download 링크도 노출 X.
+
+### 9-3. GitHub Release 가 없거나 fetch 실패할 때
+
+- updaterClient → `{ state: FAILED, error }` 반환.
+- UpdateBanner → headline `"ℹ️ 최신 버전 확인 불가"` 노출. `Failed to fetch`
+  raw 는 *기술 상세* details 안에서만, `sanitizeText` 통과.
+- 본 상태는 **backend offline 과 별개 항목** — `update-fail-not-backend`
+  배너에 명시. 같은 시점에 backend 도 down 이면 `BackendOfflineBanner` 가
+  *별도로* 노출.
+- 자동 release / 더미 release / stale 노출 0건 — `UpdateBanner.jsx` 가
+  `../config/releaseNotes` 를 import 하지 않음을 정적 grep 으로 lock (§8).
+
+### 9-4. PR 머지 후 단계 (운영자)
+
+본 PR 시점에는 desktop-release workflow 를 *실행하지 않는다*. 머지 후 운영자가:
+
+1. GitHub Actions 탭 → `desktop-release` workflow → **Run workflow** 클릭.
+2. `release_tag` 에 SemVer 입력 (예: `v1.0.1-beta.1`).
+3. `draft=true` / `create_release=true` 권장.
+4. 빌드 완료 후 Actions 페이지 *Artifacts* + GitHub Releases (draft) 에서
+   setup.exe 확인.
+5. release 페이지에서 운영자가 *수동 publish* → UpdateBanner 가 다음 사용자
+   접속 시 UPDATE_AVAILABLE 노출.

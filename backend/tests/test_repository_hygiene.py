@@ -746,6 +746,162 @@ def test_no_real_kis_token_pattern_tracked():
 
 
 # ====================================================================
+# fix/step5-github-release-artifact-link (#5-05) — Workflow contract guards
+# ====================================================================
+#
+# desktop-release workflow 가 다음 invariant 를 *항상* 준수해야 한다 — 향후
+# PR 에서 누군가 다른 path / 다른 asset 패턴을 추가해도 본 테스트가 즉시
+# 회귀를 잡는다.
+
+def test_desktop_release_workflow_sanitizes_release_tag():
+    """workflow_dispatch input `release_tag` 가 명시 sanitize step 을 통과한다.
+
+    sanitize step 이 누락되면 운영자가 `release_tag` 에 path traversal /
+    shell 메타 / 공백 / 한글을 넣었을 때 artifact 이름 / Release tag 가
+    오염된다.
+    """
+    p = _workflow_path()
+    if not p.exists():
+        pytest.skip("desktop-release.yml 미존재 — 본 검사 skip")
+    src = _read(p)
+    # sanitize step 의 식별 토큰. 정규식 키워드 + step name 둘 다 확인.
+    assert "Sanitize release_tag" in src, (
+        "release_tag sanitize step 누락 — 자유 입력값이 artifact 이름에 흘러감"
+    )
+    # SemVer 정규식 자체가 임베드돼 있어야 함 (다른 정규식으로 바뀌면 본 테스트
+    # 가 fail 해 변경자가 의도를 명시하도록 강제).
+    assert r"^v?\d+\.\d+\.\d+" in src, (
+        "release_tag sanitize 가 SemVer 정규식을 사용하지 않음"
+    )
+
+
+def test_desktop_release_workflow_upload_artifact_uses_required_options():
+    """upload-artifact step 이 `if-no-files-found: error` 와 v4 를 사용한다.
+
+    if-no-files-found 가 'warn' 또는 'ignore' 면 빈 artifact 가 release 에
+    올라갈 수 있고, 운영자가 "왜 setup.exe 가 없지?" 라며 헷갈린다.
+    """
+    p = _workflow_path()
+    if not p.exists():
+        pytest.skip("desktop-release.yml 미존재 — 본 검사 skip")
+    src = _read(p)
+    assert "actions/upload-artifact@v4" in src, "upload-artifact v4 필수"
+    assert "if-no-files-found: error" in src, (
+        "upload-artifact 가 빈 결과 허용 — 'if-no-files-found: error' 필수"
+    )
+
+
+def test_desktop_release_workflow_artifact_only_ships_setup_exe():
+    """workflow artifact / GitHub Release 첨부 파일 경로가 setup.exe 만 포함.
+
+    *.env / *.key / *.pem / *.p12 / *.pfx / *.crt / *.cer / *.json /
+    *.zip / .git 등 어떤 secret/config artifact 도 path 패턴에 등장 X.
+    NSIS 산출물 (`bundle/nsis/*-setup.exe`) 만 허용.
+    """
+    p = _workflow_path()
+    if not p.exists():
+        pytest.skip("desktop-release.yml 미존재 — 본 검사 skip")
+    src = _read(p)
+    try:
+        import yaml
+    except ImportError:
+        pytest.skip("PyYAML 미설치 — 본 검사 skip")
+    data = yaml.safe_load(src)
+    # YAML 의 jobs[*].steps[*] 를 순회해 upload-artifact / softprops 의
+    # path / files 필드를 모두 수집한다.
+    paths_seen: list[str] = []
+    for job in (data.get("jobs") or {}).values():
+        for step in job.get("steps") or []:
+            uses = (step.get("uses") or "")
+            if not (
+                uses.startswith("actions/upload-artifact")
+                or uses.startswith("softprops/action-gh-release")
+            ):
+                continue
+            with_block = step.get("with") or {}
+            for key in ("path", "files"):
+                val = with_block.get(key)
+                if val is None:
+                    continue
+                # path / files 는 string or block scalar (multi-line).
+                lines = [
+                    ln.strip() for ln in str(val).splitlines() if ln.strip()
+                ]
+                paths_seen.extend(lines)
+    assert paths_seen, "upload-artifact / softprops 의 path 가 수집되지 않음 — 본 테스트 오작동 의심"
+    for ln in paths_seen:
+        assert ln.endswith("-setup.exe") or ln.endswith("*-setup.exe"), (
+            f"workflow artifact path 가 setup.exe 외 패턴 포함: '{ln}'"
+        )
+        for forbidden in (
+            ".env", ".key", ".pem", ".p12", ".pfx",
+            ".crt", ".cer", ".keystore", ".jks",
+            "secrets", "credentials",
+        ):
+            assert forbidden not in ln.lower(), (
+                f"workflow artifact path 에 금지 키워드 '{forbidden}' 발견: '{ln}'"
+            )
+
+
+def test_desktop_release_workflow_yaml_parses_clean():
+    """workflow YAML 이 PyYAML 로 깨끗이 파싱된다 — 들여쓰기 / 따옴표 오류 0건."""
+    p = _workflow_path()
+    if not p.exists():
+        pytest.skip("desktop-release.yml 미존재 — 본 검사 skip")
+    try:
+        import yaml
+    except ImportError:
+        pytest.skip("PyYAML 미설치 — 본 검사 skip")
+    data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    assert isinstance(data, dict), "workflow root 가 dict 가 아님"
+    assert data.get("name") == "desktop-release", (
+        "workflow name 이 'desktop-release' 가 아님 — 운영자 식별자 깨짐"
+    )
+    # jobs / on 키 존재.
+    assert "jobs" in data, "jobs 누락"
+    on = data.get("on") or data.get(True)  # PyYAML 의 'on' → True 변환 대응
+    assert on is not None, "on 트리거 누락"
+
+
+def test_desktop_release_workflow_release_uses_softprops_action():
+    """GitHub Release 첨부는 softprops/action-gh-release@v2 만 사용 — 다른
+    action 으로 슬쩍 바뀌면 안전 contract 가 깨질 수 있다.
+    """
+    p = _workflow_path()
+    if not p.exists():
+        pytest.skip("desktop-release.yml 미존재 — 본 검사 skip")
+    src = _read(p)
+    assert "softprops/action-gh-release@v2" in src, (
+        "softprops/action-gh-release@v2 로 release 첨부 — 다른 action 으로 변경 금지"
+    )
+
+
+def test_desktop_release_workflow_create_release_is_gated():
+    """`create_release` input 이 true 일 때만 GitHub Release step 이 실행되는지
+    `if:` 조건이 명시되어 있는지 확인.
+    """
+    p = _workflow_path()
+    if not p.exists():
+        pytest.skip("desktop-release.yml 미존재 — 본 검사 skip")
+    try:
+        import yaml
+    except ImportError:
+        pytest.skip("PyYAML 미설치 — 본 검사 skip")
+    data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    for job in (data.get("jobs") or {}).values():
+        for step in job.get("steps") or []:
+            uses = step.get("uses") or ""
+            if uses.startswith("softprops/action-gh-release"):
+                cond = step.get("if") or ""
+                assert "inputs.create_release" in str(cond), (
+                    "softprops/action-gh-release step 에 "
+                    "`if: inputs.create_release` 조건 누락"
+                )
+                return
+    pytest.fail("softprops/action-gh-release step 자체를 찾을 수 없음")
+
+
+# ====================================================================
 # self-validation (#88 — 본 테스트가 broker 0건)
 # ====================================================================
 

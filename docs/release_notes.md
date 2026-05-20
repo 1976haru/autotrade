@@ -72,6 +72,15 @@ EXE 자동 빌드 + Desktop Auto Updater (A 단계).
   `desktop/updaterClient.js` 가 `../config/releaseNotes` 를 *import 하지 않음*
   을 정적 grep 으로 lock. FAILED state 의 raw `error` 문자열에도 `sanitizeText`
   를 적용해 secret 패턴 노출 0건. 자세한 정책: [`docs/auto_update_policy.md`](auto_update_policy.md) §8.
+- **#5-05 GitHub Release ↔ UpdateBanner 연동 contract** — `desktop-release.yml`
+  가 (1) `release_tag` SemVer sanitize step (2) `actions/upload-artifact@v4` +
+  `if-no-files-found: error` (3) `softprops/action-gh-release@v2` 가 같은
+  `bundle/nsis/*-setup.exe` 만 첨부 — `test_repository_hygiene.py` 6개 정적
+  가드로 lock. UpdateBanner UPDATE_AVAILABLE 상태에 GitHub Release asset
+  의 `browser_download_url` 을 그대로 사용하는 **"setup.exe 직접 받기"** 링크
+  추가 (`link-setup-exe-direct`, `target=_blank` + `rel="noopener noreferrer"`).
+  asset 부재 / FAILED / UP_TO_DATE 에서는 본 링크 0건. 자세한 정책:
+  [`docs/auto_update_policy.md`](auto_update_policy.md) §9.
 
 ---
 

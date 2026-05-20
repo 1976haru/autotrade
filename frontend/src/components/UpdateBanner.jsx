@@ -281,6 +281,30 @@ export function UpdateBanner({
           >
             업데이트 적용 (다운로드 페이지 열기)
           </button>
+          {/* fix/step5-github-release-artifact-link (#5-05): GitHub Release
+              에 setup.exe 가 첨부되어 있으면 *직접 다운로드 링크* 도 노출.
+              자동 설치 0건 — `<a download>` 로 브라우저가 받는다. assets 가
+              없거나 setup.exe 가 없으면 본 링크는 렌더되지 않는다. */}
+          {result?.setupExeAsset?.downloadUrl && (
+            <a
+              data-testid="link-setup-exe-direct"
+              href={result.setupExeAsset.downloadUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                padding: "6px 14px",
+                borderRadius: "var(--r-md)",
+                background: "#fff",
+                color: "#1e3a8a",
+                border: "1px solid #1e3a8a",
+                textDecoration: "none",
+                fontSize: "var(--fs-xs)",
+                fontWeight: "var(--fw-bold)",
+              }}
+            >
+              setup.exe 직접 받기
+            </a>
+          )}
           <button
             data-testid="btn-update-later"
             onClick={onLater}
