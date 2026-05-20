@@ -305,6 +305,24 @@ KIS_ACCOUNT_NO=여기에_모의투자_계좌번호
 
 자세한 절차: [`docs/auto_update_policy.md`](auto_update_policy.md) §11-4.
 
+### 13-4. "업데이트 적용" 클릭 시 동작 — 자동 설치 0건 (현재 Phase 2)
+
+UpdateBanner 의 *어떤 시나리오에서도* 사용자는 항상 다음 3 경로 중 하나로
+setup.exe 를 받을 수 있습니다 — Tauri Phase 3 자동 설치가 아직 비활성이라서:
+
+| UpdateBanner 상태 | 경로 1 (권장) | 경로 2 | 경로 3 |
+|---|---|---|---|
+| 🆕 새 버전 + setup.exe 첨부됨 | **"setup.exe 직접 받기"** anchor (브라우저 다운로드) | "업데이트 적용 (다운로드 페이지 열기)" 버튼 (release 페이지) | "GitHub Release 페이지 열기" anchor (release 페이지) |
+| 🆕 새 버전 + setup.exe *없음* | (없음) | "업데이트 적용" 버튼 (release 페이지) | "GitHub Release 페이지 열기" anchor |
+| ✅ 최신 버전 | (재설치 필요 없음) | (없음) | (없음) — "다시 확인" 만 |
+| ℹ️ 최신 버전 확인 불가 | (없음) | "다시 시도" 버튼 | "GitHub Release 페이지 열기" anchor |
+
+> setup.exe asset 이 *아직* release 에 첨부되지 않은 경우 (운영자가 빌드 중
+> 이거나 partial release 인 경우) 노란색 안내 banner 가 노출되어 사용자가
+> *현재 설치된 버전 그대로* 계속 사용할 수 있음을 명시합니다.
+>
+> 자세한 fallback 매트릭스: [`docs/auto_update_policy.md`](auto_update_policy.md) §12.
+
 ## 14. 로그 파일 위치
 
 | 종류 | 경로 |
