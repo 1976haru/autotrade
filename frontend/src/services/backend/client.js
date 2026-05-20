@@ -124,6 +124,22 @@ export const backendApi = {
         fallback_to_default: fallbackToDefault,
       }),
     }),
+  // P-02: 종목당 한도 설정 — Paper 전용, 실전 주문금액 아님.
+  setPaperPerSymbolAllocation: ({
+    mode = null,
+    perSymbolMaxKrw = null,
+    perSymbolMaxPct = null,
+    fallbackToDefault = false,
+  } = {}) =>
+    backendFetch("/api/auto-paper/per-symbol-allocation", {
+      method: "POST",
+      body: JSON.stringify({
+        mode,
+        per_symbol_max_krw: perSymbolMaxKrw,
+        per_symbol_max_pct: perSymbolMaxPct,
+        fallback_to_default: fallbackToDefault,
+      }),
+    }),
   // feat/step2-05-pre-market-gate: optional `body` carry — pre_market 결과를
   // 포함시켜 backend 가 BLOCK 검증. body 미제공 시 backwards-compat.
   autoPaperStart:         (body = null) => backendFetch(

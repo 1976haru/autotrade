@@ -85,14 +85,112 @@ P-01 시점 *in-memory* 만 — 프로세스 재시작 시 default 로 복귀. D
 - 영구 invariant 배지 3종 (`Paper 전용` / `실거래 OFF 유지` / `주문 권한 없음`)
 - *임의 KRW 입력 form 0개* — 허용 옵션만 chip 선택. 잘못된 값 입력 차단.
 
-## 2. P-02 (예정) — 종목당 투자금
+## 2. P-02 — 종목당 최대 투자금 (본 PR 추가)
 
-본 PR 시점 미구현. 다음 PR 에서:
-- 시드머니 대비 % (예: 5% / 10% / 20%)
-- 절대 KRW (예: 500,000 / 1,000,000 / 2,000,000)
-- `PositionSizingPolicy.max_position_krw` 와의 결합 방식
+종목당 가상 매수 한도를 두 방식으로 설정 가능.
 
-설계 원칙은 P-01 과 동일 — 실전 계좌 / 실거래 한도와 *완전 분리*.
+### 2-1. 허용 모드
+
+| 모드 | 의미 | 입력 필드 |
+|---|---|---|
+| `FIXED_KRW` | 절대 KRW 한도 | `per_symbol_max_krw` |
+| `PCT_OF_EQUITY` | 시드머니 대비 비율 | `per_symbol_max_pct` |
+
+### 2-2. 허용 값
+
+| 모드 | 옵션 |
+|---|---|
+| `FIXED_KRW` | `1_000_000` (**기본값**, 100만원) / `2_000_000` (200만원) |
+| `PCT_OF_EQUITY` | `0.10` (10%) |
+
+기본 모드 = `FIXED_KRW`. 기본 effective cap = 1,000,000 KRW.
+
+### 2-3. effective_per_symbol_cap_krw 계산
+
+```
+FIXED_KRW          → per_symbol_max_krw 그대로
+PCT_OF_EQUITY      → floor(initial_cash * per_symbol_max_pct)
+```
+
+예시 (PCT_OF_EQUITY + 0.10):
+
+| 시드머니 | effective cap |
+|---|---|
+| 10,000,000 (1,000만원) | 1,000,000 (100만원) |
+| 30,000,000 (3,000만원) | 3,000,000 (300만원) |
+| 50,000,000 (5,000만원) | 5,000,000 (500만원) |
+
+### 2-4. API contract
+
+`GET /api/auto-paper/capital-config` 응답에 P-02 신규 필드 추가:
+
+```json
+{
+  "initial_cash":                       10000000,
+  "per_symbol_mode":                    "FIXED_KRW",
+  "per_symbol_max_krw":                 1000000,
+  "per_symbol_max_pct":                 0.10,
+  "effective_per_symbol_cap_krw":       1000000,
+  "allowed_per_symbol_max_krw_options": [1000000, 2000000],
+  "allowed_per_symbol_max_pct_options": [0.10],
+  "is_paper_only":                      true,
+  "is_live_authorization":              false
+}
+```
+
+`POST /api/auto-paper/per-symbol-allocation` 입력 (partial update — None 필드는 보존):
+
+```json
+{
+  "mode":                "PCT_OF_EQUITY",
+  "per_symbol_max_krw":  null,
+  "per_symbol_max_pct":  0.10,
+  "fallback_to_default": false
+}
+```
+
+허용되지 않은 값 + `fallback_to_default=false` → **400** `invalid_per_symbol_allocation`
++ `allowed_modes` / `allowed_per_symbol_max_krw_options` /
+`allowed_per_symbol_max_pct_options` carry.
+
+### 2-5. UI 동작 (`PaperCapitalCard` 확장)
+
+별도 섹션 "📌 종목당 최대 투자금" 노출:
+- 3개 옵션 chip — **100만원** / **200만원** / **시드머니의 10%**
+- 현재 적용 한도 (effective_per_symbol_cap_krw, KRW + 한국식 만원)
+- "이 값은 Paper 모의매매 전용이며 실전 주문금액이 아닙니다" disclaimer
+- 시드머니가 변경되면 PCT 모드의 hint 텍스트가 *자동* 갱신 (예: "현재 시드머니
+  3,000만원 × 10%")
+- input / textarea / select 0개 — 임의 KRW / % 입력 form 차단
+
+### 2-6. PositionSizingPolicy 와의 결합 (설계 메모)
+
+`PositionSizingPolicy.max_position_krw` (default 5,000,000) 와는 *별도* 변수.
+caller (예: `consume_agent_recommendations`) 가 다음 두 값 중 **더 보수적인**
+(min) 을 적용해 sizing 결정:
+
+```python
+effective_cap = min(
+    paper_cfg.effective_per_symbol_cap_krw,   # P-02
+    sizing_policy.max_position_krw,           # 기존 policy
+)
+```
+
+본 결합 적용은 별도 PR (P-시리즈 후속) — 본 PR 은 *config 노출만*. 기존 sizing
+경로는 변경 0건.
+
+### 2-7. 안전 invariant (P-02 추가분)
+
+| 항목 | 값 |
+|---|---|
+| `per_symbol_max_krw not in ALLOWED_PER_SYMBOL_MAX_KRW` | ValueError / 400 거부 |
+| `per_symbol_max_pct not in ALLOWED_PER_SYMBOL_MAX_PCT` | ValueError / 400 거부 |
+| `per_symbol_mode` not in `PerSymbolAllocationMode` | ValueError / 400 거부 |
+| `is_paper_only` / `is_live_authorization` | P-01 invariant 그대로 유지 |
+| capital_config 모듈 import (broker / OrderExecutor / KIS / settings 등) | 0건 유지 |
+| `broker.place_order(` / `route_order(` 호출 | 0건 유지 |
+| frontend per-symbol 섹션의 BUY/SELL/Place Order/매수/매도 라벨 | 0개 |
+| frontend per-symbol 섹션의 input/textarea/select | 0개 |
 
 ## 3. 사용자 흐름 예시 (P-01 동작 확인)
 
