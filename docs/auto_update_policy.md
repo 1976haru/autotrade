@@ -478,3 +478,124 @@ Phase 3 활성화 후에도 다음은 *변경되지 않는다*:
 - 본 §10 문서 신설.
 
 Phase 3 활성화는 운영자가 위 체크리스트 통과 + 별도 옵트인 PR 후에만 가능.
+
+## 11. 사용자 `.env` 보존 정책 (#5-07)
+
+본 절은 *업데이트 / 재설치 / 앱 제거* 흐름에서 사용자의 KIS 모의투자 키 /
+계좌번호 / 로그 / 포트 캐시가 어떻게 보존되는지를 *단일 진실* 로 정리한다.
+운영자가 키를 다시 채울 일이 없도록 모든 단계에서 사용자 입력은 *건드리지
+않는다* — 본 정책은 정적 테스트로 lock.
+
+### 11-1. `.env` 표준 경로
+
+| 항목 | 경로 |
+|---|---|
+| 운영자가 KIS 키를 입력하는 *유일한* 파일 | `%APPDATA%\Autotrade\.env` |
+| 풀 경로 예시 | `C:\Users\<사용자명>\AppData\Roaming\Autotrade\.env` |
+| backend sidecar 로그 | `%APPDATA%\Autotrade\logs\backend-YYYYMMDD.log` |
+| 포트 캐시 (재생성 가능) | `%APPDATA%\Autotrade\backend-port.json` |
+
+탐색기에서 주소창에 `%APPDATA%\Autotrade\` 를 그대로 붙여넣으면 위 폴더로
+바로 이동한다 — 환경변수 치환이 자동.
+
+### 11-2. 보존되는 흐름 매트릭스
+
+| 동작 | `.env` | `logs\` | `backend-port.json` |
+|---|---|---|---|
+| **앱 업데이트 (Phase 1/2: 새 setup.exe 수동 설치)** | ✅ 그대로 | ✅ 그대로 | ✅ 그대로 (또는 다음 실행 시 자동 갱신) |
+| **앱 업데이트 (Phase 3: downloadAndInstall + relaunch)** | ✅ 그대로 | ✅ 그대로 | ✅ 다음 실행 시 자동 갱신 |
+| **같은 버전 setup.exe 재설치** | ✅ 그대로 | ✅ 그대로 | ✅ 그대로 |
+| **앱 *제거* (Windows 설정 → 앱)** | ✅ 그대로 (Windows 가 AppData 자동 삭제 안 함) | ✅ 그대로 | ✅ 그대로 |
+| **운영자가 `%APPDATA%\Autotrade` 폴더 *수동* 삭제** | ❌ 사라짐 | ❌ 사라짐 | ❌ 사라짐 |
+
+### 11-3. installer 가 사용자 secret 을 덮어쓰지 않는 메커니즘
+
+본 invariant 가 깨지지 않도록 코드 / 설정 단에서 강제되는 가드:
+
+1. **`tauri.conf.json::bundle.resources` 가 빈 배열** — installer 가 settings
+   파일을 자체 bundle 에 포함시키지 *못한다*.
+2. **`src-tauri/binaries/README.md` 가 `backend/.env` 를 bundle 제외 명시** —
+   sidecar PyInstaller `--onefile` 산출물은 `.env` 를 *함께 묶지 않는다*.
+3. **NSIS installer 의 설치 대상은 `%ProgramFiles%\Agent Trader v1\`** —
+   `%APPDATA%` 와 *물리적으로 다른* 디렉터리. installer 가 `%APPDATA%` 를
+   *건드릴 권한* 자체가 없다.
+4. **`desktop-release.yml` Step 8 (Safety guard 빌드 후)** — bundle 디렉터리
+   에 `.env` / `.env.local` 파일이 포함되면 **FATAL** 로 빌드 차단. 인증서 /
+   키 확장자도 동일하게 차단.
+5. **`app_desktop_launcher.py`** 는 `.env` 를 *읽기만* — `unlink` / `remove`
+   / `write_text` 어떤 함수도 `.env` 대상으로 호출하지 않는다 (정적 grep
+   가드: `test_env_preservation_policy::test_launcher_does_not_write_to_env`).
+6. **`frontend/src/desktop/updaterClient.js`** 는 GitHub REST 만 호출 —
+   파일시스템 접근 0건 (`test_env_preservation_policy::
+   test_updater_client_does_not_touch_env`).
+7. **`UpdateBanner.jsx`** 가 모든 state 에서 "사용자 .env 보존" 안전 배지를
+   영구 노출 (`badge-no-env-overwrite` testid, 기존 UI invariant 테스트로
+   lock).
+
+### 11-4. 업데이트 후 "KIS 키가 사라진 것 같아요" 트러블슈팅
+
+KIS 키가 *실제로* 사라지는 경우는 위 §11-2 매트릭스에 없다 — 대부분은
+**파일명 / 위치 / 확장자 실수**. 다음 순서로 점검:
+
+1. **파일 확장자 확인**: 메모장으로 저장하면 Windows 가 자동으로 `.txt` 를
+   붙여 `.env.txt` 로 만든다. 탐색기에서 *보기 → 파일 확장명* 체크박스를
+   켜고 `Autotrade` 폴더를 본다.
+   - ❌ `.env.txt` ← **launcher 가 인식하지 못한다**
+   - ✅ `.env` ← 정상
+2. **파일 위치 확인**: 정확히 `%APPDATA%\Autotrade\.env` 인지.
+   `C:\Users\<사용자>\Autotrade\.env` 가 아니라 *AppData\Roaming* 안.
+3. **파일 권한 확인**: 마우스 우클릭 → 속성 → "읽기 전용" 체크 해제.
+4. **백업에서 복구**: 운영자가 다른 PC 또는 1Password / Bitwarden 에 백업한
+   `.env` 가 있으면 그 내용을 위 경로에 직접 붙여넣는다 (한 줄에 `KEY=VALUE`
+   형식).
+5. **launcher 로그 확인**: `%APPDATA%\Autotrade\logs\backend-YYYYMMDD.log`
+   에서 다음 라인 검색:
+   ```
+   safety: .env resolved from C:\Users\...\AppData\Roaming\Autotrade\.env
+   secret-presence: KIS_APP_KEY=present
+   ```
+   `not found in any candidate` 또는 `KIS_APP_KEY=missing` 이면 §1-3 확인.
+
+> **운영자가 KIS 키 / 계좌번호 / Anthropic 키 원문을** *화면 캡처 / GitHub
+> issue / 채팅* **에 붙여넣지 *마세요*.** 모든 진단은 위 launcher 로그의
+> `present` / `missing` 라벨만으로 충분합니다.
+
+### 11-5. Secret 비노출 invariant
+
+| 위치 | 노출 정책 |
+|---|---|
+| 앱 UI (UpdateBanner / Settings / Monitoring) | 사용자 secret 입력창 / 표시창 0개 (다른 PR 의 frontend 테스트로 lock) |
+| backend sidecar 로그 (`%APPDATA%\Autotrade\logs\`) | secret 키 *원문* 0건. `present` / `missing` 라벨만 (`app_desktop_launcher.py::_print_safety_snapshot`) |
+| GitHub repo (`git ls-files`) | KIS PST 토큰 / API key / PEM marker 0건 (`test_repository_hygiene::test_no_real_kis_token_pattern_tracked`, `test_no_tauri_private_key_committed`) |
+| GitHub Actions artifact / Release | `.env` / 인증서 / 키 파일 0건 (`desktop-release.yml` Step 8 safety guard) |
+| GitHub Release notes (`release.body`) | `sanitizeText` 통과 — `sk-...` / `ghp_...` / `Bearer ...` 패턴 `[REDACTED]` 마스킹 |
+
+### 11-6. `backend-port.json` 은 *재생성 가능 캐시*
+
+`%APPDATA%\Autotrade\backend-port.json` 은 frontend 가 backend sidecar 의
+fallback 포트 (8000/8001/8002) 를 빠르게 찾기 위한 *캐시* 다 — 사용자 입력이
+아니라 launcher 가 매 실행 시 작성. 본 파일을 수동 삭제해도 다음 앱 실행 시
+자동 재생성되며 `.env` 와는 무관하다.
+
+내용 예시 (secret 0건):
+```json
+{
+  "host":       "127.0.0.1",
+  "port":       8001,
+  "mode":       "free",
+  "written_at": "2026-05-20T12:34:56.789Z"
+}
+```
+
+### 11-7. 운영자 백업 권장 사항
+
+`.env` 가 우발적으로 사라지지 않게:
+
+1. **첫 입력 후 즉시 안전 저장소에 백업** — 1Password / Bitwarden / 암호화된
+   USB. 사진 / clipboard / 메모 앱 (평문) 금지.
+2. **PC 교체 / 재설치** 시 위 백업에서 *직접* 위 경로에 붙여넣기. 새 PC 의
+   `%APPDATA%\Autotrade\` 디렉터리가 *없으면* 첫 앱 실행 후 자동 생성됨 —
+   그 다음 `.env` 를 복사.
+3. **여러 PC 동기화 금지** — `%APPDATA%` 는 *그 PC 의 사용자* 전용. OneDrive
+   / Dropbox 로 동기화하면 KIS 토큰이 클라우드에 평문 저장돼 *Secret 보안
+   원칙* 위반.

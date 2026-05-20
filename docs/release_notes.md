@@ -93,6 +93,18 @@ EXE 자동 빌드 + Desktop Auto Updater (A 단계).
   `test_tauri_create_updater_artifacts_false` /
   `test_no_tauri_private_key_committed` /
   `test_desktop_release_workflow_phase3_signing_inactive`).
+- **#5-07 사용자 `.env` 보존 정책 (문서 / 테스트만, 코드 변경 0건)** —
+  [`docs/auto_update_policy.md`](auto_update_policy.md) §11 신설 (`.env`
+  표준 경로 / 보존 매트릭스 / installer 가드 4-layer / 트러블슈팅 /
+  Secret 비노출 invariant / backend-port.json 재생성 안내 / 운영자 백업
+  권장). [`docs/exe_oneclick_installation.md`](exe_oneclick_installation.md)
+  §13-3 신설 — KIS 키 사라짐 트러블슈팅 표 (`.env.txt` 함정 / AppData 경로 /
+  읽기 전용 / 백업 복구). [`docs/desktop_exe_status.md`](desktop_exe_status.md)
+  §8-I 신설 — 보존 메커니즘 4 layer 요약. 신규 정적 가드 4개
+  (`test_env_preservation_policy.py`): launcher 가 `.env` 에 write/delete
+  호출 0건, `updaterClient.js` 가 `.env` / 파일시스템 접근 0건,
+  `UpdateBanner.jsx` 가 "사용자 .env 보존" 안전 배지 영구 노출, docs 가
+  `%APPDATA%\Autotrade\.env` 표준 경로 명시.
 
 ---
 

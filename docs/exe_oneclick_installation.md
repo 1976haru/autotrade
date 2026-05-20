@@ -279,12 +279,31 @@ KIS_ACCOUNT_NO=여기에_모의투자_계좌번호
 ### 13-2. 사용자 데이터 (선택)
 
 ```
-%APPDATA%\Autotrade\.env       # 운영자 키 — 필요 없으면 직접 삭제
-%APPDATA%\Autotrade\logs\      # 로그 파일 — 필요 없으면 직접 삭제
+%APPDATA%\Autotrade\.env                 # 운영자 키 — 필요 없으면 직접 삭제
+%APPDATA%\Autotrade\logs\                # 로그 파일 — 필요 없으면 직접 삭제
+%APPDATA%\Autotrade\backend-port.json    # 포트 캐시 — 다음 실행 시 자동 재생성
 ```
 
 > 위 폴더는 *앱 제거로 자동 삭제되지 않습니다* — 의도된 동작입니다.
 > 운영자의 `.env` 가 우발적으로 사라지지 않도록 보존됩니다.
+>
+> **완전 삭제**가 필요하면 Windows 탐색기 주소창에 `%APPDATA%\Autotrade` 를
+> 붙여넣고 폴더 전체를 *수동* 으로 삭제하세요. 자세한 보존 매트릭스 + 트러블슈팅:
+> [`docs/auto_update_policy.md`](auto_update_policy.md) §11.
+
+### 13-3. KIS 키가 "사라진 것 같다" — 빠른 점검
+
+업데이트 / 재설치 후 readiness 카드가 `KIS_APP_KEY=missing` 으로 나오면 거의
+*파일명 실수* 입니다 (실제 .env 가 삭제된 경우는 매우 드뭅니다).
+
+| 증상 | 점검 |
+|---|---|
+| 메모장으로 저장 후 `.env.txt` 가 생김 | 탐색기 → 보기 → 파일 확장명 켜기 → `.env.txt` → `.env` 로 rename |
+| `C:\Users\<사용자>\Autotrade\` 에 저장 | 정확한 경로는 `C:\Users\<사용자>\AppData\Roaming\Autotrade\` — `%APPDATA%` 안에 |
+| "읽기 전용" 으로 잠김 | 우클릭 → 속성 → 읽기 전용 체크 해제 |
+| 다른 PC 의 `.env` 가져오고 싶음 | 1Password / Bitwarden 백업에서 평문 복사 (clipboard / 사진 / OneDrive 금지) |
+
+자세한 절차: [`docs/auto_update_policy.md`](auto_update_policy.md) §11-4.
 
 ## 14. 로그 파일 위치
 
