@@ -81,6 +81,18 @@ EXE 자동 빌드 + Desktop Auto Updater (A 단계).
   추가 (`link-setup-exe-direct`, `target=_blank` + `rel="noopener noreferrer"`).
   asset 부재 / FAILED / UP_TO_DATE 에서는 본 링크 0건. 자세한 정책:
   [`docs/auto_update_policy.md`](auto_update_policy.md) §9.
+- **#5-06 Tauri updater Phase 3 준비 (문서 / 테스트만, 활성화 0건)** —
+  Phase 3 (`downloadAndInstall()` + `relaunch()`) 전환 8단계 절차 +
+  활성화 직전 체크리스트를 [`docs/auto_update_policy.md`](auto_update_policy.md)
+  §10 에 신설. `tauri.conf.json::plugins.updater.active=false` /
+  `bundle.createUpdaterArtifacts=false` / `pubkey=""` *유지* (변경 0건).
+  `desktop-release.yml` Tauri build step 의 `TAURI_SIGNING_PRIVATE_KEY` /
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` env 는 *주석 처리* 유지 — 본 PR 시점
+  활성 env 0건. 신규 정적 가드 4개로 향후 PR 의 부주의한 활성화 방지
+  (`test_tauri_updater_inactive_in_phase2` /
+  `test_tauri_create_updater_artifacts_false` /
+  `test_no_tauri_private_key_committed` /
+  `test_desktop_release_workflow_phase3_signing_inactive`).
 
 ---
 

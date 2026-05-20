@@ -68,6 +68,25 @@ https://github.com/1976haru/autotrade/releases/latest
 > §1 "한 줄 결론" 을 먼저 확인하세요. 빌드가 안 되어 있어도 §6 의 대체 흐름
 > (script + 브라우저) 으로 동일한 모의 테스트가 가능합니다.
 
+### 3-2. 업데이트 방식 — 지금은 *수동 다운로드* (Phase 1/2)
+
+**현재 베타 (Phase 2)**: 새 버전이 GitHub Release 에 publish 되면 앱 안의
+`UpdateBanner` 가 알림 → 사용자가 **"setup.exe 직접 받기"** 또는
+**"업데이트 적용 (다운로드 페이지 열기)"** 클릭 → 브라우저로 setup.exe
+다운로드 → 더블클릭 설치.
+
+**Phase 3 자동 업데이트는 *후속 PR* 에서 활성화 예정** — Tauri updater plugin
+이 서명된 `latest.json` 을 검증한 뒤 `downloadAndInstall()` + `relaunch()` 로
+원클릭 자동 적용. 활성화 절차는
+[`docs/auto_update_policy.md`](auto_update_policy.md) §10 의 8단계 체크리스트
+참조.
+
+> #5-06: **업데이트를 적용해도 `%APPDATA%\Autotrade\.env` 는 *항상 보존* 됩니다.**
+> Phase 1 / 2 / 3 어떤 단계에서도 사용자 입력 (KIS 모의투자 키 / 계좌번호 /
+> Anthropic 키) 은 setup.exe 안의 `.env.example` 과 *별도 파일* 이라 덮어쓰기
+> 0건. 안전 flag default (`KIS_IS_PAPER=true` 등) 도 사용자 `.env` 가 우선
+> 합니다.
+
 ## 4. 설치 방법
 
 ### 4-1. `.msi` 또는 `.exe` 더블클릭
