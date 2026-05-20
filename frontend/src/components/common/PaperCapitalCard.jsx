@@ -85,6 +85,22 @@ export function PaperCapitalCard({
     }
   }, []);
 
+  // P-03: 최대 동시 보유 종목 수 변경.
+  const onSelectMaxPositions = useCallback(async (count) => {
+    setPendingValue(`max-positions:${count}`);
+    setError("");
+    try {
+      const c = await backendApi.setPaperMaxConcurrentPositions({
+        maxConcurrentPositions: count,
+      });
+      setConfig(c);
+    } catch (e) {
+      setError(e?.message || "최대 동시 보유 종목 수 설정 변경 실패");
+    } finally {
+      setPendingValue(null);
+    }
+  }, []);
+
   const options = config?.allowed_initial_cash_options
     || [10_000_000, 30_000_000, 50_000_000];
   const selected = config?.initial_cash;
@@ -312,6 +328,100 @@ export function PaperCapitalCard({
                               marginLeft: 6, fontFamily: "monospace" }}>
                 ({Number(config.effective_per_symbol_cap_krw).toLocaleString("ko-KR")} KRW
                 · mode={config.per_symbol_mode})
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* P-03: 최대 동시 보유 종목 수 — 3/5/10 chip + 현재 설정 표시 */}
+        {config && (
+          <div data-testid={`${testId}-max-positions-section`}
+               style={{
+                 display: "flex", flexDirection: "column", gap: 6,
+                 padding: "8px 10px",
+                 background: "var(--c-surface-2, #f8fafc)",
+                 border: "1px solid var(--c-border)",
+                 borderRadius: 6,
+               }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--c-text)" }}>
+              📊 최대 동시 보유 종목
+            </div>
+            <div
+              data-testid={`${testId}-max-positions-disclaimer`}
+              style={{
+                fontSize: 10, color: "var(--c-text-3)", lineHeight: 1.5,
+              }}
+            >
+              이 값은 Paper 모의매매 전용이며 실전 주문 한도가 아닙니다. 동시
+              보유 종목 수가 한도에 도달하면 신규 진입(매수)만 차단되며, 청산/
+              관망 판단은 영향을 받지 않습니다.
+            </div>
+            <div
+              data-testid={`${testId}-max-positions-options`}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(80px, 1fr))",
+                gap: 6,
+              }}
+            >
+              {(config.allowed_max_concurrent_positions_options || [3, 5, 10]).map((count) => {
+                const isSel = config.max_concurrent_positions === count;
+                const isPending = pendingValue === `max-positions:${count}`;
+                return (
+                  <button
+                    key={count}
+                    type="button"
+                    data-testid={`${testId}-max-positions-option-${count}`}
+                    data-selected={isSel ? "true" : "false"}
+                    disabled={loading || pendingValue !== null}
+                    onClick={() => onSelectMaxPositions(count)}
+                    style={{
+                      padding: "8px 10px",
+                      borderRadius: 5,
+                      border: `1px solid ${isSel ? "#2563eb" : "var(--c-border)"}`,
+                      background: isSel ? "#eff6ff" : "var(--c-surface)",
+                      color: isSel ? "#1e3a8a" : "var(--c-text)",
+                      fontWeight: isSel ? 700 : 500,
+                      fontSize: 12,
+                      cursor: loading || pendingValue !== null ? "wait" : "pointer",
+                      textAlign: "center",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 1,
+                      lineHeight: 1.3,
+                    }}
+                  >
+                    <span>{count}종목</span>
+                    {isSel && (
+                      <span style={{ fontSize: 8, fontWeight: 700,
+                                      color: "#2563eb" }}>✓ 선택됨</span>
+                    )}
+                    {isPending && (
+                      <span style={{ fontSize: 8, color: "var(--c-text-3)" }}>
+                        설정 중…
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            <div
+              data-testid={`${testId}-max-positions-current`}
+              style={{
+                marginTop: 2,
+                padding: "4px 8px",
+                background: "var(--c-surface, #fff)",
+                borderRadius: 4,
+                fontSize: 11,
+                color: "var(--c-text-2)",
+              }}
+            >
+              현재 설정: <b data-testid={`${testId}-max-positions-current-value`}>
+                {config.max_concurrent_positions}종목
+              </b>
+              <span style={{ fontSize: 10, color: "var(--c-text-3)",
+                              marginLeft: 6 }}>
+                (한도 도달 시 신규 진입만 차단 — 청산은 자유)
               </span>
             </div>
           </div>

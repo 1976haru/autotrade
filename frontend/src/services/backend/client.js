@@ -140,6 +140,24 @@ export const backendApi = {
         fallback_to_default: fallbackToDefault,
       }),
     }),
+  // P-03: 최대 동시 보유 종목 수 — Paper 전용, 실전 주문 한도 아님.
+  setPaperMaxConcurrentPositions: ({ maxConcurrentPositions, fallbackToDefault = false } = {}) =>
+    backendFetch("/api/auto-paper/max-concurrent-positions", {
+      method: "POST",
+      body: JSON.stringify({
+        max_concurrent_positions: maxConcurrentPositions,
+        fallback_to_default: fallbackToDefault,
+      }),
+    }),
+  previewPaperConcurrentBuy: ({ action = "BUY", symbol = null, currentHeldSymbols = [] } = {}) =>
+    backendFetch("/api/auto-paper/max-concurrent-positions/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        action,
+        symbol,
+        current_held_symbols: currentHeldSymbols,
+      }),
+    }),
   // feat/step2-05-pre-market-gate: optional `body` carry — pre_market 결과를
   // 포함시켜 backend 가 BLOCK 검증. body 미제공 시 backwards-compat.
   autoPaperStart:         (body = null) => backendFetch(

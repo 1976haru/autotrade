@@ -18,9 +18,11 @@ import { PaperCapitalCard } from "./PaperCapitalCard";
 
 vi.mock("../../services/backend/client", () => ({
   backendApi: {
-    paperCapitalConfig:           vi.fn(),
-    setPaperCapitalConfig:        vi.fn(),
-    setPaperPerSymbolAllocation:  vi.fn(),
+    paperCapitalConfig:                 vi.fn(),
+    setPaperCapitalConfig:              vi.fn(),
+    setPaperPerSymbolAllocation:        vi.fn(),
+    setPaperMaxConcurrentPositions:     vi.fn(),
+    previewPaperConcurrentBuy:          vi.fn(),
   },
 }));
 
@@ -37,6 +39,9 @@ const _DEFAULT_CONFIG = {
   effective_per_symbol_cap_krw: 1_000_000,
   allowed_per_symbol_max_krw_options: [1_000_000, 2_000_000],
   allowed_per_symbol_max_pct_options: [0.10],
+  // P-03 fields.
+  max_concurrent_positions: 3,
+  allowed_max_concurrent_positions_options: [3, 5, 10],
   currency: "KRW",
   is_paper_only: true,
   is_live_authorization: false,
@@ -49,6 +54,8 @@ beforeEach(() => {
   backendApi.paperCapitalConfig.mockReset();
   backendApi.setPaperCapitalConfig.mockReset();
   backendApi.setPaperPerSymbolAllocation.mockReset();
+  backendApi.setPaperMaxConcurrentPositions.mockReset();
+  backendApi.previewPaperConcurrentBuy.mockReset();
 });
 afterEach(cleanup);
 
@@ -387,6 +394,163 @@ describe("<PaperCapitalCard> P-02 — per-symbol allocation", () => {
     ).toBe("true");
     expect(
       screen.getByTestId("paper-capital-card-per-symbol-option-fixed-1m")
+        .getAttribute("data-selected"),
+    ).toBe("false");
+  });
+});
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// P-03: 최대 동시 보유 종목 수 UI
+// ────────────────────────────────────────────────────────────────────────────
+describe("<PaperCapitalCard> P-03 — max concurrent positions", () => {
+  it("renders 3 options (3종목 / 5종목 / 10종목)", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-max-positions-section"));
+    expect(screen.getByTestId("paper-capital-card-max-positions-option-3")).toBeTruthy();
+    expect(screen.getByTestId("paper-capital-card-max-positions-option-5")).toBeTruthy();
+    expect(screen.getByTestId("paper-capital-card-max-positions-option-10")).toBeTruthy();
+  });
+
+  it("displays 3종목 / 5종목 / 10종목 Korean labels", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    const { container } = render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-max-positions-section"));
+    const text = container.textContent || "";
+    expect(text).toContain("3종목");
+    expect(text).toContain("5종목");
+    expect(text).toContain("10종목");
+  });
+
+  it("default 3종목 is selected", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-max-positions-option-3"));
+    expect(
+      screen.getByTestId("paper-capital-card-max-positions-option-3")
+        .getAttribute("data-selected"),
+    ).toBe("true");
+    expect(
+      screen.getByTestId("paper-capital-card-max-positions-option-5")
+        .getAttribute("data-selected"),
+    ).toBe("false");
+  });
+
+  it("clicking 5종목 calls setPaperMaxConcurrentPositions", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    backendApi.setPaperMaxConcurrentPositions.mockResolvedValue({
+      ..._DEFAULT_CONFIG,
+      max_concurrent_positions: 5,
+    });
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-max-positions-option-5"));
+    fireEvent.click(screen.getByTestId("paper-capital-card-max-positions-option-5"));
+    await waitFor(() => {
+      expect(backendApi.setPaperMaxConcurrentPositions).toHaveBeenCalledWith({
+        maxConcurrentPositions: 5,
+      });
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("paper-capital-card-max-positions-current-value").textContent,
+      ).toContain("5종목");
+    });
+  });
+
+  it("clicking 10종목 calls setPaperMaxConcurrentPositions", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    backendApi.setPaperMaxConcurrentPositions.mockResolvedValue({
+      ..._DEFAULT_CONFIG,
+      max_concurrent_positions: 10,
+    });
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-max-positions-option-10"));
+    fireEvent.click(screen.getByTestId("paper-capital-card-max-positions-option-10"));
+    await waitFor(() => {
+      expect(backendApi.setPaperMaxConcurrentPositions).toHaveBeenCalledWith({
+        maxConcurrentPositions: 10,
+      });
+    });
+  });
+
+  it("disclaimer says paper-only and not live trade limit", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() =>
+      screen.getByTestId("paper-capital-card-max-positions-disclaimer"),
+    );
+    const text = screen.getByTestId("paper-capital-card-max-positions-disclaimer")
+      .textContent || "";
+    expect(text).toContain("Paper 모의매매 전용");
+    expect(text).toContain("실전 주문 한도가 아닙니다");
+    // 신규 진입만 차단되고 청산/관망은 영향 없음 명시 — 토큰 BUY/SELL/EXIT/HOLD
+    // literal 은 *사용하지 않는다* (UI invariant 의 "no live trade labels" 와
+    // 충돌 방지).
+    expect(text).toContain("신규 진입");
+    expect(text).toContain("청산");
+  });
+
+  it("shows current setting value", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue({
+      ..._DEFAULT_CONFIG,
+      max_concurrent_positions: 10,
+    });
+    render(<PaperCapitalCard />);
+    await waitFor(() =>
+      screen.getByTestId("paper-capital-card-max-positions-current-value"),
+    );
+    expect(
+      screen.getByTestId("paper-capital-card-max-positions-current-value").textContent,
+    ).toContain("10종목");
+  });
+
+  it("section has NO live-trade labels", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-max-positions-section"));
+    const section = screen.getByTestId("paper-capital-card-max-positions-section");
+    const text = section.textContent || "";
+    for (const banned of [
+      "지금 매수", "지금 매도", "Place Order", "place order",
+      "매수 실행", "매도 실행",
+      "실거래 시작", "실거래 활성화",
+      "ENABLE_LIVE_TRADING",
+    ]) {
+      expect(text.includes(banned)).toBe(false);
+    }
+    expect(section.querySelectorAll("input").length).toBe(0);
+    expect(section.querySelectorAll("textarea").length).toBe(0);
+    expect(section.querySelectorAll("select").length).toBe(0);
+  });
+
+  it("section does NOT expose secret patterns", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    const { container } = render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-max-positions-section"));
+    const text = (container.textContent || "").toLowerCase();
+    for (const needle of [
+      "kis_app_key", "kis_app_secret", "anthropic_api_key",
+      "openai_api_key", "telegram_bot_token", "sk-", "bearer ",
+      "kis_account_no",
+    ]) {
+      expect(text.includes(needle)).toBe(false);
+    }
+  });
+
+  it("highlights 5종목 when current setting is 5", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue({
+      ..._DEFAULT_CONFIG,
+      max_concurrent_positions: 5,
+    });
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-max-positions-option-5"));
+    expect(
+      screen.getByTestId("paper-capital-card-max-positions-option-5")
+        .getAttribute("data-selected"),
+    ).toBe("true");
+    expect(
+      screen.getByTestId("paper-capital-card-max-positions-option-3")
         .getAttribute("data-selected"),
     ).toBe("false");
   });
