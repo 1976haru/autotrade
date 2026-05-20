@@ -34,15 +34,21 @@ from app.auto_paper.decisions import (
     process_ai_recommendation,
 )
 from app.auto_paper.capital_config import (
+    ALLOWED_MAX_CONCURRENT_POSITIONS,
     ALLOWED_PAPER_INITIAL_CASH,
     ALLOWED_PER_SYMBOL_MAX_KRW,
     ALLOWED_PER_SYMBOL_MAX_PCT,
+    InvalidMaxConcurrentPositionsError,
     InvalidPaperCapitalError,
     InvalidPerSymbolAllocationError,
     PerSymbolAllocationMode,
     get_paper_capital_config,
+    set_max_concurrent_positions,
     set_paper_capital_config,
     set_per_symbol_allocation,
+)
+from app.auto_paper.concurrent_positions_guard import (
+    check_concurrent_buy_allowed,
 )
 from app.core.config import get_settings
 
@@ -600,6 +606,87 @@ def set_per_symbol_allocation_endpoint(body: _PerSymbolAllocationBody) -> dict:
         "notice": (
             "종목당 최대 투자금은 Paper 모의매매 전용이며 실전 주문금액이 "
             "아닙니다."
+        ),
+    }
+
+
+# ============================================================================
+# P-03: 최대 동시 보유 종목 수 설정 endpoints (in-memory)
+# ============================================================================
+
+
+class _MaxConcurrentPositionsBody(BaseModel):
+    """`POST /auto-paper/max-concurrent-positions` 입력."""
+
+    max_concurrent_positions: int  = Field(..., description="허용 옵션 중 하나 (3 / 5 / 10)")
+    fallback_to_default:      bool = Field(False, description="True 면 허용 외 값을 default 로 대체")
+
+
+@_AP.post("/max-concurrent-positions")
+def set_max_concurrent_positions_endpoint(body: _MaxConcurrentPositionsBody) -> dict:
+    """P-03: 최대 동시 보유 종목 수 변경.
+
+    *Paper 전용* — 실전 주문 한도와 결합 0건. broker / OrderExecutor /
+    route_order 호출 0건 — in-memory 갱신만.
+    """
+    try:
+        cfg, fallback_used = set_max_concurrent_positions(
+            body.max_concurrent_positions,
+            fallback_to_default=body.fallback_to_default,
+        )
+    except InvalidMaxConcurrentPositionsError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error":   "invalid_max_concurrent_positions",
+                "message": str(exc),
+                "allowed_max_concurrent_positions_options": list(
+                    ALLOWED_MAX_CONCURRENT_POSITIONS
+                ),
+            },
+        )
+    return {
+        **cfg.to_dict(),
+        "fallback_used": fallback_used,
+        "notice": (
+            "최대 동시 보유 종목 수는 Paper 모의매매 전용이며 실전 주문 한도가 "
+            "아닙니다."
+        ),
+    }
+
+
+class _ConcurrentBuyPreviewBody(BaseModel):
+    """advisory preview — caller 가 BUY 시도 *전* 한도 도달 여부 사전 시뮬."""
+
+    action:               str            = Field("BUY", description="caller 의 매매 의도 — 'BUY' 만 한도 체크")
+    symbol:               str | None     = Field(None, description="신규 진입 후보 종목 코드")
+    current_held_symbols: list[str]      = Field(
+        default_factory=list,
+        description="현재 보유 중인 고유 종목 코드 목록 — 중복 제외 권장",
+    )
+
+
+@_AP.post("/max-concurrent-positions/preview")
+def preview_concurrent_buy_endpoint(body: _ConcurrentBuyPreviewBody) -> dict:
+    """advisory preview — 신규 BUY 가 한도에 걸리는지 사전 체크.
+
+    Returns:
+        ConcurrentBuyCheckResult.to_dict() — verdict / reason / 보유 카운트 carry.
+
+    broker / route_order 호출 0건. 본 응답은 *advisory* — 실 주문은 별도 흐름.
+    """
+    cfg = get_paper_capital_config()
+    result = check_concurrent_buy_allowed(
+        action=body.action,
+        symbol=body.symbol,
+        current_held_symbols=body.current_held_symbols,
+        max_concurrent_positions=cfg.max_concurrent_positions,
+    )
+    return {
+        **result.to_dict(),
+        "notice": (
+            "본 결과는 advisory — 실 주문은 별도 흐름 (RiskManager / route_order). "
+            "Paper 전용이며 실전 주문 한도가 아닙니다."
         ),
     }
 

@@ -109,6 +109,17 @@ DEFAULT_PER_SYMBOL_MODE: PerSymbolAllocationMode = PerSymbolAllocationMode.FIXED
 
 
 # ============================================================================
+# 상수 — 최대 동시 보유 종목 수 (P-03)
+# ============================================================================
+
+DEFAULT_MAX_CONCURRENT_POSITIONS: int = 3
+
+# 사용자가 *Paper 전용* 으로 선택 가능한 최대 동시 보유 종목 수.
+# 과도한 분산 / 과도한 동시 진입 / 자금 과다 사용 방지용 안전장치.
+ALLOWED_MAX_CONCURRENT_POSITIONS: tuple[int, ...] = (3, 5, 10)
+
+
+# ============================================================================
 # 예외
 # ============================================================================
 
@@ -129,6 +140,14 @@ class InvalidPerSymbolAllocationError(ValueError):
     `set_per_symbol_allocation(..., fallback_to_default=True)` 로 호출하면
     default 로 fallback. 본 예외는 *Paper 정책 위반* 만 의미 — 실거래 한도와
     무관.
+    """
+
+
+class InvalidMaxConcurrentPositionsError(ValueError):
+    """허용되지 않은 최대 동시 보유 종목 수를 set 하려고 시도.
+
+    `set_max_concurrent_positions(..., fallback_to_default=True)` 면 default
+    로 fallback. 본 예외는 *Paper 정책 위반* 만 의미 — 실거래 한도와 무관.
     """
 
 
@@ -189,6 +208,10 @@ class PaperCapitalConfig:
     allowed_per_symbol_max_krw_options:    tuple[int, ...]         = ALLOWED_PER_SYMBOL_MAX_KRW
     allowed_per_symbol_max_pct_options:    tuple[float, ...]       = ALLOWED_PER_SYMBOL_MAX_PCT
 
+    # P-03 — 최대 동시 보유 종목 수.
+    max_concurrent_positions:              int                     = DEFAULT_MAX_CONCURRENT_POSITIONS
+    allowed_max_concurrent_positions_options: tuple[int, ...]      = ALLOWED_MAX_CONCURRENT_POSITIONS
+
     currency:                    str       = PAPER_CAPITAL_CURRENCY
     is_paper_only:               bool      = True
     is_live_authorization:       bool      = False
@@ -239,6 +262,13 @@ class PaperCapitalConfig:
                 f"got {type(self.per_symbol_mode).__name__}"
             )
 
+        # P-03 invariant — max_concurrent_positions 검증.
+        if self.max_concurrent_positions not in self.allowed_max_concurrent_positions_options:
+            raise ValueError(
+                f"max_concurrent_positions={self.max_concurrent_positions} 가 "
+                f"allowed {self.allowed_max_concurrent_positions_options} 외 — 거부"
+            )
+
     @property
     def effective_per_symbol_cap_krw(self) -> int:
         """현재 mode + 값 으로 산정한 *실제 적용* 종목당 한도 (KRW).
@@ -264,6 +294,9 @@ class PaperCapitalConfig:
             "effective_per_symbol_cap_krw":       int(self.effective_per_symbol_cap_krw),
             "allowed_per_symbol_max_krw_options": list(self.allowed_per_symbol_max_krw_options),
             "allowed_per_symbol_max_pct_options": list(self.allowed_per_symbol_max_pct_options),
+            # P-03
+            "max_concurrent_positions":              int(self.max_concurrent_positions),
+            "allowed_max_concurrent_positions_options": list(self.allowed_max_concurrent_positions_options),
 
             "currency":                      self.currency,
             "is_paper_only":                 self.is_paper_only,
@@ -291,6 +324,8 @@ class _PaperCapitalStore:
         self._per_symbol_mode: PerSymbolAllocationMode = DEFAULT_PER_SYMBOL_MODE
         self._per_symbol_max_krw: int = DEFAULT_PER_SYMBOL_MAX_KRW
         self._per_symbol_max_pct: float = DEFAULT_PER_SYMBOL_MAX_PCT
+        # P-03 — 최대 동시 보유 종목 수 store.
+        self._max_concurrent_positions: int = DEFAULT_MAX_CONCURRENT_POSITIONS
         self._updated_at: str = ""
 
     def snapshot(self) -> PaperCapitalConfig:
@@ -303,6 +338,8 @@ class _PaperCapitalStore:
                 per_symbol_max_pct=self._per_symbol_max_pct,
                 allowed_per_symbol_max_krw_options=ALLOWED_PER_SYMBOL_MAX_KRW,
                 allowed_per_symbol_max_pct_options=ALLOWED_PER_SYMBOL_MAX_PCT,
+                max_concurrent_positions=self._max_concurrent_positions,
+                allowed_max_concurrent_positions_options=ALLOWED_MAX_CONCURRENT_POSITIONS,
                 currency=PAPER_CAPITAL_CURRENCY,
                 is_paper_only=True,
                 is_live_authorization=False,
@@ -448,6 +485,44 @@ class _PaperCapitalStore:
         )
         return snap, fallback_used
 
+    def set_max_concurrent_positions(
+        self,
+        value: int,
+        *,
+        fallback_to_default: bool = False,
+    ) -> tuple[PaperCapitalConfig, bool]:
+        """P-03: 최대 동시 보유 종목 수 변경.
+
+        Returns:
+            (new_config, fallback_used). fallback_used=True 면 *입력값이 허용
+            되지 않아 default 로 대체* 됐음.
+        """
+        target = int(value)
+        fallback_used = False
+        if target not in ALLOWED_MAX_CONCURRENT_POSITIONS:
+            if fallback_to_default:
+                _log.warning(
+                    "[paper-capital] max_concurrent_positions=%d 허용 외 — "
+                    "default %d 로 fallback",
+                    target, DEFAULT_MAX_CONCURRENT_POSITIONS,
+                )
+                target = DEFAULT_MAX_CONCURRENT_POSITIONS
+                fallback_used = True
+            else:
+                raise InvalidMaxConcurrentPositionsError(
+                    f"max_concurrent_positions={target} 가 허용 옵션 "
+                    f"{ALLOWED_MAX_CONCURRENT_POSITIONS} 외 — 거부."
+                )
+        with self._lock:
+            self._max_concurrent_positions = target
+            self._updated_at = datetime.now(timezone.utc).isoformat()
+        snap = self.snapshot()
+        _log.info(
+            "[paper-capital] max_concurrent_positions set → %d (fallback=%s)",
+            target, fallback_used,
+        )
+        return snap, fallback_used
+
     def reset_for_tests(self) -> None:
         """테스트 격리용 — process state 를 default 로 reset."""
         with self._lock:
@@ -455,6 +530,7 @@ class _PaperCapitalStore:
             self._per_symbol_mode    = DEFAULT_PER_SYMBOL_MODE
             self._per_symbol_max_krw = DEFAULT_PER_SYMBOL_MAX_KRW
             self._per_symbol_max_pct = DEFAULT_PER_SYMBOL_MAX_PCT
+            self._max_concurrent_positions = DEFAULT_MAX_CONCURRENT_POSITIONS
             self._updated_at = ""
 
 
@@ -546,6 +622,37 @@ def is_allowed_per_symbol_max_pct(value: float) -> bool:
         return False
 
 
+# ============================================================================
+# P-03 — public API
+# ============================================================================
+
+
+def set_max_concurrent_positions(
+    value: int,
+    *,
+    fallback_to_default: bool = False,
+) -> tuple[PaperCapitalConfig, bool]:
+    """최대 동시 보유 종목 수 변경.
+
+    `fallback_to_default=True` 면 허용되지 않은 값도 default 로 대체.
+    `False` (기본) 면 `InvalidMaxConcurrentPositionsError` 로 즉시 raise.
+
+    본 함수는 broker / OrderExecutor / route_order / KIS 어떤 호출도 *하지
+    않는다* — 단순히 in-memory 값을 갱신.
+    """
+    return _store.set_max_concurrent_positions(
+        value, fallback_to_default=fallback_to_default,
+    )
+
+
+def is_allowed_max_concurrent_positions(value: int) -> bool:
+    """UI 사전 validation — 허용 옵션 안에 있는지."""
+    try:
+        return int(value) in ALLOWED_MAX_CONCURRENT_POSITIONS
+    except (TypeError, ValueError):
+        return False
+
+
 __all__ = [
     # P-01
     "DEFAULT_PAPER_INITIAL_CASH",
@@ -569,4 +676,10 @@ __all__ = [
     "set_per_symbol_allocation",
     "is_allowed_per_symbol_max_krw",
     "is_allowed_per_symbol_max_pct",
+    # P-03
+    "DEFAULT_MAX_CONCURRENT_POSITIONS",
+    "ALLOWED_MAX_CONCURRENT_POSITIONS",
+    "InvalidMaxConcurrentPositionsError",
+    "set_max_concurrent_positions",
+    "is_allowed_max_concurrent_positions",
 ]

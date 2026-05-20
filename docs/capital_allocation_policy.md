@@ -207,11 +207,123 @@ effective_cap = min(
 9. 앱 재시작 시 default 1,000만원 으로 복귀 (P-16 에서 영구화)
 ```
 
+## 3-A. P-03 — 최대 동시 보유 종목 수 제한 (본 PR 추가)
+
+과도한 분산 / 과도한 동시 진입 / 자금 과다 사용을 막는 *Paper 전용* 안전장치.
+
+### 3-A-1. 허용 옵션
+
+| 옵션 | 의미 |
+|---|---|
+| `3` | **기본값** — 최대 3종목 동시 보유 |
+| `5` | 최대 5종목 동시 보유 |
+| `10` | 최대 10종목 동시 보유 |
+
+위 3종 외 값 → `InvalidMaxConcurrentPositionsError` (또는 fallback=true 시
+default 로 대체).
+
+### 3-A-2. 가드 로직 (`check_concurrent_buy_allowed`)
+
+`app/auto_paper/concurrent_positions_guard.py` 의 순수 함수.
+
+| 입력 action | 입력 symbol vs held | 결과 |
+|---|---|---|
+| `BUY` | 신규 종목 + 보유 수 < 한도 | `ALLOW` |
+| `BUY` | 신규 종목 + 보유 수 ≥ 한도 | `BLOCKED_MAX_POSITIONS` |
+| `BUY` | 이미 보유 중 (`symbol in held`) | `ALLOW` (`is_existing_position=True`) |
+| `SELL` / `EXIT` / `HOLD` / `WATCH` 등 | (any) | `SKIP_NON_BUY` |
+
+특징:
+- HOLD / SELL / EXIT 는 *제한 없음* — 청산 방향은 종목 수 한도와 무관.
+- 추가 매수 (같은 종목) 는 *고유 종목 수 변화 없음* → 항상 ALLOW.
+- 결과 dataclass `ConcurrentBuyCheckResult`:
+  - `is_order_signal=False` / `is_live_authorization=False` / `is_paper_only=True` 영구.
+  - broker / route_order 호출 0건 — *advisory* 평가만.
+- 동일 종목 중복 entry 가 `current_held_symbols` 에 들어와도 set 으로 dedupe.
+
+### 3-A-3. EMERGENCY_STOP 처리
+
+본 가드 *밖* 의 책임. AutoPaperLoop / consumer 가 `EMERGENCY_STOP` 상태이면
+어떤 신규 판단도 진행하지 않으므로 본 가드 호출조차 발생하지 않는다 (정책 +
+별도 테스트로 lock).
+
+### 3-A-4. API contract
+
+`GET /api/auto-paper/capital-config` 응답에 P-03 신규 필드:
+
+```json
+{
+  "max_concurrent_positions":                  3,
+  "allowed_max_concurrent_positions_options":  [3, 5, 10]
+}
+```
+
+`POST /api/auto-paper/max-concurrent-positions` 입력:
+
+```json
+{
+  "max_concurrent_positions": 5,
+  "fallback_to_default":      false
+}
+```
+
+허용 외 + `fallback_to_default=false` → **400** `invalid_max_concurrent_positions`.
+
+`POST /api/auto-paper/max-concurrent-positions/preview` (advisory):
+
+입력:
+```json
+{
+  "action":               "BUY",
+  "symbol":               "005930",
+  "current_held_symbols": ["000660", "035720"]
+}
+```
+
+응답 (200, advisory):
+```json
+{
+  "verdict":                     "ALLOW",
+  "current_unique_symbol_count": 2,
+  "max_concurrent_positions":    3,
+  "symbol":                      "005930",
+  "action":                      "BUY",
+  "reason":                      "신규 종목 BUY 허용 (current_unique=2 < 3)",
+  "is_existing_position":        false,
+  "is_order_signal":             false,
+  "is_live_authorization":       false,
+  "is_paper_only":               true
+}
+```
+
+### 3-A-5. UI 동작 (`PaperCapitalCard` 확장)
+
+별도 섹션 "📊 최대 동시 보유 종목" 노출:
+- 3개 옵션 chip — **3종목** / **5종목** / **10종목**
+- 현재 설정값 표시
+- "이 값은 Paper 모의매매 전용이며 실전 주문 한도가 아닙니다" disclaimer
+- "한도 도달 시 신규 진입만 차단 — 청산은 자유" 안내
+- input / textarea / select 0개 — 임의 입력 form 차단
+
+### 3-A-6. 안전 invariant (P-03 추가분)
+
+| 항목 | 값 |
+|---|---|
+| `max_concurrent_positions not in ALLOWED_MAX_CONCURRENT_POSITIONS` | ValueError / 400 거부 |
+| `ConcurrentBuyCheckResult.is_order_signal` | False 영구 |
+| `ConcurrentBuyCheckResult.is_live_authorization` | False 영구 |
+| `ConcurrentBuyCheckResult.is_paper_only` | True 영구 |
+| capital_config / concurrent_positions_guard 모듈 import | broker / OrderExecutor / KIS / settings / 외부 HTTP / AI SDK 0건 |
+| frontend section BUY / SELL / Place Order / 매수 / 매도 / 실거래 라벨 | 0개 |
+| frontend section input / textarea / select | 0개 |
+
 ## 4. P-시리즈 전체 매핑
 
 | 번호 | 항목 | 본 PR | 상태 |
 |---|---|---|---|
-| P-01 | 초기 Paper 시드머니 설정 | ✅ 본 PR | done |
-| P-02 | 종목당 투자금 설정 | (다음) | pending |
+| P-01 | 초기 Paper 시드머니 설정 | (이전 PR) | done |
+| P-02 | 종목당 투자금 설정 | (이전 PR) | done |
+| P-03 | 최대 동시 보유 종목 수 제한 | ✅ 본 PR | done |
+| P-04 | 매수 가능성 체크 | (다음) | pending |
 | P-... | (이후 항목) | (별도 PR) | pending |
 | P-16 | Paper 자본 설정 영구 저장 | (예정) | pending |
