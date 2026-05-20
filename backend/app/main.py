@@ -24,6 +24,7 @@ from app.api.routes_broker import router as broker_router
 from app.api.routes_explainability import router as explainability_router
 from app.api.routes_live_engine import router as live_engine_router
 from app.api.routes_market import router as market_router
+from app.api.routes_market_state import router as market_state_router
 from app.api.routes_analytics import router as analytics_router
 from app.api.routes_monitoring import router as monitoring_router
 from app.api.routes_paper import router as paper_router
@@ -209,6 +210,7 @@ app.include_router(broker_router, prefix="/api")
 app.include_router(ai_router, prefix="/api")
 app.include_router(backtest_router, prefix="/api")
 app.include_router(market_router, prefix="/api")
+app.include_router(market_state_router, prefix="/api")
 app.include_router(approvals_router, prefix="/api")
 app.include_router(audit_router, prefix="/api")
 app.include_router(live_engine_router, prefix="/api")

@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { StrategySelectionCard } from "./StrategySelectionCard";
 import { _resetStrategyDisplayLookupForTests } from "../../utils/strategyNames";
+import { MarketPhase } from "../../utils/marketHours";
 
 vi.mock("../../services/backend/client", () => ({
   backendApi: { engineBeginnerRegistry: vi.fn() },
@@ -300,12 +301,66 @@ describe("StrategySelectionCard — loading / error", () => {
     expect(container.textContent).toContain("로딩 중");
   });
 
-  it("error 상태 + onRefresh 표시", () => {
+  it("error 상태 + onRefresh 표시 (정규장 OPEN 한정)", () => {
     const onRefresh = vi.fn();
     const { getByTestId } = render(
-      <StrategySelectionCard error="boom" onRefresh={onRefresh} />,
+      <StrategySelectionCard
+        error="boom"
+        onRefresh={onRefresh}
+        marketPhase={MarketPhase.OPEN}
+      />,
     );
     expect(getByTestId("strategy-selection-error").textContent)
       .toContain("불러오지 못했습니다");
+  });
+});
+
+
+// fix/market-closed-state-distinction ─────────────────────────────────────────
+describe("StrategySelectionCard — 장 종료 / 휴장 상태", () => {
+  it("CLOSED + error → '전략 조합 데이터를 아직 불러오지 못했습니다' 대신 market-closed", () => {
+    const { getByTestId, queryByTestId } = render(
+      <StrategySelectionCard
+        error="boom"
+        marketPhase={MarketPhase.CLOSED}
+      />,
+    );
+    expect(getByTestId("strategy-selection-market-closed").textContent)
+      .toContain("장 종료");
+    // 기존 fetch-fail testid 가 노출되지 않아야 한다.
+    expect(queryByTestId("strategy-selection-error")).toBeNull();
+  });
+
+  it("WEEKEND + error → '주말 휴장' 안내", () => {
+    const { getByTestId, queryByTestId } = render(
+      <StrategySelectionCard
+        error="boom"
+        marketPhase={MarketPhase.WEEKEND}
+      />,
+    );
+    expect(getByTestId("strategy-selection-market-closed").textContent)
+      .toContain("주말 휴장");
+    expect(queryByTestId("strategy-selection-error")).toBeNull();
+  });
+
+  it("PRE_OPEN + report 미주입 → '장 시작 전' 안내 (null 대신)", () => {
+    const { getByTestId } = render(
+      <StrategySelectionCard marketPhase={MarketPhase.PRE_OPEN} />,
+    );
+    expect(getByTestId("strategy-selection-market-closed").textContent)
+      .toContain("장 시작 전");
+  });
+
+  it("CLOSED + report 정상 → market-closed 안내가 *없고* 정상 표시", () => {
+    // 실제로 데이터가 있으면 카드는 그대로 표시. market-closed banner는 비표시.
+    const { getByTestId, queryByTestId } = render(
+      <StrategySelectionCard
+        report={_report()}
+        marketPhase={MarketPhase.CLOSED}
+      />,
+    );
+    expect(getByTestId("strategy-selection-card")).toBeTruthy();
+    expect(queryByTestId("strategy-selection-market-closed")).toBeNull();
+    expect(getByTestId("strategy-selection-symbol").textContent).toBe("005930");
   });
 });

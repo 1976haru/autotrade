@@ -16,7 +16,9 @@
 import { useEffect, useState } from "react";
 import { Card, SectionLabel } from "./index";
 import { ErrorState, LoadingState, StatusBadge } from "./primitives";
+import { MarketClosedNotice } from "./MarketClosedNotice";
 import { backendApi } from "../../services/backend/client";
+import { MarketPhase, currentMarketPhase } from "../../utils/marketHours";
 
 
 // 체크리스트 상의 4개 핵심 전략. registry 키와 매핑 + 사용자 친화 라벨.
@@ -113,9 +115,13 @@ function StrategyChip({ entry, isSelected, isCandidate, registryEntry }) {
 export function AgentStrategyChoiceCard({
   testId = "agent-strategy-choice-card",
   autoLoad = true,
+  marketPhase: marketPhaseProp = null,
 }) {
   const [state, setState] = useState({ requestKey: 0, error: null, status: null, registry: null });
   const [tick, setTick] = useState(0);
+  // 테스트에서 marketPhaseProp 으로 주입 가능 — 미주입 시 client-side 계산.
+  const marketPhase = marketPhaseProp || currentMarketPhase();
+  const marketClosed = marketPhase !== MarketPhase.OPEN;
 
   useEffect(() => {
     if (!autoLoad) return;
@@ -153,6 +159,25 @@ export function AgentStrategyChoiceCard({
   }
 
   if (state.error) {
+    // fix/market-closed-state-distinction: 장 종료 / 휴장 시 fetch 가 실패
+    // 했더라도 *오류*로 표시하지 않고 friendly market-closed banner 만
+    // 노출. 정규장이 열려 있을 때만 ErrorState 를 노출해 실제 장애와
+    // 휴장 상태를 구분.
+    if (marketClosed) {
+      return (
+        <Card>
+          <div data-testid={testId} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <SectionLabel>AI Agent 선택 전략</SectionLabel>
+            <MarketClosedNotice
+              phase={marketPhase}
+              testId={`${testId}-market-closed`}
+              detail="장 종료 / 휴장 시간에는 신규 전략 신호가 생성되지 않습니다. (backend 연결 자체는 별도 점검)"
+              onRefresh={() => setTick((t) => t + 1)}
+            />
+          </div>
+        </Card>
+      );
+    }
     return (
       <Card>
         <ErrorState
