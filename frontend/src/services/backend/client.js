@@ -180,6 +180,13 @@ export const backendApi = {
         max_concurrent_positions: maxConcurrentPositions,
       }),
     }),
+  // P-05: Paper 최소 1주 매수 가드 — 정수/floor 강제. advisory.
+  validatePaperMinLot: ({ action = "BUY", symbol = null, quantity = null } = {}) =>
+    backendFetch("/api/auto-paper/min-lot/validate", {
+      method: "POST",
+      body: JSON.stringify({ action, symbol, quantity }),
+    }),
+  paperMinLotPreview: () => backendFetch("/api/auto-paper/min-lot/preview"),
   // feat/step2-05-pre-market-gate: optional `body` carry — pre_market 결과를
   // 포함시켜 backend 가 BLOCK 검증. body 미제공 시 backwards-compat.
   autoPaperStart:         (body = null) => backendFetch(

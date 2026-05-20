@@ -53,6 +53,10 @@ from app.auto_paper.concurrent_positions_guard import (
 from app.auto_paper.affordability_check import (
     check_paper_affordability,
 )
+from app.auto_paper.min_lot_check import (
+    compute_paper_affordable_lot,
+    validate_paper_min_lot,
+)
 from app.core.config import get_settings
 
 
@@ -752,6 +756,78 @@ def preview_paper_affordability_endpoint(body: _AffordabilityPreviewBody) -> dic
         "notice": (
             "본 결과는 advisory — Paper 전용이며 실전 주문 결정과 결합되지 "
             "않습니다. 실 주문은 별도 흐름 (RiskManager / route_order)."
+        ),
+    }
+
+
+# ============================================================================
+# P-05: Paper 최소 1주 매수 가드 endpoints
+# ============================================================================
+
+
+class _MinLotValidateBody(BaseModel):
+    """advisory — 운영자/caller 가 결정한 quantity 가 유효한 정수 ≥ 1 인지."""
+
+    action:   str            = Field("BUY", description="caller 매매 의도")
+    symbol:   str | None     = Field(None)
+    quantity: float | None   = Field(None, description="검증 대상 수량 (정수 ≥ 1 만 ALLOWED)")
+
+
+@_AP.post("/min-lot/validate")
+def validate_paper_min_lot_endpoint(body: _MinLotValidateBody) -> dict:
+    """Paper BUY 수량의 *정수 ≥ 1* 가드 advisory.
+
+    소수점 / 음수 / 0 / 비-숫자 입력은 모두 BLOCKED_*. SELL/EXIT/HOLD →
+    SKIP_NON_BUY. broker / route_order 호출 0건.
+    """
+    result = validate_paper_min_lot(
+        action=body.action,
+        quantity=body.quantity,
+        symbol=body.symbol,
+    )
+    return {
+        **result.to_dict(),
+        "notice": (
+            "Paper 모의매매 전용 advisory — 정수 1주 이상만 매수 후보. 소수점 "
+            "주식 불가. broker / OrderExecutor 호출 0건."
+        ),
+    }
+
+
+@_AP.get("/min-lot/preview")
+def preview_min_lot_endpoint() -> dict:
+    """현재 PaperCapitalConfig 기준 *예시 1주 가격* 별 매수 가능 수량.
+
+    UI 가 "현재 cap 기준 예상 가능 수량 예시" 를 노출할 때 사용. broker / DB
+    호출 0건. 예시 가격: 5만 / 10만 / 50만 / 100만 / 200만 / 500만 KRW.
+    """
+    cfg = get_paper_capital_config()
+    sample_prices = [50_000, 100_000, 500_000, 1_000_000, 2_000_000, 5_000_000]
+    examples = []
+    for p in sample_prices:
+        qty = compute_paper_affordable_lot(
+            effective_per_symbol_cap_krw=cfg.effective_per_symbol_cap_krw,
+            available_cash_krw=cfg.initial_cash,  # *시드머니 기준* — 미사용 가정
+            price=p,
+        )
+        examples.append({
+            "price":                p,
+            "affordable_quantity":  qty,
+            "is_affordable":        qty >= 1,
+        })
+    return {
+        "effective_per_symbol_cap_krw":  int(cfg.effective_per_symbol_cap_krw),
+        "initial_cash":                  int(cfg.initial_cash),
+        "examples":                      examples,
+        "min_lot_quantity":              1,
+        "fractional_share_supported":    False,
+        "rounding_policy":               "floor",
+        "is_paper_only":                 True,
+        "is_live_authorization":         False,
+        "notice": (
+            "예시 표는 현재 시드머니 전체가 가용하다는 가정. 실제 매수 가능 "
+            "수량은 P-04 affordability_check 에서 cash 잔액까지 함께 본다. "
+            "Paper 전용 advisory."
         ),
     }
 
