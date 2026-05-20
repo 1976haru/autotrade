@@ -114,6 +114,16 @@ export const backendApi = {
   // 모든 경로는 PAPER/SIMULATION 한정 — broker.place_order 호출 0건.
   desktopHealth:          () => backendFetch("/api/desktop/health"),
   autoPaperStatus:        () => backendFetch("/api/auto-paper/status"),
+  // P-01: Paper 시드머니 설정 — Paper 전용, 실전 계좌와 무관.
+  paperCapitalConfig:     () => backendFetch("/api/auto-paper/capital-config"),
+  setPaperCapitalConfig:  ({ initialCash, fallbackToDefault = false } = {}) =>
+    backendFetch("/api/auto-paper/capital-config", {
+      method: "POST",
+      body: JSON.stringify({
+        initial_cash: initialCash,
+        fallback_to_default: fallbackToDefault,
+      }),
+    }),
   // feat/step2-05-pre-market-gate: optional `body` carry — pre_market 결과를
   // 포함시켜 backend 가 BLOCK 검증. body 미제공 시 backwards-compat.
   autoPaperStart:         (body = null) => backendFetch(

@@ -33,6 +33,12 @@ from app.auto_paper.decisions import (
     AIRecommendationInput,
     process_ai_recommendation,
 )
+from app.auto_paper.capital_config import (
+    ALLOWED_PAPER_INITIAL_CASH,
+    InvalidPaperCapitalError,
+    get_paper_capital_config,
+    set_paper_capital_config,
+)
 from app.core.config import get_settings
 
 
@@ -462,6 +468,72 @@ def get_active_candidate() -> dict:
         "is_order_signal":       False,
         "auto_apply_allowed":    False,
         "is_live_authorization": False,
+    }
+
+
+# ============================================================================
+# P-01: Paper 시드머니 설정 endpoints (in-memory; P-16 에서 영구화)
+# ============================================================================
+
+
+class _PaperCapitalBody(BaseModel):
+    """`POST /auto-paper/capital-config` 입력 — 시드머니 변경.
+
+    `fallback_to_default=False` (기본) — 허용되지 않은 값은 400 으로 거부.
+    `True` — 허용되지 않은 값을 받으면 default 로 fallback 하고 응답에
+    `fallback_used=True` carry (silent 가 아닌 *명시* 알림).
+    """
+
+    initial_cash:        int  = Field(..., description="허용 옵션 중 하나의 KRW 정수")
+    fallback_to_default: bool = Field(False, description="True 면 비허용 값을 default 로 대체")
+
+
+@_AP.get("/capital-config")
+def get_capital_config_endpoint() -> dict:
+    """현재 Paper 시드머니 설정 (read-only).
+
+    P-01 시점 in-memory store — 프로세스 재시작 시 default (10,000,000) 로
+    복귀. 영구 저장은 P-16 에서 별도 PR.
+    """
+    cfg = get_paper_capital_config()
+    return {
+        **cfg.to_dict(),
+        # 사용자 안내 — UI 가 그대로 표시 가능.
+        "notice": (
+            "Paper 시드머니는 *모의매매 전용* 이며 실전 계좌와 무관합니다. "
+            "어떤 broker / 실거래 API 와도 결합되지 않습니다."
+        ),
+    }
+
+
+@_AP.post("/capital-config")
+def set_capital_config_endpoint(body: _PaperCapitalBody) -> dict:
+    """Paper 시드머니 설정 변경.
+
+    허용 옵션 (`ALLOWED_PAPER_INITIAL_CASH`) 외 값은 기본 400 으로 거부.
+    `fallback_to_default=True` 면 default 로 대체 후 `fallback_used=True`
+    carry. broker / OrderExecutor / route_order 호출 0건 — in-memory 갱신만.
+    """
+    try:
+        cfg, fallback_used = set_paper_capital_config(
+            body.initial_cash,
+            fallback_to_default=body.fallback_to_default,
+        )
+    except InvalidPaperCapitalError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error":   "invalid_paper_initial_cash",
+                "message": str(exc),
+                "allowed_initial_cash_options": list(ALLOWED_PAPER_INITIAL_CASH),
+            },
+        )
+    return {
+        **cfg.to_dict(),
+        "fallback_used": fallback_used,
+        "notice": (
+            "Paper 시드머니는 *모의매매 전용* 이며 실전 계좌와 무관합니다."
+        ),
     }
 
 
