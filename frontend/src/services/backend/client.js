@@ -158,6 +158,28 @@ export const backendApi = {
         current_held_symbols: currentHeldSymbols,
       }),
     }),
+  // P-04: Paper BUY 후보 affordability 사전 검사 — advisory.
+  previewPaperAffordability: ({
+    action = "BUY",
+    symbol = null,
+    price = null,
+    availableCashKrw = 0,
+    currentHeldSymbols = [],
+    effectivePerSymbolCapKrw = null,
+    maxConcurrentPositions = null,
+  } = {}) =>
+    backendFetch("/api/auto-paper/affordability/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        action,
+        symbol,
+        price,
+        available_cash_krw: availableCashKrw,
+        current_held_symbols: currentHeldSymbols,
+        effective_per_symbol_cap_krw: effectivePerSymbolCapKrw,
+        max_concurrent_positions: maxConcurrentPositions,
+      }),
+    }),
   // feat/step2-05-pre-market-gate: optional `body` carry — pre_market 결과를
   // 포함시켜 backend 가 BLOCK 검증. body 미제공 시 backwards-compat.
   autoPaperStart:         (body = null) => backendFetch(

@@ -50,6 +50,9 @@ from app.auto_paper.capital_config import (
 from app.auto_paper.concurrent_positions_guard import (
     check_concurrent_buy_allowed,
 )
+from app.auto_paper.affordability_check import (
+    check_paper_affordability,
+)
 from app.core.config import get_settings
 
 
@@ -687,6 +690,68 @@ def preview_concurrent_buy_endpoint(body: _ConcurrentBuyPreviewBody) -> dict:
         "notice": (
             "본 결과는 advisory — 실 주문은 별도 흐름 (RiskManager / route_order). "
             "Paper 전용이며 실전 주문 한도가 아닙니다."
+        ),
+    }
+
+
+# ============================================================================
+# P-04: Paper 매수 가능성 (affordability) preview endpoint
+# ============================================================================
+
+
+class _AffordabilityPreviewBody(BaseModel):
+    """advisory preview — caller 가 BUY 후보 *전* affordability 사전 시뮬.
+
+    `effective_per_symbol_cap_krw` / `max_concurrent_positions` 가 입력에
+    없으면 *현재 PaperCapitalConfig 값* 을 자동 사용. 명시 override 도 허용
+    (테스트 / what-if 시뮬용).
+    """
+
+    action:                       str             = Field("BUY", description="caller 의 매매 의도 — BUY 만 검사")
+    symbol:                       str | None      = Field(None, description="후보 종목 코드")
+    price:                        float | None    = Field(None, description="1주 가격 (KRW)")
+    available_cash_krw:           int             = Field(0, description="남은 Paper 현금")
+    current_held_symbols:         list[str]       = Field(default_factory=list)
+    # 옵션 — 미주입 시 현재 PaperCapitalConfig 자동 적용.
+    effective_per_symbol_cap_krw: int | None      = Field(None)
+    max_concurrent_positions:     int | None      = Field(None)
+
+
+@_AP.post("/affordability/preview")
+def preview_paper_affordability_endpoint(body: _AffordabilityPreviewBody) -> dict:
+    """Paper BUY 후보 affordability 사전 advisory check.
+
+    Returns:
+        AffordabilityResult.to_dict() — verdict / reason_ko / affordable_quantity
+        / 사용된 cap + cash + held + max_positions carry.
+
+    broker / route_order 호출 0건. 응답은 advisory — 실 주문은 별도 흐름.
+    """
+    cfg = get_paper_capital_config()
+    cap = (
+        int(body.effective_per_symbol_cap_krw)
+        if body.effective_per_symbol_cap_krw is not None
+        else int(cfg.effective_per_symbol_cap_krw)
+    )
+    max_pos = (
+        int(body.max_concurrent_positions)
+        if body.max_concurrent_positions is not None
+        else int(cfg.max_concurrent_positions)
+    )
+    result = check_paper_affordability(
+        action=body.action,
+        symbol=body.symbol,
+        price=body.price,
+        available_cash_krw=int(body.available_cash_krw),
+        effective_per_symbol_cap_krw=cap,
+        current_held_symbols=body.current_held_symbols,
+        max_concurrent_positions=max_pos,
+    )
+    return {
+        **result.to_dict(),
+        "notice": (
+            "본 결과는 advisory — Paper 전용이며 실전 주문 결정과 결합되지 "
+            "않습니다. 실 주문은 별도 흐름 (RiskManager / route_order)."
         ),
     }
 
