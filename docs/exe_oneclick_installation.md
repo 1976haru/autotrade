@@ -35,8 +35,15 @@ src-tauri/target/release/bundle/nsis/Agent Trader v1_1.0.0_x64-setup.exe
 베타테스터는 보통 **GitHub Release** 의 첨부 파일에서 받습니다:
 
 ```
-https://github.com/<ORG>/<REPO>/releases/latest
+https://github.com/1976haru/autotrade/releases/latest
 ```
+
+> #5-05: 본 URL 은 앱 안 `UpdateBanner` 가 *유일하게 신뢰하는 진실 소스* 입니다.
+> Release draft 가 *publish* 되면 `UpdateBanner` 가 다음 사용자 접속 시 자동으로
+> 새 버전을 안내하고, `assets[].browser_download_url` 을 그대로 사용해 카드
+> 안에 **"setup.exe 직접 받기"** 링크를 노출합니다 (target=\_blank,
+> noopener/noreferrer). Release 가 없거나 조회 실패 시에는 **"최신 버전 확인 불가"**
+> 로만 표시되며, 오래된 release note 가 *최신 업데이트* 처럼 둔갑하지 않습니다.
 
 ### 3-1. (운영자) GitHub Actions 자동 빌드로 installer 만들기
 

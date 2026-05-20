@@ -92,6 +92,37 @@ jobs:
     timeout-minutes: 45
 
     steps:
+      # ----- 0. release_tag sanitize (가장 먼저 실행) -----
+      # workflow_dispatch input 은 운영자가 자유롭게 입력 — 잘못된 값이 artifact
+      # 이름 / GitHub Release tag 에 들어가면 후속 step 의 파일 경로 / API 호출
+      # 이 깨질 수 있다. SemVer-스타일 (선택적 'v' prefix + N.N.N + 선택적
+      # pre-release / build metadata) 만 허용하고 그 외는 *즉시 fail*.
+      # 경로 traversal / 명령 injection / 공백 / 한글 모두 차단.
+      # 허용 예: v1.0.0 / v1.0.1-beta.1 / 1.0.0+build.5 / v2.10.0-rc.1
+      # 차단 예: ../etc/passwd / v1.0.0; rm -rf / "v1 release" / latest
+      - name: Sanitize release_tag input
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.release_tag }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            Write-Error "release_tag 가 비어 있음 — workflow_dispatch input 필수"
+            exit 1
+          }
+          # 길이 제한 (DoS / 비정상 입력 방지).
+          if ($tag.Length -gt 64) {
+            Write-Error "release_tag 가 너무 김 (64자 초과): length=$($tag.Length)"
+            exit 1
+          }
+          # SemVer-스타일 정규식. 'v' prefix 선택, dot-separated 숫자 3개,
+          # 선택적 pre-release ('-' 다음 영숫자/마침표/하이픈), 선택적 build
+          # metadata ('+' 다음 영숫자/마침표/하이픈).
+          $semver = '^v?\d+\.\d+\.\d+(-[A-Za-z0-9.\-]+)?(\+[A-Za-z0-9.\-]+)?$'
+          if ($tag -notmatch $semver) {
+            Write-Error "release_tag 형식이 SemVer 가 아님: '$tag' (예: v1.0.1 / v1.0.1-beta.1)"
+            exit 1
+          }
+          Write-Host "[OK] release_tag sanitize 통과: '$tag'"
+
       # ----- 1. Checkout -----
       - name: Checkout
         uses: actions/checkout@v4
@@ -295,6 +326,13 @@ jobs:
       # ----- 9. Upload workflow artifact -----
       # 항상 업로드 — 운영자가 Release 안 만들고 artifact 만 다운로드 가능.
       # NSIS setup.exe 만 필수 — MSI 는 일시 보류 (tauri.conf.json targets=["nsis"]).
+      #
+      # fix/step5-github-release-artifact-link (#5-05):
+      #   path 패턴은 *오직* setup.exe 만 허용. 인증서 / 키 / .env / latest.json
+      #   같은 어떤 secret 또는 config artifact 도 포함하지 않는다. 금지 확장자
+      #   목록은 docs/auto_update_policy.md §9-1 참고.
+      #   tests/test_repository_hygiene.py 의 desktop_release 가드가 이 경로
+      #   패턴을 정적 grep 으로 lock.
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
         with:

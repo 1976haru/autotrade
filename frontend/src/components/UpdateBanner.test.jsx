@@ -578,3 +578,116 @@ describe("Stale popup guard — behavior (#5-04)", () => {
     expect(screen.queryByTestId("update-release-notes")).toBeNull();
   });
 });
+
+
+// ============================================================================
+// fix/step5-github-release-artifact-link (#5-05) — direct setup.exe link
+// ============================================================================
+
+describe("UpdateBanner — GitHub Release setup.exe direct link (#5-05)", () => {
+  afterEach(cleanup);
+
+  it("UPDATE_AVAILABLE + setupExeAsset 가 있으면 'setup.exe 직접 받기' 링크 노출", async () => {
+    const check = _mockCheck(UPDATE_STATES.UPDATE_AVAILABLE, {
+      currentVersion: "1.0.0",
+      latestVersion: "1.0.1",
+      releaseUrl: "https://github.com/1976haru/autotrade/releases/tag/v1.0.1",
+      setupExeAsset: {
+        name: "Agent Trader v1_1.0.1_x64-setup.exe",
+        size: 12_345_678,
+        downloadUrl:
+          "https://github.com/1976haru/autotrade/releases/download/v1.0.1/Agent-Trader-v1_1.0.1_x64-setup.exe",
+      },
+    });
+    render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    const direct = await waitFor(() =>
+      screen.getByTestId("link-setup-exe-direct"),
+    );
+    expect(direct.tagName).toBe("A");
+    expect(direct.getAttribute("href")).toContain(
+      "/releases/download/v1.0.1/",
+    );
+    expect(direct.getAttribute("href")).toMatch(/setup\.exe$/);
+    // 보안 invariant: target=_blank 시 noopener/noreferrer 필수.
+    expect(direct.getAttribute("rel")).toMatch(/noopener/);
+    expect(direct.getAttribute("rel")).toMatch(/noreferrer/);
+    expect(direct.getAttribute("target")).toBe("_blank");
+    expect(direct.textContent).toContain("setup.exe");
+  });
+
+  it("UPDATE_AVAILABLE + setupExeAsset 없음 → 직접 다운로드 링크 0건 (release 페이지 버튼만)", async () => {
+    const check = _mockCheck(UPDATE_STATES.UPDATE_AVAILABLE, {
+      currentVersion: "1.0.0",
+      latestVersion: "1.0.1",
+      releaseUrl: "https://example.com",
+      // setupExeAsset 없음 — GitHub Release 가 setup.exe 아직 첨부 안 한 경우.
+    });
+    render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    await waitFor(() => screen.getByTestId("btn-update-apply"));
+    expect(screen.queryByTestId("link-setup-exe-direct")).toBeNull();
+  });
+
+  it("UP_TO_DATE 상태에서는 setupExeAsset 이 있어도 직접 링크 노출 X", async () => {
+    const check = _mockCheck(UPDATE_STATES.UP_TO_DATE, {
+      currentVersion: "1.0.0",
+      latestVersion: "1.0.0",
+      setupExeAsset: {
+        name: "x-setup.exe",
+        size: 1,
+        downloadUrl: "https://example.com/x-setup.exe",
+      },
+    });
+    render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    await waitFor(() => screen.getByTestId("update-uptodate"));
+    expect(screen.queryByTestId("link-setup-exe-direct")).toBeNull();
+  });
+
+  it("FAILED 상태에서도 직접 링크 노출 X — release 페이지 fallback 만", async () => {
+    const check = _mockCheck(UPDATE_STATES.FAILED, {
+      currentVersion: "1.0.0",
+      error: "Failed to fetch",
+    });
+    render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    await waitFor(() => screen.getByTestId("update-fail-headline"));
+    expect(screen.queryByTestId("link-setup-exe-direct")).toBeNull();
+    // FAILED 의 manual download fallback 은 release *페이지* 링크.
+    expect(screen.getByTestId("link-manual-download").getAttribute("href"))
+      .toContain("github.com/1976haru/autotrade/releases");
+  });
+
+  it("직접 링크에 BUY / SELL / 매수 / 매도 / 실거래 라벨 0건", async () => {
+    const check = _mockCheck(UPDATE_STATES.UPDATE_AVAILABLE, {
+      currentVersion: "1.0.0",
+      latestVersion: "1.0.1",
+      releaseUrl: "https://example.com",
+      setupExeAsset: {
+        name: "Agent-Trader-v1_1.0.1_x64-setup.exe",
+        size: 1,
+        downloadUrl: "https://example.com/Agent-Trader-v1_1.0.1_x64-setup.exe",
+      },
+    });
+    render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    const direct = await waitFor(() =>
+      screen.getByTestId("link-setup-exe-direct"),
+    );
+    const text = direct.textContent || "";
+    for (const banned of [
+      "BUY", "SELL", "HOLD",
+      "Place Order",
+      "매수", "매도",
+      "실거래 시작", "실거래 활성화",
+    ]) {
+      expect(text.includes(banned)).toBe(false);
+    }
+  });
+});
