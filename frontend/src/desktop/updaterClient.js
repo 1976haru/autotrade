@@ -11,6 +11,11 @@
 //   - 응답에서 Secret 패턴 발견 시 redacted 처리 (방어적 — GitHub API 는
 //     보내지 않지만 응답이 변조될 경우 대비)
 //   - 자동 *재시작* / *파일 덮어쓰기* 0건 — A 단계는 안내만
+//
+// fix/step5-stale-release-popup-guard (#5-04) — STATIC INVARIANT:
+//   본 파일은 `../config/releaseNotes` 를 *import 하지 않는다*. GitHub Release
+//   응답이 없으면 `state: FAILED + error` 만 반환하며, 로컬 하드코딩 노트는
+//   절대 결과에 섞이지 않는다 (test 로 lock).
 
 export const UPDATE_STATES = Object.freeze({
   IDLE:              "IDLE",

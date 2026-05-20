@@ -66,6 +66,13 @@ EXE 자동 빌드 + Desktop Auto Updater (A 단계).
 - (TBD) MSI 산출 복원 — WiX 캐시 step 추가.
 - (TBD) AI Paper Auto Loop tick 실제 strategy 통합 (현 placeholder).
 
+### 포함 (이미 머지)
+- **#5-04 Stale popup 방지 가드 강화** — fetch 실패 시 stale welcome / release
+  안내가 "최신 업데이트" 처럼 둔갑하지 않도록 `UpdateBanner.jsx` /
+  `desktop/updaterClient.js` 가 `../config/releaseNotes` 를 *import 하지 않음*
+  을 정적 grep 으로 lock. FAILED state 의 raw `error` 문자열에도 `sanitizeText`
+  를 적용해 secret 패턴 노출 0건. 자세한 정책: [`docs/auto_update_policy.md`](auto_update_policy.md) §8.
+
 ---
 
 ## 참고

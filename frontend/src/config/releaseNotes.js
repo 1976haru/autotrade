@@ -16,6 +16,12 @@
 // GitHub Release fetch 실패 시 UpdateBanner 는 *RELEASE_NOTES 와 무관하게*
 // "최신 버전 확인 불가" 만 노출 — 본 모듈의 WELCOME 안내가 *최신 업데이트
 // 처럼 둔갑하지 않도록* UpdateBanner 는 본 모듈을 import 하지 않는다.
+//
+// fix/step5-stale-release-popup-guard (#5-04):
+//   `UpdateBanner.jsx` / `desktop/updaterClient.js` 가 본 모듈을 import 하지
+//   않음을 *정적 import 검사* 로 lock. 변경 시 UpdateBanner.test.jsx 가 즉시
+//   실패. WELCOME 안내는 `<ReleaseNotesModal>` 만 사용하며 "초기 안내" 배지
+//   + disclaimer + localStorage ack 로 1회 노출 후 자동 재팝업 0건.
 
 // 초기 안내 — 앱 첫 실행 / 새 버전 첫 접속 시 1회 노출용.
 export const WELCOME_NOTES = [

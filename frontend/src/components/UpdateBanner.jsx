@@ -4,6 +4,7 @@ import {
   UPDATE_STATES,
   checkForUpdate,
   openUpdateUrl,
+  sanitizeText,
 } from "../desktop/updaterClient";
 
 // Auto Update banner — A 단계: GitHub Release latest 조회 + 사용자에게 변경
@@ -15,6 +16,15 @@ import {
 //   - 사용자 .env / Secret 을 *읽거나 쓰지* 않는다
 //   - "업데이트" 버튼 = 새 release page 열기 (브라우저). 자동 설치 0건
 //   - "실거래" / "매수" / "매도" / "Place Order" 라벨 0건 (테스트로 lock)
+//
+// fix/step5-stale-release-popup-guard (#5-04) — STATIC INVARIANT:
+//   본 파일은 `../config/releaseNotes` 의 어떤 export 도 *import 하지 않는다*
+//   (`RELEASE_NOTES` / `WELCOME_NOTES` / `latestReleaseNote` /
+//   `latestWelcomeNote`). GitHub Release fetch 가 실패해도 *로컬 하드코딩 노트
+//   (v1.0.0 / 2026-05-08 등)* 가 "최신 업데이트" 인 척 둔갑하지 않도록.
+//   초기 안내 (welcome) 와 release update 는 별도 컴포넌트 (`ReleaseNotesModal`)
+//   가 책임지며, 본 banner 는 *오직 fetch 결과* 만 표시한다. UpdateBanner.test.jsx
+//   가 본 파일 소스에서 위 4개 export 의 import 부재를 정적 검증한다.
 
 // fix/update-banner-stale-release-notes: fallback 은 의도적으로 부자연스러운
 // "0.0.0-unknown" — vite.config.js 의 build-time inject 가 작동 안 하면 화면에서
@@ -345,7 +355,12 @@ export function UpdateBanner({
         style={{ marginBottom: 6, fontSize: "var(--fs-xs)", color: "var(--c-text-3)" }}
       >
         <summary>기술 상세</summary>
-        <div style={{ marginTop: 4 }}>error: {result?.error || "unknown error"}</div>
+        {/* fix/step5-stale-release-popup-guard: error 문자열에 token / secret
+            패턴이 섞여 있을 경우 raw 노출 방지를 위해 sanitizeText 적용.
+            GitHub API 가 보낼 일은 없지만 fork / proxy 변조 케이스 대비. */}
+        <div style={{ marginTop: 4 }}>
+          error: {sanitizeText(result?.error || "unknown error")}
+        </div>
       </details>
       <div data-testid="update-manual-download" style={{ marginBottom: 6, fontSize: "var(--fs-xs)" }}>
         새 버전 공지가 있는지 GitHub Release 페이지에서 직접 확인할 수 있습니다.
