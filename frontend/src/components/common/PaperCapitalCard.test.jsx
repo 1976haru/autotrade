@@ -23,6 +23,7 @@ vi.mock("../../services/backend/client", () => ({
     setPaperPerSymbolAllocation:        vi.fn(),
     setPaperMaxConcurrentPositions:     vi.fn(),
     previewPaperConcurrentBuy:          vi.fn(),
+    paperMinLotPreview:                 vi.fn(),
   },
 }));
 
@@ -50,12 +51,36 @@ const _DEFAULT_CONFIG = {
 };
 
 
+const _DEFAULT_MIN_LOT_PREVIEW = {
+  effective_per_symbol_cap_krw: 1_000_000,
+  initial_cash: 10_000_000,
+  min_lot_quantity: 1,
+  fractional_share_supported: false,
+  rounding_policy: "floor",
+  examples: [
+    { price: 50_000,    affordable_quantity: 20, is_affordable: true  },
+    { price: 100_000,   affordable_quantity: 10, is_affordable: true  },
+    { price: 500_000,   affordable_quantity: 2,  is_affordable: true  },
+    { price: 1_000_000, affordable_quantity: 1,  is_affordable: true  },
+    { price: 2_000_000, affordable_quantity: 0,  is_affordable: false },
+    { price: 5_000_000, affordable_quantity: 0,  is_affordable: false },
+  ],
+  is_paper_only: true,
+  is_live_authorization: false,
+  notice: "예시 표는 현재 시드머니 전체가 가용하다는 가정. Paper 전용 advisory.",
+};
+
+
 beforeEach(() => {
   backendApi.paperCapitalConfig.mockReset();
   backendApi.setPaperCapitalConfig.mockReset();
   backendApi.setPaperPerSymbolAllocation.mockReset();
   backendApi.setPaperMaxConcurrentPositions.mockReset();
   backendApi.previewPaperConcurrentBuy.mockReset();
+  backendApi.paperMinLotPreview.mockReset();
+  // default mock — min-lot preview 가 항상 응답하도록 (P-01~04 tests 들이
+  // 본 preview 를 명시 mock 하지 않아도 동작).
+  backendApi.paperMinLotPreview.mockResolvedValue(_DEFAULT_MIN_LOT_PREVIEW);
 });
 afterEach(cleanup);
 
@@ -553,5 +578,134 @@ describe("<PaperCapitalCard> P-03 — max concurrent positions", () => {
       screen.getByTestId("paper-capital-card-max-positions-option-3")
         .getAttribute("data-selected"),
     ).toBe("false");
+  });
+});
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// P-05: 최소 1주 매수 + 예시 가능 수량 표
+// ────────────────────────────────────────────────────────────────────────────
+describe("<PaperCapitalCard> P-05 — min-lot preview", () => {
+  it("renders min-lot section with disclaimer + examples + policy", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-min-lot-section"));
+    expect(screen.getByTestId("paper-capital-card-min-lot-disclaimer")).toBeTruthy();
+    expect(screen.getByTestId("paper-capital-card-min-lot-examples")).toBeTruthy();
+    expect(screen.getByTestId("paper-capital-card-min-lot-policy")).toBeTruthy();
+  });
+
+  it("renders 6 example price rows (50k / 100k / 500k / 1M / 2M / 5M)", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-min-lot-examples"));
+    for (const price of [50_000, 100_000, 500_000, 1_000_000, 2_000_000, 5_000_000]) {
+      expect(
+        screen.getByTestId(`paper-capital-card-min-lot-example-price-${price}`),
+      ).toBeTruthy();
+      expect(
+        screen.getByTestId(`paper-capital-card-min-lot-example-qty-${price}`),
+      ).toBeTruthy();
+    }
+  });
+
+  it("shows 1주 수량 for 1,000,000 KRW price (cap=1M)", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-min-lot-example-qty-1000000"));
+    expect(
+      screen.getByTestId("paper-capital-card-min-lot-example-qty-1000000").textContent,
+    ).toContain("1주");
+  });
+
+  it("shows 0주 (1주 미만) for 2,000,000 KRW price (cap=1M)", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-min-lot-example-qty-2000000"));
+    expect(
+      screen.getByTestId("paper-capital-card-min-lot-example-qty-2000000").textContent,
+    ).toContain("0주");
+  });
+
+  it("disclaimer says 정수 1주 이상 + 소수점 불가 + floor 정책", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-min-lot-disclaimer"));
+    const text = screen.getByTestId("paper-capital-card-min-lot-disclaimer").textContent || "";
+    expect(text).toContain("정수 1주 이상");
+    expect(text).toContain("소수점 주식 불가");
+    expect(text).toContain("내림(floor)");
+    // floor 정책 명시 — "반올림하지 않습니다" 같은 *부정형* 으로 사용. 단독
+    // 긍정형 ("반올림 적용") 같은 표현은 없어야 함.
+    expect(text).toContain("반올림하지 않습니다");
+  });
+
+  it("policy row says min_lot=1, fractional unsupported, rounding=floor", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-min-lot-policy"));
+    const text = screen.getByTestId("paper-capital-card-min-lot-policy").textContent || "";
+    expect(text).toContain("1주");
+    expect(text).toContain("지원 안 함");
+    expect(text).toContain("floor");
+  });
+
+  it("min-lot section has NO trade-execution / input buttons", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-min-lot-section"));
+    const section = screen.getByTestId("paper-capital-card-min-lot-section");
+    const text = section.textContent || "";
+    for (const banned of [
+      "지금 매수", "지금 매도", "Place Order", "place order",
+      "BUY", "SELL", "HOLD",
+      "실거래 시작", "실거래 활성화",
+      "ENABLE_LIVE_TRADING",
+    ]) {
+      expect(text.includes(banned)).toBe(false);
+    }
+    expect(section.querySelectorAll("input").length).toBe(0);
+    expect(section.querySelectorAll("textarea").length).toBe(0);
+    expect(section.querySelectorAll("select").length).toBe(0);
+    expect(section.querySelectorAll("button").length).toBe(0);
+  });
+
+  it("min-lot section secret 노출 0건", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-min-lot-section"));
+    const text = (screen.getByTestId("paper-capital-card-min-lot-section").textContent || "").toLowerCase();
+    for (const needle of [
+      "kis_app_key", "kis_app_secret", "anthropic_api_key",
+      "openai_api_key", "telegram_bot_token", "sk-", "bearer ",
+      "kis_account_no",
+    ]) {
+      expect(text.includes(needle)).toBe(false);
+    }
+  });
+
+  it("min-lot preview is re-fetched after initial_cash change", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    backendApi.setPaperCapitalConfig.mockResolvedValue({
+      ..._DEFAULT_CONFIG,
+      initial_cash: 30_000_000,
+    });
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-option-30000000"));
+    backendApi.paperMinLotPreview.mockClear();
+    fireEvent.click(screen.getByTestId("paper-capital-card-option-30000000"));
+    await waitFor(() => {
+      expect(backendApi.paperMinLotPreview).toHaveBeenCalled();
+    });
+  });
+
+  it("min-lot section absent when preview not yet loaded", () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    // preview 가 *pending* — 응답 안 옴.
+    backendApi.paperMinLotPreview.mockReturnValue(new Promise(() => {}));
+    render(<PaperCapitalCard />);
+    expect(
+      screen.queryByTestId("paper-capital-card-min-lot-section"),
+    ).toBeNull();
   });
 });

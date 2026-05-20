@@ -34,12 +34,18 @@ export function PaperCapitalCard({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [pendingValue, setPendingValue] = useState(null);
+  // P-05: 예시 매수 가능 수량 표.
+  const [minLotPreview, setMinLotPreview] = useState(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const c = await backendApi.paperCapitalConfig();
+      const [c, mlp] = await Promise.all([
+        backendApi.paperCapitalConfig(),
+        backendApi.paperMinLotPreview().catch(() => null),
+      ]);
       setConfig(c);
+      setMinLotPreview(mlp);
       setError("");
     } catch (e) {
       setError(e?.message || "Paper 시드머니 설정 조회 실패");
@@ -52,18 +58,28 @@ export function PaperCapitalCard({
     if (autoLoad) refresh();
   }, [autoLoad, refresh]);
 
+  const _refreshMinLotPreview = useCallback(async () => {
+    try {
+      const mlp = await backendApi.paperMinLotPreview();
+      setMinLotPreview(mlp);
+    } catch {
+      // 무시 — preview 실패가 메인 흐름을 막지 않음.
+    }
+  }, []);
+
   const onSelect = useCallback(async (amount) => {
     setPendingValue(amount);
     setError("");
     try {
       const c = await backendApi.setPaperCapitalConfig({ initialCash: amount });
       setConfig(c);
+      _refreshMinLotPreview();
     } catch (e) {
       setError(e?.message || "Paper 시드머니 설정 변경 실패");
     } finally {
       setPendingValue(null);
     }
-  }, []);
+  }, [_refreshMinLotPreview]);
 
   // P-02: 종목당 한도 옵션 — FIXED_KRW 절대값 또는 PCT_OF_EQUITY (10%) 선택.
   // 세 옵션을 단일 클릭 가능한 chip 으로 노출. 운영자가 *현재 선택* 을 한
@@ -78,12 +94,13 @@ export function PaperCapitalCard({
         perSymbolMaxPct: pct ?? null,
       });
       setConfig(c);
+      _refreshMinLotPreview();
     } catch (e) {
       setError(e?.message || "종목당 한도 설정 변경 실패");
     } finally {
       setPendingValue(null);
     }
-  }, []);
+  }, [_refreshMinLotPreview]);
 
   // P-03: 최대 동시 보유 종목 수 변경.
   const onSelectMaxPositions = useCallback(async (count) => {
@@ -423,6 +440,100 @@ export function PaperCapitalCard({
                               marginLeft: 6 }}>
                 (한도 도달 시 신규 진입만 차단 — 청산은 자유)
               </span>
+            </div>
+          </div>
+        )}
+
+        {/* P-05: 현재 cap 기준 예상 매수 가능 수량 표 + floor / 소수점 불가 안내 */}
+        {minLotPreview && (
+          <div
+            data-testid={`${testId}-min-lot-section`}
+            style={{
+              display: "flex", flexDirection: "column", gap: 6,
+              padding: "8px 10px",
+              background: "var(--c-surface-2, #f8fafc)",
+              border: "1px solid var(--c-border)",
+              borderRadius: 6,
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--c-text)" }}>
+              🔢 최소 1주 매수 — 예상 가능 수량
+            </div>
+            <div
+              data-testid={`${testId}-min-lot-disclaimer`}
+              style={{
+                fontSize: 10, color: "var(--c-text-3)", lineHeight: 1.5,
+              }}
+            >
+              Paper 매수는 *정수 1주 이상* 만 허용 (소수점 주식 불가). 수량은
+              항상 내림(floor) — 반올림하지 않습니다. 현재 종목당 한도{" "}
+              <b>{Number(minLotPreview.effective_per_symbol_cap_krw).toLocaleString("ko-KR")} KRW</b>{" "}
+              기준 예시 가격 별 매수 가능 수량 (시드머니 전체 가용 가정 —
+              실제는 P-04 affordability 가 cash 잔액까지 검사).
+            </div>
+            <div
+              data-testid={`${testId}-min-lot-examples`}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "auto 1fr auto",
+                rowGap: 2,
+                columnGap: 8,
+                padding: "6px 8px",
+                background: "var(--c-surface, #fff)",
+                borderRadius: 4,
+                fontSize: 11,
+                color: "var(--c-text-2)",
+              }}
+            >
+              <span style={{ fontWeight: 700, color: "var(--c-text-3)" }}>
+                예시 1주 가격
+              </span>
+              <span style={{ fontWeight: 700, color: "var(--c-text-3)" }} />
+              <span style={{ fontWeight: 700, color: "var(--c-text-3)",
+                              textAlign: "right" }}>
+                매수 가능 수량
+              </span>
+              {(minLotPreview.examples || []).map((ex) => (
+                <>
+                  <span
+                    key={`p-${ex.price}`}
+                    data-testid={`${testId}-min-lot-example-price-${ex.price}`}
+                    style={{ fontFamily: "monospace" }}
+                  >
+                    {Number(ex.price).toLocaleString("ko-KR")} KRW
+                  </span>
+                  <span
+                    key={`s-${ex.price}`}
+                    style={{
+                      fontSize: 9,
+                      color: ex.is_affordable ? "#15803d" : "#b91c1c",
+                    }}
+                  >
+                    {ex.is_affordable ? "✓ 가능" : "✗ 1주 미만"}
+                  </span>
+                  <span
+                    key={`q-${ex.price}`}
+                    data-testid={`${testId}-min-lot-example-qty-${ex.price}`}
+                    style={{
+                      fontFamily: "monospace", textAlign: "right",
+                      fontWeight: ex.affordable_quantity > 0 ? 700 : 400,
+                      color: ex.affordable_quantity > 0
+                        ? "var(--c-text)" : "var(--c-text-3)",
+                    }}
+                  >
+                    {ex.affordable_quantity}주
+                  </span>
+                </>
+              ))}
+            </div>
+            <div
+              data-testid={`${testId}-min-lot-policy`}
+              style={{
+                fontSize: 10, color: "var(--c-text-3)", lineHeight: 1.5,
+              }}
+            >
+              정책: 최소 수량 <b>{minLotPreview.min_lot_quantity}주</b> · 소수점
+              주식 <b>지원 안 함</b> · 반올림 정책 <b>{minLotPreview.rounding_policy}</b>.
             </div>
           </div>
         )}

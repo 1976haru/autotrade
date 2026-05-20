@@ -454,6 +454,135 @@ ledger / DB / AgentDecisionLog 를 직접 쓰지 않는다 (관심사 분리).
 - input/textarea/select 0개 — caller 가 prop 으로 후보를 주입
 - button 0개 — 본 카드는 *advisory 표시 전용*
 
+## 3-C. P-05 — 최소 1주 매수 조건 (본 PR 추가)
+
+국내주식은 *정수 단위* 거래 — 소수점 주식 없음. AI Paper 가 *정수 ≥ 1*
+인 BUY 만 실행하도록 강제하는 마이크로 가드. P-04 (가격 vs 한도 vs 현금) 와
+함께 호출되며, P-04 가 macro / P-05 가 micro 책임.
+
+### 3-C-1. MinLotVerdict (5종)
+
+| verdict | 의미 |
+|---|---|
+| `ALLOWED` | quantity 가 정수 ≥ 1 |
+| `BLOCKED_ZERO_QUANTITY` | quantity = 0 또는 None |
+| `BLOCKED_NEGATIVE_QUANTITY` | quantity < 0 |
+| `BLOCKED_FRACTIONAL_QUANTITY` | 소수점 (0.5, 1.5 등) / NaN / inf / 비-숫자 |
+| `SKIP_NON_BUY` | action != BUY |
+
+Verdict 우선순위 (위→아래 첫 매칭):
+1. `SKIP_NON_BUY` → 2. `BLOCKED_ZERO_QUANTITY` (None) → 3. 비-숫자 / NaN /
+inf → 4. `BLOCKED_NEGATIVE_QUANTITY` → 5. `BLOCKED_FRACTIONAL_QUANTITY` →
+6. `BLOCKED_ZERO_QUANTITY` (== 0) → 7. `ALLOWED`
+
+### 3-C-2. floor 정책 (`compute_paper_affordable_lot`)
+
+```
+affordable_lot = floor( min(effective_per_symbol_cap_krw, available_cash_krw) / price )
+```
+
+특징:
+- **반올림 금지** — 항상 *내림*. 다음 lot 가 cap / cash 를 초과할 수 있으므로
+  보수적.
+- 예시: budget=999,999 + price=1,000 → 999주 (1,000주 아님).
+- 예시: budget=1,000,000 + price=1,000,001 → 0주 (1.0 미만은 0).
+- `cap=0` 은 *cap 제약 없음* 으로 간주 — `cash` 만 제약.
+- `price ≤ 0` 또는 `None` → 0 반환 (caller 가 P-04 의 INVALID_PRICE /
+  MISSING_PRICE 로 처리).
+
+### 3-C-3. 절대 invariant
+
+| 항목 | 값 |
+|---|---|
+| `MinLotCheckResult.is_order_signal` | False (dataclass __post_init__ 가드) |
+| `MinLotCheckResult.is_live_authorization` | False |
+| `MinLotCheckResult.is_paper_only` | True |
+| `floored_quantity < 0` | ValueError |
+| `compute_paper_affordable_lot` 반환 타입 | 항상 `int` (float / Decimal / numpy 0건) |
+| `min_lot_check.py` 모듈 import (broker / OrderExecutor / KIS / settings / 외부 HTTP / AI SDK) | 0건 |
+| `broker.place_order(` / `route_order(` / `KisClient(` / 안전 flag mutate | 0건 |
+| 소수점 주식 지원 | False 영구 (`fractional_share_supported=False`) |
+| 반올림 정책 | `"floor"` 영구 |
+| bool quantity (True/False) | `BLOCKED_FRACTIONAL_QUANTITY` (의도치 않은 정수 변환 차단) |
+
+### 3-C-4. API contract
+
+`POST /api/auto-paper/min-lot/validate` — 결정된 quantity 검증:
+
+입력:
+```json
+{ "action": "BUY", "symbol": "005930", "quantity": 1.5 }
+```
+
+응답:
+```json
+{
+  "verdict":             "BLOCKED_FRACTIONAL_QUANTITY",
+  "requested_quantity":  1.5,
+  "floored_quantity":    1,
+  "action":              "BUY",
+  "symbol":              "005930",
+  "reason_ko":           "매수 수량 1.5 는 소수점이라 Paper 매수 후보에서 제외...",
+  "risk_flag":           "fractional_quantity",
+  "is_allowed":          false,
+  "is_paper_only":       true,
+  "is_live_authorization": false
+}
+```
+
+`GET /api/auto-paper/min-lot/preview` — 현재 cap 기준 *예시 1주 가격 매트릭스*:
+
+```json
+{
+  "effective_per_symbol_cap_krw": 1000000,
+  "initial_cash":                 10000000,
+  "min_lot_quantity":             1,
+  "fractional_share_supported":   false,
+  "rounding_policy":              "floor",
+  "examples": [
+    { "price":   50000, "affordable_quantity": 20, "is_affordable": true  },
+    { "price":  100000, "affordable_quantity": 10, "is_affordable": true  },
+    { "price":  500000, "affordable_quantity":  2, "is_affordable": true  },
+    { "price": 1000000, "affordable_quantity":  1, "is_affordable": true  },
+    { "price": 2000000, "affordable_quantity":  0, "is_affordable": false },
+    { "price": 5000000, "affordable_quantity":  0, "is_affordable": false }
+  ],
+  "is_paper_only": true,
+  "is_live_authorization": false
+}
+```
+
+### 3-C-5. UI 확장 (`PaperCapitalCard`)
+
+기존 카드에 새 섹션 "🔢 최소 1주 매수 — 예상 가능 수량" 추가:
+- 6개 예시 가격 × `affordable_quantity` (현재 cap 기준)
+- "Paper 매수는 정수 1주 이상만 허용 (소수점 주식 불가)" disclaimer
+- "수량은 항상 내림(floor) — 반올림하지 않습니다" 명시
+- "최소 수량 1주 · 소수점 주식 지원 안 함 · 반올림 정책 floor" policy 행
+- input/textarea/select/button **0개** — *advisory 표시 전용*
+- 시드머니 / 종목당 한도 변경 시 자동 재조회 (config 변경 → preview 갱신)
+
+### 3-C-6. P-04 affordability 와의 관계
+
+| 책임 | P-04 affordability_check | P-05 min_lot_check |
+|---|---|---|
+| 매크로 (가격 vs 한도 vs 현금) | ✅ | — |
+| 보유 종목 수 한도 | ✅ | — |
+| 매수 가능 *수량 계산* (floor) | ✅ (호출자에게 반환) | ✅ (compute helper 제공) |
+| 결정된 *quantity 자체* 검증 (정수 ≥ 1) | — | ✅ |
+| 소수점 / NaN / inf / bool 거부 | — | ✅ |
+
+권장 호출 흐름:
+```
+1. P-04: result_p4 = check_paper_affordability(...)
+2. result_p4.is_affordable 이면 → sizing 결정 → qty 계산
+3. P-05: result_p5 = validate_paper_min_lot(action, quantity)
+4. result_p5.is_allowed 일 때만 PaperDecision 진행
+```
+
+P-04 의 `affordable_quantity` 와 P-05 의 `compute_paper_affordable_lot()`
+은 *동일한 floor 정책* — 본 PR 의 회귀 테스트가 두 결과의 일치를 lock.
+
 ## 4. P-시리즈 전체 매핑
 
 | 번호 | 항목 | 본 PR | 상태 |
@@ -461,7 +590,7 @@ ledger / DB / AgentDecisionLog 를 직접 쓰지 않는다 (관심사 분리).
 | P-01 | 초기 Paper 시드머니 설정 | (이전 PR) | done |
 | P-02 | 종목당 투자금 설정 | (이전 PR) | done |
 | P-03 | 최대 동시 보유 종목 수 제한 | (이전 PR) | done |
-| P-04 | 매수 가능성 체크 | ✅ 본 PR | done |
-| P-05 | 최소 1주 매수 조건 | (다음) | pending |
+| P-04 | 매수 가능성 체크 | (이전 PR) | done |
+| P-05 | 최소 1주 매수 조건 | ✅ 본 PR | done |
 | P-... | (이후 항목) | (별도 PR) | pending |
 | P-16 | Paper 자본 설정 영구 저장 | (예정) | pending |
