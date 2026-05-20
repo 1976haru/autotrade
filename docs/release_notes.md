@@ -105,6 +105,23 @@ EXE 자동 빌드 + Desktop Auto Updater (A 단계).
   호출 0건, `updaterClient.js` 가 `.env` / 파일시스템 접근 0건,
   `UpdateBanner.jsx` 가 "사용자 .env 보존" 안전 배지 영구 노출, docs 가
   `%APPDATA%\Autotrade\.env` 표준 경로 명시.
+- **#5-08 수동 다운로드 fallback 보강** — UpdateBanner 가 *모든* 실패 / partial
+  release 시나리오에서 사용자가 setup.exe 를 수동으로 받을 수 있는 경로를
+  항상 노출하도록 강화:
+  * UPDATE_AVAILABLE 상태에 `link-manual-download` (GitHub Release 페이지 anchor)
+    tertiary fallback 추가 — `releaseUrl` 미제공 시 `/releases` 인덱스로 fallback.
+  * `setupExeAsset` 부재 시 노란 `update-asset-missing-notice` banner 노출 —
+    "현재 설치된 버전 그대로 사용 가능" 명시.
+  * FAILED 상태에 `update-fail-env-preserved` 라인 추가 — 업데이트 실패가
+    사용자 KIS 키 / 계좌번호에 *영향을 주지 않음* 을 명시.
+  * 신규 vitest 케이스 7개 (release 페이지 anchor / releaseUrl fallback /
+    asset-missing notice / setupExeAsset 있을 때 미노출 / .env 보존 reassurance /
+    BUY-SELL 라벨 0건 / FAILED stale note 0건 유지).
+  * [`docs/auto_update_policy.md`](auto_update_policy.md) §12 신설 — 실패
+    시나리오 별 화면 매트릭스 + 3-tier fallback 우선순위 + 항상 전달되는
+    4가지 안내.
+  * [`docs/exe_oneclick_installation.md`](exe_oneclick_installation.md) §13-4
+    신설 — 사용자 친화 fallback 경로 표.
 
 ---
 

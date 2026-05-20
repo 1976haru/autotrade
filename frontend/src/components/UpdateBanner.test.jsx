@@ -691,3 +691,170 @@ describe("UpdateBanner — GitHub Release setup.exe direct link (#5-05)", () => 
     }
   });
 });
+
+
+// ============================================================================
+// fix/step5-update-manual-fallback (#5-08) — Manual download fallback paths
+// ============================================================================
+//
+// 본 describe 블록은 *업데이트 실패 / partial release* 시 사용자가 항상
+// 수동으로 setup.exe 를 받을 수 있는 경로를 가지는지 검증.
+
+describe("UpdateBanner — Manual fallback paths (#5-08)", () => {
+  afterEach(cleanup);
+
+  // §4-1: UPDATE_AVAILABLE 에서도 release 페이지 anchor (tertiary fallback) 노출
+  it("UPDATE_AVAILABLE 에 link-manual-download (release 페이지) 항상 노출", async () => {
+    const check = _mockCheck(UPDATE_STATES.UPDATE_AVAILABLE, {
+      currentVersion: "1.0.0",
+      latestVersion: "1.0.1",
+      releaseUrl: "https://github.com/1976haru/autotrade/releases/tag/v1.0.1",
+      setupExeAsset: {
+        name: "Agent-Trader-v1_1.0.1_x64-setup.exe",
+        size: 1,
+        downloadUrl: "https://github.com/1976haru/autotrade/releases/download/v1.0.1/Agent-Trader-v1_1.0.1_x64-setup.exe",
+      },
+    });
+    render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    const link = await waitFor(() => screen.getByTestId("link-manual-download"));
+    expect(link.tagName).toBe("A");
+    expect(link.getAttribute("href")).toContain("github.com/1976haru/autotrade/releases");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toMatch(/noopener/);
+    expect(link.getAttribute("rel")).toMatch(/noreferrer/);
+    expect(link.textContent).toContain("GitHub Release 페이지 열기");
+  });
+
+  it("UPDATE_AVAILABLE + releaseUrl 미제공 → repo /releases 로 fallback", async () => {
+    const check = _mockCheck(UPDATE_STATES.UPDATE_AVAILABLE, {
+      currentVersion: "1.0.0",
+      latestVersion: "1.0.1",
+      // releaseUrl 의도적 누락
+      setupExeAsset: undefined,
+    });
+    render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    const link = await waitFor(() => screen.getByTestId("link-manual-download"));
+    expect(link.getAttribute("href")).toBe(
+      "https://github.com/1976haru/autotrade/releases",
+    );
+  });
+
+  // §4-2: setupExeAsset 부재 시 사용자 안내 banner 노출
+  it("UPDATE_AVAILABLE + setupExeAsset 없음 → asset-missing notice 노출", async () => {
+    const check = _mockCheck(UPDATE_STATES.UPDATE_AVAILABLE, {
+      currentVersion: "1.0.0",
+      latestVersion: "1.0.1",
+      releaseUrl: "https://github.com/1976haru/autotrade/releases/tag/v1.0.1",
+    });
+    render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    const notice = await waitFor(() =>
+      screen.getByTestId("update-asset-missing-notice"),
+    );
+    expect(notice.textContent).toContain("setup.exe");
+    expect(notice.textContent).toContain("아직 첨부되지 않았");
+    // 사용자가 *현재 설치된 버전* 을 그대로 쓸 수 있음을 안내.
+    expect(notice.textContent).toContain("v1.0.0");
+  });
+
+  it("UPDATE_AVAILABLE + setupExeAsset 있음 → asset-missing notice 미노출", async () => {
+    const check = _mockCheck(UPDATE_STATES.UPDATE_AVAILABLE, {
+      currentVersion: "1.0.0",
+      latestVersion: "1.0.1",
+      releaseUrl: "https://github.com/1976haru/autotrade/releases/tag/v1.0.1",
+      setupExeAsset: {
+        name: "x-setup.exe",
+        size: 1,
+        downloadUrl: "https://example.com/x-setup.exe",
+      },
+    });
+    render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    await waitFor(() => screen.getByTestId("btn-update-apply"));
+    expect(screen.queryByTestId("update-asset-missing-notice")).toBeNull();
+  });
+
+  // §4-3: FAILED state 에 .env 보존 reassurance 노출
+  it("FAILED 상태에 update-fail-env-preserved 안내 노출 (사용자 .env 보존 명시)", async () => {
+    const check = _mockCheck(UPDATE_STATES.FAILED, {
+      currentVersion: "1.0.0",
+      error: "Failed to fetch",
+    });
+    render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    const env = await waitFor(() =>
+      screen.getByTestId("update-fail-env-preserved"),
+    );
+    expect(env.textContent).toContain("%APPDATA%\\Autotrade\\.env");
+    expect(env.textContent).toMatch(/보존|영향을 주지 않습니다/);
+  });
+
+  // §4-4: 모든 fallback 경로에서 BUY/SELL/실거래 라벨 0건
+  it("UPDATE_AVAILABLE + setupExeAsset 없음 → BUY/SELL/실거래 라벨 0건", async () => {
+    const check = _mockCheck(UPDATE_STATES.UPDATE_AVAILABLE, {
+      currentVersion: "1.0.0",
+      latestVersion: "1.0.1",
+      releaseUrl: "https://github.com/1976haru/autotrade/releases/tag/v1.0.1",
+    });
+    const { container } = render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    await waitFor(() => screen.getByTestId("update-asset-missing-notice"));
+    const text = container.textContent || "";
+    for (const banned of [
+      "BUY", "SELL", "HOLD", "Place Order",
+      "매수", "매도", "실거래 시작", "실거래 활성화",
+      "ENABLE_LIVE_TRADING",
+    ]) {
+      expect(text.includes(banned)).toBe(false);
+    }
+  });
+
+  // §4-5: secret 노출 0건 (asset-missing notice / env-preserved 라인 포함)
+  it("모든 fallback 안내에 secret 패턴 노출 0건", async () => {
+    const states = [
+      [UPDATE_STATES.UPDATE_AVAILABLE, {
+        currentVersion: "1.0.0",
+        latestVersion: "1.0.1",
+        releaseUrl: "https://github.com/1976haru/autotrade/releases/tag/v1.0.1",
+        releaseNotes: "ok",
+      }],
+      [UPDATE_STATES.FAILED, {
+        currentVersion: "1.0.0",
+        error: "Bearer sk-fake1234567890abcdef leaked",
+      }],
+    ];
+    for (const [st, payload] of states) {
+      const check = _mockCheck(st, payload);
+      const { container, unmount } = render(
+        <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+      );
+      await waitFor(() => screen.getByTestId("update-banner"));
+      const text = container.textContent || "";
+      // Bearer 토큰 / sk- 토큰 raw 노출 0건.
+      expect(text).not.toMatch(/Bearer\s+sk-fake1234567890abcdef/);
+      expect(text).not.toMatch(/\bsk-[A-Za-z0-9]{20,}\b/);
+      unmount();
+    }
+  });
+
+  // §4-6: FAILED 상태에서 stale release note 노출 0건 (#5-04 가드 유지 확인)
+  it("FAILED 상태에 fallback 안내가 추가돼도 update-release-notes 는 여전히 0건", async () => {
+    const check = _mockCheck(UPDATE_STATES.FAILED, {
+      currentVersion: "1.0.0",
+      error: "x",
+    });
+    render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    await waitFor(() => screen.getByTestId("update-fail-headline"));
+    expect(screen.queryByTestId("update-release-notes")).toBeNull();
+  });
+});

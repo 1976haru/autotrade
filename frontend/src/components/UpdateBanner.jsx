@@ -215,6 +215,13 @@ export function UpdateBanner({
 
   if (state === UPDATE_STATES.UPDATE_AVAILABLE) {
     const notes = (result?.releaseNotes || "").slice(0, 600);
+    // fix/step5-update-manual-fallback (#5-08): GitHub Release 페이지 자체
+    // 경로 — apply 버튼 / 직접 다운로드 둘 다 실패해도 사용자가 *반드시*
+    // 도달할 수 있는 *tertiary* fallback. releaseUrl 이 비어 있으면 repo
+    // releases 페이지로 안내.
+    const releasesPageUrl =
+      result?.releaseUrl || "https://github.com/1976haru/autotrade/releases";
+    const hasSetupAsset = Boolean(result?.setupExeAsset?.downloadUrl);
     return (
       <div
         data-testid="update-banner"
@@ -320,7 +327,53 @@ export function UpdateBanner({
           >
             나중에
           </button>
+          {/* fix/step5-update-manual-fallback (#5-08): GitHub Release *페이지*
+              자체 anchor. apply 버튼이 브라우저 차단 / 직접 다운로드 링크가
+              없을 때 사용자가 항상 도달 가능한 tertiary fallback. testid 는
+              FAILED state 와 동일 (`link-manual-download`) — 둘 다 *release
+              페이지로 직접 이동* 으로 의미 일치. */}
+          <a
+            data-testid="link-manual-download"
+            href={releasesPageUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              padding: "6px 14px",
+              borderRadius: "var(--r-md)",
+              background: "#fff",
+              color: "#1e3a8a",
+              border: "1px solid #bfdbfe",
+              textDecoration: "none",
+              fontSize: "var(--fs-xs)",
+            }}
+          >
+            GitHub Release 페이지 열기
+          </a>
         </div>
+        {/* fix/step5-update-manual-fallback (#5-08): setup.exe asset 이 아직
+            첨부되지 않은 release (MSI only / asset 업로드 중 / 빌드 partial)
+            를 만났을 때 사용자에게 명시 안내. apply 버튼은 release 페이지를
+            열어 사용자가 직접 자산을 확인할 수 있다. */}
+        {!hasSetupAsset && (
+          <div
+            data-testid="update-asset-missing-notice"
+            style={{
+              marginTop: 8,
+              padding: "6px 8px",
+              background: "#fef3c7",
+              border: "1px solid #fbbf24",
+              borderRadius: "var(--r-md)",
+              fontSize: "var(--fs-xs)",
+              color: "#92400e",
+              lineHeight: 1.5,
+            }}
+          >
+            ⚠️ 본 release 에 <code>setup.exe</code> asset 이 아직 첨부되지 않았습니다.
+            "GitHub Release 페이지 열기" 로 이동해 직접 자산을 확인하세요.
+            (빌드가 partial 이거나 MSI-only 일 수 있습니다 — 현재 설치된 버전
+            v{currentVersion} 은 그대로 사용 가능합니다.)
+          </div>
+        )}
         <div
           data-testid="update-restart-hint"
           style={{
@@ -373,6 +426,21 @@ export function UpdateBanner({
         }}
       >
         ※ 이 메시지는 *백엔드 연결 실패와는 다른 별개 항목* 입니다 (앱 코드 업데이트 확인 전용).
+      </div>
+      {/* fix/step5-update-manual-fallback (#5-08): 업데이트 확인이 실패해도
+          사용자가 입력한 KIS 모의투자 키 / 계좌번호가 *어떤 영향도 받지 않음*
+          을 명시. 일부 사용자가 "업데이트 안 됨 → 내 키가 사라졌을까?" 라고
+          오인하지 않도록 .env 보존을 별도 라인으로 carry. */}
+      <div
+        data-testid="update-fail-env-preserved"
+        style={{
+          marginBottom: 6,
+          fontSize: "var(--fs-xs)",
+          color: "var(--c-text-3)",
+        }}
+      >
+        ※ 본 실패는 사용자 데이터에 영향을 주지 않습니다. <code>%APPDATA%\Autotrade\.env</code>
+        의 KIS 모의투자 키 / 계좌번호 / 로그 / 포트 캐시는 그대로 보존됩니다.
       </div>
       <details
         data-testid="update-fail-tech-detail"
