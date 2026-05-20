@@ -317,13 +317,151 @@ default 로 대체).
 | frontend section BUY / SELL / Place Order / 매수 / 매도 / 실거래 라벨 | 0개 |
 | frontend section input / textarea / select | 0개 |
 
+## 3-B. P-04 — Paper BUY affordability 체크 (본 PR 추가)
+
+종목 1주 가격이 종목당 투자금 한도보다 비싸거나, 남은 Paper 현금이 1주
+가격보다 적으면 AI Paper BUY 후보에서 자동 제외하는 *advisory* 사전 검사.
+
+예시 (사용자 요청서):
+- 종목당 한도 100만원 + SK하이닉스 1주 1,800,000원 → 1주도 살 수 없으므로
+  `PRICE_OVER_CAP` (BUY 차단).
+
+### 3-B-1. AffordabilityVerdict (8종)
+
+| verdict | 의미 | 차단 |
+|---|---|---|
+| `AFFORDABLE` | 1주 이상 가능 | — (BUY 진행) |
+| `PRICE_OVER_CAP` | 1주 가격 > 종목당 한도 | BUY 차단 |
+| `INSUFFICIENT_CASH` | 남은 현금 < 1주 가격 | BUY 차단 |
+| `BELOW_MIN_LOT` | floor(min(cap, cash)/price) < 1 | BUY 차단 |
+| `MAX_POSITIONS_REACHED` | 보유 ≥ 한도 + 신규 종목 | BUY 차단 (P-03 매핑) |
+| `INVALID_PRICE` | price ≤ 0 | BUY 차단 |
+| `MISSING_PRICE` | price is None | BUY 차단 |
+| `SKIP_NON_BUY` | action != BUY | — (SELL/EXIT/HOLD/NO_OP 영향 없음) |
+
+verdict 우선순위 (위→아래 첫 매칭):
+1. SKIP_NON_BUY → 2. MISSING_PRICE → 3. INVALID_PRICE → 4. PRICE_OVER_CAP
+→ 5. INSUFFICIENT_CASH → 6. BELOW_MIN_LOT → 7. MAX_POSITIONS_REACHED
+→ 8. AFFORDABLE
+
+### 3-B-2. 매수 가능 수량 계산
+
+```
+affordable_quantity = floor( min(effective_per_symbol_cap_krw, available_cash_krw) / price )
+```
+
+예시 (cap=1M, cash=10M):
+- price=70,000 → min=1M, 1M//70k = **14주**
+- price=200,000 → 1M//200k = **5주**
+- price=900,000 → 1M//900k = **1주**
+- price=1,800,000 → cap < price → `PRICE_OVER_CAP`, qty=0
+
+### 3-B-3. 절대 invariant
+
+| 항목 | 값 |
+|---|---|
+| `AffordabilityResult.is_order_signal` | False (dataclass __post_init__ 가드) |
+| `AffordabilityResult.is_live_authorization` | False |
+| `AffordabilityResult.is_paper_only` | True |
+| `affordable_quantity < 0` | ValueError |
+| `affordability_check.py` import 대상 (broker / OrderExecutor / KIS / settings / 외부 HTTP / AI SDK) | 0건 |
+| `.enable_live_trading = ...` 등 안전 flag mutation | 0건 |
+| `broker.place_order(` / `route_order(` / `KisClient(` 호출 | 0건 |
+| 추가 매수 (이미 보유 종목) | `MAX_POSITIONS_REACHED` 건너뜀 (`is_existing_position=True`) |
+
+### 3-B-4. API contract
+
+`POST /api/auto-paper/affordability/preview` (advisory):
+
+입력:
+```json
+{
+  "action":               "BUY",
+  "symbol":               "000660",
+  "price":                1800000,
+  "available_cash_krw":   10000000,
+  "current_held_symbols": [],
+  "effective_per_symbol_cap_krw": null,
+  "max_concurrent_positions":     null
+}
+```
+
+`effective_per_symbol_cap_krw` / `max_concurrent_positions` 가 None 이면
+*현재 PaperCapitalConfig* 자동 사용. 명시 override 도 허용 (테스트 / what-if).
+
+응답 (200):
+```json
+{
+  "verdict":                      "PRICE_OVER_CAP",
+  "symbol":                       "000660",
+  "action":                       "BUY",
+  "price":                        1800000,
+  "effective_per_symbol_cap_krw": 1000000,
+  "available_cash_krw":           10000000,
+  "affordable_quantity":          0,
+  "current_held_unique_symbols":  0,
+  "max_concurrent_positions":     3,
+  "is_existing_position":         false,
+  "reason_ko":                    "1주 가격이 종목당 투자금 한도 1,000,000원을 초과해 Paper 매수 후보에서 제외했습니다.",
+  "risk_flag":                    "price_over_per_symbol_cap",
+  "is_affordable":                false,
+  "is_order_signal":              false,
+  "is_live_authorization":        false,
+  "is_paper_only":                true,
+  "notice":                       "본 결과는 advisory — Paper 전용..."
+}
+```
+
+### 3-B-5. AI Paper 연동 권장 흐름
+
+PaperDecision 생성 (`paper_decision_bridge` / `consume_agent_recommendations`)
+에서 BUY 후보 *전* 본 helper 를 호출:
+
+```python
+from app.auto_paper.affordability_check import (
+    AffordabilityVerdict,
+    check_paper_affordability,
+)
+
+result = check_paper_affordability(
+    action="BUY",
+    symbol=candidate.symbol,
+    price=current_price,
+    available_cash_krw=current_paper_cash,
+    effective_per_symbol_cap_krw=paper_cfg.effective_per_symbol_cap_krw,
+    current_held_symbols=paper_positions.unique_symbols(),
+    max_concurrent_positions=paper_cfg.max_concurrent_positions,
+)
+if not result.is_affordable and result.verdict != AffordabilityVerdict.SKIP_NON_BUY:
+    # action 을 HOLD / NO_OP 로 강등, risk_flags 에 result.risk_flag 추가,
+    # metadata.affordability_result = result.to_dict(), ledger 에 reason_ko
+    # 기록, AgentDecisionLog 의 reasons 에도 reason_ko 추가.
+    ...
+```
+
+본 helper 의 *호출* 은 caller 책임 — affordability_check 모듈 자체는 paper
+ledger / DB / AgentDecisionLog 를 직접 쓰지 않는다 (관심사 분리).
+
+### 3-B-6. UI (`PaperAffordabilityCard`)
+
+별도 카드 "🧮 매수 가능성":
+- verdict 헤드라인 (색상 매핑: AFFORDABLE 녹색 / 한도/현금/가격 이슈 빨강 /
+  한도 도달 주황)
+- 사람 친화 한국어 사유 (reason_ko)
+- 6개 수치 (종목 / 1주 가격 / 종목당 한도 / 남은 Paper 현금 / 매수 가능 수량 / 보유/한도)
+- "Paper 전용 · 실제 주문 아님" 영구 배지
+- "broker / OrderExecutor 호출은 어떤 경로에서도 발생하지 않습니다" disclaimer
+- input/textarea/select 0개 — caller 가 prop 으로 후보를 주입
+- button 0개 — 본 카드는 *advisory 표시 전용*
+
 ## 4. P-시리즈 전체 매핑
 
 | 번호 | 항목 | 본 PR | 상태 |
 |---|---|---|---|
 | P-01 | 초기 Paper 시드머니 설정 | (이전 PR) | done |
 | P-02 | 종목당 투자금 설정 | (이전 PR) | done |
-| P-03 | 최대 동시 보유 종목 수 제한 | ✅ 본 PR | done |
-| P-04 | 매수 가능성 체크 | (다음) | pending |
+| P-03 | 최대 동시 보유 종목 수 제한 | (이전 PR) | done |
+| P-04 | 매수 가능성 체크 | ✅ 본 PR | done |
+| P-05 | 최소 1주 매수 조건 | (다음) | pending |
 | P-... | (이후 항목) | (별도 PR) | pending |
 | P-16 | Paper 자본 설정 영구 저장 | (예정) | pending |
