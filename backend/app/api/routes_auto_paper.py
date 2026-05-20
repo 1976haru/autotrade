@@ -35,9 +35,14 @@ from app.auto_paper.decisions import (
 )
 from app.auto_paper.capital_config import (
     ALLOWED_PAPER_INITIAL_CASH,
+    ALLOWED_PER_SYMBOL_MAX_KRW,
+    ALLOWED_PER_SYMBOL_MAX_PCT,
     InvalidPaperCapitalError,
+    InvalidPerSymbolAllocationError,
+    PerSymbolAllocationMode,
     get_paper_capital_config,
     set_paper_capital_config,
+    set_per_symbol_allocation,
 )
 from app.core.config import get_settings
 
@@ -533,6 +538,68 @@ def set_capital_config_endpoint(body: _PaperCapitalBody) -> dict:
         "fallback_used": fallback_used,
         "notice": (
             "Paper 시드머니는 *모의매매 전용* 이며 실전 계좌와 무관합니다."
+        ),
+    }
+
+
+# ============================================================================
+# P-02: 종목당 한도 설정 endpoints (in-memory; P-16 에서 영구화)
+# ============================================================================
+
+
+class _PerSymbolAllocationBody(BaseModel):
+    """`POST /auto-paper/per-symbol-allocation` 입력.
+
+    세 필드 모두 *옵션* — None 이면 현재 값 유지. caller 는 mode 만 바꾸거나
+    값 한쪽만 바꿔도 됨. 허용되지 않은 값은 기본 400 으로 거부 —
+    `fallback_to_default=True` 면 default 로 대체.
+    """
+
+    mode:                str   | None = Field(
+        None, description="'FIXED_KRW' or 'PCT_OF_EQUITY'",
+    )
+    per_symbol_max_krw:  int   | None = Field(
+        None, description="허용 KRW 옵션 중 하나 (예: 1000000, 2000000)",
+    )
+    per_symbol_max_pct:  float | None = Field(
+        None, description="허용 비율 옵션 중 하나 (예: 0.10)",
+    )
+    fallback_to_default: bool         = Field(
+        False, description="True 면 허용 외 값을 default 로 대체",
+    )
+
+
+@_AP.post("/per-symbol-allocation")
+def set_per_symbol_allocation_endpoint(body: _PerSymbolAllocationBody) -> dict:
+    """P-02: 종목당 최대 투자금 설정 변경.
+
+    *Paper 전용* — 실전 주문 한도와 결합 0건. broker / OrderExecutor /
+    route_order 호출 0건 — in-memory 갱신만. partial update 지원.
+    """
+    try:
+        cfg, fallback_used = set_per_symbol_allocation(
+            mode=body.mode,
+            per_symbol_max_krw=body.per_symbol_max_krw,
+            per_symbol_max_pct=body.per_symbol_max_pct,
+            fallback_to_default=body.fallback_to_default,
+        )
+    except InvalidPerSymbolAllocationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error":   "invalid_per_symbol_allocation",
+                "message": str(exc),
+                "allowed_modes":                      [m.value for m in PerSymbolAllocationMode],
+                "allowed_per_symbol_max_krw_options": list(ALLOWED_PER_SYMBOL_MAX_KRW),
+                "allowed_per_symbol_max_pct_options": list(ALLOWED_PER_SYMBOL_MAX_PCT),
+            },
+        )
+    return {
+        **cfg.to_dict(),
+        "fallback_used": fallback_used,
+        "notice": (
+            "종목당 최대 투자금은 Paper 모의매매 전용이며 실전 주문금액이 "
+            "아닙니다."
         ),
     }
 
