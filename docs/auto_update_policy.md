@@ -141,3 +141,58 @@ Windows SmartScreen 경고가 뜨면 **"추가 정보" → "실행"** 을 클릭
 - [`docs/desktop_update_policy.md`](desktop_update_policy.md) — 서명 키 관리
 - [`docs/exe_oneclick_installation.md`](exe_oneclick_installation.md) — 베타테스터 가이드
 - [`docs/desktop_exe_status.md`](desktop_exe_status.md) — EXE 빌드 상태
+
+## 8. Stale popup 방지 정책 (#5-04)
+
+베타테스터가 "최신 버전" 으로 *오인* 할 수 있는 케이스를 *정적 + 동작* 양면
+으로 차단한다.
+
+### 8-1. 노출 분리
+
+| 상태 | 표시 컴포넌트 | 트리거 |
+|---|---|---|
+| 초기 안내 (welcome) | `<ReleaseNotesModal>` | localStorage ack 없음 / 다른 version |
+| 릴리스 노트 (release update) | `<ReleaseNotesModal>` | `RELEASE_NOTES[0]` 이 존재할 때 |
+| 자동 업데이트 알림 | `<UpdateBanner>` | GitHub Release fetch 결과 `UPDATE_AVAILABLE` |
+| 최신 버전 확인 실패 | `<UpdateBanner>` (FAILED state) | fetch 실패 |
+
+### 8-2. 정적 invariant (코드 단)
+
+- `frontend/src/components/UpdateBanner.jsx` 는 `../config/releaseNotes` 를
+  **import 하지 않는다**. (`UpdateBanner.test.jsx` 가 소스 grep 으로 lock.)
+- `frontend/src/desktop/updaterClient.js` 도 동일. fetch 결과만 carry.
+- 따라서 GitHub Release fetch 가 실패해도 `RELEASE_NOTES` / `WELCOME_NOTES`
+  의 하드코딩 항목이 *최신 업데이트* 인 척 노출될 수 없다.
+
+### 8-3. 동작 invariant (UI 단)
+
+- FAILED state headline: "ℹ️ 최신 버전 확인 불가" (`update-fail-headline`).
+  `Failed to fetch` raw 문자열은 *headline* 에 노출 X — 기술 상세 `<details>`
+  안에서만 (`sanitizeText` 통과).
+- FAILED state 와 `BackendOfflineBanner` 는 *별개 항목* — banner 안에 명시
+  disclaimer (`update-fail-not-backend` testid).
+- `<update-release-notes>` 는 *UPDATE_AVAILABLE state* 에서만 렌더 — FAILED /
+  UP_TO_DATE 에서는 존재 X.
+- "이번 안내 확인" / "이번 버전 공지 확인" 버튼은 `<ReleaseNotesModal>` 만
+  소속. `<UpdateBanner>` 에는 없음.
+
+### 8-4. 재팝업 방지
+
+- "이번 안내 확인" 클릭 시 `localStorage::agent-trader-welcome-ack` 에
+  `note.version` 저장 → `useReleaseNotesAutoPopup` 이 mount 시 동일 version
+  이면 0회 popup.
+- 기존 `agent-trader-last-seen-version` (legacy) key 도 backwards compat 으로
+  ack 인정.
+- 모달의 "닫기" / backdrop click 은 ack 저장 안 함 — 다음 접속 시 동일
+  안내가 다시 뜬다 (운영자가 본 PR 시점 의도된 동작 — 사용자가 안내를
+  *명시 확인* 하지 않으면 노출 유지).
+
+### 8-5. 시나리오 별 기대 표시
+
+| 시점 / 상태 | 화면 |
+|---|---|
+| 첫 실행, 새 release 없음 | welcome modal (1회). UpdateBanner = UP_TO_DATE or FAILED |
+| 새 release 있음 | UpdateBanner = UPDATE_AVAILABLE + release notes |
+| 인터넷 차단 | UpdateBanner = FAILED ("최신 버전 확인 불가"). welcome modal 정상 동작 |
+| backend down | BackendOfflineBanner = 별도. UpdateBanner 는 영향 X |
+| "이번 안내 확인" 후 재실행 | welcome modal 0회. UpdateBanner 는 무관하게 정상 동작 |

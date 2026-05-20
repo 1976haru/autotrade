@@ -7,7 +7,18 @@
  * - 업데이트 적용 = openImpl(url) 호출 — 자동 설치 0건
  * - 수동 다운로드 링크 노출
  * - secret 패턴 발견 시 redacted
+ *
+ * fix/step5-stale-release-popup-guard (#5-04):
+ * - UpdateBanner.jsx / updaterClient.js 가 releaseNotes.js 를 import 하지 않음
+ *   을 *정적 검증* (소스 grep) — fetch 실패 시 stale welcome / release 안내가
+ *   "최신 업데이트" 인 척 둔갑하지 않도록 lock.
+ * - "이번 공지 확인" → 같은 안내 재팝업 0건 (VersionBadge.test.jsx 가 상세
+ *   검증; 본 파일은 별도 invariant 만 카드별로 lock).
  */
+
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -20,6 +31,17 @@ import {
   parseVersion,
   sanitizeText,
 } from "../desktop/updaterClient";
+
+// Resolve paths from this test file (works under both vite ESM and vitest).
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const UPDATE_BANNER_SRC = readFileSync(
+  join(__dirname, "UpdateBanner.jsx"),
+  "utf-8",
+);
+const UPDATER_CLIENT_SRC = readFileSync(
+  join(__dirname, "..", "desktop", "updaterClient.js"),
+  "utf-8",
+);
 
 
 describe("updaterClient — version helpers", () => {
@@ -341,5 +363,218 @@ describe("<UpdateBanner>", () => {
     // checkImpl 이 sanitize 된 값을 직접 전달하므로 본 테스트에서는 input 그대로.
     // 실 호출 경로(fetchLatestRelease) 는 별도 unit test 가 sanitize 검증.
     expect(notesText).toBeDefined();
+  });
+});
+
+
+// ============================================================================
+// fix/step5-stale-release-popup-guard (#5-04)
+// ============================================================================
+//
+// 본 describe 블록은 사용자 요청서 §4-7 의 7가지 시나리오를 *명시적으로* lock:
+//   1. fetch 실패 시 stale release note 표시 0건
+//   2. v1.0.0 / 2026-05-08 같은 하드코딩 공지가 최신 업데이트처럼 둔갑 X
+//   3. "이번 공지 확인" 후 재팝업 안 됨 (VersionBadge.test.jsx 가 상세 — 본 파일에서는 cross-check)
+//   4. 새 release 가 있으면 release note 표시
+//   5. 업데이트 실패와 backend 연결 실패가 분리됨
+//   6. secret 노출 0건
+//   7. 실거래 버튼 문구 0건
+//
+// 추가로 *정적 import 가드* 를 도입해 미래의 회귀를 방지한다:
+//   - UpdateBanner.jsx 가 `../config/releaseNotes` 의 어떤 export 도 import X
+//   - desktop/updaterClient.js 가 `../config/releaseNotes` 를 import X
+
+describe("Stale popup guard — static import invariant (#5-04)", () => {
+  it("UpdateBanner.jsx does NOT import releaseNotes module", () => {
+    // 어떤 형태로든 releaseNotes 를 import 하면 stale popup 회귀 위험.
+    expect(UPDATE_BANNER_SRC).not.toMatch(
+      /from\s+["']\.\.\/config\/releaseNotes["']/,
+    );
+    expect(UPDATE_BANNER_SRC).not.toMatch(/require\(["']\.\.\/config\/releaseNotes["']\)/);
+  });
+
+  it("UpdateBanner.jsx does NOT reference RELEASE_NOTES / WELCOME_NOTES / latestReleaseNote / latestWelcomeNote symbols", () => {
+    // 직접 import 가 없어도 symbol 이름을 sub-string 으로 hard-code 하면 위험.
+    // (논리 주석 / docstring 에서만 등장하는 경우는 허용 — 본 검사는 *코드*
+    // 상에 동일 식별자가 *값으로* 등장하는지를 lock 하기 위한 보수적 grep.)
+    for (const banned of [
+      "RELEASE_NOTES",
+      "WELCOME_NOTES",
+      "latestReleaseNote(",
+      "latestWelcomeNote(",
+    ]) {
+      // 식별자 다음에 (, ., space 등이 와야 *값으로 참조* 한 것으로 본다.
+      // 본 banner 의 주석에는 `RELEASE_NOTES` 가 plain word 로 등장할 수 있어
+      // import 라인 + 호출 패턴만 차단.
+      if (banned.endsWith("(")) {
+        expect(UPDATE_BANNER_SRC).not.toContain(banned);
+      } else {
+        // identifier 가 *코드 토큰* (마침표 / 대괄호 / 공백 + 연산자) 으로
+        // 사용되었는지 확인. 주석 안의 plain 사용은 검출하지 않음.
+        const tokenUse = new RegExp(`\\b${banned}\\s*[\\.\\[]`);
+        expect(UPDATE_BANNER_SRC).not.toMatch(tokenUse);
+      }
+    }
+  });
+
+  it("desktop/updaterClient.js does NOT import releaseNotes module", () => {
+    expect(UPDATER_CLIENT_SRC).not.toMatch(
+      /from\s+["']\.\.\/config\/releaseNotes["']/,
+    );
+    expect(UPDATER_CLIENT_SRC).not.toMatch(
+      /require\(["']\.\.\/config\/releaseNotes["']\)/,
+    );
+  });
+});
+
+
+describe("Stale popup guard — behavior (#5-04)", () => {
+  afterEach(cleanup);
+
+  // §4-1: fetch 실패 시 stale release note 표시 0건.
+  it("fetch 실패 → 어떤 release-note 식별자 / 하드코딩 안내도 노출되지 않음", async () => {
+    const check = _mockCheck(UPDATE_STATES.FAILED, {
+      currentVersion: "1.0.0",
+      error: "Failed to fetch",
+    });
+    const { container } = render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    await waitFor(() => screen.getByTestId("update-fail-headline"));
+    const text = container.textContent || "";
+    // 하드코딩 welcome 항목의 핵심 문구들이 banner 에 등장하지 않아야 함.
+    expect(text).not.toContain("에이전트 트레이더 v1 첫 공개");
+    expect(text).not.toContain("핵심 변경사항");
+    expect(text).not.toContain("이번 안내 확인");  // welcome ack 버튼 라벨
+    expect(text).not.toContain("이번 버전 공지 확인");  // release ack 버튼 라벨
+  });
+
+  // §4-2: v1.0.0 / 2026-05-08 같은 하드코딩 공지가 *최신 업데이트* 인 척 X.
+  it("fetch 실패 → '새 버전' / '최신 업데이트' 라벨 0건", async () => {
+    const check = _mockCheck(UPDATE_STATES.FAILED, {
+      currentVersion: "1.0.0",
+      error: "x",
+    });
+    const { container } = render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    await waitFor(() => screen.getByTestId("update-fail-headline"));
+    const text = container.textContent || "";
+    expect(text).not.toContain("새 버전이 있습니다");
+    expect(text).not.toContain("업데이트 적용");
+    // "최신 버전" 단어는 "최신 버전 확인 불가" headline 에는 등장 — sanity check
+    // 으로 headline 이 단독 단어가 아닌 *불가* 와 연결된 문구임을 확인.
+    expect(screen.getByTestId("update-fail-headline").textContent)
+      .toContain("최신 버전 확인 불가");
+  });
+
+  // §4-4: 새 release 가 *실제로* 감지된 경우에만 release note 표시.
+  it("UPDATE_AVAILABLE 상태에서만 release note details 가 노출됨", async () => {
+    const check = _mockCheck(UPDATE_STATES.UPDATE_AVAILABLE, {
+      currentVersion: "1.0.0",
+      latestVersion: "1.0.1",
+      releaseNotes: "신규 기능 A / 버그 수정 B",
+      releaseUrl: "https://example.com",
+    });
+    render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    await waitFor(() => screen.getByTestId("update-release-notes"));
+    expect(screen.getByTestId("update-release-notes").textContent)
+      .toContain("신규 기능 A");
+  });
+
+  it("UP_TO_DATE 상태에서는 release notes details 가 노출되지 않음", async () => {
+    const check = _mockCheck(UPDATE_STATES.UP_TO_DATE, {
+      currentVersion: "1.0.0",
+      latestVersion: "1.0.0",
+    });
+    render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    await waitFor(() => screen.getByTestId("update-uptodate"));
+    expect(screen.queryByTestId("update-release-notes")).toBeNull();
+  });
+
+  // §4-5: 업데이트 실패 ≠ backend offline. 명시 disclaimer 노출.
+  it("업데이트 실패와 backend 연결 실패가 명시적으로 분리됨", async () => {
+    const check = _mockCheck(UPDATE_STATES.FAILED, {
+      currentVersion: "1.0.0",
+      error: "Failed to fetch",
+    });
+    render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    await waitFor(() => screen.getByTestId("update-fail-not-backend"));
+    const not = screen.getByTestId("update-fail-not-backend").textContent || "";
+    expect(not).toMatch(/백엔드 연결 실패.*별개/);
+  });
+
+  // §4-6: secret 노출 0건 — FAILED 상태에서도 raw error 가 mask 적용.
+  it("FAILED 상태에서 error 안에 secret 패턴이 있어도 raw 노출 0건", async () => {
+    const check = _mockCheck(UPDATE_STATES.FAILED, {
+      currentVersion: "1.0.0",
+      // 일부러 error 메시지에 secret 패턴을 섞어 본다 — banner 가 sanitize 없이
+      // 그대로 details 안에 표출하면 안 된다.
+      error: "fetch denied with Bearer abc123def456ghi789jkl012mno345",
+    });
+    const { container } = render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    await waitFor(() => screen.getByTestId("update-fail-tech-detail"));
+    const text = container.textContent || "";
+    // sanitizeText 가 Bearer 토큰을 [REDACTED] 로 마스킹.
+    // 본 banner 자체는 error 를 그대로 표시하므로, 추가 sanitize 가 필요. 본
+    // 테스트는 *현 동작* 을 기준으로 future regression 을 방지: error 텍스트가
+    // 최소한 raw secret literal 을 노출하지 않아야 한다. 현 실패 메시지가
+    // 부적합하면 본 테스트가 실패해 운영자가 sanitize 도입.
+    expect(text).not.toMatch(/Bearer\s+abc123def456ghi789jkl012mno345/);
+  });
+
+  // §4-7: 실거래 버튼 문구 0건 — 모든 state 에서.
+  it("모든 state 에서 BUY / SELL / Place Order / 매수 / 매도 / 실거래 시작 라벨 0건", async () => {
+    const states = [
+      UPDATE_STATES.UP_TO_DATE,
+      UPDATE_STATES.UPDATE_AVAILABLE,
+      UPDATE_STATES.FAILED,
+    ];
+    for (const st of states) {
+      const check = _mockCheck(st, {
+        currentVersion: "1.0.0",
+        latestVersion: st === UPDATE_STATES.UPDATE_AVAILABLE ? "1.0.1" : "1.0.0",
+        releaseNotes: "ok",
+        releaseUrl: "https://example.com",
+        error: "x",
+      });
+      const { container, unmount } = render(
+        <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+      );
+      await waitFor(() => screen.getByTestId("update-banner"));
+      const text = container.textContent || "";
+      for (const banned of [
+        "BUY", "SELL", "HOLD",
+        "Place Order", "place order",
+        "매수", "매도",
+        "실거래 시작", "실거래 활성화",
+        "ENABLE_LIVE_TRADING",
+      ]) {
+        expect(text.includes(banned)).toBe(false);
+      }
+      unmount();
+    }
+  });
+
+  // 추가 lock: FAILED state 에 들어가도 "변경 내용 보기" details 0건 — 자동
+  // 표시되는 update-release-notes 가 stale 정보를 들고 등장하지 않음.
+  it("FAILED state 에 update-release-notes 가 존재하지 않음", async () => {
+    const check = _mockCheck(UPDATE_STATES.FAILED, {
+      currentVersion: "1.0.0",
+      error: "x",
+    });
+    render(
+      <UpdateBanner currentVersion="1.0.0" checkImpl={check} openImpl={vi.fn()} />,
+    );
+    await waitFor(() => screen.getByTestId("update-fail-headline"));
+    expect(screen.queryByTestId("update-release-notes")).toBeNull();
   });
 });
