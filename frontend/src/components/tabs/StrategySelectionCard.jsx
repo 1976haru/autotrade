@@ -1,5 +1,7 @@
 import { Card, SectionLabel } from "../common";
+import { MarketClosedNotice } from "../common/MarketClosedNotice";
 import { strategyDisplayShort, useStrategyDisplayNames } from "../../utils/strategyNames";
+import { MarketPhase, currentMarketPhase } from "../../utils/marketHours";
 
 // 85: Strategy Selection Card — 4개 단타 전략 vote → 최적 조합 advisory.
 //
@@ -138,8 +140,17 @@ function _BlockedRow({ entry, lookup }) {
 }
 
 
-export function StrategySelectionCard({ report, loading, error, onRefresh }) {
+export function StrategySelectionCard({
+  report,
+  loading,
+  error,
+  onRefresh,
+  marketPhase: marketPhaseProp = null,
+}) {
   const { lookup: strategyLookup } = useStrategyDisplayNames();
+  // 테스트에서 marketPhaseProp 으로 주입 가능 — 미주입 시 client-side 계산.
+  const marketPhase = marketPhaseProp || currentMarketPhase();
+  const marketClosed = marketPhase !== MarketPhase.OPEN;
 
   if (loading && !report) {
     return (
@@ -150,6 +161,24 @@ export function StrategySelectionCard({ report, loading, error, onRefresh }) {
     );
   }
   if (error) {
+    // fix/market-closed-state-distinction: 장 종료 / 휴장 시 fetch 가 비어
+    // 있더라도 *오류*로 표시하지 않고 friendly market-closed banner 만
+    // 노출. 정규장이 열려 있을 때만 기존 fetch-fail 안내를 노출.
+    if (marketClosed) {
+      return (
+        <Card>
+          <div data-testid="strategy-selection-card">
+            <SectionLabel>🎯 전략 조합 판단</SectionLabel>
+            <MarketClosedNotice
+              phase={marketPhase}
+              testId="strategy-selection-market-closed"
+              detail="장 종료 / 휴장 시간에는 신규 전략 vote 가 생성되지 않습니다."
+              onRefresh={onRefresh || null}
+            />
+          </div>
+        </Card>
+      );
+    }
     return (
       <Card>
         <SectionLabel>🎯 전략 조합 판단</SectionLabel>
@@ -169,7 +198,26 @@ export function StrategySelectionCard({ report, loading, error, onRefresh }) {
       </Card>
     );
   }
-  if (!report) return null;
+  if (!report) {
+    // 데이터가 비어 있고 정규장이 닫혀 있으면 *오류로 보이지 않게* market-closed
+    // banner 를 노출. 장중 비어 있는 상태는 기존처럼 null (caller가 처리).
+    if (marketClosed) {
+      return (
+        <Card>
+          <div data-testid="strategy-selection-card">
+            <SectionLabel>🎯 전략 조합 판단</SectionLabel>
+            <MarketClosedNotice
+              phase={marketPhase}
+              testId="strategy-selection-market-closed"
+              detail="장 종료 / 휴장 시간에는 신규 전략 vote 가 생성되지 않습니다."
+              onRefresh={onRefresh || null}
+            />
+          </div>
+        </Card>
+      );
+    }
+    return null;
+  }
 
   const actionPalette = _ACTION_PALETTE[report.final_action] || _ACTION_PALETTE.NO_SIGNAL;
   const conflictPalette = _CONFLICT_PALETTE[report.conflict_level] || _CONFLICT_PALETTE.NONE;

@@ -6,7 +6,9 @@ import {
   SectionHeader,
   StatusBadge,
 } from "../common/primitives";
+import { MarketClosedNotice } from "../common/MarketClosedNotice";
 import { backendApi } from "../../services/backend/client";
+import { MarketPhase, currentMarketPhase } from "../../utils/marketHours";
 
 // 232 (UI-004): Agent 판단 hero card. 사용자가 Dashboard에서 3초 안에 Agent
 // 가 무엇을 추천하는지 알 수 있도록 구조화.
@@ -36,12 +38,15 @@ function _isDemoBuild() {
 }
 
 
-export function AgentDecisionHero() {
+export function AgentDecisionHero({ marketPhase: marketPhaseProp = null } = {}) {
   const [chains,    setChains]    = useState(null);
   const [regime,    setRegime]    = useState(null);
   const [readiness, setReadiness] = useState(null);
   const [error,     setError]     = useState("");
   const [loading,   setLoading]   = useState(true);
+  // 테스트에서 marketPhaseProp 으로 주입 가능 — 미주입 시 client-side 계산.
+  const marketPhase = marketPhaseProp || currentMarketPhase();
+  const marketClosed = marketPhase !== MarketPhase.OPEN;
 
   useEffect(() => {
     let cancelled = false;
@@ -76,6 +81,22 @@ export function AgentDecisionHero() {
   }
 
   if (error) {
+    // fix/market-closed-state-distinction: 장 종료 / 휴장 시 fetch 가 실패
+    // 했더라도 *오류*로 표시하지 않고 friendly market-closed banner 만
+    // 노출. 정규장이 열려 있을 때만 ErrorState 를 노출해 실제 장애와
+    // 휴장 상태를 구분.
+    if (marketClosed) {
+      return (
+        <div data-testid="agent-decision-hero" style={_cardStyle()}>
+          <SectionHeader sub="advisory only — 주문 권한 없음">🧠 Agent 판단</SectionHeader>
+          <MarketClosedNotice
+            phase={marketPhase}
+            testId="agent-decision-hero-market-closed"
+            detail="장 종료 / 휴장 시간에는 신규 Agent 판단이 생성되지 않습니다. (backend 연결 자체는 별도 점검)"
+          />
+        </div>
+      );
+    }
     return (
       <div data-testid="agent-decision-hero" style={_cardStyle()}>
         <SectionHeader sub="advisory only — 주문 권한 없음">🧠 Agent 판단</SectionHeader>
@@ -95,6 +116,21 @@ export function AgentDecisionHero() {
   const chief = (chains || []).find((c) => c.agent_name === "ChiefTradingAgent");
 
   if (!chief) {
+    // 장 종료 / 휴장 시간엔 비어 있는 게 *정상* — EmptyState 대신 친절한
+    // market-closed banner 로 안내. 정규장이 열려 있는데 비어 있다면 기존
+    // EmptyState 로 fallback.
+    if (marketClosed) {
+      return (
+        <div data-testid="agent-decision-hero" style={_cardStyle()}>
+          <SectionHeader sub="advisory only — 주문 권한 없음">🧠 Agent 판단</SectionHeader>
+          <MarketClosedNotice
+            phase={marketPhase}
+            testId="agent-decision-hero-market-closed"
+            detail="장이 다시 열리면 Agent Council 이 판단을 산출합니다."
+          />
+        </div>
+      );
+    }
     return (
       <div data-testid="agent-decision-hero" style={_cardStyle()}>
         <SectionHeader sub="advisory only — 주문 권한 없음">🧠 Agent 판단</SectionHeader>

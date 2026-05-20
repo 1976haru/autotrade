@@ -22,7 +22,9 @@
 
 import { useMemo } from "react";
 import { Card, SectionLabel } from "../common";
+import { MarketClosedNotice } from "../common/MarketClosedNotice";
 import { useMonitoring } from "../../store/useMonitoring";
+import { MarketPhase, currentMarketPhase } from "../../utils/marketHours";
 
 
 const STATUS_COLOR = {
@@ -203,7 +205,7 @@ function AlertList({ alerts }) {
  * 시스템이 응답하지 않을 때도 색상 회색 + "측정 불가" 안내로 fallback —
  * 모니터링 카드 자체가 에러로 흰 화면이 되면 안 된다.
  */
-export function MonitoringCard({ snapshotOverride = null }) {
+export function MonitoringCard({ snapshotOverride = null, marketPhase: marketPhaseProp = null }) {
   const monitoring = useMonitoring();
   const snapshot = snapshotOverride ?? monitoring.snapshot;
   const error    = snapshotOverride ? "" : monitoring.error;
@@ -212,6 +214,10 @@ export function MonitoringCard({ snapshotOverride = null }) {
   const overall  = snapshot?.overall || "UNKNOWN";
   const metrics  = snapshot?.metrics || [];
   const alerts   = snapshot?.alerts  || [];
+  // fix/market-closed-state-distinction: 장 종료 / 휴장 시간엔 데이터가
+  // *비어 있는 게 정상* — 에러 메시지를 friendly market-closed 안내로 대체.
+  const marketPhase = marketPhaseProp || currentMarketPhase();
+  const marketClosed = marketPhase !== MarketPhase.OPEN;
 
   return (
     <Card style={{ marginBottom: 12 }} accentColor={STATUS_COLOR[overall]}>
@@ -223,7 +229,15 @@ export function MonitoringCard({ snapshotOverride = null }) {
         <StatusBadge status={overall} />
       </div>
 
-      {error ? (
+      {error && marketClosed ? (
+        <div data-testid="monitoring-error" style={{ marginBottom: 10 }}>
+          <MarketClosedNotice
+            phase={marketPhase}
+            testId="monitoring-market-closed"
+            detail="장 종료 / 휴장 시간에는 일부 메트릭이 비어 있을 수 있습니다. (backend 연결 자체는 별도 점검)"
+          />
+        </div>
+      ) : error ? (
         <div
           data-testid="monitoring-error"
           style={{

@@ -2,9 +2,14 @@ import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { MonitoringCard } from "./MonitoringCard";
+import { MarketPhase } from "../../utils/marketHours";
 
 vi.mock("../../services/backend/client", () => ({
   backendApi: { monitoringMetrics: vi.fn() },
+}));
+
+vi.mock("../../store/useMonitoring", () => ({
+  useMonitoring: () => ({ snapshot: null, loading: false, error: "Failed to fetch", refresh: () => {} }),
 }));
 
 
@@ -162,5 +167,49 @@ describe("MonitoringCard — invariant", () => {
     const badges = getAllByTestId("status-badge-UNKNOWN");
     expect(badges.length).toBeGreaterThan(0);
     expect(badges[0].textContent).toBe("측정 불가");
+  });
+});
+
+
+// fix/market-closed-state-distinction ─────────────────────────────────────────
+//
+// monitoring fetch 가 실패해도 장 종료 / 휴장 시간엔 "백엔드 상태를 확인하세요"
+// 같은 오류 문구 대신 friendly market-closed banner 가 노출되어야 한다.
+// (snapshotOverride 를 *주지 않는다* → useMonitoring mock 의 error 가 활성화.)
+describe("MonitoringCard — 장 종료 / 휴장 상태", () => {
+  it("CLOSED + monitoring fetch 실패 → market-closed 안내", () => {
+    const { getByTestId } = render(
+      <MonitoringCard marketPhase={MarketPhase.CLOSED} />,
+    );
+    expect(getByTestId("monitoring-error")).toBeTruthy();
+    expect(getByTestId("monitoring-market-closed").textContent)
+      .toContain("장 종료");
+    // 사용자 요청서 §4 — 오류처럼 보이지 않게 문구를 바꿈.
+    expect(getByTestId("monitoring-error").textContent)
+      .not.toContain("백엔드 상태를 확인하세요");
+  });
+
+  it("WEEKEND + fetch 실패 → '주말 휴장' 안내", () => {
+    const { getByTestId } = render(
+      <MonitoringCard marketPhase={MarketPhase.WEEKEND} />,
+    );
+    expect(getByTestId("monitoring-market-closed").textContent)
+      .toContain("주말 휴장");
+  });
+
+  it("PRE_OPEN + fetch 실패 → '장 시작 전' 안내", () => {
+    const { getByTestId } = render(
+      <MonitoringCard marketPhase={MarketPhase.PRE_OPEN} />,
+    );
+    expect(getByTestId("monitoring-market-closed").textContent)
+      .toContain("장 시작 전");
+  });
+
+  it("OPEN + fetch 실패 → 기존 '백엔드 상태를 확인하세요' 메시지 유지", () => {
+    const { getByTestId } = render(
+      <MonitoringCard marketPhase={MarketPhase.OPEN} />,
+    );
+    expect(getByTestId("monitoring-error").textContent)
+      .toContain("백엔드 상태를 확인하세요");
   });
 });

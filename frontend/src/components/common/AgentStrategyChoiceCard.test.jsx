@@ -2,6 +2,7 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentStrategyChoiceCard } from "./AgentStrategyChoiceCard";
+import { MarketPhase } from "../../utils/marketHours";
 
 
 vi.mock("../../services/backend/client", () => ({
@@ -98,16 +99,53 @@ describe("<AgentStrategyChoiceCard>", () => {
     expect(container.querySelector('button[data-testid*="place"]')).toBeNull();
   });
 
-  it("does not expose 'Failed to fetch' raw text", async () => {
+  it("does not expose 'Failed to fetch' raw text (정규장 OPEN 한정)", async () => {
     backendApi.engineStatus.mockRejectedValue(
       Object.assign(new Error("Failed to fetch"), {}),
     );
     backendApi.engineRegistry.mockRejectedValue(
       Object.assign(new Error("Failed to fetch"), {}),
     );
-    const { getByTestId } = render(<AgentStrategyChoiceCard />);
+    const { getByTestId } = render(
+      <AgentStrategyChoiceCard marketPhase={MarketPhase.OPEN} />,
+    );
     await waitFor(() => getByTestId("agent-strategy-choice-card-error"));
     expect(getByTestId("agent-strategy-choice-card-error").textContent)
       .not.toContain("Failed to fetch");
+  });
+
+  // fix/market-closed-state-distinction ─────────────────────────────────────
+
+  it("CLOSED + fetch 실패 → 'AI 전략 선택 조회 실패' 대신 market-closed 안내", async () => {
+    backendApi.engineStatus.mockRejectedValue(new Error("Failed to fetch"));
+    backendApi.engineRegistry.mockRejectedValue(new Error("Failed to fetch"));
+    const { findByTestId, queryByText } = render(
+      <AgentStrategyChoiceCard marketPhase={MarketPhase.CLOSED} />,
+    );
+    const notice = await findByTestId("agent-strategy-choice-card-market-closed");
+    expect(notice.textContent).toContain("장 종료");
+    expect(queryByText("AI 전략 선택 조회 실패")).toBeNull();
+  });
+
+  it("WEEKEND + fetch 실패 → '주말 휴장' 안내", async () => {
+    backendApi.engineStatus.mockRejectedValue(new Error("Failed to fetch"));
+    backendApi.engineRegistry.mockRejectedValue(new Error("Failed to fetch"));
+    const { findByTestId, queryByText } = render(
+      <AgentStrategyChoiceCard marketPhase={MarketPhase.WEEKEND} />,
+    );
+    const notice = await findByTestId("agent-strategy-choice-card-market-closed");
+    expect(notice.textContent).toContain("주말 휴장");
+    expect(queryByText("AI 전략 선택 조회 실패")).toBeNull();
+  });
+
+  it("PRE_OPEN + fetch 실패 → '장 시작 전' 안내", async () => {
+    backendApi.engineStatus.mockRejectedValue(new Error("Failed to fetch"));
+    backendApi.engineRegistry.mockRejectedValue(new Error("Failed to fetch"));
+    const { findByTestId, queryByText } = render(
+      <AgentStrategyChoiceCard marketPhase={MarketPhase.PRE_OPEN} />,
+    );
+    const notice = await findByTestId("agent-strategy-choice-card-market-closed");
+    expect(notice.textContent).toContain("장 시작 전");
+    expect(queryByText("AI 전략 선택 조회 실패")).toBeNull();
   });
 });
