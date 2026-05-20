@@ -273,3 +273,208 @@ UpdateBanner UI 매핑:
    setup.exe 확인.
 5. release 페이지에서 운영자가 *수동 publish* → UpdateBanner 가 다음 사용자
    접속 시 UPDATE_AVAILABLE 노출.
+
+## 10. Phase 3 (auto-install) 준비 체크리스트 (#5-06)
+
+본 절은 *후속 PR* (별도 옵트인) 에서 자동 *설치* 까지 가능한 Phase 3 으로
+전환하기 위한 사전 준비를 정의한다. 본 PR 시점에는 **어떤 step 도 실행하지
+않는다** — 본 문서가 그 절차를 *기록* 만 한다.
+
+### 10-0. 용어 정리
+
+| 용어 | 의미 |
+|---|---|
+| **Phase 1** | 수동 다운로드 — 사용자가 GitHub Release 에서 setup.exe 받음 (현 PR 까지의 상태) |
+| **Phase 2** | UpdateBanner 가 GitHub Release `latest` 조회 + 변경 안내 + 직접 다운로드 링크. 자동 설치 0건 (현 PR 의 *현재* 동작) |
+| **Phase 3** | Tauri updater plugin 활성화 + 서명된 latest.json + `downloadAndInstall()` + relaunch |
+| **public key** | `tauri signer generate` 가 만드는 *공개* 키 — `tauri.conf.json::plugins.updater.pubkey` 에 commit. 사용자 앱이 latest.json 의 서명을 *검증* 할 때 사용 |
+| **private key** | 같은 명령이 만드는 *비밀* 키 — *절대 repo 에 commit 금지*. GitHub Secret 으로만 사용. workflow 의 Tauri build 가 latest.json 에 *서명* 할 때 사용 |
+| **latest.json** | Tauri updater manifest. version / platforms.windows-x86_64.{url, signature} 포함. GitHub Release 에 `releases/latest/download/latest.json` 으로 첨부 |
+
+### 10-1. 자동 설치 동작 흐름 (Phase 3 활성화 후)
+
+```
+앱 실행
+  └─ UpdateBanner mount
+       └─ check() — tauri-plugin-updater 가 endpoints[0] 의 latest.json 조회
+            └─ latest.json 서명을 public key 로 검증
+                 ├─ 검증 실패 → state=FAILED ("최신 버전 확인 불가") — 수동 fallback
+                 └─ 검증 성공 + current < latest
+                      └─ UPDATE_AVAILABLE 표시 + "업데이트 적용" 버튼
+                           └─ 사용자 클릭 → downloadAndInstall()
+                                ├─ 다운로드 (NSIS setup.exe + 서명)
+                                ├─ 서명 재검증
+                                ├─ 설치 (앱 종료 → 새 버전 설치 → relaunch)
+                                └─ 사용자 .env (%APPDATA%\Autotrade\.env) *보존*
+```
+
+실패 시 (서명 검증 실패 / 다운로드 실패 / 설치 권한 부족 등) 어떤 단계에서
+멈춰도 **수동 다운로드 fallback 은 항상 유지** — release 페이지 링크 +
+"setup.exe 직접 받기" anchor 가 그대로 노출.
+
+### 10-2. 8단계 활성화 절차 (운영자 수동 — 별도 PR)
+
+#### Step 1 — `tauri signer generate` 로 키 쌍 생성
+
+운영자 로컬 PC 에서 (절대 CI / 공개 서버에서 실행 금지):
+
+```powershell
+# Tauri CLI v2 가 이미 설치돼 있어야 함 (`cargo install tauri-cli --version "^2" --locked`)
+tauri signer generate -w "$env:USERPROFILE\.tauri\agent-trader.key"
+# 출력:
+#   Your secret key was written to ...\.tauri\agent-trader.key
+#   Your public key was written to  ...\.tauri\agent-trader.key.pub
+```
+
+산출:
+- `agent-trader.key` — **private key** (절대 외부 노출 금지)
+- `agent-trader.key.pub` — **public key** (commit 대상)
+
+> **password 옵션**: `tauri signer generate -p` 로 password 보호도 가능.
+> 사용 시 `TAURI_KEY_PASSWORD` GitHub Secret 도 함께 등록.
+
+#### Step 2 — public key 를 `tauri.conf.json` 에 commit
+
+`src-tauri/tauri.conf.json` 의 `plugins.updater.pubkey` 를 빈 문자열에서
+public key 내용으로 교체. 본 step 은 *별도 PR* 의 코드 변경 — 본 PR 에서는
+빈 값 유지.
+
+```json
+"plugins": {
+  "updater": {
+    "active": true,                                  // ← Step 2 에서 true 전환
+    "endpoints": [
+      "https://github.com/1976haru/autotrade/releases/latest/download/latest.json"
+    ],
+    "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG..."        // ← Step 1 에서 받은 public key
+  }
+}
+```
+
+`bundle.createUpdaterArtifacts` 도 같은 PR 에서 `true` 로 전환:
+
+```json
+"bundle": {
+  "createUpdaterArtifacts": true                     // ← Step 2 에서 true 전환
+}
+```
+
+#### Step 3 — private key 를 GitHub Secret 에 등록
+
+GitHub repo Settings → Secrets and variables → Actions → **New repository
+secret**:
+
+| Name | Value |
+|---|---|
+| `TAURI_PRIVATE_KEY` | `agent-trader.key` 파일의 *전체* 내용 (Base64 + comment 헤더 포함) |
+| `TAURI_KEY_PASSWORD` | (선택) password 보호 사용 시 비밀번호 |
+
+> `TAURI_PRIVATE_KEY` Secret 이 등록되지 않은 상태로 workflow 를 돌리면
+> `cargo tauri build` 가 createUpdaterArtifacts=true 인 경우 *서명 step 에서
+> 실패* 한다. 그래서 본 PR 시점에는 `createUpdaterArtifacts=false` 를
+> 유지해 미등록 상태에서도 setup.exe 빌드는 계속 가능하다.
+
+#### Step 4 — `desktop-release.yml` 의 Tauri build step `env` 연결
+
+본 PR 시점에는 Tauri build step `env:` 의 signing 관련 줄이 *주석 처리* 되어
+있다 (`#` 시작). Step 4 PR 에서 이 줄들의 `#` 만 제거:
+
+```yaml
+- name: Tauri build
+  env:
+    TAURI_SIGNING_PRIVATE_KEY:          ${{ secrets.TAURI_PRIVATE_KEY }}
+    TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+    NODE_ENV: production
+  working-directory: src-tauri
+  run: cargo tauri build
+```
+
+Step 4 PR 머지 후 첫 workflow 실행에서 `latest.json` 이 NSIS setup.exe 옆에
+함께 생성된다. workflow 의 upload-artifact + softprops/action-gh-release
+`files:` 패턴에도 `latest.json` 을 별도 줄로 추가해야 GitHub Release 에
+첨부된다 — Step 4 PR 의 핵심 변경.
+
+#### Step 5 — `createUpdaterArtifacts=true` 전환
+
+Step 2 PR 에 이미 포함된 변경. 본 step 은 *분리 PR* 로 진행해도 됨 — Step
+2-5 는 같은 PR 에 묶어도 무방하지만 운영자가 단계별로 검증하고 싶으면
+독립 PR.
+
+#### Step 6 — `UpdateBanner` 의 "업데이트 적용" 핸들러 교체
+
+`frontend/src/components/UpdateBanner.jsx` 의 `onApply` 가 현재는
+`openImpl(url)` 로 release 페이지만 연다. Phase 3 에서는:
+
+```js
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
+
+async function onApply() {
+  const update = await check();
+  if (update?.available) {
+    await update.downloadAndInstall();
+    await relaunch();   // ← Step 7
+  }
+}
+```
+
+* desktop runtime (Tauri) 에서만 실행. 브라우저 / GitHub Pages demo 에서는
+  기존 `openImpl(url)` fallback.
+* `@tauri-apps/plugin-updater` + `@tauri-apps/plugin-process` 를
+  `frontend/package.json` 에 의존성 추가 필요.
+
+#### Step 7 — `relaunch()` 호출
+
+`@tauri-apps/plugin-process::relaunch()` 가 앱을 종료하고 *새 설치된 버전*
+으로 자동 재시작. 사용자 `.env` 는 `%APPDATA%\Autotrade\` 에 그대로 남아
+있으므로 다시 같은 모의투자 API 키로 시작.
+
+#### Step 8 — 실패 시 수동 다운로드 fallback 유지
+
+Phase 3 활성화 후에도 다음 fallback 은 *그대로* 유지:
+- **FAILED state** → "최신 버전 확인 불가" + release 페이지 링크.
+- **UPDATE_AVAILABLE 에서 자동 설치 실패** → 현재 PR 의 "setup.exe 직접 받기"
+  anchor 가 그대로 작동. 사용자가 수동으로 받아 더블클릭.
+- **검증 실패** (서명 검증 실패) → Tauri 가 install 을 *거부*. UpdateBanner
+  는 FAILED 처럼 표시 + release 페이지 안내.
+
+### 10-3. Phase 3 활성화 전 체크리스트 (운영자 수동)
+
+전환 *직전* 에 다음을 모두 통과해야 한다 — 누락 시 자동 업데이트가 망가져서
+복구가 어렵다 (사용자 PC 에 깨진 latest.json 이 캐시될 수 있음).
+
+| # | 항목 | 확인 방법 |
+|---|---|---|
+| 1 | `tauri signer generate` 가 만든 키 쌍을 운영자 PC 안전 저장소 (1Password / Bitwarden / encrypted vault) 에 백업 | 운영자 수동 |
+| 2 | `TAURI_PRIVATE_KEY` GitHub Secret 이 등록됨 | repo Settings → Secrets 확인 |
+| 3 | `tauri.conf.json::plugins.updater.pubkey` 값이 1번 키 쌍의 public key 와 *완전히 일치* | base64 diff |
+| 4 | workflow 의 Tauri build step `env` 에 signing 줄이 활성화됨 | workflow 실행 로그에 "Signing artifact" 등장 |
+| 5 | 첫 Phase 3 release 빌드가 `latest.json` 을 GitHub Release 에 첨부 | release 페이지에서 `latest.json` 다운로드 + JSON 파싱 |
+| 6 | `latest.json` 의 `platforms.windows-x86_64.signature` 가 빈 값이 아님 | jq 또는 수동 확인 |
+| 7 | 이전 Phase 2 사용자 (현재 운영자가 배포한 EXE 사용자) 가 *수동* 으로 새 Phase 3 setup.exe 를 받아 한 번 설치해야 다음부터 자동 업데이트 시작 | 운영자 공지 |
+| 8 | 자동 업데이트 실패 시 운영자가 즉시 `active=false` 로 되돌릴 수 있는 hotfix PR draft 준비 | 별도 branch 에 revert PR 보관 |
+
+### 10-4. .env / Secret / 사용자 데이터 보존 invariant
+
+Phase 3 활성화 후에도 다음은 *변경되지 않는다*:
+
+- 사용자 `.env` (`%APPDATA%\Autotrade\.env`) 는 *덮어쓰기 0건*. 새 버전이
+  설치되어도 KIS 모의투자 키 / 계좌번호 / Anthropic 키 등 사용자 입력은 그대로.
+- 안전 flag default (`KIS_IS_PAPER=true`, `ENABLE_LIVE_TRADING=false` 등) 는
+  setup.exe 안의 `.env.example` 에만 존재 — 사용자 `.env` 와 별도 파일.
+- 자동 업데이트로 broker / OrderExecutor / route_order 코드가 추가되어도
+  *RiskManager 다층 가드* 는 항상 작동 (CLAUDE.md 절대 원칙).
+
+### 10-5. 본 PR (#5-06) 의 범위 — *문서 / 테스트만*
+
+본 PR 은 위 8단계를 *어느 것도 실행하지 않는다*. 본 PR 의 코드 변경은:
+
+- `tauri.conf.json` 의 `active=false` / `createUpdaterArtifacts=false` /
+  `pubkey=""` *유지* (변경 0건).
+- `desktop-release.yml` 의 `TAURI_SIGNING_PRIVATE_KEY` env 줄 *주석 유지*
+  (코멘트 안에만 존재 — actual env 0건).
+- 신규 `test_repository_hygiene.py` 정적 가드 — 위 invariant 가 향후 PR
+  에서 *실수로 켜지지 않도록* lock.
+- 본 §10 문서 신설.
+
+Phase 3 활성화는 운영자가 위 체크리스트 통과 + 별도 옵트인 PR 후에만 가능.

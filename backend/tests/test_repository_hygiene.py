@@ -902,6 +902,180 @@ def test_desktop_release_workflow_create_release_is_gated():
 
 
 # ====================================================================
+# fix/step5-tauri-updater-phase3-prep (#5-06) — Phase 2/3 invariants
+# ====================================================================
+#
+# Tauri updater Phase 3 (`downloadAndInstall()` + `relaunch()`) 가 *부주의로*
+# 활성화되지 않도록 정적 가드를 추가한다. 활성화는 별도 옵트인 PR + 운영자
+# 명시 절차 후에만 — 본 PR 까지는 모두 false / 빈 값 / 주석 처리 상태 유지.
+
+
+def _tauri_conf_path() -> pathlib.Path:
+    return _ROOT / "src-tauri" / "tauri.conf.json"
+
+
+def _load_tauri_conf() -> dict:
+    import json
+    p = _tauri_conf_path()
+    if not p.exists():
+        pytest.skip("src-tauri/tauri.conf.json 미존재 — 본 검사 skip")
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def test_tauri_updater_inactive_in_phase2():
+    """Phase 2 동안 `plugins.updater.active` 는 false, `pubkey` 는 빈 값 유지.
+
+    Phase 3 PR 머지 시점에만 운영자가 명시적으로 true 로 전환 + public key
+    commit. 그 전에 누군가 실수로 true 로 바꾸면 본 테스트가 즉시 fail.
+    """
+    conf = _load_tauri_conf()
+    updater = (conf.get("plugins") or {}).get("updater") or {}
+    assert updater.get("active") is False, (
+        "tauri.conf.json::plugins.updater.active 가 false 가 아님 — "
+        "Phase 3 활성화는 docs/auto_update_policy.md §10 의 8단계 + "
+        "운영자 명시 옵트인 PR 필요"
+    )
+    pubkey = updater.get("pubkey", "")
+    assert pubkey == "", (
+        f"plugins.updater.pubkey 가 빈 값이 아님 (length={len(pubkey)}). "
+        "public key commit 은 Phase 3 활성화 PR 에서만."
+    )
+    # endpoints 는 미리 실 repo URL 로 준비돼 있어야 한다 — Phase 3 전환 시
+    # 운영자가 URL 까지 새로 적지 않도록.
+    endpoints = updater.get("endpoints") or []
+    assert any(
+        "github.com/1976haru/autotrade" in e and "latest.json" in e
+        for e in endpoints
+    ), (
+        "plugins.updater.endpoints 가 1976haru/autotrade 의 latest.json 을 "
+        "참조하지 않음 — Phase 3 활성화 시 URL 일치 필수"
+    )
+
+
+def test_tauri_create_updater_artifacts_false():
+    """`bundle.createUpdaterArtifacts` 가 false 유지.
+
+    true 로 전환되면 `cargo tauri build` 가 `TAURI_PRIVATE_KEY` 가 *없는*
+    상태에서도 서명 step 을 시도해 빌드가 실패한다. Phase 3 활성화 PR 에서만
+    true 로 변경.
+    """
+    conf = _load_tauri_conf()
+    bundle = conf.get("bundle") or {}
+    assert bundle.get("createUpdaterArtifacts") is False, (
+        "tauri.conf.json::bundle.createUpdaterArtifacts 가 false 가 아님 — "
+        "Phase 3 활성화 PR 에서만 true 로 전환"
+    )
+
+
+def test_no_tauri_private_key_committed():
+    """실 private key 파일 / PEM markers 가 repo 에 추적되지 않음.
+
+    `tauri signer generate` 가 만드는 키 형식:
+      `untrusted comment: minisign encrypted secret key\n...`
+    또는 OpenSSL PEM 형식:
+      `-----BEGIN PRIVATE KEY-----`
+      `-----BEGIN OPENSSH PRIVATE KEY-----`
+      `-----BEGIN RSA PRIVATE KEY-----`
+      `-----BEGIN EC PRIVATE KEY-----`
+
+    Tauri minisign 형식 헤더 `untrusted comment: minisign encrypted secret key`
+    는 docs / 본 테스트 식별 토큰으로도 사용될 수 있으므로, 실제 *파일 확장자*
+    (.key, .pem, .p12 등) 가 추적되는지를 함께 확인.
+    """
+    import subprocess
+    try:
+        out = subprocess.check_output(
+            ["git", "ls-files"], cwd=str(_ROOT),
+            text=True, encoding="utf-8", errors="replace",
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pytest.skip("git 미설치 또는 repo 아님")
+
+    tracked = [ln.strip() for ln in out.splitlines() if ln.strip()]
+
+    # 파일 확장자 가드 — *.key / *.pem / *.p12 / *.pfx 추적 0건.
+    suspicious_files = [
+        p for p in tracked
+        if p.lower().endswith((".key", ".pem", ".p12", ".pfx", ".asc"))
+    ]
+    # docs / test fixture 경로는 제외 (placeholder 텍스트 파일이 우연히 같은
+    # 확장자를 쓸 가능성 매우 낮지만 보수적 allowlist).
+    allowed = {
+        # 현재 시점 추적된 합법 파일 (있다면 여기에 명시).
+    }
+    suspicious_files = [p for p in suspicious_files if p not in allowed]
+    assert suspicious_files == [], (
+        f"실 private key / 인증서 파일이 추적됨: {suspicious_files}. "
+        "Phase 3 활성화 시 TAURI_PRIVATE_KEY 는 *GitHub Secret 으로만* 사용."
+    )
+
+    # 텍스트 컨텐츠 가드 — PEM marker / minisign secret key 헤더 추적 0건.
+    pem_markers = (
+        b"-----BEGIN PRIVATE KEY-----",
+        b"-----BEGIN OPENSSH PRIVATE KEY-----",
+        b"-----BEGIN RSA PRIVATE KEY-----",
+        b"-----BEGIN EC PRIVATE KEY-----",
+        b"-----BEGIN DSA PRIVATE KEY-----",
+        b"-----BEGIN ENCRYPTED PRIVATE KEY-----",
+    )
+    # minisign secret key header 는 흔히 다음으로 시작:
+    #   "untrusted comment: minisign encrypted secret key"
+    # 본 테스트 파일 / 문서가 위 문구를 *설명용* 으로 들고 있을 수 있어, 본
+    # 가드는 *해당 라인 다음에 base64 본문이 이어지는지* 까지 확인하지는 않고,
+    # 일단 명백한 PEM marker 만 본다.
+    this_file = pathlib.Path(__file__).resolve()
+    leaks: list[tuple[str, str]] = []
+    for p in tracked:
+        full = _ROOT / p
+        if not full.exists() or full.is_dir():
+            continue
+        if full.resolve() == this_file:
+            continue  # 본 테스트 파일 자체는 marker 패턴을 *설명* 으로 들고 있을 수 있음
+        try:
+            raw = full.read_bytes()
+        except OSError:
+            continue
+        for marker in pem_markers:
+            if marker in raw:
+                leaks.append((p, marker.decode()))
+    assert leaks == [], f"PEM private key marker 발견: {leaks}"
+
+
+def test_desktop_release_workflow_phase3_signing_inactive():
+    """desktop-release.yml 의 Tauri build step `env:` 에 활성 signing 변수 0건.
+
+    `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 가
+    *주석* 안에 placeholder 로 존재하는 것은 허용 — 운영자가 Phase 3 활성화
+    시 주석 해제 하나로 끝나도록.
+    그러나 *코멘트가 아닌* YAML env 키로 등장하면 fail. PyYAML 로 step
+    구조를 파싱해 검증.
+    """
+    p = _workflow_path()
+    if not p.exists():
+        pytest.skip("desktop-release.yml 미존재 — 본 검사 skip")
+    try:
+        import yaml
+    except ImportError:
+        pytest.skip("PyYAML 미설치 — 본 검사 skip")
+    data = yaml.safe_load(p.read_text(encoding="utf-8"))
+    forbidden_active_keys = {
+        "TAURI_SIGNING_PRIVATE_KEY",
+        "TAURI_SIGNING_PRIVATE_KEY_PASSWORD",
+        "TAURI_PRIVATE_KEY",
+        "TAURI_KEY_PASSWORD",
+    }
+    for job_name, job in (data.get("jobs") or {}).items():
+        for step in job.get("steps") or []:
+            env = step.get("env") or {}
+            for key in env.keys():
+                assert key not in forbidden_active_keys, (
+                    f"workflow job '{job_name}' step '{step.get('name')}' 의 "
+                    f"활성 env 에 '{key}' 가 등장 — Phase 3 활성화 전이라면 "
+                    "주석 안에만 두어야 한다 (docs/auto_update_policy.md §10-2 Step 4)"
+                )
+
+
+# ====================================================================
 # self-validation (#88 — 본 테스트가 broker 0건)
 # ====================================================================
 
