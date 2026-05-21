@@ -229,6 +229,51 @@ export const backendApi = {
   paperCashState:      () => backendFetch("/api/auto-paper/cash-state"),
   paperCashStateReset: () =>
     backendFetch("/api/auto-paper/cash-state/reset", { method: "POST" }),
+  // 운영 진단 + 이벤트 로그 — *advisory* read-only. broker / DB write 0건.
+  // 본 응답은 *민감정보 0건* (backend event_log 가 fail-closed 로 차단).
+  systemDiagnostics: ({
+    frontendMode = null,
+    isDesktop = false,
+  } = {}) => {
+    const qs = new URLSearchParams();
+    if (frontendMode) qs.set("frontend_mode", frontendMode);
+    if (isDesktop)    qs.set("is_desktop", "true");
+    return backendFetch(`/api/system/diagnostics?${qs.toString()}`);
+  },
+  systemDiagnosticsPost: (body) =>
+    backendFetch("/api/system/diagnostics", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
+  paperDiagnosticsSummary: ({ frontendMode = null } = {}) => {
+    const qs = new URLSearchParams();
+    if (frontendMode) qs.set("frontend_mode", frontendMode);
+    const tail = qs.toString();
+    return backendFetch(
+      `/api/auto-paper/diagnostics/summary${tail ? `?${tail}` : ""}`,
+    );
+  },
+  systemEventsRecent: ({
+    limit = 100,
+    level = null,
+    minLevel = null,
+    category = null,
+    code = null,
+    since = null,
+  } = {}) => {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (level)     qs.set("level",     level);
+    if (minLevel)  qs.set("min_level", minLevel);
+    if (category)  qs.set("category",  category);
+    if (code)      qs.set("code",      code);
+    if (since)     qs.set("since",     since);
+    return backendFetch(`/api/system/events/recent?${qs.toString()}`);
+  },
+  systemEventTest: ({ level, category, code, message, details = {} } = {}) =>
+    backendFetch("/api/system/events/test", {
+      method: "POST",
+      body: JSON.stringify({ level, category, code, message, details }),
+    }),
   // feat/step2-05-pre-market-gate: optional `body` carry — pre_market 결과를
   // 포함시켜 backend 가 BLOCK 검증. body 미제공 시 backwards-compat.
   autoPaperStart:         (body = null) => backendFetch(
