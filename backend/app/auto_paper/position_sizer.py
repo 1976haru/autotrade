@@ -422,4 +422,284 @@ __all__ = [
     "SizingResult",
     "SizingVerdict",
     "compute_position_size",
+    # P-08 (아래 정의) — 단순 max_amount / price 기반 sizer.
+    "QuantityByPriceVerdict",
+    "QuantityByPriceResult",
+    "compute_paper_quantity_by_price",
 ]
+
+
+# ============================================================================
+# P-08: Paper position sizing by price — *simple* max_amount / price floor.
+# ============================================================================
+#
+# AI Paper 매수 후보가 결정되면 *종목당 투자금 한도* (P-02 / P-04 / P-06 의
+# `effective_per_symbol_cap_krw`) 와 *현재가* 만으로 수량을 계산:
+#
+#     quantity = floor(max_amount / price)
+#
+# 위 계산은 #4-08 risk-based `compute_position_size` 와 *별개*:
+# - #4-08 은 risk_per_trade × stop_loss × confidence × regime × flags 의
+#   복잡한 휴리스틱 sizing — 운영자가 설정한 위험 한도 기반.
+# - P-08 은 *가장 단순한 cap-based* sizing — 종목당 한도와 현재가만 보고
+#   "몇 주 살 수 있는가" 만 답한다.
+#
+# 두 sizer 의 책임:
+#  - P-08 `compute_paper_quantity_by_price` → "현재가 기준 살 수 있는 최대
+#    수량" (정수, ≥ 1 만 의미 있음).
+#  - 그 다음 P-07 `check_buy_cash_sufficient` → 남은 Paper 현금 으로 그 수량
+#    이 실제 가능한지 검사.
+#  - 그 다음 RiskManager / PermissionGate → live-side 검사.
+#  - 본 PR 은 *P-08 만* 추가하며 위 흐름의 다음 단계 wire-up 은 별도 PR.
+#
+# 호출 순서 (사용자 요청서 §11):
+#   현재가 확인
+#   → 종목당 투자금 기준 quantity 계산   (P-08, 본 모듈)
+#   → quantity >= 1 인지 확인           (P-08 + P-05)
+#   → Paper 현금 잔고 확인              (P-07)
+#   → RiskManager
+#   → PermissionGate
+#   → VirtualOrder / PaperOrder 후보 생성
+#
+# CLAUDE.md 절대 원칙 (테스트로 lock):
+#  - broker / OrderExecutor / route_order import 0건
+#  - KIS / Anthropic / OpenAI / httpx / requests import 0건
+#  - settings.enable_*_trading mutation 0건
+#  - QuantityByPriceResult.is_order_signal / is_live_authorization = False
+#    영구 (dataclass __post_init__ ValueError 가드)
+#  - is_paper_only = True 영구
+
+
+class QuantityByPriceVerdict(StrEnum):
+    """수량 계산 결과 라벨 — frontend / API payload / diagnostics 가 그대로 emit."""
+
+    OK                       = "OK"                       # quantity ≥ 1
+    MIN_LOT_NOT_AFFORDABLE   = "MIN_LOT_NOT_AFFORDABLE"   # floor(cap/price) < 1
+    INVALID_PRICE            = "INVALID_PRICE"            # price <= 0
+    INVALID_MAX_AMOUNT       = "INVALID_MAX_AMOUNT"       # max_amount <= 0
+    SKIP_NON_BUY             = "SKIP_NON_BUY"             # action != BUY
+
+
+_BUY_TOKENS = frozenset({
+    "buy", "open", "open_long", "long", "enter", "entry",
+})
+
+
+def _is_buy_action(action: str | None) -> bool:
+    return (action or "").strip().lower() in _BUY_TOKENS
+
+
+def _format_krw(amount: int | float) -> str:
+    return f"{int(amount):,}"
+
+
+@dataclass(frozen=True)
+class QuantityByPriceResult:
+    """P-08: max_amount / price 기반 수량 계산 결과 — *advisory*.
+
+    `is_paper_only=True` / `is_order_signal=False` / `is_live_authorization=
+    False` 영구 (dataclass __post_init__ ValueError 가드).
+    """
+
+    verdict:         QuantityByPriceVerdict
+    quantity:        int
+    notional_krw:    int
+    remainder_krw:   int
+    symbol:          str | None       = None
+    action:          str | None       = None
+    price:           float | None     = None
+    max_amount_krw:  int              = 0
+    reason_code:     str              = ""
+    reason_ko:       str              = ""
+    metadata:        dict[str, Any]   = field(default_factory=dict)
+
+    is_order_signal:       bool = False
+    is_live_authorization: bool = False
+    is_paper_only:         bool = True
+
+    def __post_init__(self) -> None:
+        if self.is_order_signal is not False:
+            raise ValueError(
+                "QuantityByPriceResult.is_order_signal must be False"
+            )
+        if self.is_live_authorization is not False:
+            raise ValueError(
+                "QuantityByPriceResult.is_live_authorization must be False"
+            )
+        if self.is_paper_only is not True:
+            raise ValueError(
+                "QuantityByPriceResult.is_paper_only must be True"
+            )
+        if not isinstance(self.quantity, int) or isinstance(self.quantity, bool):
+            raise ValueError(
+                f"QuantityByPriceResult.quantity must be int, "
+                f"got {type(self.quantity).__name__}"
+            )
+        if self.quantity < 0:
+            raise ValueError(
+                f"quantity must be >= 0, got {self.quantity}"
+            )
+        if self.notional_krw < 0:
+            raise ValueError(
+                f"notional_krw must be >= 0, got {self.notional_krw}"
+            )
+
+    @property
+    def is_ok(self) -> bool:
+        return self.verdict == QuantityByPriceVerdict.OK
+
+    @property
+    def is_min_lot_not_affordable(self) -> bool:
+        return self.verdict == QuantityByPriceVerdict.MIN_LOT_NOT_AFFORDABLE
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "verdict":               self.verdict.value,
+            "quantity":              int(self.quantity),
+            "notional_krw":          int(self.notional_krw),
+            "remainder_krw":         int(self.remainder_krw),
+            "symbol":                self.symbol,
+            "action":                self.action,
+            "price":                 self.price,
+            "max_amount_krw":        int(self.max_amount_krw),
+            "reason_code":           self.reason_code,
+            "reason_ko":             self.reason_ko,
+            "metadata":              dict(self.metadata),
+            "is_ok":                 self.is_ok,
+            "is_min_lot_not_affordable": self.is_min_lot_not_affordable,
+            "is_order_signal":       self.is_order_signal,
+            "is_live_authorization": self.is_live_authorization,
+            "is_paper_only":         self.is_paper_only,
+        }
+
+
+def compute_paper_quantity_by_price(
+    *,
+    action:          str | None,
+    symbol:          str | None,
+    price:           float | int | None,
+    max_amount_krw:  int,
+) -> QuantityByPriceResult:
+    """P-08: `quantity = floor(max_amount / price)` 계산 — *advisory*.
+
+    실행 순서 (verdict 우선순위 — 첫 매칭 verdict 반환):
+      1. action 이 BUY 가 아님         → SKIP_NON_BUY
+      2. max_amount <= 0               → INVALID_MAX_AMOUNT
+      3. price is None / price <= 0    → INVALID_PRICE
+      4. floor(max_amount/price) < 1   → MIN_LOT_NOT_AFFORDABLE
+      5. 그 외                          → OK (quantity ≥ 1)
+
+    Args:
+        action: 매매 의도. BUY 만 sizing. 그 외 → SKIP_NON_BUY.
+        symbol: 후보 종목 코드. None 허용.
+        price: 1주 가격 (KRW). None / 0 / 음수 → INVALID_PRICE.
+        max_amount_krw: 종목당 투자금 한도 (KRW, 정수).
+
+    Returns:
+        QuantityByPriceResult. broker / route_order 호출 0건.
+
+    호출 컨텍스트:
+        본 함수는 *sizing 단계* — 호출자는 결과를 받고 P-07 cash check /
+        RiskManager / PermissionGate 흐름을 *별도로* 진행해야 한다.
+    """
+    # 1. SKIP_NON_BUY.
+    if not _is_buy_action(action):
+        return QuantityByPriceResult(
+            verdict=QuantityByPriceVerdict.SKIP_NON_BUY,
+            quantity=0, notional_krw=0, remainder_krw=int(max(max_amount_krw, 0)),
+            symbol=symbol, action=action,
+            price=float(price) if price is not None else None,
+            max_amount_krw=int(max(max_amount_krw, 0)),
+            reason_code="SKIP_NON_BUY",
+            reason_ko=(
+                "BUY 가 아닌 action — 수량 계산 무관 (청산 / 관망은 sizing 강제 적용 안 함)."
+            ),
+        )
+
+    cap = int(max_amount_krw)
+
+    # 2. INVALID_MAX_AMOUNT.
+    if cap <= 0:
+        return QuantityByPriceResult(
+            verdict=QuantityByPriceVerdict.INVALID_MAX_AMOUNT,
+            quantity=0, notional_krw=0, remainder_krw=0,
+            symbol=symbol, action=action,
+            price=float(price) if price is not None else None,
+            max_amount_krw=cap,
+            reason_code="INVALID_MAX_AMOUNT",
+            reason_ko=(
+                "종목당 투자금이 0 이하라 수량을 계산할 수 없습니다."
+            ),
+        )
+
+    # 3. INVALID_PRICE.
+    if price is None:
+        return QuantityByPriceResult(
+            verdict=QuantityByPriceVerdict.INVALID_PRICE,
+            quantity=0, notional_krw=0, remainder_krw=cap,
+            symbol=symbol, action=action,
+            price=None, max_amount_krw=cap,
+            reason_code="INVALID_PRICE",
+            reason_ko=(
+                "현재가가 없어 수량을 계산할 수 없습니다."
+            ),
+        )
+
+    try:
+        p = float(price)
+    except (TypeError, ValueError):
+        return QuantityByPriceResult(
+            verdict=QuantityByPriceVerdict.INVALID_PRICE,
+            quantity=0, notional_krw=0, remainder_krw=cap,
+            symbol=symbol, action=action,
+            price=None, max_amount_krw=cap,
+            reason_code="INVALID_PRICE",
+            reason_ko=(
+                f"현재가 {price!r} 가 숫자가 아니라 수량을 계산할 수 없습니다."
+            ),
+        )
+
+    if not math.isfinite(p) or p <= 0:
+        return QuantityByPriceResult(
+            verdict=QuantityByPriceVerdict.INVALID_PRICE,
+            quantity=0, notional_krw=0, remainder_krw=cap,
+            symbol=symbol, action=action,
+            price=p if math.isfinite(p) else None,
+            max_amount_krw=cap,
+            reason_code="INVALID_PRICE",
+            reason_ko=(
+                f"현재가 {p} 가 0 이하라 수량을 계산할 수 없습니다."
+            ),
+        )
+
+    # 4. floor(max_amount / price) 계산.
+    qty = int(math.floor(cap / p))
+    notional = int(p * qty) if qty > 0 else 0
+    remainder = cap - notional
+
+    if qty < 1:
+        return QuantityByPriceResult(
+            verdict=QuantityByPriceVerdict.MIN_LOT_NOT_AFFORDABLE,
+            quantity=0, notional_krw=0, remainder_krw=cap,
+            symbol=symbol, action=action,
+            price=p, max_amount_krw=cap,
+            reason_code="MIN_LOT_NOT_AFFORDABLE",
+            reason_ko=(
+                f"종목당 투자금 {_format_krw(cap)}원으로 1주({_format_krw(p)}원)"
+                "를 살 수 없습니다 (1주도 살 수 없음)."
+            ),
+        )
+
+    # 5. OK.
+    return QuantityByPriceResult(
+        verdict=QuantityByPriceVerdict.OK,
+        quantity=qty, notional_krw=notional, remainder_krw=remainder,
+        symbol=symbol, action=action,
+        price=p, max_amount_krw=cap,
+        reason_code="OK",
+        reason_ko=(
+            f"종목당 투자금 기준 {qty}주 매수 가능 "
+            f"(1주 {_format_krw(p)}원 × {qty}주 = "
+            f"{_format_krw(notional)}원, 잔여 {_format_krw(remainder)}원)."
+        ),
+    )
