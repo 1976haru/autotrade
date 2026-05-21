@@ -709,3 +709,163 @@ describe("<PaperCapitalCard> P-05 — min-lot preview", () => {
     ).toBeNull();
   });
 });
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// P-06: 고가주 처리 정책 (EXCLUDE / HOLD / INCREASE_BUDGET_HINT)
+// ────────────────────────────────────────────────────────────────────────────
+describe("<PaperCapitalCard> P-06 — high-price policy", () => {
+  it("renders high-price section with 3 policy options", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-high-price-section"));
+    expect(screen.getByTestId("paper-capital-card-high-price-option-EXCLUDE")).toBeTruthy();
+    expect(screen.getByTestId("paper-capital-card-high-price-option-HOLD")).toBeTruthy();
+    expect(
+      screen.getByTestId("paper-capital-card-high-price-option-INCREASE_BUDGET_HINT"),
+    ).toBeTruthy();
+  });
+
+  it("default selected policy is EXCLUDE (with '기본값' badge)", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-high-price-option-EXCLUDE"));
+    expect(
+      screen.getByTestId("paper-capital-card-high-price-option-EXCLUDE")
+        .getAttribute("data-selected"),
+    ).toBe("true");
+    expect(
+      screen.getByTestId("paper-capital-card-high-price-option-HOLD")
+        .getAttribute("data-selected"),
+    ).toBe("false");
+    expect(
+      screen.getByTestId("paper-capital-card-high-price-option-INCREASE_BUDGET_HINT")
+        .getAttribute("data-selected"),
+    ).toBe("false");
+    expect(
+      screen.getByTestId("paper-capital-card-high-price-option-default-badge").textContent,
+    ).toContain("기본값");
+  });
+
+  it("renders EXCLUDE reason by default — '1주 가격이 투자한도 초과로 제외'", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-high-price-current-reason"));
+    const reason = screen.getByTestId("paper-capital-card-high-price-current-reason-value")
+      .textContent || "";
+    expect(reason).toBe("1주 가격이 투자한도 초과로 제외");
+  });
+
+  it("clicking HOLD shows '1주 가격이 투자한도 초과로 보류'", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-high-price-option-HOLD"));
+    fireEvent.click(screen.getByTestId("paper-capital-card-high-price-option-HOLD"));
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("paper-capital-card-high-price-current-reason-value").textContent,
+      ).toBe("1주 가격이 투자한도 초과로 보류");
+    });
+    expect(
+      screen.getByTestId("paper-capital-card-high-price-option-HOLD")
+        .getAttribute("data-selected"),
+    ).toBe("true");
+  });
+
+  it("clicking INCREASE_BUDGET_HINT shows '종목당 투자금 증액 필요' reason", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() =>
+      screen.getByTestId("paper-capital-card-high-price-option-INCREASE_BUDGET_HINT"),
+    );
+    fireEvent.click(
+      screen.getByTestId("paper-capital-card-high-price-option-INCREASE_BUDGET_HINT"),
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("paper-capital-card-high-price-current-reason-value").textContent,
+      ).toBe("1주 가격이 투자한도 초과: 종목당 투자금 증액 필요");
+    });
+  });
+
+  it("disclaimer mentions 고가주 + 예시 100,000원 + 120,000원 + Paper 전용", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-high-price-disclaimer"));
+    const text = screen.getByTestId("paper-capital-card-high-price-disclaimer")
+      .textContent || "";
+    expect(text).toContain("고가주");
+    expect(text).toContain("100,000원");
+    expect(text).toContain("120,000원");
+    expect(text).toContain("Paper 전용");
+  });
+
+  it("all 3 required reason messages are present somewhere in the section", async () => {
+    // 사용자 요청서 §5 — 화면이나 상태 메시지에 다음 중 하나가 표시되어야 함.
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-high-price-section"));
+    const text = screen.getByTestId("paper-capital-card-high-price-section")
+      .textContent || "";
+    // EXCLUDE 메시지 (default) 는 current-reason 영역에 표시.
+    expect(text).toContain("1주 가격이 투자한도 초과로 제외");
+    // HOLD / HINT 메시지는 정책 chip 의 hint 또는 click 시 표시될 reason 이지만,
+    // 본 카드는 default render 후 다른 정책 선택 시 표시 — 본 테스트는
+    // EXCLUDE default 메시지 + 공통 fragment "1주 가격이 투자한도 초과" 존재
+    // 만 lock (HOLD/HINT 메시지 click 후 표시는 위 별도 it 으로 검증).
+    expect(text).toContain("1주 가격이 투자한도 초과");
+  });
+
+  it("high-price section has NO trade-execution / live-order buttons", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-high-price-section"));
+    const section = screen.getByTestId("paper-capital-card-high-price-section");
+    const text = section.textContent || "";
+    for (const banned of [
+      "지금 매수", "지금 매도", "Place Order", "place order",
+      "매수 실행", "매도 실행",
+      "BUY", "SELL", "HOLD",
+      "실거래 시작", "실거래 활성화",
+      "ENABLE_LIVE_TRADING",
+    ]) {
+      expect(text.includes(banned)).toBe(false);
+    }
+    // input/textarea/select 0개 — 임의 입력 form 차단.
+    expect(section.querySelectorAll("input").length).toBe(0);
+    expect(section.querySelectorAll("textarea").length).toBe(0);
+    expect(section.querySelectorAll("select").length).toBe(0);
+  });
+
+  it("high-price section does NOT expose secret patterns", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-high-price-section"));
+    const text = (screen.getByTestId("paper-capital-card-high-price-section").textContent || "").toLowerCase();
+    for (const needle of [
+      "kis_app_key", "kis_app_secret", "anthropic_api_key",
+      "openai_api_key", "telegram_bot_token", "sk-", "bearer ",
+      "kis_account_no",
+    ]) {
+      expect(text.includes(needle)).toBe(false);
+    }
+  });
+
+  it("clicking EXCLUDE after HOLD restores '제외' reason", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-high-price-option-HOLD"));
+    fireEvent.click(screen.getByTestId("paper-capital-card-high-price-option-HOLD"));
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("paper-capital-card-high-price-current-reason-value").textContent,
+      ).toContain("보류");
+    });
+    fireEvent.click(screen.getByTestId("paper-capital-card-high-price-option-EXCLUDE"));
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("paper-capital-card-high-price-current-reason-value").textContent,
+      ).toBe("1주 가격이 투자한도 초과로 제외");
+    });
+  });
+});

@@ -57,6 +57,11 @@ from app.auto_paper.min_lot_check import (
     compute_paper_affordable_lot,
     validate_paper_min_lot,
 )
+from app.auto_paper.affordability import (
+    DEFAULT_HIGH_PRICE_POLICY,
+    HighPricePolicy,
+    evaluate_high_price,
+)
 from app.core.config import get_settings
 
 
@@ -828,6 +833,72 @@ def preview_min_lot_endpoint() -> dict:
             "예시 표는 현재 시드머니 전체가 가용하다는 가정. 실제 매수 가능 "
             "수량은 P-04 affordability_check 에서 cash 잔액까지 함께 본다. "
             "Paper 전용 advisory."
+        ),
+    }
+
+
+# ============================================================================
+# P-06: 고가주 처리 정책 preview endpoint (EXCLUDE / HOLD / INCREASE_BUDGET_HINT)
+# ============================================================================
+
+
+class _HighPricePreviewBody(BaseModel):
+    """advisory preview — caller 가 BUY 후보 *전* 고가주 정책 사전 시뮬.
+
+    `effective_per_symbol_cap_krw` 가 입력에 없으면 *현재 PaperCapitalConfig
+    값* 을 자동 사용. policy 미지정 시 default EXCLUDE.
+    """
+
+    action:                       str            = Field("BUY", description="caller 의 매매 의도 — BUY 만 검사")
+    symbol:                       str | None     = Field(None, description="후보 종목 코드")
+    price:                        float | None   = Field(None, description="1주 가격 (KRW)")
+    policy:                       str | None     = Field(
+        None,
+        description="고가주 정책 — 'EXCLUDE' / 'HOLD' / 'INCREASE_BUDGET_HINT'. None → default EXCLUDE",
+    )
+    effective_per_symbol_cap_krw: int | None     = Field(None)
+
+
+@_AP.post("/high-price/preview")
+def preview_high_price_endpoint(body: _HighPricePreviewBody) -> dict:
+    """고가주 처리 정책 사전 advisory check (P-06).
+
+    Returns:
+        HighPriceCheckResult.to_dict() — verdict / reason_ko / policy /
+        suggested_min_cap_krw carry.
+
+    broker / route_order 호출 0건. 응답은 advisory — 실 주문은 별도 흐름.
+    """
+    cfg = get_paper_capital_config()
+    cap = (
+        int(body.effective_per_symbol_cap_krw)
+        if body.effective_per_symbol_cap_krw is not None
+        else int(cfg.effective_per_symbol_cap_krw)
+    )
+    try:
+        result = evaluate_high_price(
+            action=body.action,
+            symbol=body.symbol,
+            price=body.price,
+            effective_per_symbol_cap_krw=cap,
+            policy=body.policy,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error":   "invalid_high_price_policy",
+                "message": str(exc),
+                "allowed_policies": [p.value for p in HighPricePolicy],
+            },
+        )
+    return {
+        **result.to_dict(),
+        "default_policy": DEFAULT_HIGH_PRICE_POLICY.value,
+        "allowed_policies": [p.value for p in HighPricePolicy],
+        "notice": (
+            "본 결과는 advisory — Paper 전용이며 실전 주문 결정과 결합되지 "
+            "않습니다. 고가주 정책은 운영자가 선택 가능 (default EXCLUDE)."
         ),
     }
 

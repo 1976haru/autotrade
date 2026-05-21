@@ -26,6 +26,30 @@ function formatKrwManwon(amount) {
 }
 
 
+// P-06: 고가주 처리 정책 — 3 옵션 + UI 라벨 + 매핑 메시지.
+// backend `HighPricePolicy` enum 값과 1:1.
+const HIGH_PRICE_POLICY_OPTIONS = [
+  {
+    key: "EXCLUDE",
+    label: "제외",
+    hint: "후보에서 자동 제외 (기본값 · 가장 보수적)",
+    reason: "1주 가격이 투자한도 초과로 제외",
+  },
+  {
+    key: "HOLD",
+    label: "보류",
+    hint: "후보에서 삭제하지 않고 보류 상태로 carry",
+    reason: "1주 가격이 투자한도 초과로 보류",
+  },
+  {
+    key: "INCREASE_BUDGET_HINT",
+    label: "자금증액 안내",
+    hint: "사용자에게 종목당 투자금을 늘리도록 안내",
+    reason: "1주 가격이 투자한도 초과: 종목당 투자금 증액 필요",
+  },
+];
+
+
 export function PaperCapitalCard({
   testId = "paper-capital-card",
   autoLoad = true,
@@ -36,6 +60,8 @@ export function PaperCapitalCard({
   const [pendingValue, setPendingValue] = useState(null);
   // P-05: 예시 매수 가능 수량 표.
   const [minLotPreview, setMinLotPreview] = useState(null);
+  // P-06: 고가주 처리 정책 — default EXCLUDE.
+  const [highPricePolicy, setHighPricePolicy] = useState("EXCLUDE");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -534,6 +560,111 @@ export function PaperCapitalCard({
             >
               정책: 최소 수량 <b>{minLotPreview.min_lot_quantity}주</b> · 소수점
               주식 <b>지원 안 함</b> · 반올림 정책 <b>{minLotPreview.rounding_policy}</b>.
+            </div>
+          </div>
+        )}
+
+        {/* P-06: 고가주 처리 정책 — 3 옵션 chip + 선택된 정책의 사용자 메시지 */}
+        {config && (
+          <div
+            data-testid={`${testId}-high-price-section`}
+            style={{
+              display: "flex", flexDirection: "column", gap: 6,
+              padding: "8px 10px",
+              background: "var(--c-surface-2, #f8fafc)",
+              border: "1px solid var(--c-border)",
+              borderRadius: 6,
+            }}
+          >
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--c-text)" }}>
+              📈 고가주 처리 정책
+            </div>
+            <div
+              data-testid={`${testId}-high-price-disclaimer`}
+              style={{
+                fontSize: 10, color: "var(--c-text-3)", lineHeight: 1.5,
+              }}
+            >
+              종목당 투자금으로 1주도 살 수 없는 고가주 (예: 종목당 한도
+              100,000원 + 현재가 120,000원)는 AI Paper 진입 전 단계에서
+              아래 정책에 따라 안전 처리합니다. Paper 전용이며 실거래 결정과
+              결합되지 않습니다.
+            </div>
+            <div
+              data-testid={`${testId}-high-price-options`}
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))",
+                gap: 6,
+              }}
+            >
+              {HIGH_PRICE_POLICY_OPTIONS.map((opt) => {
+                const isSel = highPricePolicy === opt.key;
+                return (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    data-testid={`${testId}-high-price-option-${opt.key}`}
+                    data-selected={isSel ? "true" : "false"}
+                    onClick={() => setHighPricePolicy(opt.key)}
+                    style={{
+                      padding: "8px 10px",
+                      borderRadius: 5,
+                      border: `1px solid ${isSel ? "#2563eb" : "var(--c-border)"}`,
+                      background: isSel ? "#eff6ff" : "var(--c-surface)",
+                      color: isSel ? "#1e3a8a" : "var(--c-text)",
+                      fontWeight: isSel ? 700 : 500,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      textAlign: "center",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 1,
+                      lineHeight: 1.3,
+                    }}
+                  >
+                    <span>{opt.label}</span>
+                    <span style={{
+                      fontSize: 9, color: "var(--c-text-3)", fontWeight: 400,
+                    }}>
+                      {opt.hint}
+                    </span>
+                    {isSel && (
+                      <span style={{ fontSize: 8, fontWeight: 700,
+                                      color: "#2563eb" }}>✓ 선택됨</span>
+                    )}
+                    {opt.key === "EXCLUDE" && (
+                      <span
+                        data-testid={`${testId}-high-price-option-default-badge`}
+                        style={{ fontSize: 8, color: "#475569" }}
+                      >
+                        기본값
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            <div
+              data-testid={`${testId}-high-price-current-reason`}
+              style={{
+                marginTop: 2,
+                padding: "6px 8px",
+                background: "var(--c-surface, #fff)",
+                borderRadius: 4,
+                fontSize: 11,
+                color: "var(--c-text-2)",
+                lineHeight: 1.5,
+              }}
+            >
+              <span style={{ fontSize: 10, color: "var(--c-text-3)" }}>
+                선택된 정책 적용 시 표시 사유 →{" "}
+              </span>
+              <b data-testid={`${testId}-high-price-current-reason-value`}>
+                {(HIGH_PRICE_POLICY_OPTIONS.find(
+                  (o) => o.key === highPricePolicy,
+                ) || HIGH_PRICE_POLICY_OPTIONS[0]).reason}
+              </b>
             </div>
           </div>
         )}
