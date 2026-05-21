@@ -39,6 +39,106 @@ const _READINESS_LABEL = {
 };
 
 
+/**
+ * fix/ci-paper-candidate-and-lint: backend / mock 어디서 응답해도 후보 row 가
+ * 정상 표시되도록 *robust* normalizer. 다음 모든 형태를 동일한 표준 모양으로
+ * 정규화한다:
+ *
+ *   - candidates 배열 직접 반환 (`[c1, c2]`)
+ *   - `{ candidates: [...] }`
+ *   - `{ items: [...] }`
+ *   - `{ entries: [...] }`
+ *   - `{ data: { candidates: [...] } }`  (또는 data.items / data.entries)
+ *   - `{ result: { candidates: [...] } }` (또는 result.items / result.entries)
+ *   - 빈 배열 / null / undefined → empty state
+ *
+ * 표준 모양: `{ candidates: Array, readiness_state: string, total: number,
+ * raw }`.
+ *
+ * readiness_state 가 응답에 없으면 *후보 내용으로부터 추론*:
+ *   - candidates.length === 0                       → NO_CANDIDATE
+ *   - 모든 후보가 APPROVED + 1개 이상                → CANDIDATE_READY
+ *   - 그 외 (PENDING_APPROVAL 1개 이상)              → WAITING_APPROVAL
+ */
+export function normalizeCandidatesResponse(raw) {
+  // null / undefined → 빈 상태.
+  if (raw == null) {
+    return {
+      candidates: [], readiness_state: "NO_CANDIDATE", total: 0, raw,
+    };
+  }
+
+  // 배열 직접 반환.
+  let candidates = null;
+  if (Array.isArray(raw)) {
+    candidates = raw;
+  } else if (typeof raw === "object") {
+    // wrapper 단계별 탐색 — caller 가 어느 모양으로 보내든 대응.
+    const top = raw;
+    const data = top.data && typeof top.data === "object" ? top.data : null;
+    const result = top.result && typeof top.result === "object" ? top.result : null;
+    const sources = [top, data, result].filter(Boolean);
+    for (const src of sources) {
+      for (const key of ["candidates", "items", "entries"]) {
+        if (Array.isArray(src[key])) {
+          candidates = src[key];
+          break;
+        }
+      }
+      if (candidates) break;
+    }
+  }
+  if (!Array.isArray(candidates)) {
+    candidates = [];
+  }
+  // 무효 entry 제거 — candidate_id 가 없으면 row 가 만들어질 수 없으므로 skip.
+  candidates = candidates.filter(
+    (c) => c != null && typeof c === "object" && c.candidate_id,
+  );
+
+  // readiness_state — 응답에 있으면 그대로, 없으면 추론.
+  let readiness =
+    (raw && typeof raw === "object" && typeof raw.readiness_state === "string"
+      ? raw.readiness_state
+      : null);
+  if (!readiness && raw && typeof raw === "object") {
+    const wrappers = [raw.data, raw.result].filter(
+      (x) => x && typeof x === "object",
+    );
+    for (const w of wrappers) {
+      if (typeof w.readiness_state === "string") {
+        readiness = w.readiness_state;
+        break;
+      }
+    }
+  }
+  if (!readiness) {
+    if (candidates.length === 0) {
+      readiness = "NO_CANDIDATE";
+    } else {
+      const hasPending = candidates.some(
+        (c) => c.status === "PENDING_APPROVAL",
+      );
+      const allApproved = candidates.length > 0 && candidates.every(
+        (c) => c.status === "APPROVED",
+      );
+      readiness = hasPending
+        ? "WAITING_APPROVAL"
+        : allApproved
+        ? "CANDIDATE_READY"
+        : "WAITING_APPROVAL";
+    }
+  }
+
+  return {
+    candidates,
+    readiness_state: readiness,
+    total: candidates.length,
+    raw,
+  };
+}
+
+
 function _PaperOnlyBadge() {
   return (
     <span
@@ -260,8 +360,13 @@ export default function PaperCandidateApprovalCard({
         apiClient.autoPaperCandidates(),
         apiClient.autoPaperActiveCandidate(),
       ]);
-      setData(list);
-      setActiveId(active && active.has_active ? active.active.candidate_id : null);
+      // fix/ci-paper-candidate-and-lint: 어떤 응답 모양이 와도 normalize.
+      // backend / mock 응답이 array / {candidates} / {items} / {data.*} /
+      // {result.*} / null 어디든 후보 row 가 정상 표시되도록 한다.
+      setData(normalizeCandidatesResponse(list));
+      setActiveId(active && active.has_active && active.active
+        ? active.active.candidate_id
+        : null);
       setError(null);
     } catch (e) {
       setError(e?.message || "load_failed");
@@ -307,8 +412,17 @@ export default function PaperCandidateApprovalCard({
     }
   }, [apiClient, defaultOperatorId, refresh]);
 
-  const readiness = data?.readiness_state || "NO_CANDIDATE";
+  // normalizer 가 항상 candidates / readiness_state 를 보장.
   const candidates = data?.candidates || [];
+  // 실제 후보가 있으면 empty state 가 동시에 떠서는 안 된다 — readiness
+  // label 도 후보 유무와 일관되게 보정 (응답 라벨이 잘못 와도 UI 모순 차단).
+  const rawReadiness = data?.readiness_state || "NO_CANDIDATE";
+  const readiness = candidates.length === 0 && rawReadiness !== "NO_CANDIDATE"
+    ? "NO_CANDIDATE"
+    : (candidates.length > 0 && rawReadiness === "NO_CANDIDATE"
+        ? "WAITING_APPROVAL"
+        : rawReadiness);
+  const isEmpty = candidates.length === 0;
 
   return (
     <div data-testid="paper-candidate-approval-card">
@@ -346,7 +460,7 @@ export default function PaperCandidateApprovalCard({
           </div>
         ) : null}
 
-        {readiness === "NO_CANDIDATE" ? (
+        {isEmpty ? (
           <div
             data-testid="candidate-approval-empty"
             style={{ color: "#64748b", fontSize: 12, padding: "8px 0" }}

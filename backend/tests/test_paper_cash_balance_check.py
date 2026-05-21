@@ -28,8 +28,6 @@ from sqlalchemy.pool import StaticPool
 
 from app.auto_paper.capital_config import (
     reset_paper_capital_for_tests,
-    set_paper_capital_config,
-    set_per_symbol_allocation,
 )
 from app.auto_paper.capital_state import (
     CapitalState,

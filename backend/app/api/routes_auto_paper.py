@@ -64,7 +64,6 @@ from app.auto_paper.affordability import (
 )
 from app.auto_paper.capital_state import (
     check_buy_cash_sufficient,
-    compute_required_krw,
     get_capital_state,
 )
 from app.core.config import get_settings

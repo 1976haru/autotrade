@@ -609,6 +609,29 @@ describe("<PaperCapitalCard> P-05 — min-lot preview", () => {
     }
   });
 
+  it("does not emit React 'each child should have a unique key' warning", async () => {
+    // map 결과의 Fragment 가 key 를 받지 못하면 React 가 console.error 로
+    // 경고. 본 테스트는 *진짜 warning 발생 여부* 를 잡는다 — 단순 console.error
+    // mock 으로 숨기는 방식은 금지.
+    const errors = [];
+    const orig = console.error;
+    console.error = (...args) => {
+      errors.push(args.map((a) => String(a)).join(" "));
+      // 원본도 호출 — 다른 unrelated 에러를 누락하지 않도록.
+      orig(...args);
+    };
+    try {
+      backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+      render(<PaperCapitalCard />);
+      await waitFor(() => screen.getByTestId("paper-capital-card-min-lot-examples"));
+    } finally {
+      console.error = orig;
+    }
+    const keyWarning = errors.find((e) => /unique\s+"key"\s+prop/i.test(e));
+    expect(keyWarning, `unexpected React key warning: ${keyWarning}`)
+      .toBeUndefined();
+  });
+
   it("shows 1주 수량 for 1,000,000 KRW price (cap=1M)", async () => {
     backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
     render(<PaperCapitalCard />);
