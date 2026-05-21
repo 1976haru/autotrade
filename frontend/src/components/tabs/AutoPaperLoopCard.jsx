@@ -5,6 +5,11 @@ import AgentRiskProfileSelector, {
   DEFAULT_RISK_PROFILE,
 } from "../AgentRiskProfileSelector";
 import { backendApi } from "../../services/backend/client";
+import {
+  buildPaperCapitalSummary,
+  loadPaperCapitalSettings,
+  toStartPayloadCapitalSettings,
+} from "../../store/usePaperCapitalSettings";
 
 // AI Paper Auto Loop card — EXE 원클릭 시작/정지/긴급정지.
 //
@@ -150,6 +155,9 @@ export function AutoPaperLoopCard({
   // `start_allowed === false` 면 시작 버튼 비활성화 + 차단 배너 노출 +
   // start() 호출 시 backend 에도 동일 payload 동봉 (서버 단 거절).
   preMarketCheckResult = null,
+  // P-15: Paper 자금 설정 — Settings 카드의 localStorage 값 carry.
+  // 미지정 시 localStorage 에서 직접 로드. start payload 에 동봉.
+  paperCapitalSettings = null,
 } = {}) {
   const [status, setStatus] = useState(null);
   const [safety, setSafety] = useState(null);
@@ -214,12 +222,19 @@ export function AutoPaperLoopCard({
     }
   };
 
+  // P-15: capital_settings — prop 우선, 없으면 localStorage 에서 로드.
+  const capitalSettings = paperCapitalSettings || loadPaperCapitalSettings();
+  const capitalSummary = buildPaperCapitalSummary(capitalSettings);
+  const capitalPayload = toStartPayloadCapitalSettings(capitalSettings);
+
   // 시작 버튼: pre-market 결과 + 선택된 risk_profile 을 backend 에 동봉.
   // 서버가 최종 거절 권한 (pre_market BLOCK / EMERGENCY_STOP 등).
   const onStart = useCallback(wrap(async () => {
     // 항상 body 생성 — risk_profile 은 반드시 carry (기본값 BALANCED).
     const body = {
       risk_profile: riskProfile,
+      // P-15: Paper 자금 설정 — 시작 시점의 localStorage / prop 값 동봉.
+      capital_settings: capitalPayload,
       ...(preMarketCheckResult != null
         ? {
             pre_market: {
@@ -232,7 +247,7 @@ export function AutoPaperLoopCard({
         : {}),
     };
     return apiClient.autoPaperStart(body);
-  }), [apiClient, refresh, preMarketCheckResult, riskProfile]);
+  }), [apiClient, refresh, preMarketCheckResult, riskProfile, capitalPayload]);
   // fix/frontend-ci-operator-and-autopaper: onStop 은 canStop 가드 *별도*.
   // 버튼 disabled 가 어떤 환경 차이로 우회되더라도 *handler 안에서* 한 번
   // 더 검증 — 호출 안전 보장. arrow function 으로 wrap 하여 apiClient.
@@ -507,6 +522,38 @@ export function AutoPaperLoopCard({
             || state === "WAITING_MARKET"
           }
         />
+      </div>
+
+      {/* P-15: 적용 자금 기준 요약 — 시작 *전* 사용자에게 노출. */}
+      <div
+        data-testid="auto-paper-capital-summary"
+        style={{
+          marginBottom: 10,
+          padding: "8px 10px",
+          background: "#f1f5f9",
+          border: "1px solid #cbd5e1",
+          borderRadius: "var(--r-md)",
+          fontSize: "var(--fs-xs)",
+          color: "var(--c-text)",
+          lineHeight: 1.6,
+        }}
+      >
+        <div style={{ fontWeight: "var(--fw-bold)", marginBottom: 2 }}>
+          적용 자금 기준
+        </div>
+        <div data-testid="auto-paper-capital-summary-text">{capitalSummary}</div>
+        <div
+          data-testid="auto-paper-allow-additional-buy-label"
+          style={{
+            marginTop: 4,
+            color: capitalSettings.allowAdditionalBuy ? "#7f1d1d" : "var(--c-text-2)",
+            fontWeight: capitalSettings.allowAdditionalBuy ? "var(--fw-bold)" : "normal",
+          }}
+        >
+          {capitalSettings.allowAdditionalBuy
+            ? "동일 종목 추가매수: 허용 — Paper 검증 전용"
+            : "동일 종목 추가매수: 비허용"}
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }} data-testid="control-buttons">

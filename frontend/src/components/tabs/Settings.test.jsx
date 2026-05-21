@@ -133,6 +133,15 @@ describe("<Settings> integrates the warning banner", () => {
       getByTestId("display-settings-card").getAttribute("data-current-font-size"),
     ).toBe("large");
   });
+
+  it("P-15: renders PaperCapitalSettingsCard within Settings tab", () => {
+    // P-15 — Paper 자금 설정 카드가 Settings 탭 상단부에 mount.
+    // 위치는 DisplaySettingsCard 와 UpdateCheckerCard 사이.
+    const { getByTestId } = render(<Settings settings={_makeSettings()} />);
+    expect(getByTestId("paper-capital-settings-card")).toBeTruthy();
+    expect(getByTestId("paper-capital-settings-intro").textContent)
+      .toMatch(/AI Paper/);
+  });
 });
 
 
