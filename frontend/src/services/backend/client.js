@@ -206,6 +206,29 @@ export const backendApi = {
         effective_per_symbol_cap_krw: effectivePerSymbolCapKrw,
       }),
     }),
+  // P-07: Paper 현금 잔고 사전 검사 (price × qty vs 남은 Paper 현금).
+  // available_cash_krw=null 이면 backend singleton 자동 사용.
+  // 종목당 한도와는 *별개* — 차단 사유 코드: INSUFFICIENT_PAPER_CASH.
+  previewPaperCashCheck: ({
+    action = "BUY",
+    symbol = null,
+    price = null,
+    quantity = 0,
+    availableCashKrw = null,
+  } = {}) =>
+    backendFetch("/api/auto-paper/cash-check/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        action,
+        symbol,
+        price,
+        quantity,
+        available_cash_krw: availableCashKrw,
+      }),
+    }),
+  paperCashState:      () => backendFetch("/api/auto-paper/cash-state"),
+  paperCashStateReset: () =>
+    backendFetch("/api/auto-paper/cash-state/reset", { method: "POST" }),
   // feat/step2-05-pre-market-gate: optional `body` carry — pre_market 결과를
   // 포함시켜 backend 가 BLOCK 검증. body 미제공 시 backwards-compat.
   autoPaperStart:         (body = null) => backendFetch(
