@@ -152,9 +152,35 @@ class _PreMarketBody(BaseModel):
     warnings:         list[str]  = Field(default_factory=list)
 
 
+class _PaperCapitalSettingsBody(BaseModel):
+    """P-15: Paper 자금 설정 carry — *advisory*.
+
+    frontend `usePaperCapitalSettings` 의 snake_case payload. backend 는 본
+    값을 *수신* + audit / status 에 carry만 하며, 기존 in-memory
+    `capital_config` (`P-01` / `P-02` / `P-03` 의 strict 옵션) 정책은 *변경
+    하지 않는다*. 즉:
+        - 입력 값을 *그대로 사용* 하지 않고
+        - 정책 위반 여부는 별도 검증 endpoint (`/paper-capital-settings/validate`) 에서
+        - loop 실 동작은 기존 capital_config 가 책임 — 본 PR 은 *carry / 검증* 만.
+
+    모든 필드는 *Paper 정책 입력값* 일 뿐 실거래 한도가 아님.
+    """
+
+    total_paper_capital:    int   | None = Field(None, ge=1)
+    per_symbol_allocation:  int   | None = Field(None, ge=1)
+    max_positions:          int   | None = Field(None, ge=1, le=100)
+    max_daily_buy_amount:   int   | None = Field(None, ge=1)
+    max_symbol_weight_pct:  float | None = Field(None, gt=0, le=1)
+    allow_additional_buy:   bool  | None = Field(None)
+
+
 class _StartBody(BaseModel):
     """`POST /auto-paper/start` body. 모두 optional — body 없이도 호출 가능."""
-    pre_market: Optional[_PreMarketBody] = None
+    pre_market:        Optional[_PreMarketBody]              = None
+    risk_profile:      Optional[str]                         = None
+    # P-15: Paper 자금 설정 advisory carry. broker 호출 / 안전 flag 변경
+    # 0건 — frontend → backend audit / status 전달용.
+    capital_settings:  Optional[_PaperCapitalSettingsBody]   = None
 
 
 @_AP.get("/status")
@@ -1668,6 +1694,48 @@ _PRICE_NOTICE = (
     "SELL stale 경고 추가 예정. 본 결과는 advisory — 실거래 권한 부여가 "
     "아닙니다."
 )
+
+
+# ============================================================================
+# P-15: Paper 자금 설정 검증 advisory endpoint (mutation 0건)
+# ============================================================================
+
+
+@_AP.post("/paper-capital-settings/validate")
+def validate_paper_capital_settings_endpoint(
+    body: _PaperCapitalSettingsBody,
+) -> dict:
+    """P-15: Paper 자금 설정 입력값 검증 — *pure*, mutation 0건.
+
+    사용자가 frontend Settings 카드에서 입력한 자금 기준을 backend 가 검증
+    + echo 한다. 본 endpoint 는:
+      - 기존 `capital_config` (P-01/P-02/P-03 의 strict 옵션) 을 *변경하지
+        않는다* (`set_*` 호출 0건)
+      - broker / OrderExecutor / route_order 호출 0건
+      - 입력값을 그대로 echo + `is_live_authorization=False` /
+        `is_order_signal=False` invariant carry
+      - 잘못된 값은 Pydantic 단에서 422 로 차단 (정수 범위 / 비율 0~1)
+    """
+    return {
+        "total_paper_capital":   body.total_paper_capital,
+        "per_symbol_allocation": body.per_symbol_allocation,
+        "max_positions":         body.max_positions,
+        "max_daily_buy_amount":  body.max_daily_buy_amount,
+        "max_symbol_weight_pct": body.max_symbol_weight_pct,
+        "allow_additional_buy":  (
+            False if body.allow_additional_buy is None
+            else bool(body.allow_additional_buy)
+        ),
+        "is_paper_only":         True,
+        "is_order_signal":       False,
+        "is_live_authorization": False,
+        "reason_message":        "Paper 자금 설정이 검증되었습니다. (advisory)",
+        "notice": (
+            "본 endpoint 는 입력 검증 / echo 만 수행합니다 — 실거래 권한 "
+            "부여가 아니며 기존 capital_config 정책도 변경하지 않습니다. "
+            "RiskManager / PermissionGate 는 계속 적용됩니다."
+        ),
+    }
 
 
 def _build_price_diagnostics(freshness) -> dict:

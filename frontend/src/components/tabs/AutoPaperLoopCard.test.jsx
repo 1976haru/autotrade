@@ -279,8 +279,9 @@ describe("<AutoPaperLoopCard>", () => {
       fireEvent.click(getByTestId("btn-start-auto-paper"));
       await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
       // 첫 호출 인자 — pre_market + risk_profile (#4-RiskProfileUI: BALANCED 기본값).
+      // P-15: capital_settings 도 carry — toMatchObject 로 부분 검증.
       const callArgs = api.autoPaperStart.mock.calls[0][0];
-      expect(callArgs).toEqual({
+      expect(callArgs).toMatchObject({
         risk_profile: "BALANCED",
         pre_market: {
           start_allowed:    true,
@@ -300,8 +301,9 @@ describe("<AutoPaperLoopCard>", () => {
       expect(queryByTestId("auto-paper-premarket-blocked-banner")).toBeNull();
       fireEvent.click(getByTestId("btn-start-auto-paper"));
       await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
-      // #4-RiskProfileUI: pre_market=null 이라도 body 는 risk_profile 만 포함.
-      expect(api.autoPaperStart.mock.calls[0][0]).toEqual({
+      // #4-RiskProfileUI: pre_market=null 이라도 body 는 risk_profile 포함.
+      // P-15: capital_settings 도 carry — toMatchObject 로 부분 검증.
+      expect(api.autoPaperStart.mock.calls[0][0]).toMatchObject({
         risk_profile: "BALANCED",
       });
     });
@@ -940,7 +942,7 @@ describe("<AutoPaperLoopCard>", () => {
       fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
       await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
       expect(api.autoPaperStart.mock.calls[0][0])
-        .toEqual({ risk_profile: "BALANCED" });
+        .toMatchObject({ risk_profile: "BALANCED" });
     });
 
     it("CONSERVATIVE selection is forwarded to start payload", async () => {
@@ -951,7 +953,7 @@ describe("<AutoPaperLoopCard>", () => {
       fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
       await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
       expect(api.autoPaperStart.mock.calls[0][0])
-        .toEqual({ risk_profile: "CONSERVATIVE" });
+        .toMatchObject({ risk_profile: "CONSERVATIVE" });
     });
 
     it("AGGRESSIVE selection is forwarded to start payload", async () => {
@@ -962,7 +964,7 @@ describe("<AutoPaperLoopCard>", () => {
       fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
       await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
       expect(api.autoPaperStart.mock.calls[0][0])
-        .toEqual({ risk_profile: "AGGRESSIVE" });
+        .toMatchObject({ risk_profile: "AGGRESSIVE" });
     });
 
     it("selector + start payload include risk_profile alongside pre_market", async () => {
@@ -1200,5 +1202,168 @@ describe("<AutoPaperLoopCard> — stop button state matrix", () => {
     expect(text).not.toContain("실거래");
     expect(text.toLowerCase()).not.toContain("place order");
     expect(text.toLowerCase()).not.toContain("enable_");
+  });
+});
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// P-15: Paper 자금 설정 carry — summary + start payload
+// ────────────────────────────────────────────────────────────────────────────
+
+
+describe("<AutoPaperLoopCard> — P-15 capital settings", () => {
+  afterEach(cleanup);
+
+  it("default 자금 기준 요약이 화면에 표시됨", async () => {
+    const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    const summary = screen.getByTestId("auto-paper-capital-summary");
+    expect(summary.textContent).toMatch(/적용 자금 기준/);
+    const text = screen.getByTestId("auto-paper-capital-summary-text").textContent;
+    expect(text).toMatch(/시드머니/);
+    expect(text).toMatch(/종목당/);
+    expect(text).toMatch(/최대/);
+    expect(text).toMatch(/일일/);
+    expect(text).toMatch(/종목비중/);
+  });
+
+  it("allow_additional_buy=false → '비허용' 라벨 표시", async () => {
+    const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+    render(
+      <AutoPaperLoopCard
+        apiClient={api}
+        pollIntervalMs={0}
+        paperCapitalSettings={{
+          totalPaperCapital: 10_000_000,
+          perSymbolAllocation: 1_000_000,
+          maxPositions: 5,
+          maxDailyBuyAmount: 3_000_000,
+          maxSymbolWeightPct: 0.2,
+          allowAdditionalBuy: false,
+        }}
+      />,
+    );
+    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    expect(screen.getByTestId("auto-paper-allow-additional-buy-label").textContent)
+      .toMatch(/비허용/);
+  });
+
+  it("allow_additional_buy=true → 'Paper 검증 전용' 경고 표시", async () => {
+    const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+    render(
+      <AutoPaperLoopCard
+        apiClient={api}
+        pollIntervalMs={0}
+        paperCapitalSettings={{
+          totalPaperCapital: 10_000_000,
+          perSymbolAllocation: 1_000_000,
+          maxPositions: 5,
+          maxDailyBuyAmount: 3_000_000,
+          maxSymbolWeightPct: 0.2,
+          allowAdditionalBuy: true,
+        }}
+      />,
+    );
+    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    const label = screen.getByTestId("auto-paper-allow-additional-buy-label");
+    expect(label.textContent).toMatch(/허용/);
+    expect(label.textContent).toMatch(/Paper 검증 전용/);
+  });
+
+  it("start payload 에 capital_settings 6개 키 포함", async () => {
+    const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+    render(
+      <AutoPaperLoopCard
+        apiClient={api}
+        pollIntervalMs={0}
+        paperCapitalSettings={{
+          totalPaperCapital: 30_000_000,
+          perSymbolAllocation: 2_000_000,
+          maxPositions: 8,
+          maxDailyBuyAmount: 5_000_000,
+          maxSymbolWeightPct: 0.10,
+          allowAdditionalBuy: true,
+        }}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-start-auto-paper").disabled).toBe(false),
+    );
+    fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
+    await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
+    const body = api.autoPaperStart.mock.calls[0][0];
+    expect(body.capital_settings).toEqual({
+      total_paper_capital:    30_000_000,
+      per_symbol_allocation:  2_000_000,
+      max_positions:          8,
+      max_daily_buy_amount:   5_000_000,
+      max_symbol_weight_pct:  0.10,
+      allow_additional_buy:   true,
+    });
+  });
+
+  it("prop 없으면 localStorage 에서 로드 (default snake_case payload)", async () => {
+    const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-start-auto-paper").disabled).toBe(false),
+    );
+    fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
+    await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
+    const body = api.autoPaperStart.mock.calls[0][0];
+    expect(body.capital_settings).toMatchObject({
+      total_paper_capital:    10_000_000,
+      per_symbol_allocation:  1_000_000,
+      max_positions:          5,
+      max_daily_buy_amount:   3_000_000,
+      max_symbol_weight_pct:  0.2,
+      allow_additional_buy:   false,
+    });
+  });
+
+  it("P-15: 추가매수 ON 카드여도 '실거래 활성화' / Place Order / ENABLE_* 라벨 0건", async () => {
+    const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+    const { container } = render(
+      <AutoPaperLoopCard
+        apiClient={api}
+        pollIntervalMs={0}
+        paperCapitalSettings={{
+          totalPaperCapital: 10_000_000,
+          perSymbolAllocation: 1_000_000,
+          maxPositions: 5,
+          maxDailyBuyAmount: 3_000_000,
+          maxSymbolWeightPct: 0.2,
+          allowAdditionalBuy: true,
+        }}
+      />,
+    );
+    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    const banned = [
+      "Place Order", "지금 매수", "지금 매도",
+      "실거래 시작", "실거래 활성화 시작", "실거래 활성화 켜기",
+      "ENABLE_LIVE_TRADING=true", "ENABLE_AI_EXECUTION=true",
+    ];
+    for (const b of banned) {
+      expect(container.textContent).not.toContain(b);
+    }
+  });
+
+  it("정지 버튼 회귀 — RUNNING 시 disabled=false 유지 (P-15 영향 없음)", async () => {
+    const api = _mockApi({ state: "RUNNING", cycle_count: 3 });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-stop-auto-paper").disabled).toBe(false),
+    );
+    fireEvent.click(screen.getByTestId("btn-stop-auto-paper"));
+    await waitFor(() => expect(api.autoPaperStop).toHaveBeenCalledTimes(1));
+  });
+
+  it("정지 버튼 회귀 — PAUSED 시 disabled=true 유지", async () => {
+    const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-stop-auto-paper").disabled).toBe(true),
+    );
   });
 });
