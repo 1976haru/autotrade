@@ -653,6 +653,61 @@ def is_allowed_max_concurrent_positions(value: int) -> bool:
         return False
 
 
+# ============================================================================
+# P-10: 일일 최대 신규 매수금액 한도 — capital_config 측 helper
+# ============================================================================
+#
+# 핵심 check 함수는 `app/risk/loss_limits.py::check_daily_buy_limit`. 본 모듈
+# 은 *resolve* layer — 사용자 수동값 / P-09 risk profile 기반 / 시스템
+# default 의 우선순위 단일 진실 (사용자 요청서 §2).
+
+# system 기본값 — 사용자 요청서 §2 권장.
+DEFAULT_DAILY_BUY_LIMIT_KRW: int = 3_000_000
+
+
+def resolve_daily_buy_limit(
+    *,
+    manual_daily_buy_limit_krw: int | None = None,
+    risk_profile:               str | None = None,
+    total_paper_capital_krw:    int | None = None,
+) -> tuple[int, str]:
+    """일일 매수 한도 resolve — 우선순위 (사용자 요청서 §2):
+
+      1. 사용자 수동값 (`manual_daily_buy_limit_krw` 가 > 0 일 때)
+      2. P-09 risk profile 기반 자동값
+         (`capital_allocation_for(profile, total_paper_capital_krw).max_daily_buy_amount`)
+      3. 시스템 기본값 (`DEFAULT_DAILY_BUY_LIMIT_KRW`)
+
+    Returns:
+        tuple(amount_krw, source) — source 는 "manual" / "risk_profile" /
+        "system_default" / "fallback" 중 하나.
+    """
+    # 1. 수동값.
+    if manual_daily_buy_limit_krw is not None:
+        try:
+            v = int(manual_daily_buy_limit_krw)
+        except (TypeError, ValueError):
+            v = 0
+        if v > 0:
+            return v, "manual"
+
+    # 2. P-09 risk profile.
+    if risk_profile is not None and total_paper_capital_krw is not None:
+        try:
+            from app.agents.risk_profile import capital_allocation_for
+            r = capital_allocation_for(
+                risk_profile,
+                total_paper_capital_krw=int(total_paper_capital_krw),
+            )
+            if r.max_daily_buy_amount_krw > 0:
+                return r.max_daily_buy_amount_krw, "risk_profile"
+        except Exception:  # noqa: BLE001
+            pass
+
+    # 3. 시스템 기본값.
+    return DEFAULT_DAILY_BUY_LIMIT_KRW, "system_default"
+
+
 __all__ = [
     # P-01
     "DEFAULT_PAPER_INITIAL_CASH",
@@ -682,4 +737,7 @@ __all__ = [
     "InvalidMaxConcurrentPositionsError",
     "set_max_concurrent_positions",
     "is_allowed_max_concurrent_positions",
+    # P-10
+    "DEFAULT_DAILY_BUY_LIMIT_KRW",
+    "resolve_daily_buy_limit",
 ]
