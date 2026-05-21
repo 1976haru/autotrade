@@ -33,8 +33,6 @@ from app.auto_paper.affordability import (
 )
 from app.auto_paper.capital_config import (
     reset_paper_capital_for_tests,
-    set_paper_capital_config,
-    set_per_symbol_allocation,
 )
 from app.db.base import Base
 from app.db.session import get_db

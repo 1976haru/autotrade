@@ -28,6 +28,7 @@ from app.api.routes_market_state import router as market_state_router
 from app.api.routes_analytics import router as analytics_router
 from app.api.routes_monitoring import router as monitoring_router
 from app.api.routes_paper import router as paper_router
+from app.api.routes_system import router as system_router
 from app.api.routes_reconciliation import router as reconciliation_router
 from app.api.routes_risk import router as risk_router
 from app.api.routes_futures import router as futures_router
@@ -157,10 +158,29 @@ async def lifespan(_app: FastAPI):
             "/api/status, /api/kis-paper/readiness"
         )
 
+    # Emit operator-facing event — backend ready.
+    try:
+        from app.system.event_log import log_event
+        log_event(
+            level="INFO", category="SYSTEM", code="BACKEND_READY",
+            message="Backend lifespan started — accepting requests.",
+            details={"migration_nonblocking": cfg.migration_nonblocking},
+        )
+    except Exception:  # noqa: BLE001 — event log 실패가 startup 을 막지 않음.
+        pass
+
     try:
         yield
     finally:
         _startup_logger.info("[shutdown] lifespan exit")
+        try:
+            from app.system.event_log import log_event
+            log_event(
+                level="INFO", category="SYSTEM", code="BACKEND_SHUTDOWN",
+                message="Backend lifespan exiting.",
+            )
+        except Exception:  # noqa: BLE001
+            pass
         if poller_starter_task is not None and not poller_starter_task.done():
             poller_starter_task.cancel()
             try:
@@ -223,6 +243,7 @@ app.include_router(themes_router, prefix="/api")
 app.include_router(governance_router, prefix="/api")
 app.include_router(explainability_router, prefix="/api")
 app.include_router(paper_router, prefix="/api")
+app.include_router(system_router, prefix="/api")
 app.include_router(shadow_router, prefix="/api")
 app.include_router(ai_assist_router, prefix="/api")
 app.include_router(ai_execution_router, prefix="/api")
