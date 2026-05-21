@@ -64,6 +64,7 @@ from app.auto_paper.affordability import (
 )
 from app.auto_paper.capital_state import (
     check_buy_cash_sufficient,
+    check_duplicate_position_buy,
     get_capital_state,
 )
 from app.agents.risk_profile import (
@@ -81,6 +82,8 @@ from app.risk.position_limits import (
     check_symbol_weight_limit,
 )
 from app.auto_paper.capital_config import (
+    DEFAULT_ALLOW_ADDITIONAL_BUY,
+    resolve_additional_buy_policy,
     resolve_daily_buy_limit,
     resolve_symbol_weight_limit_pct,
 )
@@ -1392,6 +1395,99 @@ def resolve_symbol_weight_limit_endpoint(body: _ResolveSymbolWeightBody) -> dict
         "is_order_signal":        False,
         "notice": (
             "Paper 전용 advisory — 실거래 한도와 결합되지 않습니다."
+        ),
+    }
+
+
+# ============================================================================
+# P-12: 중복 보유 방지 — preview + resolve
+# ============================================================================
+
+
+class _DuplicatePositionPreviewBody(BaseModel):
+    """advisory preview — 중복 보유 차단 사전 시뮬.
+
+    caller 가 VirtualPosition / OrderAuditLog 에서 *현재 보유 수량* 을 집계 후
+    `current_position_quantity` 로 전달. `allow_additional_buy` 미주입 시
+    resolve 흐름 (manual → system default) 자동 적용.
+    """
+
+    side:                        str           = Field("BUY")
+    symbol:                      str           = Field(..., description="종목 코드")
+    current_position_quantity:   int           = Field(0)
+    allow_additional_buy:        bool | None   = Field(
+        None,
+        description="None → resolve_additional_buy_policy 자동 적용 (default False).",
+    )
+    manual_allow_additional_buy: bool | None   = Field(None)
+
+
+@_AP.post("/duplicate-position/preview")
+def preview_duplicate_position_endpoint(
+    body: _DuplicatePositionPreviewBody,
+) -> dict:
+    """P-12: 동일 종목 추가 BUY 사전 advisory check.
+
+    Returns:
+        DuplicatePositionResult.to_dict() — allowed / reason_code /
+        reason_message / symbol / current_position_quantity /
+        allow_additional_buy carry. 추가로 `resolved_source` 안내.
+
+    호출 순서 (사용자 요청서 §5):
+      현재가 → P-08 sizing → P-06 → *P-12 (본 endpoint)* → P-07 cash →
+      P-10 daily → P-11 weight → RiskManager → PermissionGate.
+
+    broker / route_order 호출 0건, *상태 변경 0건*.
+    """
+    if body.allow_additional_buy is not None:
+        allow = bool(body.allow_additional_buy)
+        source = "explicit"
+    else:
+        allow, source = resolve_additional_buy_policy(
+            manual_allow_additional_buy=body.manual_allow_additional_buy,
+        )
+    result = check_duplicate_position_buy(
+        side=body.side,
+        symbol=body.symbol,
+        current_position_quantity=int(body.current_position_quantity),
+        allow_additional_buy=allow,
+    )
+    return {
+        **result.to_dict(),
+        "resolved_source":   source,
+        "default_allow":     DEFAULT_ALLOW_ADDITIONAL_BUY,
+        "notice": (
+            "본 결과는 advisory — Paper 전용이며 실거래 결정과 결합되지 않습니다. "
+            "allow_additional_buy=true 도 실거래 권한 부여가 아니며 P-07 cash / "
+            "P-10 daily / P-11 weight / RiskManager / PermissionGate 는 별도 적용됩니다."
+        ),
+    }
+
+
+class _ResolveAdditionalBuyBody(BaseModel):
+    """추가 BUY 허용 resolve — manual → system default."""
+
+    manual_allow_additional_buy: bool | None = Field(None)
+
+
+@_AP.post("/duplicate-position/resolve")
+def resolve_additional_buy_policy_endpoint(
+    body: _ResolveAdditionalBuyBody,
+) -> dict:
+    """우선순위: manual → system default (False)."""
+    allow, source = resolve_additional_buy_policy(
+        manual_allow_additional_buy=body.manual_allow_additional_buy,
+    )
+    return {
+        "allow_additional_buy":     bool(allow),
+        "source":                   source,
+        "default_allow":            DEFAULT_ALLOW_ADDITIONAL_BUY,
+        "is_paper_only":            True,
+        "is_live_authorization":    False,
+        "is_order_signal":          False,
+        "notice": (
+            "Paper 전용 advisory — 실거래 권한 부여가 아닙니다. 공격형 risk "
+            "profile 도 자동 허용 사용 안 함 (별도 명시 옵트인 필요)."
         ),
     }
 

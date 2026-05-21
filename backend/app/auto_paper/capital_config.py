@@ -675,6 +675,41 @@ DEFAULT_DAILY_BUY_LIMIT_KRW: int = 3_000_000
 # 시스템 기본값 — 사용자 요청서 §2 권장 (20%).
 DEFAULT_MAX_SYMBOL_WEIGHT_PCT: float = 0.20
 
+
+# ============================================================================
+# P-12: 중복 보유 방지 — 추가 BUY 허용 정책 helper
+# ============================================================================
+#
+# 핵심 check 함수는 `app/auto_paper/capital_state.py::check_duplicate_position_buy`.
+# 본 모듈은 *resolve* layer — 사용자 수동값 / 시스템 기본값 우선순위.
+# 사용자 요청서 §2 명시: 공격형 risk profile 도 *자동 허용 안 함* — 추가
+# BUY 허용은 *별도 명시 설정* 만 가능.
+
+# 시스템 기본값 — 사용자 요청서 §2 안전 우선 (False).
+DEFAULT_ALLOW_ADDITIONAL_BUY:    bool = False
+DEFAULT_ALLOW_AVERAGING_DOWN:    bool = False
+DEFAULT_ALLOW_PYRAMIDING:        bool = False
+
+
+def resolve_additional_buy_policy(
+    *,
+    manual_allow_additional_buy: bool | None = None,
+) -> tuple[bool, str]:
+    """추가 BUY 허용 resolve — 사용자 요청서 §2 우선순위:
+
+      1. 사용자 수동 설정 (`manual_allow_additional_buy` 가 명시 지정)
+      2. 시스템 기본값 (`DEFAULT_ALLOW_ADDITIONAL_BUY` = False)
+
+    *risk profile 은 자동 허용 사용하지 않는다* — 공격형 도 추가 BUY 허용
+    별도 명시 옵트인 필요 (사용자 요청서 §2 주의 — 물타기 위험).
+
+    Returns:
+        tuple(allowed, source) — source 는 "manual" / "system_default".
+    """
+    if manual_allow_additional_buy is not None:
+        return bool(manual_allow_additional_buy), "manual"
+    return DEFAULT_ALLOW_ADDITIONAL_BUY, "system_default"
+
 # P-09 risk profile 기반 종목별 비중 — 사용자 요청서 §2 권장 매핑.
 # (P-09 의 per_symbol_allocation_ratio 과 *동일 값* 이라 그것을 직접 carry.)
 _RISK_PROFILE_SYMBOL_WEIGHT_PCT: dict[str, float] = {
@@ -796,4 +831,9 @@ __all__ = [
     # P-11
     "DEFAULT_MAX_SYMBOL_WEIGHT_PCT",
     "resolve_symbol_weight_limit_pct",
+    # P-12
+    "DEFAULT_ALLOW_ADDITIONAL_BUY",
+    "DEFAULT_ALLOW_AVERAGING_DOWN",
+    "DEFAULT_ALLOW_PYRAMIDING",
+    "resolve_additional_buy_policy",
 ]
