@@ -66,6 +66,10 @@ from app.auto_paper.capital_state import (
     check_buy_cash_sufficient,
     get_capital_state,
 )
+from app.auto_paper.position_sizer import (
+    QuantityByPriceVerdict,
+    compute_paper_quantity_by_price,
+)
 from app.core.config import get_settings
 
 
@@ -1000,6 +1004,65 @@ def reset_paper_cash_state_endpoint() -> dict:
         **snap.to_dict(),
         "notice": (
             "Paper 현금 잔고 리셋 완료 — 누적 BUY/SELL 카운트와 invested 초기화."
+        ),
+    }
+
+
+# ============================================================================
+# P-08: Paper position sizing by price (preview)
+# ============================================================================
+
+
+class _SizingPreviewBody(BaseModel):
+    """advisory preview — `quantity = floor(max_amount / price)`.
+
+    `max_amount_krw` 미주입 시 *현재 PaperCapitalConfig*  의
+    `effective_per_symbol_cap_krw` 자동 사용.
+    """
+
+    action:          str            = Field("BUY", description="caller 의 매매 의도 — BUY 만 sizing")
+    symbol:          str | None     = Field(None, description="후보 종목 코드")
+    price:           float | None   = Field(None, description="1주 가격 (KRW)")
+    max_amount_krw:  int | None     = Field(
+        None,
+        description="종목당 투자금 한도 (KRW). None 이면 현재 PaperCapitalConfig 자동 사용.",
+    )
+
+
+@_AP.post("/sizing/preview")
+def preview_paper_sizing_endpoint(body: _SizingPreviewBody) -> dict:
+    """P-08: Paper BUY 후보의 *수량 계산* 사전 advisory.
+
+    Returns:
+        QuantityByPriceResult.to_dict() — verdict / quantity / notional_krw /
+        remainder_krw / reason_code / reason_ko carry.
+
+    호출 순서 (사용자 요청서 §11):
+      현재가 확인 → 종목당 투자금 기준 quantity 계산 (본 endpoint) →
+      quantity ≥ 1 확인 → Paper 현금 잔고 확인 (P-07) → RiskManager →
+      PermissionGate → VirtualOrder / PaperOrder 후보 생성.
+
+    broker / route_order 호출 0건. *상태 변경 0건* — 단순 계산만.
+    """
+    cfg = get_paper_capital_config()
+    cap = (
+        int(body.max_amount_krw)
+        if body.max_amount_krw is not None
+        else int(cfg.effective_per_symbol_cap_krw)
+    )
+    result = compute_paper_quantity_by_price(
+        action=body.action,
+        symbol=body.symbol,
+        price=body.price,
+        max_amount_krw=cap,
+    )
+    return {
+        **result.to_dict(),
+        "allowed_reason_codes": [v.value for v in QuantityByPriceVerdict],
+        "notice": (
+            "본 결과는 advisory — Paper 전용이며 실거래 주문 결정과 결합되지 "
+            "않습니다. 다음 단계는 P-07 현금 잔고 검사 → RiskManager → "
+            "PermissionGate."
         ),
     }
 
