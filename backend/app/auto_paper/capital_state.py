@@ -611,6 +611,353 @@ def reset_capital_state_for_tests(initial_cash_krw: int | None = None) -> None:
     get_capital_state().reset(initial_cash_krw=int(initial_cash_krw))
 
 
+# ============================================================================
+# P-12: 중복 보유 방지 (Duplicate Position Buy Guard) — Paper advisory layer
+# ============================================================================
+#
+# 이미 보유 중인 종목에 대한 추가 BUY 진입을 *기본 차단* 한다. 향후 물타기/
+# 추가매수 전략을 위해 `allow_additional_buy` 설정으로 옵트인 가능. 본 모듈
+# 은 *순수 함수* — broker / route_order / DB / 외부 호출 0건.
+#
+# 사용자 요청서 §1 정책:
+#   기본값: allow_additional_buy = False
+#   동일 종목 보유 중 + 옵트인 안 함 → DUPLICATE_POSITION_BUY_BLOCKED
+#
+# 호출 순서 (사용자 요청서 §5):
+#   현재가 → P-08 sizing → P-06 → *P-12 (본 함수)* → P-07 cash → P-10 daily
+#   → P-11 weight → RiskManager → PermissionGate → VirtualOrder.
+#
+# CLAUDE.md 절대 원칙 (테스트로 lock):
+# - broker / OrderExecutor / route_order import 0건
+# - settings.enable_*_trading mutation 0건
+# - DuplicatePositionResult.is_paper_only = True 영구
+# - is_order_signal / is_live_authorization = False 영구
+# - `allow_additional_buy=True` 도 *실거래 권한 부여 아님* (Paper 한정)
+
+
+# reason_code 상수.
+DUPLICATE_POSITION_NO_EXISTING            = "NO_EXISTING_POSITION"
+DUPLICATE_POSITION_ADDITIONAL_BUY_ALLOWED = "ADDITIONAL_BUY_ALLOWED"
+DUPLICATE_POSITION_BUY_BLOCKED            = "DUPLICATE_POSITION_BUY_BLOCKED"
+DUPLICATE_POSITION_CHECK_NOT_APPLICABLE   = "DUPLICATE_POSITION_CHECK_NOT_APPLICABLE"
+DUPLICATE_POSITION_INVALID_SYMBOL         = "INVALID_SYMBOL"
+DUPLICATE_POSITION_INVALID_QUANTITY       = "INVALID_POSITION_QUANTITY"
+
+
+@dataclass(frozen=True)
+class DuplicatePositionResult:
+    """중복 보유 검사 결과 — *advisory*, broker 호출 0건.
+
+    `is_paper_only=True` / `is_order_signal=False` / `is_live_authorization=
+    False` 영구 (dataclass __post_init__ 가드).
+    """
+
+    allowed:                    bool
+    reason_code:                str
+    reason_message:             str
+    symbol:                     str | None = None
+    side:                       str | None = None
+    current_position_quantity:  int = 0
+    allow_additional_buy:       bool = False
+
+    is_paper_only:              bool = True
+    is_order_signal:            bool = False
+    is_live_authorization:      bool = False
+
+    def __post_init__(self) -> None:
+        if self.is_paper_only is not True:
+            raise ValueError(
+                "DuplicatePositionResult.is_paper_only must be True"
+            )
+        if self.is_order_signal is not False:
+            raise ValueError(
+                "DuplicatePositionResult.is_order_signal must be False"
+            )
+        if self.is_live_authorization is not False:
+            raise ValueError(
+                "DuplicatePositionResult.is_live_authorization must be False"
+            )
+
+    @property
+    def blocked(self) -> bool:
+        return not self.allowed
+
+    @property
+    def is_duplicate_blocked(self) -> bool:
+        return self.reason_code == DUPLICATE_POSITION_BUY_BLOCKED
+
+    @property
+    def is_not_applicable(self) -> bool:
+        return self.reason_code == DUPLICATE_POSITION_CHECK_NOT_APPLICABLE
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "allowed":                   self.allowed,
+            "reason_code":               self.reason_code,
+            "reason_message":            self.reason_message,
+            "symbol":                    self.symbol,
+            "side":                      self.side,
+            "current_position_quantity": int(self.current_position_quantity),
+            "allow_additional_buy":      bool(self.allow_additional_buy),
+            "blocked":                   self.blocked,
+            "is_duplicate_blocked":      self.is_duplicate_blocked,
+            "is_not_applicable":         self.is_not_applicable,
+            "is_paper_only":             self.is_paper_only,
+            "is_order_signal":           self.is_order_signal,
+            "is_live_authorization":     self.is_live_authorization,
+        }
+
+
+def check_duplicate_position_buy(
+    *,
+    side:                       str | None,
+    symbol:                     str | None,
+    current_position_quantity:  int | float,
+    allow_additional_buy:       bool = False,
+) -> DuplicatePositionResult:
+    """이미 보유 중인 종목 추가 BUY 사전 검사 — *advisory*.
+
+    실행 순서 (reason_code 우선순위 — 첫 매칭 반환):
+      1. SELL / HOLD / NO_ACTION              → NOT_APPLICABLE
+      2. symbol 이 비어있음                    → INVALID_SYMBOL
+      3. current_position_quantity 가 음수      → INVALID_POSITION_QUANTITY
+      4. current_position_quantity == 0       → NO_EXISTING_POSITION (allowed)
+      5. current_position_quantity > 0
+         + allow_additional_buy=True          → ADDITIONAL_BUY_ALLOWED (allowed)
+      6. current_position_quantity > 0
+         + allow_additional_buy=False         → DUPLICATE_POSITION_BUY_BLOCKED
+
+    Args:
+        side: 매매 의도. BUY 만 검사. 그 외 → NOT_APPLICABLE.
+        symbol: 후보 종목 코드 — 필수.
+        current_position_quantity: 현재 해당 symbol 의 Paper 보유 *open 수량*.
+            VirtualPosition / OrderAuditLog FIFO 누적 등 caller 가 계산.
+            **0 = 보유 안 함**, **> 0 = 보유 중**, 음수는 invalid.
+        allow_additional_buy: 동일 종목 추가 매수 허용 옵트인. 기본 False.
+            *True 도 실거래 권한 부여 아님* — RiskManager / PermissionGate /
+            P-07 cash / P-10 daily / P-11 weight 모두 *별도* 적용됨.
+
+    Returns:
+        DuplicatePositionResult.
+    """
+    # 1. NOT APPLICABLE — BUY 가 아니면 한도 검사 무관.
+    if not _is_buy_action(side):
+        return DuplicatePositionResult(
+            allowed=True,
+            reason_code=DUPLICATE_POSITION_CHECK_NOT_APPLICABLE,
+            reason_message=(
+                "BUY 가 아니므로 중복 보유 차단을 적용하지 않습니다."
+            ),
+            symbol=symbol, side=side,
+            current_position_quantity=0,
+            allow_additional_buy=bool(allow_additional_buy),
+        )
+
+    # 2. symbol 검증 — 필수.
+    sym = (symbol or "").strip() if isinstance(symbol, str) else ""
+    if not sym:
+        return DuplicatePositionResult(
+            allowed=False,
+            reason_code=DUPLICATE_POSITION_INVALID_SYMBOL,
+            reason_message=(
+                "종목 코드가 비어 있어 중복 보유 여부를 평가할 수 없습니다."
+            ),
+            symbol=symbol, side=side,
+            current_position_quantity=0,
+            allow_additional_buy=bool(allow_additional_buy),
+        )
+
+    # 3. current_position_quantity 검증.
+    if isinstance(current_position_quantity, bool):
+        # bool 은 int 의 서브타입 — 의도치 않은 입력 거부.
+        return DuplicatePositionResult(
+            allowed=False,
+            reason_code=DUPLICATE_POSITION_INVALID_QUANTITY,
+            reason_message=(
+                f"보유 수량 {current_position_quantity!r} 의 타입이 정수가 "
+                "아니라 평가할 수 없습니다."
+            ),
+            symbol=sym, side=side,
+            current_position_quantity=0,
+            allow_additional_buy=bool(allow_additional_buy),
+        )
+    if not isinstance(current_position_quantity, (int, float)):
+        return DuplicatePositionResult(
+            allowed=False,
+            reason_code=DUPLICATE_POSITION_INVALID_QUANTITY,
+            reason_message=(
+                f"보유 수량 {current_position_quantity!r} 가 숫자가 아니라 "
+                "평가할 수 없습니다."
+            ),
+            symbol=sym, side=side,
+            current_position_quantity=0,
+            allow_additional_buy=bool(allow_additional_buy),
+        )
+    try:
+        qf = float(current_position_quantity)
+    except (TypeError, ValueError):
+        qf = -1.0
+    if qf != qf or qf in (float("inf"), float("-inf")):
+        return DuplicatePositionResult(
+            allowed=False,
+            reason_code=DUPLICATE_POSITION_INVALID_QUANTITY,
+            reason_message=(
+                f"보유 수량 {current_position_quantity!r} 가 유효한 숫자가 아닙니다."
+            ),
+            symbol=sym, side=side,
+            current_position_quantity=0,
+            allow_additional_buy=bool(allow_additional_buy),
+        )
+    if qf < 0:
+        return DuplicatePositionResult(
+            allowed=False,
+            reason_code=DUPLICATE_POSITION_INVALID_QUANTITY,
+            reason_message=(
+                f"보유 수량 {current_position_quantity!r} 가 음수라 평가할 수 없습니다."
+            ),
+            symbol=sym, side=side,
+            current_position_quantity=0,
+            allow_additional_buy=bool(allow_additional_buy),
+        )
+
+    qty_int = int(qf)
+
+    # 4. 보유 수량 0 — 신규 BUY 가능.
+    if qty_int == 0:
+        return DuplicatePositionResult(
+            allowed=True,
+            reason_code=DUPLICATE_POSITION_NO_EXISTING,
+            reason_message=(
+                f"{sym}은 현재 보유 중이 아니므로 신규 BUY 가 가능합니다."
+            ),
+            symbol=sym, side=side,
+            current_position_quantity=0,
+            allow_additional_buy=bool(allow_additional_buy),
+        )
+
+    # 5. 보유 중 + 옵트인 허용 → ALLOW (다른 안전 layer 는 별도 적용).
+    if allow_additional_buy:
+        return DuplicatePositionResult(
+            allowed=True,
+            reason_code=DUPLICATE_POSITION_ADDITIONAL_BUY_ALLOWED,
+            reason_message=(
+                f"{sym}은 이미 보유 중인 종목이지만 추가 매수 허용 설정"
+                f"(allow_additional_buy=true)으로 BUY 가 가능합니다 "
+                f"(현재 보유 {qty_int}주). 단, 현금 / 일일 한도 / 종목 비중 / "
+                "RiskManager / PermissionGate 등 다른 안전 검사는 별도로 적용됩니다."
+            ),
+            symbol=sym, side=side,
+            current_position_quantity=qty_int,
+            allow_additional_buy=True,
+        )
+
+    # 6. 보유 중 + 옵트인 안 함 → DUPLICATE_POSITION_BUY_BLOCKED.
+    return DuplicatePositionResult(
+        allowed=False,
+        reason_code=DUPLICATE_POSITION_BUY_BLOCKED,
+        reason_message=(
+            f"이미 보유 중인 종목이라 추가 매수 차단 — {sym}은 이미 Paper "
+            f"포지션에 보유 중입니다 (현재 {qty_int}주). 현재 설정에서는 동일 "
+            "종목 추가 매수가 허용되지 않아 BUY 를 차단합니다."
+        ),
+        symbol=sym, side=side,
+        current_position_quantity=qty_int,
+        allow_additional_buy=False,
+    )
+
+
+# ── 현재 종목 *수량* 계산 helper ────────────────────────────────────────────
+#
+# 사용자 요청서 §4: 보유 중 판단 기준은 *open quantity > 0*.
+# accepted/filled BUY 수량 합 − accepted/filled SELL 수량 합. 음수면 0 clamp.
+
+_ACCEPTED_POSITION_STATUSES_P12 = frozenset({
+    "FILLED", "ACCEPTED", "EXECUTED", "COMPLETED", "CONFIRMED",
+    "filled", "accepted", "executed", "completed", "confirmed",
+})
+_REJECTED_POSITION_STATUSES_P12 = frozenset({
+    "REJECTED", "CANCELLED", "CANCELED", "BLOCKED", "EXPIRED", "FAILED",
+    "rejected", "cancelled", "canceled", "blocked", "expired", "failed",
+})
+
+
+def calculate_current_position_quantity(
+    orders,
+    *,
+    symbol: str,
+) -> int:
+    """현재 해당 symbol 의 *Paper open 수량* — accepted/filled BUY − SELL.
+
+    사용자 요청서 §4 기준:
+    - accepted / filled BUY 수량 합산 − accepted / filled SELL 수량 합산.
+    - rejected / cancelled / blocked / pending / status 미상 → 제외.
+    - SELL 로 전량 청산 시 0 clamp.
+
+    Args:
+        orders: iterable of dict / dataclass / Pydantic-like objects.
+            각 entry 필드:
+              symbol, side / direction / action, status / state,
+              quantity / qty / filled_quantity / fill_quantity.
+        symbol: 평가 대상 종목 코드.
+
+    Returns:
+        int — open quantity (≥ 0).
+    """
+    if not orders or not symbol:
+        return 0
+
+    def _get(o, key, default=None):
+        if isinstance(o, dict):
+            return o.get(key, default)
+        return getattr(o, key, default)
+
+    def _side(o):
+        return (
+            _get(o, "side") or _get(o, "direction") or _get(o, "action")
+            or _get(o, "trade_side")
+        )
+
+    def _status(o):
+        return _get(o, "status") or _get(o, "state") or _get(o, "order_status")
+
+    def _qty(o) -> int:
+        for key in ("filled_quantity", "fill_quantity",
+                    "quantity", "qty"):
+            v = _get(o, key)
+            if v is not None:
+                try:
+                    return int(float(v))
+                except (TypeError, ValueError):
+                    pass
+        return 0
+
+    sym = str(symbol).strip()
+    buy_qty = 0
+    sell_qty = 0
+    for o in orders:
+        if o is None:
+            continue
+        osym = _get(o, "symbol")
+        if not osym or str(osym).strip() != sym:
+            continue
+        status_raw = _status(o)
+        if status_raw is None:
+            continue
+        if str(status_raw) in _REJECTED_POSITION_STATUSES_P12:
+            continue
+        if str(status_raw) not in _ACCEPTED_POSITION_STATUSES_P12:
+            continue
+        side_str = (_side(o) or "").strip().lower()
+        q = max(_qty(o), 0)
+        if side_str in _BUY_TOKENS:
+            buy_qty += q
+        elif side_str in {
+            "sell", "close", "close_long", "exit", "sell_to_close",
+        }:
+            sell_qty += q
+    return max(buy_qty - sell_qty, 0)
+
+
 __all__ = [
     "CashCheckVerdict",
     "CashCheckResult",
@@ -622,4 +969,14 @@ __all__ = [
     "check_buy_cash_sufficient",
     "get_capital_state",
     "reset_capital_state_for_tests",
+    # P-12
+    "DUPLICATE_POSITION_NO_EXISTING",
+    "DUPLICATE_POSITION_ADDITIONAL_BUY_ALLOWED",
+    "DUPLICATE_POSITION_BUY_BLOCKED",
+    "DUPLICATE_POSITION_CHECK_NOT_APPLICABLE",
+    "DUPLICATE_POSITION_INVALID_SYMBOL",
+    "DUPLICATE_POSITION_INVALID_QUANTITY",
+    "DuplicatePositionResult",
+    "check_duplicate_position_buy",
+    "calculate_current_position_quantity",
 ]
