@@ -1,4 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import {
+  applyDisplaySettingsToRoot,
+  loadDisplaySettings,
+} from "./store/useDisplaySettings";
 import { TopBar }       from "./components/layout/TopBar";
 import { BottomNav }    from "./components/layout/BottomNav";
 import { TopNav }       from "./components/layout/TopNav";
@@ -41,6 +45,14 @@ export default function App() {
 }
 
 function AppShell() {
+  // feature/display-settings-and-ui-readability: App boot 시점에 사용자가
+  // 이전 세션에서 저장한 display preset 을 root html 요소에 즉시 반영.
+  // DisplaySettingsCard 가 mount 되기 전에도 EXE 가 사용자의 선호 글자 크기/
+  // 화면 폭/테마로 렌더링되도록 한다. broker / 실거래 호출 0건.
+  useEffect(() => {
+    applyDisplaySettingsToRoot(loadDisplaySettings());
+  }, []);
+
   const [tab, setTab] = useState("dash");
   const portfolio  = usePortfolio();
   const strategy   = useStrategy();

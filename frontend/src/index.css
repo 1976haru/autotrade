@@ -316,6 +316,126 @@ code {
 }
 
 
+/* ──────────────────────────────────────────────────────────────────────────
+ * feature/display-settings-and-ui-readability: 사용자가 설정 탭에서 선택한
+ * 글자 크기 / 화면 폭 / 테마를 root data-attribute 로 받아 전역 변수 +
+ * 레이아웃 폭에 즉시 반영. 사용자 요청서 §2 정확 매핑.
+ *
+ * 권장 data-attribute (`useDisplaySettings.applyDisplaySettingsToRoot`):
+ *   data-font-size      = standard | large | xlarge
+ *   data-layout-width   = standard | wide | full
+ *   data-display-theme  = light | highContrastLight | softLight
+ * ──────────────────────────────────────────────────────────────────────── */
+
+/* 글자 크기 preset — 기본값은 large (사용자 요청서 §2). */
+html[data-font-size="standard"] {
+  --fs-xs:    11px;
+  --fs-sm:    13px;
+  --fs-base:  14px;
+  --fs-md:    16px;
+  --fs-lg:    18px;
+  --fs-xl:    22px;
+}
+html[data-font-size="large"],
+html:not([data-font-size]) {
+  --fs-xs:    13px;
+  --fs-sm:    15px;
+  --fs-base:  17px;
+  --fs-md:    18px;
+  --fs-lg:    20px;
+  --fs-xl:    24px;
+}
+html[data-font-size="xlarge"] {
+  --fs-xs:    14px;
+  --fs-sm:    16px;
+  --fs-base:  19px;
+  --fs-md:    20px;
+  --fs-lg:    22px;
+  --fs-xl:    26px;
+}
+
+/* 화면 폭 preset — 기본값은 wide (사용자 요청서 §2). */
+html[data-layout-width="standard"] .app-shell,
+html[data-layout-width="standard"] .app-bottomnav {
+  max-width: min(94vw, 1280px);
+}
+html[data-layout-width="wide"] .app-shell,
+html[data-layout-width="wide"] .app-bottomnav,
+html:not([data-layout-width]) .app-shell,
+html:not([data-layout-width]) .app-bottomnav {
+  max-width: min(98vw, 1680px);
+}
+html[data-layout-width="full"] .app-shell,
+html[data-layout-width="full"] .app-bottomnav {
+  max-width: none;
+  width: calc(100vw - 32px);
+  /* full 에서도 좌우 최소 padding 확보 — 사용자 요청서 §2 주의 */
+  padding-left:  16px;
+  padding-right: 16px;
+}
+/* 모바일 / 작은 화면에서는 layout-width=full 도 overflow 방지 */
+@media (max-width: 480px) {
+  html[data-layout-width="full"] .app-shell {
+    width: 100vw;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}
+
+/* 테마 preset — 기본값은 highContrastLight (사용자 요청서 §2 - 어두운 배경
+ * 줄이고 글자 대비를 높이는 권장 테마). 사용자 요청서 §5 권장 색상. */
+html[data-display-theme="light"] {
+  --c-bg:        #f5f7fb;
+  --c-surface:   #ffffff;
+  --c-surface-2: #f8fafc;
+  --c-surface-3: #eef2f7;
+  --c-border:    #dbe2ea;
+  --c-border-strong: #c8d3e0;
+  --c-text:    #111827;
+  --c-text-2:  #334155;
+  --c-text-3:  #475569;
+  --c-text-4:  #64748b;
+  --c-text-5:  #94a3b8;
+}
+html[data-display-theme="highContrastLight"],
+html:not([data-display-theme]) {
+  /* 사용자 요청서 §5 권장 색상 - 검정 배경 줄이고 대비 강화 */
+  --c-bg:        #f5f7fb;
+  --c-surface:   #ffffff;
+  --c-surface-2: #f8fafc;
+  --c-surface-3: #eef2f7;
+  --c-border:    #cbd5e1;
+  --c-border-strong: #94a3b8;
+  --c-text:    #0b1220;        /* 더 진한 본문 */
+  --c-text-2:  #1f2937;        /* 더 진한 보조 */
+  --c-text-3:  #334155;        /* 더 진한 tertiary */
+  --c-text-4:  #475569;        /* 더 진한 muted */
+  --c-text-5:  #64748b;
+}
+html[data-display-theme="softLight"] {
+  /* 눈부심을 줄인 연한 배경 — 한 톤 다운 + 채도 약함 */
+  --c-bg:        #f7f5ef;       /* warm off-white */
+  --c-surface:   #fffdf7;
+  --c-surface-2: #f5f1e6;
+  --c-surface-3: #ece7d8;
+  --c-border:    #d9d3c2;
+  --c-border-strong: #c0b8a6;
+  --c-text:    #2b2417;         /* warm dark */
+  --c-text-2:  #3f3a2c;
+  --c-text-3:  #5e5746;
+  --c-text-4:  #79705c;
+  --c-text-5:  #948a76;
+}
+
+/* 한 화면 정보 밀도 개선 — wide / full 에서 카드 grid 자동 확장.
+ * 사용자 요청서 §7 적용. */
+html[data-layout-width="wide"] .app-shell,
+html[data-layout-width="full"] .app-shell {
+  --card-grid-min: 280px;
+}
+
+
+
 /* primitives: shared utility classes for the new operator UI.
  * 토큰만으로는 부족한 layout/typography 패턴을 별도 class로 노출.
  * 인라인 style 비중을 줄이는 첫 단계. */

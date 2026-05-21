@@ -121,6 +121,18 @@ describe("<Settings> integrates the warning banner", () => {
     const { queryByTestId } = render(<Settings settings={_makeSettings()} />);
     expect(queryByTestId("mode-warning-banner")).toBeNull();
   });
+
+  it("renders DisplaySettingsCard within Settings tab", () => {
+    // feature/display-settings-and-ui-readability — 화면 표시 설정 카드가
+    // Settings 탭 안에 mount 되는지 회귀 검증. 위치는 VersionInfoCard 와
+    // UpdateCheckerCard 사이 (사용자 요청서 §1 권장).
+    const { getByTestId } = render(<Settings settings={_makeSettings()} />);
+    expect(getByTestId("display-settings-card")).toBeTruthy();
+    // 기본값 (large/wide/highContrastLight) 으로 mount.
+    expect(
+      getByTestId("display-settings-card").getAttribute("data-current-font-size"),
+    ).toBe("large");
+  });
 });
 
 
