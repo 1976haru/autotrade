@@ -331,3 +331,365 @@ def should_block_buy_for_feed(
         max_age_seconds=max_age_seconds, now=now,
     )
     return status.is_stale, status.reason, status
+
+
+# ============================================================================
+# P-14: 가격 freshness + 비정상 / 급등락 가격 BUY 차단
+# ============================================================================
+#
+# 기존 #20 infrastructure (FreshnessStatus / is_quote_stale / is_bar_stale /
+# is_feed_stale) 는 *데이터 소스 단위* — quote / bar / feed 의 timestamp 기반
+# stale 평가. P-14 는 그 위에 *paper sizing / affordability 전 단계* 의 단일
+# pure 함수 `check_price_freshness` 를 얹어 다음을 동시에 처리:
+#
+#   1. price 가 None / 0 / 음수 → INVALID_PRICE
+#   2. price_timestamp 가 너무 오래됨 → PRICE_STALE
+#   3. reference_price 대비 변동률이 한도 초과 → ABNORMAL_PRICE_MOVE
+#
+# 결과 `PriceFreshnessResult` 는:
+#   - allowed: True/False (BUY 차단 여부)
+#   - reason_code: PRICE_FRESHNESS_OK / PRICE_STALE / INVALID_PRICE /
+#     ABNORMAL_PRICE_MOVE / PRICE_MISSING / PRICE_TOO_LOW / PRICE_TOO_HIGH /
+#     PRICE_CHANGE_TOO_LARGE / PRICE_CHECK_NOT_APPLICABLE
+#   - reason_message: 한국어 사용자 표시 메시지
+#   - age_seconds / price_change_pct / max_age_seconds / max_change_pct
+#
+# SELL / HOLD / NO_ACTION 은 *원칙적으로 차단하지 않는다* — caller 가
+# `_is_buy_side_action` 으로 분기 후 본 함수 호출 또는 본 함수에 action 을 넘겨
+# `PRICE_CHECK_NOT_APPLICABLE` 로 처리. P-14 는 최소한 *BUY 차단* 만 구현, SELL
+# stale 경고는 후속 PR.
+
+
+DEFAULT_MAX_AGE_SECONDS: int   = 60
+DEFAULT_MAX_CHANGE_PCT:  float = 10.0
+
+
+# ---------- reason_code 상수 (사용자 요청서 §2 정확) ----------
+
+
+PRICE_FRESHNESS_OK            = "PRICE_FRESHNESS_OK"
+PRICE_STALE                   = "PRICE_STALE"
+INVALID_PRICE                 = "INVALID_PRICE"
+ABNORMAL_PRICE_MOVE           = "ABNORMAL_PRICE_MOVE"
+PRICE_MISSING                 = "PRICE_MISSING"
+PRICE_TOO_LOW                 = "PRICE_TOO_LOW"
+PRICE_TOO_HIGH                = "PRICE_TOO_HIGH"
+PRICE_CHANGE_TOO_LARGE        = "PRICE_CHANGE_TOO_LARGE"
+PRICE_CHECK_NOT_APPLICABLE    = "PRICE_CHECK_NOT_APPLICABLE"
+
+
+# ---------- 사용자 표시 메시지 ----------
+
+
+PRICE_FRESHNESS_OK_MESSAGE_KO        = "현재가 확인: 정상"
+PRICE_STALE_MESSAGE_KO               = "현재가가 오래되어 매수 차단"
+INVALID_PRICE_MESSAGE_KO             = "현재가가 비정상이라 매수 차단"
+ABNORMAL_PRICE_MOVE_MESSAGE_KO       = "가격 급등락이 감지되어 매수 차단"
+PRICE_MISSING_MESSAGE_KO             = "현재가가 없어 매수 차단"
+PRICE_CHECK_NOT_APPLICABLE_MESSAGE_KO = (
+    "현재 action 은 BUY 가 아니므로 가격 검사 적용 안 함"
+)
+
+
+# ---------- helpers ----------
+
+
+_PAPER_BUY_TOKENS = frozenset({
+    "buy", "open", "open_long", "long", "enter", "entry",
+})
+
+
+def _is_buy_action_for_price_check(action: str | None) -> bool:
+    """P-14 BUY 의도 판별 — affordability/sizing 모듈과 동일 토큰."""
+    if action is None:
+        # action 미지정 시 *BUY 로 간주* (caller 가 BUY 흐름에서 본 함수를 호출
+        # 한 것이라고 가정 — 안전 측 default).
+        return True
+    return action.strip().lower() in _PAPER_BUY_TOKENS
+
+
+def _coerce_datetime(value: datetime | str | None) -> datetime | None:
+    """ISO 문자열 / datetime 둘 다 허용. None 은 None 그대로."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return _ensure_utc(value)
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return None
+        # Z suffix → +00:00 변환 (Python 3.10 ISO parser 호환).
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(s)
+        except ValueError as exc:
+            raise ValueError(
+                f"price_timestamp / now 가 ISO datetime 이 아님: {value!r}"
+            ) from exc
+        return _ensure_utc(parsed)
+    raise TypeError(
+        f"datetime / str / None 가 아님: {type(value).__name__}"
+    )
+
+
+def _format_pct(value: float) -> str:
+    """변동률 한국어 표시 — 소수 1자리."""
+    return f"{value:.1f}%"
+
+
+# ---------- P-14 result dataclass ----------
+
+
+@dataclass(frozen=True)
+class PriceFreshnessResult:
+    """가격 freshness + 비정상 / 급등락 평가 결과 — *advisory*.
+
+    `is_paper_only=True` / `is_order_signal=False` / `is_live_authorization=
+    False` 영구 (post_init 가드).
+    """
+
+    allowed:               bool
+    reason_code:           str
+    reason_message:        str
+    symbol:                str | None       = None
+    action:                str | None       = None
+    price:                 float | None     = None
+    price_timestamp:       datetime | None  = None
+    now:                   datetime | None  = None
+    age_seconds:           float | None     = None
+    max_age_seconds:       int              = DEFAULT_MAX_AGE_SECONDS
+    reference_price:       float | None     = None
+    price_change_pct:      float | None     = None
+    max_change_pct:        float            = DEFAULT_MAX_CHANGE_PCT
+    detail_message:        str              = ""
+
+    is_paper_only:         bool = True
+    is_order_signal:       bool = False
+    is_live_authorization: bool = False
+
+    def __post_init__(self) -> None:
+        if self.is_paper_only is not True:
+            raise ValueError(
+                "PriceFreshnessResult.is_paper_only must be True"
+            )
+        if self.is_order_signal is not False:
+            raise ValueError(
+                "PriceFreshnessResult.is_order_signal must be False"
+            )
+        if self.is_live_authorization is not False:
+            raise ValueError(
+                "PriceFreshnessResult.is_live_authorization must be False"
+            )
+
+    @property
+    def is_blocked(self) -> bool:
+        return self.allowed is False and self.reason_code != PRICE_FRESHNESS_OK
+
+    def to_dict(self) -> dict:
+        return {
+            "allowed":           bool(self.allowed),
+            "reason_code":       self.reason_code,
+            "reason_message":    self.reason_message,
+            "symbol":            self.symbol,
+            "action":            self.action,
+            "price":             self.price,
+            "price_timestamp":   (
+                self.price_timestamp.isoformat()
+                if self.price_timestamp else None
+            ),
+            "now":               (
+                self.now.isoformat() if self.now else None
+            ),
+            "age_seconds":       self.age_seconds,
+            "max_age_seconds":   int(self.max_age_seconds),
+            "reference_price":   self.reference_price,
+            "price_change_pct":  self.price_change_pct,
+            "max_change_pct":    float(self.max_change_pct),
+            "detail_message":    self.detail_message,
+            "is_paper_only":           self.is_paper_only,
+            "is_order_signal":         self.is_order_signal,
+            "is_live_authorization":   self.is_live_authorization,
+        }
+
+
+# ---------- core function ----------
+
+
+def check_price_freshness(
+    *,
+    symbol:           str | None             = None,
+    price:            int | float | None     = None,
+    price_timestamp:  datetime | str | None  = None,
+    now:              datetime | str | None  = None,
+    max_age_seconds:  int                    = DEFAULT_MAX_AGE_SECONDS,
+    reference_price:  int | float | None     = None,
+    max_change_pct:   float                  = DEFAULT_MAX_CHANGE_PCT,
+    action:           str | None             = None,
+) -> PriceFreshnessResult:
+    """가격 freshness + 비정상 / 급등락 평가 — *pure*.
+
+    사용자 요청서 §3 정책 그대로:
+      1. action 이 BUY 가 아니면 PRICE_CHECK_NOT_APPLICABLE (차단 X)
+      2. price is None → PRICE_MISSING
+      3. price <= 0 → INVALID_PRICE
+      4. price_timestamp 가 없으면 PRICE_STALE (안전 측 — fresh 로 보지 않음)
+      5. now - price_timestamp > max_age_seconds → PRICE_STALE
+      6. reference_price > 0 이고 |price - ref| / ref > max_change_pct →
+         ABNORMAL_PRICE_MOVE
+      7. 모두 통과 → PRICE_FRESHNESS_OK
+
+    Args:
+        symbol: 종목 코드 (carry 만, verdict 영향 없음).
+        price: 현재가.
+        price_timestamp: 현재가 timestamp (datetime / ISO str).
+        now: 평가 시각 (None → datetime.now(UTC)).
+        max_age_seconds: stale 한도. 기본 60.
+        reference_price: 직전 기준가 / previous_close. None 또는 <=0 이면 급등락
+            검사 skip.
+        max_change_pct: 변동률 한도 (%). 기본 10.0.
+        action: BUY/SELL/HOLD/NO_ACTION. BUY 아니면 적용 안 함.
+
+    Returns:
+        PriceFreshnessResult — broker / route_order 호출 0건.
+    """
+    # 1. action 분기.
+    if not _is_buy_action_for_price_check(action):
+        return PriceFreshnessResult(
+            allowed=True,
+            reason_code=PRICE_CHECK_NOT_APPLICABLE,
+            reason_message=PRICE_CHECK_NOT_APPLICABLE_MESSAGE_KO,
+            symbol=symbol, action=action,
+            price=float(price) if price is not None else None,
+            max_age_seconds=int(max_age_seconds),
+            max_change_pct=float(max_change_pct),
+            detail_message=(
+                "BUY 가 아닌 action 은 가격 검사 적용 안 함 — "
+                "SELL / HOLD / NO_ACTION 은 별도 정책."
+            ),
+        )
+
+    now_dt = _coerce_datetime(now) or datetime.now(timezone.utc)
+    ts_dt  = _coerce_datetime(price_timestamp)
+
+    # 2. price None.
+    if price is None:
+        return PriceFreshnessResult(
+            allowed=False,
+            reason_code=PRICE_MISSING,
+            reason_message=PRICE_MISSING_MESSAGE_KO,
+            symbol=symbol, action=action,
+            price=None,
+            price_timestamp=ts_dt, now=now_dt,
+            max_age_seconds=int(max_age_seconds),
+            max_change_pct=float(max_change_pct),
+            detail_message="현재가 값이 없어 BUY 를 차단합니다.",
+        )
+
+    p = float(price)
+
+    # 3. price <= 0.
+    if p <= 0:
+        return PriceFreshnessResult(
+            allowed=False,
+            reason_code=INVALID_PRICE,
+            reason_message=INVALID_PRICE_MESSAGE_KO,
+            symbol=symbol, action=action,
+            price=p,
+            price_timestamp=ts_dt, now=now_dt,
+            max_age_seconds=int(max_age_seconds),
+            max_change_pct=float(max_change_pct),
+            detail_message=(
+                f"현재가 {p} 가 0 이하라 BUY 를 차단합니다."
+            ),
+        )
+
+    # 4. price_timestamp 없음 → 안전 측 STALE.
+    if ts_dt is None:
+        return PriceFreshnessResult(
+            allowed=False,
+            reason_code=PRICE_STALE,
+            reason_message=PRICE_STALE_MESSAGE_KO,
+            symbol=symbol, action=action,
+            price=p,
+            price_timestamp=None, now=now_dt,
+            age_seconds=None,
+            max_age_seconds=int(max_age_seconds),
+            max_change_pct=float(max_change_pct),
+            detail_message=(
+                "현재가 timestamp 가 없어 신선도를 평가할 수 없습니다. "
+                "BUY 를 차단합니다."
+            ),
+        )
+
+    # 5. now - ts > max_age_seconds.
+    age = _age_seconds(now_dt, ts_dt)
+    # ts_dt 가 None 가 아니므로 age 도 None 일 수 없음.
+    assert age is not None
+
+    if int(max_age_seconds) > 0 and age > float(max_age_seconds):
+        return PriceFreshnessResult(
+            allowed=False,
+            reason_code=PRICE_STALE,
+            reason_message=PRICE_STALE_MESSAGE_KO,
+            symbol=symbol, action=action,
+            price=p,
+            price_timestamp=ts_dt, now=now_dt,
+            age_seconds=age,
+            max_age_seconds=int(max_age_seconds),
+            max_change_pct=float(max_change_pct),
+            detail_message=(
+                f"현재가 데이터가 {age:.0f}초 전 값입니다. "
+                f"허용 한도 {int(max_age_seconds)}초를 초과하여 BUY 를 "
+                f"차단합니다."
+            ),
+        )
+
+    # 6. reference_price 대비 변동률 검사.
+    change_pct: float | None = None
+    if reference_price is not None:
+        ref = float(reference_price)
+        if ref > 0:
+            change_pct = abs(p - ref) / ref * 100.0
+            if change_pct > float(max_change_pct):
+                return PriceFreshnessResult(
+                    allowed=False,
+                    reason_code=ABNORMAL_PRICE_MOVE,
+                    reason_message=ABNORMAL_PRICE_MOVE_MESSAGE_KO,
+                    symbol=symbol, action=action,
+                    price=p,
+                    price_timestamp=ts_dt, now=now_dt,
+                    age_seconds=age,
+                    max_age_seconds=int(max_age_seconds),
+                    reference_price=ref,
+                    price_change_pct=change_pct,
+                    max_change_pct=float(max_change_pct),
+                    detail_message=(
+                        f"직전 기준가 대비 현재가 변동률이 "
+                        f"{_format_pct(change_pct)} 입니다. 허용 한도 "
+                        f"{_format_pct(float(max_change_pct))} 를 초과하여 "
+                        f"BUY 를 차단합니다."
+                    ),
+                )
+        # ref <= 0 → 급등락 검사 skip (안전 측 — invalid reference 로 분류).
+
+    # 7. 모두 통과 → OK.
+    return PriceFreshnessResult(
+        allowed=True,
+        reason_code=PRICE_FRESHNESS_OK,
+        reason_message=PRICE_FRESHNESS_OK_MESSAGE_KO,
+        symbol=symbol, action=action,
+        price=p,
+        price_timestamp=ts_dt, now=now_dt,
+        age_seconds=age,
+        max_age_seconds=int(max_age_seconds),
+        reference_price=(
+            float(reference_price) if reference_price is not None else None
+        ),
+        price_change_pct=change_pct,
+        max_change_pct=float(max_change_pct),
+        detail_message=(
+            f"현재가 {p} (age {age:.0f}s, "
+            f"max {int(max_age_seconds)}s) — 정상."
+        ),
+    )
