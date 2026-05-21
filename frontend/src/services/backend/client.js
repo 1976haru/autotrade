@@ -187,6 +187,25 @@ export const backendApi = {
       body: JSON.stringify({ action, symbol, quantity }),
     }),
   paperMinLotPreview: () => backendFetch("/api/auto-paper/min-lot/preview"),
+  // P-06: 고가주 처리 정책 사전 advisory (EXCLUDE / HOLD / INCREASE_BUDGET_HINT).
+  // policy 미지정 시 backend 가 default EXCLUDE 적용.
+  previewPaperHighPrice: ({
+    action = "BUY",
+    symbol = null,
+    price = null,
+    policy = null,
+    effectivePerSymbolCapKrw = null,
+  } = {}) =>
+    backendFetch("/api/auto-paper/high-price/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        action,
+        symbol,
+        price,
+        policy,
+        effective_per_symbol_cap_krw: effectivePerSymbolCapKrw,
+      }),
+    }),
   // feat/step2-05-pre-market-gate: optional `body` carry — pre_market 결과를
   // 포함시켜 backend 가 BLOCK 검증. body 미제공 시 backwards-compat.
   autoPaperStart:         (body = null) => backendFetch(
