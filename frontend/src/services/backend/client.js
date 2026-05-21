@@ -187,6 +187,25 @@ export const backendApi = {
       body: JSON.stringify({ action, symbol, quantity }),
     }),
   paperMinLotPreview: () => backendFetch("/api/auto-paper/min-lot/preview"),
+  // Paper Universe + Diagnostics — *"왜 오늘 주문 0건인가"* read-only 진단.
+  // 본 endpoints 는 broker 호출 0건, DB write 0건, mutation 0건.
+  paperDefaultUniverse: ({ limit = 50 } = {}) => {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    return backendFetch(`/api/paper/universe/default?${qs.toString()}`);
+  },
+  paperUniversePreview: ({ userSymbols = null, limit = 50 } = {}) =>
+    backendFetch("/api/paper/universe/preview", {
+      method: "POST",
+      body: JSON.stringify({
+        user_symbols: userSymbols,
+        limit,
+      }),
+    }),
+  paperDiagnosticsPreflight: ({ frontendMode = null, limit = 50 } = {}) => {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (frontendMode) qs.set("frontend_mode", frontendMode);
+    return backendFetch(`/api/paper/diagnostics/preflight?${qs.toString()}`);
+  },
   // feat/step2-05-pre-market-gate: optional `body` carry — pre_market 결과를
   // 포함시켜 backend 가 BLOCK 검증. body 미제공 시 backwards-compat.
   autoPaperStart:         (body = null) => backendFetch(

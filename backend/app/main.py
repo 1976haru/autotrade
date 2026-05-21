@@ -28,6 +28,7 @@ from app.api.routes_market_state import router as market_state_router
 from app.api.routes_analytics import router as analytics_router
 from app.api.routes_monitoring import router as monitoring_router
 from app.api.routes_paper import router as paper_router
+from app.api.routes_paper_universe import router as paper_universe_router
 from app.api.routes_reconciliation import router as reconciliation_router
 from app.api.routes_risk import router as risk_router
 from app.api.routes_futures import router as futures_router
@@ -223,6 +224,7 @@ app.include_router(themes_router, prefix="/api")
 app.include_router(governance_router, prefix="/api")
 app.include_router(explainability_router, prefix="/api")
 app.include_router(paper_router, prefix="/api")
+app.include_router(paper_universe_router, prefix="/api")
 app.include_router(shadow_router, prefix="/api")
 app.include_router(ai_assist_router, prefix="/api")
 app.include_router(ai_execution_router, prefix="/api")
