@@ -9,7 +9,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import { AutoPaperLoopCard } from "./AutoPaperLoopCard";
+import {
+  AutoPaperLoopCard,
+  canStartAutoPaper,
+  canStopAutoPaper,
+  normalizeAutoPaperState,
+} from "./AutoPaperLoopCard";
 
 
 function _mockApi(
@@ -67,7 +72,10 @@ describe("<AutoPaperLoopCard>", () => {
   it("clicking 시작 button calls autoPaperStart", async () => {
     const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
     render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
-    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    // fix/frontend-ci: wait for button enabled (status loaded) — race fix.
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-start-auto-paper").disabled).toBe(false),
+    );
     fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
     await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalledTimes(1));
   });
@@ -75,7 +83,13 @@ describe("<AutoPaperLoopCard>", () => {
   it("clicking 정지 button calls autoPaperStop", async () => {
     const api = _mockApi({ state: "RUNNING", cycle_count: 3 });
     render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
-    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    // fix/frontend-ci-operator-and-autopaper: 사용자 요청서 §3 8번 — 정지
+    // 버튼이 *실제 disabled=false* 상태가 될 때까지 기다린 뒤 클릭. CI 환경
+    // 에서 status() async 응답이 아직 setState 로 반영되기 전에 클릭하면
+    // disabled 상태라 handler 가 호출되지 않음.
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-stop-auto-paper").disabled).toBe(false),
+    );
     fireEvent.click(screen.getByTestId("btn-stop-auto-paper"));
     await waitFor(() => expect(api.autoPaperStop).toHaveBeenCalledTimes(1));
   });
@@ -83,7 +97,11 @@ describe("<AutoPaperLoopCard>", () => {
   it("clicking 긴급정지 button calls autoPaperEmergencyStop", async () => {
     const api = _mockApi({ state: "RUNNING", cycle_count: 3 });
     render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
-    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    // 긴급정지 버튼은 busy 만 disabled — status 로딩 없이도 enabled 이지만
+    // 일관성을 위해 동일 패턴 적용.
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-emergency-stop").disabled).toBe(false),
+    );
     fireEvent.click(screen.getByTestId("btn-emergency-stop"));
     await waitFor(() => expect(api.autoPaperEmergencyStop).toHaveBeenCalledTimes(1));
   });
@@ -1002,5 +1020,185 @@ describe("<AutoPaperLoopCard>", () => {
         expect(text).not.toContain(f);
       }
     });
+  });
+});
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// fix/frontend-ci-operator-and-autopaper:
+//   pure-function 단위 테스트 (사용자 요청서 §5) — UI state matrix 가 alias /
+//   대소문자 / null / unknown 입력에서도 안정적으로 정규화되어 stop / start
+//   조건이 깨지지 않는지 *컴포넌트와 별개* 로 lock.
+// ────────────────────────────────────────────────────────────────────────────
+
+
+describe("normalizeAutoPaperState — pure function", () => {
+  it("canonical states are idempotent", () => {
+    for (const s of [
+      "PAUSED", "WAITING_MARKET", "RUNNING", "STOPPED",
+      "EMERGENCY_STOP", "MARKET_CLOSED",
+    ]) {
+      expect(normalizeAutoPaperState(s)).toBe(s);
+    }
+  });
+
+  it("legacy aliases IDLE / EMERGENCY map to canonical", () => {
+    expect(normalizeAutoPaperState("IDLE")).toBe("PAUSED");
+    expect(normalizeAutoPaperState("EMERGENCY")).toBe("EMERGENCY_STOP");
+  });
+
+  it("common synonyms map to canonical", () => {
+    expect(normalizeAutoPaperState("STARTED")).toBe("RUNNING");
+    expect(normalizeAutoPaperState("ACTIVE")).toBe("RUNNING");
+    expect(normalizeAutoPaperState("HALTED")).toBe("STOPPED");
+    expect(normalizeAutoPaperState("WAITING")).toBe("WAITING_MARKET");
+    expect(normalizeAutoPaperState("CLOSED")).toBe("MARKET_CLOSED");
+  });
+
+  it("case-insensitive normalization", () => {
+    expect(normalizeAutoPaperState("running")).toBe("RUNNING");
+    expect(normalizeAutoPaperState("Running")).toBe("RUNNING");
+    expect(normalizeAutoPaperState("  RuNnInG  ")).toBe("RUNNING");
+  });
+
+  it("null / undefined / empty / unknown -> PAUSED fallback", () => {
+    expect(normalizeAutoPaperState(null)).toBe("PAUSED");
+    expect(normalizeAutoPaperState(undefined)).toBe("PAUSED");
+    expect(normalizeAutoPaperState("")).toBe("PAUSED");
+    expect(normalizeAutoPaperState("   ")).toBe("PAUSED");
+    expect(normalizeAutoPaperState("XYZ_UNKNOWN")).toBe("PAUSED");
+  });
+});
+
+
+describe("canStopAutoPaper — pure function", () => {
+  it("RUNNING -> true", () => {
+    expect(canStopAutoPaper("RUNNING")).toBe(true);
+  });
+
+  it("alias for RUNNING -> true", () => {
+    expect(canStopAutoPaper("running")).toBe(true);
+    expect(canStopAutoPaper("STARTED")).toBe(true);
+    expect(canStopAutoPaper("ACTIVE")).toBe(true);
+  });
+
+  it("WAITING_MARKET / STOPPED / PAUSED / EMERGENCY_STOP / MARKET_CLOSED -> false", () => {
+    for (const s of [
+      "WAITING_MARKET", "STOPPED", "PAUSED",
+      "EMERGENCY_STOP", "MARKET_CLOSED",
+    ]) {
+      expect(canStopAutoPaper(s)).toBe(false);
+    }
+  });
+
+  it("null / unknown -> false", () => {
+    expect(canStopAutoPaper(null)).toBe(false);
+    expect(canStopAutoPaper("")).toBe(false);
+    expect(canStopAutoPaper("garbage")).toBe(false);
+  });
+});
+
+
+describe("canStartAutoPaper — pure function", () => {
+  it("RUNNING / WAITING_MARKET -> false", () => {
+    expect(canStartAutoPaper("RUNNING")).toBe(false);
+    expect(canStartAutoPaper("WAITING_MARKET")).toBe(false);
+    expect(canStartAutoPaper("running")).toBe(false);
+  });
+
+  it("PAUSED / STOPPED / EMERGENCY_STOP / MARKET_CLOSED -> true", () => {
+    for (const s of ["PAUSED", "STOPPED", "EMERGENCY_STOP", "MARKET_CLOSED"]) {
+      expect(canStartAutoPaper(s)).toBe(true);
+    }
+  });
+});
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// 사용자 요청서 §3 추가 시나리오: stop button disabled / enabled 매트릭스
+// ────────────────────────────────────────────────────────────────────────────
+
+
+describe("<AutoPaperLoopCard> — stop button state matrix", () => {
+  afterEach(cleanup);
+
+  it("RUNNING -> stop button disabled=false", async () => {
+    const api = _mockApi({ state: "RUNNING", cycle_count: 3 });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-stop-auto-paper").disabled).toBe(false),
+    );
+  });
+
+  it("RUNNING -> click triggers exactly 1 autoPaperStop", async () => {
+    const api = _mockApi({ state: "RUNNING", cycle_count: 3 });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-stop-auto-paper").disabled).toBe(false),
+    );
+    fireEvent.click(screen.getByTestId("btn-stop-auto-paper"));
+    await waitFor(() =>
+      expect(api.autoPaperStop).toHaveBeenCalledTimes(1),
+    );
+  });
+
+  it("STOPPED -> stop button disabled=true", async () => {
+    const api = _mockApi({ state: "STOPPED", cycle_count: 5 });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-stop-auto-paper").disabled).toBe(true),
+    );
+  });
+
+  it("PAUSED -> stop button disabled=true", async () => {
+    const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-stop-auto-paper").disabled).toBe(true),
+    );
+  });
+
+  it("WAITING_MARKET -> stop button disabled=true (정책)", async () => {
+    const api = _mockApi({ state: "WAITING_MARKET", cycle_count: 0 });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-stop-auto-paper").disabled).toBe(true),
+    );
+  });
+
+  it("MARKET_CLOSED -> stop button disabled=true (정책)", async () => {
+    const api = _mockApi({ state: "MARKET_CLOSED", cycle_count: 0 });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-stop-auto-paper").disabled).toBe(true),
+    );
+  });
+
+  it("alias state 'running' (lowercase) is normalized and stop enabled", async () => {
+    const api = _mockApi({ state: "running", cycle_count: 3 });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-stop-auto-paper").disabled).toBe(false),
+    );
+    fireEvent.click(screen.getByTestId("btn-stop-auto-paper"));
+    await waitFor(() =>
+      expect(api.autoPaperStop).toHaveBeenCalledTimes(1),
+    );
+  });
+
+  it("stop button has no live-trade label", async () => {
+    const api = _mockApi({ state: "RUNNING", cycle_count: 3 });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("btn-stop-auto-paper").disabled).toBe(false),
+    );
+    const btn = screen.getByTestId("btn-stop-auto-paper");
+    const text = (btn.textContent || "").trim();
+    expect(text).not.toContain("매수");
+    expect(text).not.toContain("매도");
+    expect(text).not.toContain("실거래");
+    expect(text.toLowerCase()).not.toContain("place order");
+    expect(text.toLowerCase()).not.toContain("enable_");
   });
 });

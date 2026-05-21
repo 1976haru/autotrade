@@ -410,7 +410,9 @@ describe("<OperatorDiagnosticsCard> — copy report", () => {
       apiClient={api} pollIntervalMs={0} clipboard={clipboard}
     />);
     await waitFor(() =>
-      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+      expect(
+        screen.getByTestId("operator-diagnostics-card-copy-report-btn").disabled,
+      ).toBe(false),
     );
     fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
     await waitFor(() => expect(clipboard.writeText).toHaveBeenCalled());
@@ -433,6 +435,11 @@ describe("<OperatorDiagnosticsCard> — copy report", () => {
 
   it("shows blocked state if report unexpectedly contains secret", async () => {
     // 정상 흐름에서는 backend 가 fail-closed — 본 테스트는 *방어선* 검증.
+    // fix/frontend-ci-operator-and-autopaper: CI 환경에서 status() async
+    // 응답이 setState 로 반영되기 전에 click 하면 button 이 disabled (loading)
+    // 라서 onClick handler 가 호출되지 않음. *button enabled 까지 기다린 뒤*
+    // click. 사용자 요청서 §5 5번 (fireEvent 이후 반드시 button disabled
+    // 여부를 먼저 검증).
     const api = _mkApiClient({
       report: _mkReport({
         // 의도적으로 secret-like value 를 message 에 주입.
@@ -443,14 +450,22 @@ describe("<OperatorDiagnosticsCard> — copy report", () => {
     render(<OperatorDiagnosticsCard
       apiClient={api} pollIntervalMs={0} clipboard={clipboard}
     />);
+    // ① button 이 *enabled* (report 가 set 된 후) 까지 대기.
     await waitFor(() =>
-      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+      expect(
+        screen.getByTestId("operator-diagnostics-card-copy-report-btn").disabled,
+      ).toBe(false),
     );
+    // ② click — 이 시점에는 onCopyReport handler 가 실제로 실행됨.
     fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
+    // ③ secret 감지 후 copy-blocked 표시 + clipboard 미호출.
     await waitFor(() =>
       screen.getByTestId("operator-diagnostics-card-copy-blocked"),
     );
     expect(clipboard.writeText).not.toHaveBeenCalled();
+    expect(
+      screen.getByTestId("operator-diagnostics-card-copy-blocked").textContent,
+    ).toContain("민감정보가 감지되어 복사가 차단되었습니다");
   });
 
   it("renders log path hint", async () => {
@@ -734,7 +749,9 @@ describe("OperatorDiagnosticsCard — secret copy guard (hardened)", () => {
       apiClient={api} pollIntervalMs={0} clipboard={clipboard}
     />);
     await waitFor(() =>
-      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+      expect(
+        screen.getByTestId("operator-diagnostics-card-copy-report-btn").disabled,
+      ).toBe(false),
     );
     fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
     await waitFor(() =>
@@ -763,7 +780,9 @@ describe("OperatorDiagnosticsCard — secret copy guard (hardened)", () => {
       apiClient={api} pollIntervalMs={0} clipboard={clipboard}
     />);
     await waitFor(() =>
-      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+      expect(
+        screen.getByTestId("operator-diagnostics-card-copy-report-btn").disabled,
+      ).toBe(false),
     );
     fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
     await waitFor(() =>
@@ -790,7 +809,9 @@ describe("OperatorDiagnosticsCard — secret copy guard (hardened)", () => {
       apiClient={api} pollIntervalMs={0} clipboard={clipboard}
     />);
     await waitFor(() =>
-      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+      expect(
+        screen.getByTestId("operator-diagnostics-card-copy-report-btn").disabled,
+      ).toBe(false),
     );
     fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
     await waitFor(() =>
@@ -806,7 +827,9 @@ describe("OperatorDiagnosticsCard — secret copy guard (hardened)", () => {
       apiClient={api} pollIntervalMs={0} clipboard={clipboard}
     />);
     await waitFor(() =>
-      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+      expect(
+        screen.getByTestId("operator-diagnostics-card-copy-report-btn").disabled,
+      ).toBe(false),
     );
     fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
     await waitFor(() => expect(clipboard.writeText).toHaveBeenCalled());
@@ -823,7 +846,9 @@ describe("OperatorDiagnosticsCard — secret copy guard (hardened)", () => {
       apiClient={api} pollIntervalMs={0} clipboard={clipboard}
     />);
     await waitFor(() =>
-      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+      expect(
+        screen.getByTestId("operator-diagnostics-card-copy-report-btn").disabled,
+      ).toBe(false),
     );
     fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
     await waitFor(() => expect(clipboard.writeText).toHaveBeenCalled());
@@ -1014,7 +1039,9 @@ describe("OperatorDiagnosticsCard — copy-blocked integration (extended)", () =
       apiClient={api} pollIntervalMs={0} clipboard={clipboard}
     />);
     await waitFor(() =>
-      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+      expect(
+        screen.getByTestId("operator-diagnostics-card-copy-report-btn").disabled,
+      ).toBe(false),
     );
     fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
     await waitFor(() =>
@@ -1035,7 +1062,9 @@ describe("OperatorDiagnosticsCard — copy-blocked integration (extended)", () =
       apiClient={api} pollIntervalMs={0} clipboard={clipboard}
     />);
     await waitFor(() =>
-      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+      expect(
+        screen.getByTestId("operator-diagnostics-card-copy-report-btn").disabled,
+      ).toBe(false),
     );
     fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
     await waitFor(() => expect(clipboard.writeText).toHaveBeenCalled());
@@ -1059,7 +1088,9 @@ describe("OperatorDiagnosticsCard — copy-blocked integration (extended)", () =
       apiClient={api} pollIntervalMs={0} clipboard={clipboard}
     />);
     await waitFor(() =>
-      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+      expect(
+        screen.getByTestId("operator-diagnostics-card-copy-report-btn").disabled,
+      ).toBe(false),
     );
     fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
     await waitFor(() =>
