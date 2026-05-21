@@ -46,6 +46,83 @@ const _STATE_LABEL = {
 
 const POLL_INTERVAL_MS = 5_000;
 
+
+// fix/frontend-ci-operator-and-autopaper:
+// Auto Paper Loop 상태 정규화 + canStop 정책을 *순수 함수* 로 분리. UI 라벨,
+// 버튼 disabled, onClick guard 가 모두 같은 normalized state 를 사용해야
+// CI 환경에서 race / alias mismatch 가 발생하지 않는다.
+//
+// canonical 상태 (backend `AutoPaperState`):
+//   PAUSED / WAITING_MARKET / RUNNING / STOPPED / EMERGENCY_STOP / MARKET_CLOSED
+//
+// 허용 alias (legacy / 대소문자 / 외부 시스템):
+//   IDLE / EMERGENCY → PAUSED / EMERGENCY_STOP
+//   running / started / active → RUNNING
+//   stopped / halted → STOPPED
+//   paused → PAUSED
+
+const _STATE_ALIASES = {
+  // canonical → canonical (idempotent)
+  PAUSED:          "PAUSED",
+  WAITING_MARKET:  "WAITING_MARKET",
+  RUNNING:         "RUNNING",
+  STOPPED:         "STOPPED",
+  EMERGENCY_STOP:  "EMERGENCY_STOP",
+  MARKET_CLOSED:   "MARKET_CLOSED",
+  // legacy.
+  IDLE:            "PAUSED",
+  EMERGENCY:       "EMERGENCY_STOP",
+  // common alias (다른 시스템 / 외부 호출 / 대소문자 일관성).
+  STARTED:         "RUNNING",
+  ACTIVE:          "RUNNING",
+  HALTED:          "STOPPED",
+  WAITING:         "WAITING_MARKET",
+  CLOSED:          "MARKET_CLOSED",
+};
+
+
+/**
+ * Auto Paper Loop 상태 정규화 — *순수 함수*. null / 빈 문자열 / 알 수 없음 →
+ * "PAUSED" (안전 fallback). 대소문자 무시.
+ *
+ * UI 라벨 / 버튼 disabled / onClick guard 모두 본 함수의 결과만 사용해야 한다.
+ *
+ * @param {string|null|undefined} raw
+ * @returns {string} canonical state
+ */
+export function normalizeAutoPaperState(raw) {
+  if (raw == null) return "PAUSED";
+  const key = String(raw).trim().toUpperCase();
+  if (!key) return "PAUSED";
+  return _STATE_ALIASES[key] || "PAUSED";
+}
+
+
+/**
+ * 정지(autoPaperStop) 호출 가능 여부 — *순수 함수*. RUNNING 일 때만 정지 가능.
+ *
+ * 사용자 요청서 §3 정책:
+ *  - RUNNING → canStop=true
+ *  - WAITING_MARKET / MARKET_CLOSED / STOPPED / PAUSED / EMERGENCY_STOP →
+ *    canStop=false (해당 상태에서는 정지할 *running tick* 자체가 없음)
+ *
+ * @param {string|null|undefined} rawState
+ * @returns {boolean}
+ */
+export function canStopAutoPaper(rawState) {
+  return normalizeAutoPaperState(rawState) === "RUNNING";
+}
+
+
+/**
+ * 시작(autoPaperStart) 호출 가능 여부 — *순수 함수*.
+ * RUNNING / WAITING_MARKET 이미 진행 중인 상태에서는 시작 차단.
+ */
+export function canStartAutoPaper(rawState) {
+  const s = normalizeAutoPaperState(rawState);
+  return s !== "RUNNING" && s !== "WAITING_MARKET";
+}
+
 function _Pill({ label, value, color, testid }) {
   return (
     <span
@@ -156,14 +233,23 @@ export function AutoPaperLoopCard({
     };
     return apiClient.autoPaperStart(body);
   }), [apiClient, refresh, preMarketCheckResult, riskProfile]);
-  const onStop = useCallback(wrap(apiClient.autoPaperStop), [apiClient, refresh]);
-  const onEmergencyStop = useCallback(
-    wrap(apiClient.autoPaperEmergencyStop),
-    [apiClient, refresh]
-  );
+  // fix/frontend-ci-operator-and-autopaper: onStop 은 canStop 가드 *별도*.
+  // 버튼 disabled 가 어떤 환경 차이로 우회되더라도 *handler 안에서* 한 번
+  // 더 검증 — 호출 안전 보장. arrow function 으로 wrap 하여 apiClient.
+  // autoPaperStop 의 this 컨텍스트 손실 위험 차단.
+  const onStop = useCallback(wrap(async () => {
+    return apiClient.autoPaperStop();
+  }), [apiClient, refresh]);
+  const onEmergencyStop = useCallback(wrap(async () => {
+    return apiClient.autoPaperEmergencyStop();
+  }), [apiClient, refresh]);
 
   // feat/step2-01-auto-paper-states: 초기 default = PAUSED (canonical).
-  const state = status?.state || "PAUSED";
+  // fix/frontend-ci-operator-and-autopaper: *모든* UI 조건이 동일한
+  // normalized state 를 사용해 race / alias mismatch 방지.
+  const state = normalizeAutoPaperState(status?.state);
+  const stopAllowed = canStopAutoPaper(state);
+  const startAllowed = canStartAutoPaper(state);
   const stateColor = _STATE_COLOR[state] || "#94a3b8";
   const stateLabel = _STATE_LABEL[state] || state;
   const liveOff = safety?.enable_live_trading === false;
@@ -453,15 +539,15 @@ export function AutoPaperLoopCard({
         </button>
         <button
           data-testid="btn-stop-auto-paper"
-          onClick={onStop}
-          disabled={busy || state !== "RUNNING"}
+          onClick={() => { if (stopAllowed && !busy) onStop(); }}
+          disabled={busy || !stopAllowed}
           style={{
             padding: "8px 16px",
             borderRadius: "var(--r-md)",
-            background: state !== "RUNNING" ? "#94a3b8" : "#fbbf24",
+            background: stopAllowed ? "#fbbf24" : "#94a3b8",
             color: "#fff",
             border: "none",
-            cursor: state !== "RUNNING" ? "not-allowed" : "pointer",
+            cursor: stopAllowed ? "pointer" : "not-allowed",
           }}
         >
           정지 (신규 판단 중단)
