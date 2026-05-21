@@ -321,4 +321,295 @@ __all__ = [
     "risk_veto_policy_for",
     "list_profiles",
     "is_live_profile",
+    # P-09 — capital allocation layer (per_symbol_ratio / max_positions /
+    # max_daily_buy_ratio). #4-08 risk-based sizing 과는 *별개* — 동시 호출
+    # 가능, P-07 cash check / P-08 quantity calc 의 *기준값* 으로 사용.
+    "RiskProfileCapitalAllocation",
+    "CapitalAllocationResult",
+    "capital_allocation_for",
+    "list_capital_allocations",
 ]
+
+
+# ============================================================================
+# P-09: Capital allocation by risk profile
+# ============================================================================
+#
+# 사용자 요청서 §1-2 정확 정책:
+#   CONSERVATIVE: per_symbol_ratio=0.05, max_positions=3, daily_buy_ratio=0.20
+#   BALANCED:    per_symbol_ratio=0.10, max_positions=5, daily_buy_ratio=0.50
+#   AGGRESSIVE:  per_symbol_ratio=0.20, max_positions=8, daily_buy_ratio=0.80
+#
+# 본 layer 는 #4-08 risk-based sizing 과 *별개* — 본 layer 는 "운영자가 한
+# 번 골라두면 매 종목마다 자동으로 적용되는 *capital allocation* policy" 다.
+# P-07 cash check 와 P-08 quantity calc 의 *max_amount* / *cap* 으로 carry
+# 가능. 사용자 수동 입력값 (per_symbol_cap) 이 있으면 *수동값 우선*.
+#
+# 핵심 invariant (테스트로 lock):
+#  - is_paper_only = True 영구
+#  - is_order_signal / is_live_authorization / auto_apply_allowed = False 영구
+#  - broker / OrderExecutor / route_order import 0건 (기존 risk_profile.py 유지)
+
+
+@dataclass(frozen=True)
+class RiskProfileCapitalAllocation:
+    """단일 risk profile 의 *capital allocation* 정책.
+
+    `per_symbol_allocation_ratio` (총 자금 대비 종목당 한도 비율),
+    `max_positions` (동시 보유 종목 수 한도), `max_daily_buy_ratio` (총 자금
+    대비 일일 신규 매수 한도 비율) 3종.
+    """
+
+    profile:                       RiskProfile
+    per_symbol_allocation_ratio:   float
+    max_positions:                 int
+    max_daily_buy_ratio:           float
+    display_name_ko:               str = ""
+    description_ko:                str = ""
+    risk_note_ko:                  str = ""
+
+    is_paper_only:                 bool = True
+    is_order_signal:               bool = False
+    is_live_authorization:         bool = False
+    auto_apply_allowed:            bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.profile, RiskProfile):
+            raise ValueError("profile must be RiskProfile enum")
+        if not (0.0 < self.per_symbol_allocation_ratio <= 1.0):
+            raise ValueError(
+                f"per_symbol_allocation_ratio must be in (0,1], "
+                f"got {self.per_symbol_allocation_ratio}"
+            )
+        if self.max_positions < 1:
+            raise ValueError(f"max_positions must be >= 1, got {self.max_positions}")
+        if not (0.0 < self.max_daily_buy_ratio <= 1.0):
+            raise ValueError(
+                f"max_daily_buy_ratio must be in (0,1], got {self.max_daily_buy_ratio}"
+            )
+        if self.is_paper_only is not True:
+            raise ValueError(
+                "RiskProfileCapitalAllocation.is_paper_only must be True"
+            )
+        for name, val in (
+            ("is_order_signal",       self.is_order_signal),
+            ("is_live_authorization", self.is_live_authorization),
+            ("auto_apply_allowed",    self.auto_apply_allowed),
+        ):
+            if val is not False:
+                raise ValueError(
+                    f"RiskProfileCapitalAllocation.{name} must be False"
+                )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "profile":                     self.profile.value,
+            "display_name":                self.display_name_ko,
+            "description":                 self.description_ko,
+            "per_symbol_allocation_ratio": float(self.per_symbol_allocation_ratio),
+            "max_positions":               int(self.max_positions),
+            "max_daily_buy_ratio":         float(self.max_daily_buy_ratio),
+            "risk_note":                   self.risk_note_ko,
+            "is_paper_only":               self.is_paper_only,
+            "is_order_signal":             self.is_order_signal,
+            "is_live_authorization":       self.is_live_authorization,
+            "auto_apply_allowed":          self.auto_apply_allowed,
+        }
+
+
+# 사용자 요청서 §2 정확 매핑.
+_CAPITAL_ALLOCATIONS: dict[RiskProfile, RiskProfileCapitalAllocation] = {
+    RiskProfile.CONSERVATIVE: RiskProfileCapitalAllocation(
+        profile=RiskProfile.CONSERVATIVE,
+        per_symbol_allocation_ratio=0.05,    # 총 자금의 5%
+        max_positions=3,
+        max_daily_buy_ratio=0.20,            # 총 자금의 20%
+        display_name_ko="보수형",
+        description_ko=(
+            "보수형: 종목당 투자금을 작게 설정하고 동시 보유 수를 줄입니다."
+        ),
+        risk_note_ko="리스크 가장 낮음",
+    ),
+    RiskProfile.BALANCED: RiskProfileCapitalAllocation(
+        profile=RiskProfile.BALANCED,
+        per_symbol_allocation_ratio=0.10,    # 총 자금의 10%
+        max_positions=5,
+        max_daily_buy_ratio=0.50,            # 총 자금의 50%
+        display_name_ko="안정형",
+        description_ko=(
+            "안정형: 기본 운용 성향입니다. 종목당 투자금과 동시 보유 수를 "
+            "중간 수준으로 적용합니다."
+        ),
+        risk_note_ko="기본값",
+    ),
+    RiskProfile.AGGRESSIVE: RiskProfileCapitalAllocation(
+        profile=RiskProfile.AGGRESSIVE,
+        per_symbol_allocation_ratio=0.20,    # 총 자금의 20%
+        max_positions=8,
+        max_daily_buy_ratio=0.80,            # 총 자금의 80%
+        display_name_ko="공격형",
+        description_ko=(
+            "공격형: 종목당 투자금을 크게 설정하고 동시 보유 수를 늘립니다."
+        ),
+        risk_note_ko="리스크 가장 높음",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class CapitalAllocationResult:
+    """`capital_allocation_for(...)` 의 단일 응답 — *advisory*.
+
+    사용자 요청서 §3 의 반환 구조 정확 매칭 + manual_override carry.
+    """
+
+    profile:                  RiskProfile
+    display_name_ko:          str
+    total_paper_capital_krw:  int
+    per_symbol_allocation_krw: int
+    max_positions:            int
+    max_daily_buy_amount_krw: int
+    is_manual_override:       bool
+    reason_message_ko:        str
+
+    is_paper_only:            bool = True
+    is_order_signal:          bool = False
+    is_live_authorization:    bool = False
+    auto_apply_allowed:       bool = False
+
+    def __post_init__(self) -> None:
+        if self.is_paper_only is not True:
+            raise ValueError("CapitalAllocationResult.is_paper_only must be True")
+        if self.is_order_signal is not False:
+            raise ValueError("is_order_signal must be False")
+        if self.is_live_authorization is not False:
+            raise ValueError("is_live_authorization must be False")
+        if self.auto_apply_allowed is not False:
+            raise ValueError("auto_apply_allowed must be False")
+        if self.total_paper_capital_krw < 0:
+            raise ValueError(
+                f"total_paper_capital_krw must be >= 0, "
+                f"got {self.total_paper_capital_krw}"
+            )
+        if self.per_symbol_allocation_krw < 0:
+            raise ValueError(
+                f"per_symbol_allocation_krw must be >= 0, "
+                f"got {self.per_symbol_allocation_krw}"
+            )
+        if self.max_positions < 1:
+            raise ValueError(f"max_positions must be >= 1, got {self.max_positions}")
+        if self.max_daily_buy_amount_krw < 0:
+            raise ValueError(
+                f"max_daily_buy_amount_krw must be >= 0, "
+                f"got {self.max_daily_buy_amount_krw}"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "profile":                   self.profile.value,
+            "display_name":              self.display_name_ko,
+            "total_paper_capital":       int(self.total_paper_capital_krw),
+            "per_symbol_allocation":     int(self.per_symbol_allocation_krw),
+            "max_positions":             int(self.max_positions),
+            "max_daily_buy_amount":      int(self.max_daily_buy_amount_krw),
+            "is_manual_override":        bool(self.is_manual_override),
+            "reason_message":            self.reason_message_ko,
+            "is_paper_only":             self.is_paper_only,
+            "is_order_signal":           self.is_order_signal,
+            "is_live_authorization":     self.is_live_authorization,
+            "auto_apply_allowed":        self.auto_apply_allowed,
+        }
+
+
+def _format_krw(amount: int | float) -> str:
+    return f"{int(amount):,}"
+
+
+def capital_allocation_for(
+    profile:                       RiskProfile | str | None,
+    *,
+    total_paper_capital_krw:       int,
+    manual_per_symbol_krw:         int | None = None,
+) -> CapitalAllocationResult:
+    """profile + 총 자금 → 종목당 한도 / max_positions / 일일 매수 한도.
+
+    우선순위 (사용자 요청서 §2 주의):
+      1. `manual_per_symbol_krw` 가 명시되면 *수동값 우선* — per_symbol_krw
+         계산은 manual 사용 (max_positions / max_daily_buy_amount 는 여전히
+         profile 기준).
+      2. manual 미지정 → `total × per_symbol_allocation_ratio` 자동 계산.
+      3. profile 이 None / 알 수 없음 → BALANCED 기본값.
+
+    Args:
+        profile: RiskProfile enum 또는 문자열 또는 None.
+        total_paper_capital_krw: 총 Paper 자금 (KRW, 음수는 0 clamp).
+        manual_per_symbol_krw: 사용자가 직접 입력한 종목당 한도. None 이면
+            profile 자동값 사용.
+
+    Returns:
+        CapitalAllocationResult — broker / route_order 호출 0건.
+    """
+    # 프로필 정규화 — 알 수 없음 / None → BALANCED.
+    if profile is None or profile == "":
+        resolved_profile = DEFAULT_RISK_PROFILE
+    elif isinstance(profile, str):
+        try:
+            resolved_profile = RiskProfile(profile.strip().upper())
+        except ValueError:
+            resolved_profile = DEFAULT_RISK_PROFILE
+    elif isinstance(profile, RiskProfile):
+        resolved_profile = profile
+    else:
+        resolved_profile = DEFAULT_RISK_PROFILE
+
+    alloc = _CAPITAL_ALLOCATIONS[resolved_profile]
+
+    total = max(int(total_paper_capital_krw), 0)
+
+    # 종목당 한도 — manual override 우선.
+    is_manual = (
+        manual_per_symbol_krw is not None
+        and int(manual_per_symbol_krw) > 0
+    )
+    if is_manual:
+        per_symbol = int(manual_per_symbol_krw)
+    else:
+        per_symbol = int(total * alloc.per_symbol_allocation_ratio)
+
+    max_daily_buy = int(total * alloc.max_daily_buy_ratio)
+
+    if is_manual:
+        reason = (
+            f"{alloc.display_name_ko} 기준이지만 사용자 수동 입력 종목당 "
+            f"투자금 {_format_krw(per_symbol)}원을 우선 적용합니다 "
+            f"(최대 {alloc.max_positions}종목 / 일일 매수 한도 "
+            f"{_format_krw(max_daily_buy)}원)."
+        )
+    else:
+        reason = (
+            f"{alloc.display_name_ko} 기준으로 종목당 {_format_krw(per_symbol)}"
+            f"원, 최대 {alloc.max_positions}종목까지 보유합니다 "
+            f"(일일 매수 한도 {_format_krw(max_daily_buy)}원)."
+        )
+
+    return CapitalAllocationResult(
+        profile=resolved_profile,
+        display_name_ko=alloc.display_name_ko,
+        total_paper_capital_krw=total,
+        per_symbol_allocation_krw=per_symbol,
+        max_positions=alloc.max_positions,
+        max_daily_buy_amount_krw=max_daily_buy,
+        is_manual_override=is_manual,
+        reason_message_ko=reason,
+    )
+
+
+def list_capital_allocations() -> list[dict[str, Any]]:
+    """UI / API 카탈로그 — 3 프리셋 + 라벨 + 비율.
+
+    *read-only* — broker / DB / 외부 호출 0건.
+    """
+    return [
+        _CAPITAL_ALLOCATIONS[p].to_dict()
+        for p in (RiskProfile.CONSERVATIVE, RiskProfile.BALANCED, RiskProfile.AGGRESSIVE)
+    ]

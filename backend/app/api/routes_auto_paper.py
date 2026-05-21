@@ -66,6 +66,12 @@ from app.auto_paper.capital_state import (
     check_buy_cash_sufficient,
     get_capital_state,
 )
+from app.agents.risk_profile import (
+    DEFAULT_RISK_PROFILE,
+    RiskProfile,
+    capital_allocation_for,
+    list_capital_allocations,
+)
 from app.auto_paper.position_sizer import (
     QuantityByPriceVerdict,
     compute_paper_quantity_by_price,
@@ -1063,6 +1069,84 @@ def preview_paper_sizing_endpoint(body: _SizingPreviewBody) -> dict:
             "본 결과는 advisory — Paper 전용이며 실거래 주문 결정과 결합되지 "
             "않습니다. 다음 단계는 P-07 현금 잔고 검사 → RiskManager → "
             "PermissionGate."
+        ),
+    }
+
+
+# ============================================================================
+# P-09: Risk-profile-based capital allocation (preview + catalog)
+# ============================================================================
+
+
+class _RiskProfileAllocationBody(BaseModel):
+    """advisory preview — profile + total → per_symbol / max_positions / daily.
+
+    `total_paper_capital_krw` 미주입 시 *현재 PaperCapitalConfig.initial_cash*
+    자동 사용. `manual_per_symbol_krw` 가 있으면 *수동값 우선*.
+    """
+
+    profile:                  str | None = Field(
+        None,
+        description="CONSERVATIVE / BALANCED / AGGRESSIVE. None → BALANCED 기본값.",
+    )
+    total_paper_capital_krw:  int | None = Field(
+        None,
+        description="총 Paper 자금. None 이면 현재 PaperCapitalConfig.initial_cash 자동 사용.",
+    )
+    manual_per_symbol_krw:    int | None = Field(
+        None,
+        description="사용자가 직접 입력한 종목당 한도. None 이면 profile 자동값 사용.",
+    )
+
+
+@_AP.post("/risk-profile/allocation/preview")
+def preview_risk_profile_allocation_endpoint(
+    body: _RiskProfileAllocationBody,
+) -> dict:
+    """P-09: profile + 총 자금 → 종목당 / max_positions / 일일 매수 한도.
+
+    Returns:
+        CapitalAllocationResult.to_dict() — profile / display_name /
+        per_symbol_allocation / max_positions / max_daily_buy_amount /
+        is_manual_override / reason_message carry.
+
+    broker / route_order 호출 0건. *상태 변경 0건* — 단순 계산만.
+    """
+    cfg = get_paper_capital_config()
+    total = (
+        int(body.total_paper_capital_krw)
+        if body.total_paper_capital_krw is not None
+        else int(cfg.initial_cash)
+    )
+    result = capital_allocation_for(
+        body.profile,
+        total_paper_capital_krw=total,
+        manual_per_symbol_krw=body.manual_per_symbol_krw,
+    )
+    return {
+        **result.to_dict(),
+        "default_profile":   DEFAULT_RISK_PROFILE.value,
+        "allowed_profiles":  [p.value for p in RiskProfile],
+        "notice": (
+            "본 결과는 advisory — Paper 전용이며 실거래 결정과 결합되지 "
+            "않습니다. 다음 단계 P-07 현금 잔고 검사 → P-08 수량 계산 → "
+            "RiskManager → PermissionGate."
+        ),
+    }
+
+
+@_AP.get("/risk-profile/catalog")
+def get_risk_profile_catalog_endpoint() -> dict:
+    """3 risk profile 카탈로그 — UI / 운영자 read-only."""
+    return {
+        "profiles":         list_capital_allocations(),
+        "default_profile":  DEFAULT_RISK_PROFILE.value,
+        "allowed_profiles": [p.value for p in RiskProfile],
+        "is_paper_only":    True,
+        "is_live_authorization": False,
+        "notice": (
+            "운용 성향은 Paper 전용이며 실거래 권한 부여가 아닙니다. "
+            "AGGRESSIVE 도 Paper 한정."
         ),
     }
 
