@@ -632,6 +632,42 @@ describe("<PaperCapitalCard> P-05 — min-lot preview", () => {
       .toBeUndefined();
   });
 
+  it("emits no React key warning after clicking through all interactive paths", async () => {
+    // 회귀 방지 — option 클릭 / per-symbol / max-positions / high-price /
+    // re-render 경로 모두 거쳐도 key warning 0건.
+    const errors = [];
+    const orig = console.error;
+    console.error = (...args) => {
+      errors.push(args.map((a) => String(a)).join(" "));
+      orig(...args);
+    };
+    try {
+      backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+      backendApi.setPaperCapitalConfig.mockResolvedValue({
+        ..._DEFAULT_CONFIG, initial_cash: 30_000_000,
+      });
+      backendApi.setPaperPerSymbolAllocation.mockResolvedValue({
+        ..._DEFAULT_CONFIG, per_symbol_max_krw: 2_000_000,
+      });
+      backendApi.setPaperMaxConcurrentPositions.mockResolvedValue({
+        ..._DEFAULT_CONFIG, max_concurrent_positions: 5,
+      });
+      render(<PaperCapitalCard />);
+      await waitFor(() => screen.getByTestId("paper-capital-card-min-lot-examples"));
+      fireEvent.click(screen.getByTestId("paper-capital-card-option-30000000"));
+      await waitFor(() => screen.getByTestId("paper-capital-card-summary"));
+      fireEvent.click(screen.getByTestId("paper-capital-card-per-symbol-option-fixed-2m"));
+      await waitFor(() => screen.getByTestId("paper-capital-card-per-symbol-section"));
+      fireEvent.click(screen.getByTestId("paper-capital-card-max-positions-option-5"));
+      await waitFor(() => screen.getByTestId("paper-capital-card-max-positions-section"));
+    } finally {
+      console.error = orig;
+    }
+    const keyWarning = errors.find((e) => /unique\s+"key"\s+prop/i.test(e));
+    expect(keyWarning, `key warning across interactions: ${keyWarning}`)
+      .toBeUndefined();
+  });
+
   it("shows 1주 수량 for 1,000,000 KRW price (cap=1M)", async () => {
     backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
     render(<PaperCapitalCard />);
