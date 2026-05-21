@@ -72,6 +72,11 @@ from app.agents.risk_profile import (
     capital_allocation_for,
     list_capital_allocations,
 )
+from app.risk.loss_limits import (
+    DEFAULT_DAILY_BUY_LIMIT_KRW,
+    check_daily_buy_limit,
+)
+from app.auto_paper.capital_config import resolve_daily_buy_limit
 from app.auto_paper.position_sizer import (
     QuantityByPriceVerdict,
     compute_paper_quantity_by_price,
@@ -1147,6 +1152,125 @@ def get_risk_profile_catalog_endpoint() -> dict:
         "notice": (
             "운용 성향은 Paper 전용이며 실거래 권한 부여가 아닙니다. "
             "AGGRESSIVE 도 Paper 한정."
+        ),
+    }
+
+
+# ============================================================================
+# P-10: 일일 최대 신규 매수금액 한도 (Daily Buy Limit) — preview + resolve
+# ============================================================================
+
+
+class _DailyBuyLimitPreviewBody(BaseModel):
+    """advisory preview — 일일 매수 한도 사전 시뮬.
+
+    `max_daily_buy_amount_krw` 미주입 시 *resolve* 흐름 (manual → P-09 →
+    system default) 적용. `today_buy_used_amount_krw` 미주입 시 0 으로 시작
+    (테스트 / what-if 시뮬 권장).
+    """
+
+    side:                       str            = Field("BUY", description="매매 의도 — BUY 만 평가")
+    symbol:                     str | None     = Field(None)
+    price:                      float | None   = Field(None)
+    quantity:                   int            = Field(0, description="수량 (정수 ≥ 1)")
+    today_buy_used_amount_krw:  int            = Field(
+        0,
+        description="오늘 누적된 신규 BUY 사용금액 (KRW). caller 가 ledger 에서 집계 후 전달.",
+    )
+    max_daily_buy_amount_krw:   int | None     = Field(
+        None,
+        description="None → resolve_daily_buy_limit 자동 적용",
+    )
+    # resolve 입력 — max 미주입 시만 사용.
+    manual_daily_buy_limit_krw: int | None     = Field(None)
+    risk_profile:               str | None     = Field(
+        None, description="CONSERVATIVE/BALANCED/AGGRESSIVE",
+    )
+    total_paper_capital_krw:    int | None     = Field(None)
+
+
+@_AP.post("/daily-buy-limit/preview")
+def preview_daily_buy_limit_endpoint(body: _DailyBuyLimitPreviewBody) -> dict:
+    """P-10: 일일 매수 한도 사전 advisory check.
+
+    Returns:
+        DailyBuyLimitResult.to_dict() — allowed / reason_code /
+        reason_message / max / today_used / new_notional /
+        projected / remaining carry. 추가로 `resolved_source` 안내.
+
+    호출 순서 (사용자 요청서 §4):
+      현재가 → P-08 sizing → P-06 → P-07 cash → *P-10 (본 endpoint)* →
+      RiskManager → PermissionGate → VirtualOrder.
+
+    broker / route_order 호출 0건. *상태 변경 0건* — 단순 계산만.
+    """
+    cfg = get_paper_capital_config()
+    if body.max_daily_buy_amount_krw is not None:
+        max_amount = int(body.max_daily_buy_amount_krw)
+        source = "explicit"
+    else:
+        total = (
+            int(body.total_paper_capital_krw)
+            if body.total_paper_capital_krw is not None
+            else int(cfg.initial_cash)
+        )
+        max_amount, source = resolve_daily_buy_limit(
+            manual_daily_buy_limit_krw=body.manual_daily_buy_limit_krw,
+            risk_profile=body.risk_profile,
+            total_paper_capital_krw=total,
+        )
+
+    result = check_daily_buy_limit(
+        side=body.side,
+        symbol=body.symbol,
+        price=body.price,
+        quantity=body.quantity,
+        today_buy_used_amount=int(body.today_buy_used_amount_krw),
+        max_daily_buy_amount=max_amount,
+    )
+    return {
+        **result.to_dict(),
+        "resolved_source":        source,
+        "default_max_krw":        DEFAULT_DAILY_BUY_LIMIT_KRW,
+        "notice": (
+            "본 결과는 advisory — Paper 전용이며 실거래 결정과 결합되지 "
+            "않습니다. 다음 단계는 RiskManager → PermissionGate."
+        ),
+    }
+
+
+class _ResolveDailyBuyLimitBody(BaseModel):
+    """일일 매수 한도 resolve — 어느 source 가 사용되는지 advisory 표시."""
+
+    manual_daily_buy_limit_krw: int | None     = Field(None)
+    risk_profile:               str | None     = Field(None)
+    total_paper_capital_krw:    int | None     = Field(None)
+
+
+@_AP.post("/daily-buy-limit/resolve")
+def resolve_daily_buy_limit_endpoint(body: _ResolveDailyBuyLimitBody) -> dict:
+    """우선순위 (사용자 요청서 §2): manual → P-09 → system default."""
+    cfg = get_paper_capital_config()
+    total = (
+        int(body.total_paper_capital_krw)
+        if body.total_paper_capital_krw is not None
+        else int(cfg.initial_cash)
+    )
+    amount, source = resolve_daily_buy_limit(
+        manual_daily_buy_limit_krw=body.manual_daily_buy_limit_krw,
+        risk_profile=body.risk_profile,
+        total_paper_capital_krw=total,
+    )
+    return {
+        "max_daily_buy_amount_krw":   int(amount),
+        "source":                     source,
+        "default_max_krw":            DEFAULT_DAILY_BUY_LIMIT_KRW,
+        "total_paper_capital_krw":    total,
+        "is_paper_only":              True,
+        "is_live_authorization":      False,
+        "is_order_signal":            False,
+        "notice": (
+            "Paper 전용 advisory — 실거래 한도와 결합되지 않습니다."
         ),
     }
 
