@@ -13,6 +13,7 @@ import { UpdateCheckerCard } from "../common/UpdateCheckerCard";
 import { UserGuideCard } from "../common/UserGuideModal";
 import { FaqCard, HelpFeedbackPanel } from "../common/HelpFeedbackPanel";
 import { DeploymentInfoCard } from "../common/DeploymentInfoCard";
+import { DisplaySettingsCard } from "../common/DisplaySettingsCard";
 import { APP_INFO, appVersionLine } from "../../config/appInfo";
 import { latestReleaseNote } from "../../config/releaseNotes";
 
@@ -228,6 +229,11 @@ export function Settings({ settings }) {
 
       {/* 버전 / 공지 — VersionBadge 클릭으로 release notes 재오픈 */}
       <VersionInfoCard />
+
+      {/* feature/display-settings-and-ui-readability: 사용자가 EXE 화면
+          가독성 (글자 크기 / 화면 폭 / 테마) 을 즉시 조정할 수 있는 카드.
+          사용자 요청서 §1 권장 위치 — 버전 카드 아래 / 배포 카드 위. */}
+      <DisplaySettingsCard />
 
       {/* #86 데스크톱 업데이트 확인 카드 — mock 단계, 후속 PR 에서 Tauri
           updater 와 실 연결. broker 호출 0건, 안전 flag 변경 0건. */}
