@@ -376,3 +376,487 @@ def policy_from_risk_policy(risk_policy) -> PositionLimitPolicy:
 # 분리는 향후 옵트인 PR (FUTURES_LIVE 비활성 상태에서는 본 rule 도입이
 # 우선순위 낮음).
 # 자세한 정책: docs/position_limit_policy.md §5.
+
+
+# ============================================================================
+# P-11: 종목별 최대 비중 제한 (Symbol Weight Limit) — Paper advisory layer
+# ============================================================================
+#
+# 기존 #35 PositionLimitRule (위) 는 broker.OrderRequest/Balance/Position 과
+# *결합* 된 RiskManager rule. P-11 은 *Paper Auto Loop* 가 BUY 후보 시점에
+# 호출하는 *순수 함수* — broker 결합 0건, dict / int / float 만 입력.
+# 두 layer 는 충돌 없이 공존 (#35 는 그대로 RiskManager 가 호출, P-11 은
+# paper_decision_bridge / agent_consumer 등 advisory caller 가 호출).
+#
+# 사용자 요청서 §1 예시:
+#   total=10,000,000 / max_pct=20% → 한 종목 최대 2,000,000원
+#   현재 보유 1,600,000 / 신규 700,000 → 예상 2,300,000
+#   → SYMBOL_WEIGHT_LIMIT_EXCEEDED 차단
+#
+# 호출 순서 (사용자 요청서 §4):
+#   현재가 → P-08 sizing → P-06 → P-07 cash → P-10 daily buy →
+#   *P-11 symbol weight (본 함수)* → RiskManager → PermissionGate.
+#
+# CLAUDE.md 절대 원칙 (테스트로 lock):
+# - broker / OrderExecutor / route_order import 0건 (본 모듈 위쪽은 이미
+#   broker import 있지만, 본 P-11 layer 는 *값만* 받으므로 결합 0건)
+# - settings.enable_*_trading mutation 0건
+# - SymbolWeightLimitResult.is_paper_only = True 영구
+# - is_order_signal / is_live_authorization = False 영구
+
+
+# ── 시스템 기본값 (사용자 요청서 §2) — P-09 미사용 시 fallback. ──
+DEFAULT_MAX_SYMBOL_WEIGHT_PCT: float = 0.20    # 20%
+
+
+_BUY_TOKENS_P11 = frozenset({
+    "buy", "open", "open_long", "long", "enter", "entry",
+})
+
+
+def _is_buy_side_p11(side: str | None) -> bool:
+    return (side or "").strip().lower() in _BUY_TOKENS_P11
+
+
+def _format_krw_p11(amount: int | float) -> str:
+    return f"{int(amount):,}"
+
+
+# reason_code 상수.
+SYMBOL_WEIGHT_LIMIT_OK                     = "SYMBOL_WEIGHT_LIMIT_OK"
+SYMBOL_WEIGHT_LIMIT_EXCEEDED               = "SYMBOL_WEIGHT_LIMIT_EXCEEDED"
+SYMBOL_WEIGHT_LIMIT_NOT_APPLICABLE         = "SYMBOL_WEIGHT_LIMIT_NOT_APPLICABLE"
+SYMBOL_WEIGHT_LIMIT_INVALID_PRICE          = "INVALID_PRICE"
+SYMBOL_WEIGHT_LIMIT_INVALID_QUANTITY       = "INVALID_QUANTITY"
+SYMBOL_WEIGHT_LIMIT_INVALID_TOTAL_EQUITY   = "INVALID_TOTAL_EQUITY"
+SYMBOL_WEIGHT_LIMIT_INVALID_WEIGHT         = "INVALID_SYMBOL_WEIGHT_LIMIT"
+
+
+@dataclass(frozen=True)
+class SymbolWeightLimitResult:
+    """종목별 최대 비중 검사 결과 — *advisory*, broker 호출 0건.
+
+    `is_paper_only=True` / `is_order_signal=False` / `is_live_authorization=
+    False` 영구 (dataclass __post_init__ 가드).
+    """
+
+    allowed:                            bool
+    reason_code:                        str
+    reason_message:                     str
+    total_paper_equity:                 int
+    max_symbol_weight_pct:              float
+    max_symbol_exposure_amount:         int
+    current_symbol_exposure_amount:     int
+    new_buy_notional:                   int
+    projected_symbol_exposure_amount:   int
+    remaining_symbol_buy_capacity:      int
+    symbol:                             str | None = None
+    side:                               str | None = None
+    price:                              float | None = None
+    quantity:                           int = 0
+
+    is_paper_only:                      bool = True
+    is_order_signal:                    bool = False
+    is_live_authorization:              bool = False
+
+    def __post_init__(self) -> None:
+        if self.is_paper_only is not True:
+            raise ValueError(
+                "SymbolWeightLimitResult.is_paper_only must be True"
+            )
+        if self.is_order_signal is not False:
+            raise ValueError(
+                "SymbolWeightLimitResult.is_order_signal must be False"
+            )
+        if self.is_live_authorization is not False:
+            raise ValueError(
+                "SymbolWeightLimitResult.is_live_authorization must be False"
+            )
+        if self.new_buy_notional < 0:
+            raise ValueError(
+                f"new_buy_notional must be >= 0, got {self.new_buy_notional}"
+            )
+
+    @property
+    def blocked(self) -> bool:
+        return not self.allowed
+
+    @property
+    def is_exceeded(self) -> bool:
+        return self.reason_code == SYMBOL_WEIGHT_LIMIT_EXCEEDED
+
+    @property
+    def is_not_applicable(self) -> bool:
+        return self.reason_code == SYMBOL_WEIGHT_LIMIT_NOT_APPLICABLE
+
+    def to_dict(self) -> dict:
+        return {
+            "allowed":                          self.allowed,
+            "reason_code":                      self.reason_code,
+            "reason_message":                   self.reason_message,
+            "total_paper_equity":               int(self.total_paper_equity),
+            "max_symbol_weight_pct":            float(self.max_symbol_weight_pct),
+            "max_symbol_exposure_amount":       int(self.max_symbol_exposure_amount),
+            "current_symbol_exposure_amount":   int(self.current_symbol_exposure_amount),
+            "new_buy_notional":                 int(self.new_buy_notional),
+            "projected_symbol_exposure_amount": int(self.projected_symbol_exposure_amount),
+            "remaining_symbol_buy_capacity":    int(self.remaining_symbol_buy_capacity),
+            "symbol":                           self.symbol,
+            "side":                             self.side,
+            "price":                            self.price,
+            "quantity":                         int(self.quantity),
+            "blocked":                          self.blocked,
+            "is_exceeded":                      self.is_exceeded,
+            "is_not_applicable":                self.is_not_applicable,
+            "is_paper_only":                    self.is_paper_only,
+            "is_order_signal":                  self.is_order_signal,
+            "is_live_authorization":            self.is_live_authorization,
+        }
+
+
+def check_symbol_weight_limit(
+    *,
+    side:                            str | None,
+    symbol:                          str | None,
+    price:                           float | int | None,
+    quantity:                        int | float,
+    total_paper_equity:              int | float,
+    current_symbol_exposure_amount:  int | float,
+    max_symbol_weight_pct:           float,
+) -> SymbolWeightLimitResult:
+    """종목별 최대 비중 사전 검사 — *advisory*. 사용자 요청서 §3 정확 매칭.
+
+    실행 순서 (reason_code 우선순위 — 첫 매칭 반환):
+      1. SELL / HOLD / NO_ACTION             → NOT_APPLICABLE
+      2. max_symbol_weight_pct <= 0 또는 > 1 → INVALID_WEIGHT
+      3. total_paper_equity <= 0             → INVALID_TOTAL_EQUITY
+      4. price <= 0 / None                   → INVALID_PRICE
+      5. quantity 가 정수 ≥ 1 이 아님         → INVALID_QUANTITY
+      6. current_symbol_exposure_amount < 0  → 0 으로 clamp + 진행
+      7. projected > max_exposure            → SYMBOL_WEIGHT_LIMIT_EXCEEDED
+      8. 그 외                                → SYMBOL_WEIGHT_LIMIT_OK
+
+    계산:
+        max_symbol_exposure_amount   = floor(total_paper_equity × pct)
+        new_buy_notional             = floor(price × quantity)
+        projected_symbol_exposure    = current + new_buy_notional
+        remaining_symbol_buy_capacity = max(max_exposure - current, 0)
+
+    Returns:
+        SymbolWeightLimitResult — to_dict() 로 API 응답에 그대로 carry 가능.
+    """
+    total_eq = int(max(int(total_paper_equity or 0), 0))
+    current_exposure_clamped = max(int(current_symbol_exposure_amount or 0), 0)
+
+    # 1. NOT APPLICABLE — BUY 가 아니면 한도 검사 무관.
+    if not _is_buy_side_p11(side):
+        return SymbolWeightLimitResult(
+            allowed=True,
+            reason_code=SYMBOL_WEIGHT_LIMIT_NOT_APPLICABLE,
+            reason_message=(
+                "BUY 가 아니므로 종목별 비중 제한을 적용하지 않습니다."
+            ),
+            total_paper_equity=total_eq,
+            max_symbol_weight_pct=float(max_symbol_weight_pct or 0),
+            max_symbol_exposure_amount=0,
+            current_symbol_exposure_amount=current_exposure_clamped,
+            new_buy_notional=0,
+            projected_symbol_exposure_amount=current_exposure_clamped,
+            remaining_symbol_buy_capacity=0,
+            symbol=symbol, side=side, price=None, quantity=0,
+        )
+
+    # 2. max_symbol_weight_pct 검증.
+    try:
+        pct = float(max_symbol_weight_pct)
+    except (TypeError, ValueError):
+        pct = -1.0
+    if not (0.0 < pct <= 1.0):
+        return SymbolWeightLimitResult(
+            allowed=False,
+            reason_code=SYMBOL_WEIGHT_LIMIT_INVALID_WEIGHT,
+            reason_message=(
+                f"종목별 최대 비중 {max_symbol_weight_pct!r} 이 (0, 1] 범위가 "
+                "아니라 평가할 수 없습니다."
+            ),
+            total_paper_equity=total_eq,
+            max_symbol_weight_pct=float(max(pct, 0.0)),
+            max_symbol_exposure_amount=0,
+            current_symbol_exposure_amount=current_exposure_clamped,
+            new_buy_notional=0,
+            projected_symbol_exposure_amount=current_exposure_clamped,
+            remaining_symbol_buy_capacity=0,
+            symbol=symbol, side=side, price=None, quantity=0,
+        )
+
+    # 3. total_paper_equity 검증.
+    if total_eq <= 0:
+        return SymbolWeightLimitResult(
+            allowed=False,
+            reason_code=SYMBOL_WEIGHT_LIMIT_INVALID_TOTAL_EQUITY,
+            reason_message=(
+                f"총 Paper 자산 {total_paper_equity!r} 이 0 이하라 평가할 수 없습니다."
+            ),
+            total_paper_equity=total_eq,
+            max_symbol_weight_pct=pct,
+            max_symbol_exposure_amount=0,
+            current_symbol_exposure_amount=current_exposure_clamped,
+            new_buy_notional=0,
+            projected_symbol_exposure_amount=current_exposure_clamped,
+            remaining_symbol_buy_capacity=0,
+            symbol=symbol, side=side, price=None, quantity=0,
+        )
+
+    # 사전 계산 (사용자 요청서 §3 정확).
+    import math
+    max_exposure = int(math.floor(total_eq * pct))
+
+    # 4. price 검증.
+    if price is None:
+        return SymbolWeightLimitResult(
+            allowed=False,
+            reason_code=SYMBOL_WEIGHT_LIMIT_INVALID_PRICE,
+            reason_message="현재가가 없어 종목별 비중을 평가할 수 없습니다.",
+            total_paper_equity=total_eq,
+            max_symbol_weight_pct=pct,
+            max_symbol_exposure_amount=max_exposure,
+            current_symbol_exposure_amount=current_exposure_clamped,
+            new_buy_notional=0,
+            projected_symbol_exposure_amount=current_exposure_clamped,
+            remaining_symbol_buy_capacity=max(max_exposure - current_exposure_clamped, 0),
+            symbol=symbol, side=side, price=None, quantity=0,
+        )
+    try:
+        p = float(price)
+    except (TypeError, ValueError):
+        p = -1.0
+    if not (p > 0):
+        return SymbolWeightLimitResult(
+            allowed=False,
+            reason_code=SYMBOL_WEIGHT_LIMIT_INVALID_PRICE,
+            reason_message=(
+                f"현재가 {price!r} 가 0 이하라 종목별 비중을 평가할 수 없습니다."
+            ),
+            total_paper_equity=total_eq,
+            max_symbol_weight_pct=pct,
+            max_symbol_exposure_amount=max_exposure,
+            current_symbol_exposure_amount=current_exposure_clamped,
+            new_buy_notional=0,
+            projected_symbol_exposure_amount=current_exposure_clamped,
+            remaining_symbol_buy_capacity=max(max_exposure - current_exposure_clamped, 0),
+            symbol=symbol, side=side, price=None, quantity=0,
+        )
+
+    # 5. quantity 검증.
+    if isinstance(quantity, bool) or not isinstance(quantity, (int, float)):
+        qty_int = -1
+    else:
+        try:
+            qf = float(quantity)
+        except (TypeError, ValueError):
+            qf = -1.0
+        if qf != qf or qf in (float("inf"), float("-inf")) or qf < 1:
+            qty_int = -1
+        elif float(qf).is_integer():
+            qty_int = int(qf)
+        else:
+            qty_int = -1
+    if qty_int < 1:
+        return SymbolWeightLimitResult(
+            allowed=False,
+            reason_code=SYMBOL_WEIGHT_LIMIT_INVALID_QUANTITY,
+            reason_message=(
+                f"매수 수량 {quantity!r} 가 유효한 정수 ≥ 1 이 아니라 "
+                "종목별 비중을 평가할 수 없습니다."
+            ),
+            total_paper_equity=total_eq,
+            max_symbol_weight_pct=pct,
+            max_symbol_exposure_amount=max_exposure,
+            current_symbol_exposure_amount=current_exposure_clamped,
+            new_buy_notional=0,
+            projected_symbol_exposure_amount=current_exposure_clamped,
+            remaining_symbol_buy_capacity=max(max_exposure - current_exposure_clamped, 0),
+            symbol=symbol, side=side, price=p, quantity=0,
+        )
+
+    # 7. 본 계산 — 사용자 요청서 §3 정확.
+    new_buy_notional = int(p * qty_int)
+    projected = current_exposure_clamped + new_buy_notional
+    remaining_before = max(max_exposure - current_exposure_clamped, 0)
+    remaining_after = max(max_exposure - projected, 0)
+
+    if projected > max_exposure:
+        return SymbolWeightLimitResult(
+            allowed=False,
+            reason_code=SYMBOL_WEIGHT_LIMIT_EXCEEDED,
+            reason_message=(
+                "종목별 최대 비중을 초과하여 매수 차단 — 총자산 "
+                f"{_format_krw_p11(total_eq)}원 기준 종목별 최대 비중 "
+                f"{pct * 100:.1f}%는 {_format_krw_p11(max_exposure)}원입니다. "
+                f"현재 보유 {_format_krw_p11(current_exposure_clamped)}원에 "
+                f"신규 매수 {_format_krw_p11(new_buy_notional)}원을 더하면 "
+                f"{_format_krw_p11(projected)}원으로 한도를 초과합니다."
+            ),
+            total_paper_equity=total_eq,
+            max_symbol_weight_pct=pct,
+            max_symbol_exposure_amount=max_exposure,
+            current_symbol_exposure_amount=current_exposure_clamped,
+            new_buy_notional=new_buy_notional,
+            projected_symbol_exposure_amount=projected,
+            remaining_symbol_buy_capacity=remaining_before,
+            symbol=symbol, side=side, price=p, quantity=qty_int,
+        )
+
+    # 8. OK.
+    return SymbolWeightLimitResult(
+        allowed=True,
+        reason_code=SYMBOL_WEIGHT_LIMIT_OK,
+        reason_message=(
+            f"종목별 최대 비중 이내 — 한도 {pct * 100:.1f}% / "
+            f"{_format_krw_p11(max_exposure)}원, 현재 보유 "
+            f"{_format_krw_p11(current_exposure_clamped)}원, 신규 매수 "
+            f"{_format_krw_p11(new_buy_notional)}원, 예상 "
+            f"{_format_krw_p11(projected)}원, 잔여 "
+            f"{_format_krw_p11(remaining_after)}원."
+        ),
+        total_paper_equity=total_eq,
+        max_symbol_weight_pct=pct,
+        max_symbol_exposure_amount=max_exposure,
+        current_symbol_exposure_amount=current_exposure_clamped,
+        new_buy_notional=new_buy_notional,
+        projected_symbol_exposure_amount=projected,
+        remaining_symbol_buy_capacity=remaining_after,
+        symbol=symbol, side=side, price=p, quantity=qty_int,
+    )
+
+
+# ── 현재 종목 노출 계산 helper (사용자 요청서 §5) ────────────────────────────
+
+
+# 합산 대상 status — 확정 / 체결 / accepted 만. rejected / cancelled / blocked
+# 제외 (사용자 요청서 §5 정책 + 검증 20).
+_ACCEPTED_POSITION_STATUSES = frozenset({
+    "FILLED", "ACCEPTED", "EXECUTED", "COMPLETED", "CONFIRMED",
+    "filled", "accepted", "executed", "completed", "confirmed",
+})
+_REJECTED_POSITION_STATUSES = frozenset({
+    "REJECTED", "CANCELLED", "CANCELED", "BLOCKED", "EXPIRED", "FAILED",
+    "rejected", "cancelled", "canceled", "blocked", "expired", "failed",
+})
+
+
+def calculate_current_symbol_exposure_amount(
+    orders,
+    *,
+    symbol: str,
+    last_price: float | int | None = None,
+) -> int:
+    """현재 해당 symbol 의 *Paper 보유 평가금액* (KRW) — 확정 BUY 누적 - 확정 SELL 누적.
+
+    각 order 의 필드:
+        side / direction / action
+        status / state
+        notional / amount / notional_krw / total_amount
+        price * quantity (fallback)
+        symbol
+
+    rejected / cancelled / blocked / pending / status 미상은 *현재 노출 계산에서
+    제외* (사용자 요청서 §5 + 검증 20).
+
+    Args:
+        orders: iterable of dict / dataclass / Pydantic-like objects.
+        symbol: 평가 대상 종목 코드.
+        last_price: 최신가 — *현재 시점 평가금액* 으로 재계산할 수 있도록
+            optional. None 이면 *체결가 누적* 기준.
+
+    Returns:
+        int — 확정 BUY notional - 확정 SELL notional (음수면 0 clamp).
+    """
+    if not orders or not symbol:
+        return 0
+
+    def _get(o, key, default=None):
+        if isinstance(o, dict):
+            return o.get(key, default)
+        return getattr(o, key, default)
+
+    def _side(o):
+        return (
+            _get(o, "side") or _get(o, "direction") or _get(o, "action")
+            or _get(o, "trade_side")
+        )
+
+    def _status(o):
+        return _get(o, "status") or _get(o, "state") or _get(o, "order_status")
+
+    def _notional(o) -> int:
+        # last_price 가 주어지면 quantity × last_price 로 *재평가* (현재 시점).
+        if last_price is not None:
+            try:
+                q = float(_get(o, "quantity") or _get(o, "qty") or 0)
+                lp = float(last_price)
+                if q > 0 and lp > 0:
+                    return int(q * lp)
+            except (TypeError, ValueError):
+                pass
+        # 명시 notional 우선.
+        for key in ("notional_krw", "notional", "amount",
+                    "total_amount", "filled_amount"):
+            v = _get(o, key)
+            if v is not None:
+                try:
+                    return int(float(v))
+                except (TypeError, ValueError):
+                    pass
+        # price × quantity fallback.
+        try:
+            p = float(_get(o, "price") or 0)
+            q = float(_get(o, "quantity") or _get(o, "qty") or 0)
+        except (TypeError, ValueError):
+            return 0
+        if p > 0 and q > 0:
+            return int(p * q)
+        return 0
+
+    sym = str(symbol).strip()
+    buy_total = 0
+    sell_total = 0
+    for o in orders:
+        if o is None:
+            continue
+        # symbol 매칭 (대소문자 strip 비교).
+        osym = _get(o, "symbol")
+        if not osym or str(osym).strip() != sym:
+            continue
+        status_raw = _status(o)
+        if status_raw is None:
+            continue
+        if str(status_raw) in _REJECTED_POSITION_STATUSES:
+            continue
+        if str(status_raw) not in _ACCEPTED_POSITION_STATUSES:
+            continue
+        side_str = (_side(o) or "").strip().lower()
+        notional = max(_notional(o), 0)
+        if side_str in _BUY_TOKENS_P11:
+            buy_total += notional
+        elif side_str in {
+            "sell", "close", "close_long", "exit", "sell_to_close",
+        }:
+            sell_total += notional
+        # 그 외 (HOLD / NO_ACTION 등) — 포지션 변동 없음.
+    return max(buy_total - sell_total, 0)
+
+
+__all_p11__ = [
+    "DEFAULT_MAX_SYMBOL_WEIGHT_PCT",
+    "SYMBOL_WEIGHT_LIMIT_OK",
+    "SYMBOL_WEIGHT_LIMIT_EXCEEDED",
+    "SYMBOL_WEIGHT_LIMIT_NOT_APPLICABLE",
+    "SYMBOL_WEIGHT_LIMIT_INVALID_PRICE",
+    "SYMBOL_WEIGHT_LIMIT_INVALID_QUANTITY",
+    "SYMBOL_WEIGHT_LIMIT_INVALID_TOTAL_EQUITY",
+    "SYMBOL_WEIGHT_LIMIT_INVALID_WEIGHT",
+    "SymbolWeightLimitResult",
+    "check_symbol_weight_limit",
+    "calculate_current_symbol_exposure_amount",
+]

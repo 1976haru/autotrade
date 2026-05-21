@@ -76,7 +76,14 @@ from app.risk.loss_limits import (
     DEFAULT_DAILY_BUY_LIMIT_KRW,
     check_daily_buy_limit,
 )
-from app.auto_paper.capital_config import resolve_daily_buy_limit
+from app.risk.position_limits import (
+    DEFAULT_MAX_SYMBOL_WEIGHT_PCT,
+    check_symbol_weight_limit,
+)
+from app.auto_paper.capital_config import (
+    resolve_daily_buy_limit,
+    resolve_symbol_weight_limit_pct,
+)
 from app.auto_paper.position_sizer import (
     QuantityByPriceVerdict,
     compute_paper_quantity_by_price,
@@ -1269,6 +1276,120 @@ def resolve_daily_buy_limit_endpoint(body: _ResolveDailyBuyLimitBody) -> dict:
         "is_paper_only":              True,
         "is_live_authorization":      False,
         "is_order_signal":            False,
+        "notice": (
+            "Paper 전용 advisory — 실거래 한도와 결합되지 않습니다."
+        ),
+    }
+
+
+# ============================================================================
+# P-11: 종목별 최대 비중 제한 — preview + resolve
+# ============================================================================
+
+
+class _SymbolWeightLimitPreviewBody(BaseModel):
+    """advisory preview — 종목별 비중 한도 사전 시뮬.
+
+    `max_symbol_weight_pct` 미주입 시 resolve 흐름 (manual → P-09 → system
+    default) 자동 적용. `total_paper_equity_krw` 미주입 시 현재
+    `PaperCapitalConfig.initial_cash` 자동 사용.
+    """
+
+    side:                            str           = Field("BUY", description="매매 의도 — BUY 만 평가")
+    symbol:                          str           = Field(..., description="종목 코드")
+    price:                           float | None  = Field(None)
+    quantity:                        int           = Field(0)
+    current_symbol_exposure_amount:  int           = Field(
+        0,
+        description="현재 해당 종목 Paper 보유 평가금액 (KRW). caller 가 ledger / VirtualPosition 에서 집계 후 전달.",
+    )
+    total_paper_equity_krw:          int | None    = Field(
+        None,
+        description="총 Paper 자산 (KRW). None 이면 PaperCapitalConfig.initial_cash 자동 사용.",
+    )
+    max_symbol_weight_pct:           float | None  = Field(
+        None,
+        description="None → resolve_symbol_weight_limit_pct 자동 적용",
+    )
+    manual_max_symbol_weight_pct:    float | None  = Field(None)
+    risk_profile:                    str | None    = Field(None)
+
+
+@_AP.post("/symbol-weight-limit/preview")
+def preview_symbol_weight_limit_endpoint(
+    body: _SymbolWeightLimitPreviewBody,
+) -> dict:
+    """P-11: 종목별 비중 한도 사전 advisory check.
+
+    Returns:
+        SymbolWeightLimitResult.to_dict() — allowed / reason_code /
+        reason_message / total_paper_equity / max_symbol_weight_pct /
+        max_symbol_exposure_amount / current / new_buy_notional /
+        projected / remaining_symbol_buy_capacity carry. 추가로
+        `resolved_source` 안내.
+
+    호출 순서 (사용자 요청서 §4):
+      현재가 → P-08 sizing → P-06 → P-07 cash → P-10 daily → *P-11 (본)* →
+      RiskManager → PermissionGate → VirtualOrder.
+
+    broker / route_order 호출 0건. *상태 변경 0건* — 단순 계산만.
+    """
+    cfg = get_paper_capital_config()
+    total = (
+        int(body.total_paper_equity_krw)
+        if body.total_paper_equity_krw is not None
+        else int(cfg.initial_cash)
+    )
+    if body.max_symbol_weight_pct is not None:
+        pct = float(body.max_symbol_weight_pct)
+        source = "explicit"
+    else:
+        pct, source = resolve_symbol_weight_limit_pct(
+            manual_max_symbol_weight_pct=body.manual_max_symbol_weight_pct,
+            risk_profile=body.risk_profile,
+        )
+
+    result = check_symbol_weight_limit(
+        side=body.side,
+        symbol=body.symbol,
+        price=body.price,
+        quantity=body.quantity,
+        total_paper_equity=total,
+        current_symbol_exposure_amount=int(body.current_symbol_exposure_amount),
+        max_symbol_weight_pct=pct,
+    )
+    return {
+        **result.to_dict(),
+        "resolved_source":  source,
+        "default_pct":      DEFAULT_MAX_SYMBOL_WEIGHT_PCT,
+        "notice": (
+            "본 결과는 advisory — Paper 전용이며 실거래 결정과 결합되지 "
+            "않습니다. 다음 단계는 RiskManager → PermissionGate."
+        ),
+    }
+
+
+class _ResolveSymbolWeightBody(BaseModel):
+    """종목별 비중 한도 resolve — 어느 source 가 사용되는지 확인."""
+
+    manual_max_symbol_weight_pct: float | None = Field(None)
+    risk_profile:                 str | None   = Field(None)
+
+
+@_AP.post("/symbol-weight-limit/resolve")
+def resolve_symbol_weight_limit_endpoint(body: _ResolveSymbolWeightBody) -> dict:
+    """우선순위 (사용자 요청서 §2): manual → P-09 → system default."""
+    pct, source = resolve_symbol_weight_limit_pct(
+        manual_max_symbol_weight_pct=body.manual_max_symbol_weight_pct,
+        risk_profile=body.risk_profile,
+    )
+    return {
+        "max_symbol_weight_pct":  float(pct),
+        "source":                 source,
+        "default_pct":            DEFAULT_MAX_SYMBOL_WEIGHT_PCT,
+        "is_paper_only":          True,
+        "is_live_authorization":  False,
+        "is_order_signal":        False,
         "notice": (
             "Paper 전용 advisory — 실거래 한도와 결합되지 않습니다."
         ),
