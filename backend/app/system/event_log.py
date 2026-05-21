@@ -86,9 +86,9 @@ _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("bearer_token",       re.compile(r"\bBearer\s+[A-Za-z0-9\.\-_]{20,}\b")),
     ("jwt",                re.compile(r"\beyJ[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\.[A-Za-z0-9\-_]{10,}\b")),
     ("kis_app_key",        re.compile(r"\bPS[A-Za-z0-9]{20,}\b")),
-    # KIS 계좌번호: 8-2 형식. 단, 6자리 종목코드 / 8자리 날짜와 구분 위해
-    # *대시 포함 8-2* 만 매칭 (예: "12345678-01" — 너무 공격적으로 잡지 않음).
-    ("korean_account",     re.compile(r"\b\d{8}-\d{2}\b")),
+    # KIS 계좌번호: 8-2 형식. 6자리 종목코드 / 8자리 날짜와 구분 위해
+    # *대시 포함 8-2* 만 매칭 (너무 공격적으로 잡지 않음).
+    ("korean_account",     re.compile(r"\b\d{8}-\d{2}\b")),  # security-scan: ignore
     ("credit_card",        re.compile(r"\b\d{4}[-\s]\d{4}[-\s]\d{4}[-\s]\d{4}\b")),
     ("rrn",                re.compile(r"\b\d{6}-\d{7}\b")),
 )

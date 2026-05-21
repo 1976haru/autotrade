@@ -52,24 +52,134 @@ const _LOG_PATH_HINT_KO = (
 );
 
 
-// secret 의심 패턴 — clipboard copy 전 *마지막* 방어선 (backend 가 이미
-// fail-closed 로 차단하므로 정상 흐름에서 도달하지 않음).
-const _SECRET_PATTERNS = [
-  /\bsk-[A-Za-z0-9]{20,}\b/,
-  /\bsk-ant-[A-Za-z0-9-_]{30,}\b/,
-  /\bghp_[A-Za-z0-9]{30,}\b/,
-  /\bxox[bpaoist]-[A-Za-z0-9-]{10,}\b/,
-  /\bBearer\s+[A-Za-z0-9.\-_]{20,}\b/,
-  /\beyJ[A-Za-z0-9-_]{10,}\.[A-Za-z0-9-_]{10,}\.[A-Za-z0-9-_]{10,}\b/,
-  /\b\d{8}-\d{2}\b/,         // 한국 계좌번호 패턴
-  /\b\d{6}-\d{7}\b/,         // 주민등록번호 패턴
+// secret *값* 패턴 — 진단 리포트에 흘러들어온 token / key / 계좌번호 패턴.
+// clipboard copy 전 *마지막* 방어선 (backend 가 이미 fail-closed 로 차단
+// 하므로 정상 흐름에서 도달하지 않음). `\b` 경계 없는 form 도 함께 등록 —
+// JSON quote/comma 등 비-word 경계가 누락된 경우에도 안전.
+const _SECRET_VALUE_PATTERNS = [
+  /sk-ant-[A-Za-z0-9\-_]{20,}/i,             // Anthropic
+  /sk-[A-Za-z0-9]{16,}/,                     // OpenAI sk-... (16자 이상)
+  /ghp_[A-Za-z0-9]{20,}/,                    // GitHub PAT
+  /xox[bpaoist]-[A-Za-z0-9-]{10,}/i,         // Slack
+  /\bBearer\s+[A-Za-z0-9.\-_]{20,}/i,        // Bearer token
+  /eyJ[A-Za-z0-9\-_]{8,}\.[A-Za-z0-9\-_]{8,}\.[A-Za-z0-9\-_]{8,}/, // JWT
+  /\b\d{8}-\d{2}\b/,                         // 한국 계좌번호 8-2 형식  // security-scan: ignore
+  /\b\d{6}-\d{7}\b/,                         // 주민등록번호 패턴
+  /\b\d{4}[\s-]\d{4}[\s-]\d{4}[\s-]\d{4}\b/, // 신용카드 번호 패턴
+  /telegram[\s_-]*bot[\s_-]*token\s*[:=]\s*\S+/i,
+  /PSAt[A-Za-z0-9]{20,}/,                    // KIS app_key 형식
 ];
 
 
+// secret *key 이름* — 값과 무관하게 key 이름 자체가 의심스러우면 차단.
+// 사용자 요청서 정책 B: "key 이름에 secret/token/password/api_key/account_no
+// 등이 포함되면 값과 무관하게 차단해도 된다."
+const _SECRET_KEY_NAMES = [
+  "api_key", "apisecret", "api_secret",
+  "app_key", "app_secret",
+  "access_token", "refresh_token",
+  "secret_token", "secret",
+  "password", "passwd",
+  "telegram_bot_token", "bot_token",
+  "kis_app_key", "kis_app_secret", "kis_account_no",
+  "anthropic_api_key", "openai_api_key",
+  "private_key", "client_secret",
+  "account_no", "account_number",
+];
+
+
+function _matchSecretValue(value) {
+  if (typeof value !== "string" || !value) return null;
+  for (const re of _SECRET_VALUE_PATTERNS) {
+    if (re.test(value)) {
+      return `value_pattern:${re.source.slice(0, 40)}`;
+    }
+  }
+  return null;
+}
+
+
+function _isSuspiciousKeyName(key) {
+  if (typeof key !== "string" || !key) return null;
+  const norm = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+  for (const candidate of _SECRET_KEY_NAMES) {
+    const candidateNorm = candidate.replace(/[^a-z0-9]/g, "");
+    if (norm.includes(candidateNorm)) {
+      return `key_name:${key}`;
+    }
+  }
+  return null;
+}
+
+
+// 의심 key 이름이라도 *값이 boolean / null / 숫자* 면 secret 일 수 없다.
+// 예: `contains_secret: false` 는 안전 flag 라벨이며, `password: ""` 는 빈
+// 입력 — 둘 다 차단 대상이 *아니다*. 오로지 *비어있지 않은 string* 값일 때만
+// key-name 조합으로 차단한다 (false positive 회피).
+function _isSecretCandidateValue(v) {
+  if (v == null) return false;
+  if (typeof v === "boolean" || typeof v === "number") return false;
+  if (typeof v === "string") return v.trim().length > 0;
+  // object / array → 자식에서 다시 봄
+  return false;
+}
+
+
+/**
+ * structured walk — payload 의 모든 (key, value) 를 재귀로 점검.
+ *
+ * 차단 규칙:
+ *  1. *값* 이 string 이고 regex 매칭 → 즉시 차단 ("value_pattern:...").
+ *  2. key 이름이 의심스럽고 + 값이 *비어있지 않은 string* → 차단
+ *     ("key_name:..."). boolean / 숫자 / null 값은 차단 대상 아님 (예:
+ *     `contains_secret: false` 같은 안전 flag 라벨 false positive 방지).
+ *  3. object / array → 재귀.
+ *
+ * @returns 첫 매칭 사유 문자열 또는 null.
+ */
+function _findSecret(node, depth) {
+  if (depth > 8) return null;          // 안전: 무한 재귀 방지
+  if (node == null) return null;
+  if (typeof node === "string") {
+    return _matchSecretValue(node);
+  }
+  if (typeof node !== "object") return null;
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const found = _findSecret(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  // object → key 이름 + 값 모두 점검.
+  for (const [k, v] of Object.entries(node)) {
+    if (_isSecretCandidateValue(v)) {
+      const keyHit = _isSuspiciousKeyName(k);
+      if (keyHit) return keyHit;
+    }
+    const valHit = _findSecret(v, depth + 1);
+    if (valHit) return valHit;
+  }
+  return null;
+}
+
+
+// 호환용 — text 기반 1차 빠른 검사 (regex 만). structured walk 보다 약하
+// 지만 빠르고 추가 방어선.
 function _containsSecret(text) {
   if (!text || typeof text !== "string") return false;
-  return _SECRET_PATTERNS.some((re) => re.test(text));
+  return _SECRET_VALUE_PATTERNS.some((re) => re.test(text));
 }
+
+
+export const __test__ = {
+  _SECRET_VALUE_PATTERNS,
+  _SECRET_KEY_NAMES,
+  _matchSecretValue,
+  _isSuspiciousKeyName,
+  _findSecret,
+  _containsSecret,
+};
 
 
 export function OperatorDiagnosticsCard({
@@ -129,18 +239,34 @@ export function OperatorDiagnosticsCard({
       generated_at: new Date().toISOString(),
       note: "Paper / SIMULATION 진단 — 민감정보는 포함되지 않습니다.",
     };
-    const text = JSON.stringify(payload, null, 2);
-    if (_containsSecret(text)) {
+
+    // fix/operator-diagnostics-copy-secret-guard: 2-layer 방어 — 먼저
+    // *구조적* (key 이름 + 값 정규식) 점검 → JSON.stringify 결과 정규식
+    // 보조 점검. 어느 한쪽이라도 매칭되면 clipboard.writeText 호출 *전*
+    // 에 blocked 상태로 전환하고 즉시 반환. clipboard 는 절대 호출되지
+    // 않는다 (사용자 요청서 정책 C 1번).
+    const structuredHit = _findSecret(payload, 0);
+    let text;
+    try {
+      text = JSON.stringify(payload, null, 2);
+    } catch {
+      // 직렬화 실패 — 안전을 위해 차단 처리.
       setCopyState("blocked");
       return;
     }
+    if (structuredHit || _containsSecret(text)) {
+      // *동기* 상태 업데이트 — async clipboard 호출 *전*. waitFor 가
+      // 안정적으로 catch 할 수 있도록.
+      setCopyState("blocked");
+      return;
+    }
+    if (!clipboard || typeof clipboard.writeText !== "function") {
+      setCopyState("fail");
+      return;
+    }
     try {
-      if (clipboard && typeof clipboard.writeText === "function") {
-        await clipboard.writeText(text);
-        setCopyState("ok");
-      } else {
-        setCopyState("fail");
-      }
+      await clipboard.writeText(text);
+      setCopyState("ok");
     } catch {
       setCopyState("fail");
     }

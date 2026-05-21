@@ -15,7 +15,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import { OperatorDiagnosticsCard } from "./OperatorDiagnosticsCard";
+import {
+  OperatorDiagnosticsCard,
+  __test__ as _internals,
+} from "./OperatorDiagnosticsCard";
 
 
 function _mkReport(over = {}) {
@@ -581,5 +584,246 @@ describe("<OperatorDiagnosticsCard> — invariants", () => {
     api.systemDiagnostics.mockClear();
     fireEvent.click(screen.getByTestId("operator-diagnostics-card-refresh-btn"));
     await waitFor(() => expect(api.systemDiagnostics).toHaveBeenCalled());
+  });
+});
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// G. fix/operator-diagnostics-copy-secret-guard — 사용자 요청서 정책 B/C 보강
+//    secret 감지 범위 + clipboard.writeText 절대 미호출 보장
+// ────────────────────────────────────────────────────────────────────────────
+
+
+describe("OperatorDiagnosticsCard — secret copy guard (hardened)", () => {
+  describe("_matchSecretValue / _isSuspiciousKeyName / _findSecret", () => {
+    it("matches OpenAI sk- token", () => {
+      expect(_internals._matchSecretValue("token sk-ABCDEFGHIJKLMNOPQRST"))
+        .not.toBeNull();
+    });
+
+    it("matches Anthropic sk-ant- token", () => {
+      expect(_internals._matchSecretValue(
+        "key sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      )).not.toBeNull();
+    });
+
+    it("matches GitHub ghp_ token", () => {
+      expect(_internals._matchSecretValue("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZAB"))
+        .not.toBeNull();
+    });
+
+    it("matches Slack xoxb / xoxp token", () => {
+      expect(_internals._matchSecretValue("xoxb-1234567890-token"))
+        .not.toBeNull();
+      expect(_internals._matchSecretValue("xoxp-1234567890-token"))
+        .not.toBeNull();
+    });
+
+    it("matches Bearer token", () => {
+      expect(_internals._matchSecretValue(
+        "Authorization: Bearer ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+      )).not.toBeNull();
+    });
+
+    it("matches JWT token", () => {
+      expect(_internals._matchSecretValue(
+        "jwt eyJabcdefgh.eyJabcdefgh.SflKxwRJSMeKKF",
+      )).not.toBeNull();
+    });
+
+    it("matches Korean account number pattern", () => {
+      expect(_internals._matchSecretValue("계좌 12345678-01"))
+        .not.toBeNull();
+    });
+
+    it("matches RRN pattern", () => {
+      expect(_internals._matchSecretValue("주민 901020-1234567"))
+        .not.toBeNull();
+    });
+
+    it("matches credit card pattern", () => {
+      expect(_internals._matchSecretValue("카드 1234-5678-9012-3456"))
+        .not.toBeNull();
+    });
+
+    it("matches telegram bot token line", () => {
+      expect(_internals._matchSecretValue(
+        "telegram_bot_token = 1234:ABCDEFGH",
+      )).not.toBeNull();
+    });
+
+    it("does NOT match normal text", () => {
+      expect(_internals._matchSecretValue("hello world 005930")).toBeNull();
+      expect(_internals._matchSecretValue("Paper / SIMULATION")).toBeNull();
+    });
+
+    it.each([
+      "api_key", "apiKey", "API_KEY",
+      "api_secret", "apiSecret", "app_secret", "app_key",
+      "access_token", "refresh_token", "secret_token",
+      "password", "Passwd",
+      "telegram_bot_token", "bot_token",
+      "kis_app_key", "kis_app_secret", "kis_account_no",
+      "anthropic_api_key", "openai_api_key",
+      "private_key", "client_secret",
+      "account_no", "account_number",
+    ])("flags suspicious key name '%s'", (key) => {
+      expect(_internals._isSuspiciousKeyName(key)).not.toBeNull();
+    });
+
+    it("does NOT flag safe boolean-flag keys", () => {
+      // contains_secret 같은 *boolean flag* key 는 값이 boolean 이면 차단
+      // 대상 아님 (false positive 회피).
+      const safe = {
+        contains_secret: false,
+        safe_for_ui: true,
+        is_order_signal: false,
+        is_paper_safe_only: true,
+        market_data_provider: "yfinance",
+        default_mode: "PAPER",
+      };
+      expect(_internals._findSecret(safe, 0)).toBeNull();
+    });
+
+    it("structured walk: api_key with non-empty string value -> BLOCK", () => {
+      const hit = _internals._findSecret({
+        config: { api_key: "abcdef1234" },
+      }, 0);
+      expect(hit).toMatch(/key_name:/);
+    });
+
+    it("structured walk: password with empty string -> NOT blocked", () => {
+      expect(_internals._findSecret({ password: "" }, 0)).toBeNull();
+    });
+
+    it("structured walk: nested sk- secret in event details -> BLOCK", () => {
+      const hit = _internals._findSecret({
+        events: [
+          { id: 1, message: "leaked sk-ABCDEFGHIJKLMNOPQRSTUVWX" },
+        ],
+      }, 0);
+      expect(hit).toMatch(/value_pattern:/);
+    });
+
+    it("structured walk: deeply nested object", () => {
+      const hit = _internals._findSecret({
+        a: { b: { c: [{ d: { kis_app_secret: "abc1234567" } }] } },
+      }, 0);
+      expect(hit).toMatch(/key_name:/);
+    });
+
+    it("recursion depth cap does not throw", () => {
+      let node = "deep";
+      for (let i = 0; i < 50; i++) node = { wrap: node };
+      expect(() => _internals._findSecret(node, 0)).not.toThrow();
+    });
+  });
+
+  // ── 사용자 요청서 §3 필수 테스트 ──
+  it("secret in diagnostics -> copy-blocked + writeText NEVER called", async () => {
+    const api = _mkApiClient({
+      report: _mkReport({
+        zero_order_primary_message:
+          "leak sk-ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefgh",
+      }),
+    });
+    const clipboard = { writeText: vi.fn(async () => {}) };
+    render(<OperatorDiagnosticsCard
+      apiClient={api} pollIntervalMs={0} clipboard={clipboard}
+    />);
+    await waitFor(() =>
+      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+    );
+    fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
+    await waitFor(() =>
+      screen.getByTestId("operator-diagnostics-card-copy-blocked"),
+    );
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+    expect(
+      screen.getByTestId("operator-diagnostics-card-copy-blocked").textContent,
+    ).toContain("민감정보가 감지되어 복사가 차단되었습니다");
+  });
+
+  it("secret in events.message -> copy-blocked + writeText NEVER called", async () => {
+    const api = _mkApiClient({
+      events: [
+        {
+          id: 99, timestamp: "2026-05-21T01:05:00+00:00",
+          level: "WARN", category: "SYSTEM",
+          code: "X", message: "Bearer ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+          details: {}, safe_for_ui: true, contains_secret: false,
+          is_order_signal: false, is_live_authorization: false,
+        },
+      ],
+    });
+    const clipboard = { writeText: vi.fn(async () => {}) };
+    render(<OperatorDiagnosticsCard
+      apiClient={api} pollIntervalMs={0} clipboard={clipboard}
+    />);
+    await waitFor(() =>
+      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+    );
+    fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
+    await waitFor(() =>
+      screen.getByTestId("operator-diagnostics-card-copy-blocked"),
+    );
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+  });
+
+  it("api_key field in events.details -> copy-blocked", async () => {
+    const api = _mkApiClient({
+      events: [
+        {
+          id: 1, timestamp: "2026-05-21T01:05:00+00:00",
+          level: "INFO", category: "SYSTEM",
+          code: "X", message: "no body",
+          details: { api_key: "leaked-value-here" },
+          safe_for_ui: true, contains_secret: false,
+          is_order_signal: false, is_live_authorization: false,
+        },
+      ],
+    });
+    const clipboard = { writeText: vi.fn(async () => {}) };
+    render(<OperatorDiagnosticsCard
+      apiClient={api} pollIntervalMs={0} clipboard={clipboard}
+    />);
+    await waitFor(() =>
+      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+    );
+    fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
+    await waitFor(() =>
+      screen.getByTestId("operator-diagnostics-card-copy-blocked"),
+    );
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+  });
+
+  it("clean payload -> writeText called + copy-blocked NOT shown", async () => {
+    const api = _mkApiClient();
+    const clipboard = { writeText: vi.fn(async () => {}) };
+    render(<OperatorDiagnosticsCard
+      apiClient={api} pollIntervalMs={0} clipboard={clipboard}
+    />);
+    await waitFor(() =>
+      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+    );
+    fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
+    await waitFor(() => expect(clipboard.writeText).toHaveBeenCalled());
+    expect(
+      screen.queryByTestId("operator-diagnostics-card-copy-blocked"),
+    ).toBeNull();
+  });
+
+  it("contains_secret=false / safe_for_ui=true safety flags -> NOT blocked", async () => {
+    // 회귀 방지 — boolean flag key 가 secret 로 오인되지 않아야 함.
+    const api = _mkApiClient();
+    const clipboard = { writeText: vi.fn(async () => {}) };
+    render(<OperatorDiagnosticsCard
+      apiClient={api} pollIntervalMs={0} clipboard={clipboard}
+    />);
+    await waitFor(() =>
+      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+    );
+    fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
+    await waitFor(() => expect(clipboard.writeText).toHaveBeenCalled());
   });
 });
