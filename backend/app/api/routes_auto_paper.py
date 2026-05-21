@@ -83,9 +83,14 @@ from app.risk.position_limits import (
 )
 from app.auto_paper.capital_config import (
     DEFAULT_ALLOW_ADDITIONAL_BUY,
+    DEFAULT_ALLOW_AVERAGING_DOWN,
+    DEFAULT_ALLOW_PYRAMIDING,
     resolve_additional_buy_policy,
     resolve_daily_buy_limit,
     resolve_symbol_weight_limit_pct,
+)
+from app.auto_paper.additional_buy_policy import (
+    resolve_capital_allocation_policy,
 )
 from app.auto_paper.position_sizer import (
     QuantityByPriceVerdict,
@@ -1488,6 +1493,77 @@ def resolve_additional_buy_policy_endpoint(
         "notice": (
             "Paper 전용 advisory — 실거래 권한 부여가 아닙니다. 공격형 risk "
             "profile 도 자동 허용 사용 안 함 (별도 명시 옵트인 필요)."
+        ),
+    }
+
+
+# ============================================================================
+# P-13: 추가매수 / 물타기 / 피라미딩 통합 정책 — read-only + override preview
+# ============================================================================
+
+
+class _CapitalAllocationPolicyBody(BaseModel):
+    """추가매수 / 물타기 / 피라미딩 통합 정책 응답.
+
+    사용자가 명시 옵트인 (manual_*) 을 carry 하지 않으면 *모두 기본 False*
+    응답. risk_profile 은 라벨만 carry — 공격형 도 자동 허용 사용 안 함
+    (사용자 요청서 §4).
+    """
+
+    risk_profile:                 str | None  = Field(None)
+    manual_allow_additional_buy:  bool | None = Field(None)
+    manual_allow_averaging_down:  bool | None = Field(None)
+    manual_allow_pyramiding:      bool | None = Field(None)
+
+
+@_AP.post("/capital-allocation-policy")
+def get_capital_allocation_policy_endpoint(
+    body: _CapitalAllocationPolicyBody,
+) -> dict:
+    """P-13: 추가매수 / 물타기 / 피라미딩 통합 정책 응답.
+
+    Returns:
+        CapitalAllocationPolicyResult.to_dict() — allow_additional_buy /
+        allow_averaging_down / allow_pyramiding + policy_message 3종 +
+        reason_code 3종 carry.
+
+    *advisory only* — broker / route_order / DB write 0건.
+    """
+    result = resolve_capital_allocation_policy(
+        risk_profile=body.risk_profile,
+        manual_allow_additional_buy=body.manual_allow_additional_buy,
+        manual_allow_averaging_down=body.manual_allow_averaging_down,
+        manual_allow_pyramiding=body.manual_allow_pyramiding,
+    )
+    return {
+        **result.to_dict(),
+        "defaults": {
+            "allow_additional_buy":  DEFAULT_ALLOW_ADDITIONAL_BUY,
+            "allow_averaging_down":  DEFAULT_ALLOW_AVERAGING_DOWN,
+            "allow_pyramiding":      DEFAULT_ALLOW_PYRAMIDING,
+        },
+        "notice": (
+            "본 결과는 advisory — Paper 전용이며 실거래 권한 부여가 아닙니다. "
+            "공격형 risk profile 도 자동 허용 사용 안 함 (별도 명시 옵트인 필요). "
+            "허용 시에도 P-07 cash / P-10 daily / P-11 weight / RiskManager / "
+            "PermissionGate 는 별도 적용됩니다."
+        ),
+    }
+
+
+@_AP.get("/capital-allocation-policy")
+def get_capital_allocation_policy_default_endpoint() -> dict:
+    """GET — 기본 정책 (모두 False) read-only."""
+    result = resolve_capital_allocation_policy()
+    return {
+        **result.to_dict(),
+        "defaults": {
+            "allow_additional_buy":  DEFAULT_ALLOW_ADDITIONAL_BUY,
+            "allow_averaging_down":  DEFAULT_ALLOW_AVERAGING_DOWN,
+            "allow_pyramiding":      DEFAULT_ALLOW_PYRAMIDING,
+        },
+        "notice": (
+            "Paper 전용 advisory — 실거래 권한 부여 아님. 기본값은 영구 False."
         ),
     }
 

@@ -591,6 +591,166 @@ P-04 의 `affordable_quantity` 와 P-05 의 `compute_paper_affordable_lot()`
 | P-02 | 종목당 투자금 설정 | (이전 PR) | done |
 | P-03 | 최대 동시 보유 종목 수 제한 | (이전 PR) | done |
 | P-04 | 매수 가능성 체크 | (이전 PR) | done |
-| P-05 | 최소 1주 매수 조건 | ✅ 본 PR | done |
+| P-05 | 최소 1주 매수 조건 | (이전 PR) | done |
+| P-06 | 고가주 처리 정책 | (이전 PR) | done |
+| P-07 | Paper 현금 잔고 체크 | (이전 PR) | done |
+| P-08 | Position sizing (max_amount/price) | (이전 PR) | done |
+| P-09 | 성향별 자금 배분 (보수/안정/공격) | (이전 PR) | done |
+| P-10 | 일일 최대 매수금액 한도 | (이전 PR) | done |
+| P-11 | 종목별 최대 비중 제한 | (이전 PR) | done |
+| P-12 | 중복 보유 방지 (BUY 가드) | (이전 PR) | done |
+| P-13 | 물타기 / 추가매수 / 피라미딩 정책 | ✅ 본 PR | done |
 | P-... | (이후 항목) | (별도 PR) | pending |
 | P-16 | Paper 자본 설정 영구 저장 | (예정) | pending |
+
+
+## 5. P-13 — 물타기 / 추가매수 / 피라미딩 정책 (본 PR 추가)
+
+> **본 섹션은 *시스템 안전 정책* 이며 *투자 조언이 아니다*.** Paper /
+> SIMULATION 검증 흐름의 단일 진실. 실거래 / LIVE_AI_EXECUTION 활성화는
+> *별도 promotion gate* + 별도 PR 통과 없이는 불가.
+
+### 5-1. 문서 목적
+
+본 섹션은 Paper / AI Paper 자금 배분에서 **동일 종목 추가매수**, **물타기
+(averaging down)**, **피라미딩 (pyramiding)** 정책을 정의한다. 세 정책 모두
+*손실 확대 위험* 이 크므로 기본 금지하며, 향후 전략별 검증을 거쳐 옵트인
+가능한 구조만 미리 둔다.
+
+### 5-2. 기본 원칙
+
+1. **자금은 한 번에 과도하게 투입하지 않는다** — P-07 cash / P-10 daily /
+   P-11 symbol-weight / P-12 duplicate 가드가 모두 *동시 적용* 된다.
+2. **종목당 투자금, 일일 매수한도, 종목별 최대비중, 중복보유 방지를 모두 적용
+   한다** — 본 정책은 *그 위의* 별도 가드.
+3. **추가매수 / 물타기 / 피라미딩은 손실 확대 위험으로 기본 금지** — 사용자
+   요청서 §1 6번 명시.
+4. **공격형 risk profile 도 자동 허용 사용 안 함** — 위험 성향 ≠ 위험 행동
+   자동 옵트인 (사용자 요청서 §4 명시).
+5. **추가매수 허용은 별도 명시 설정** (`allow_additional_buy=True`) 이며
+   *실거래 권한 부여가 아니다*.
+6. **허용 시에도** Paper cash / 일일 한도 / 종목 비중 / RiskManager /
+   PermissionGate 는 *별도 유지*.
+
+### 5-3. 성향별 정책 (사용자 요청서 §4 정확 매트릭스)
+
+| 성향 | allow_additional_buy | allow_averaging_down | allow_pyramiding |
+|---|---|---|---|
+| 보수형 (CONSERVATIVE) | **false** | **false** | **false** |
+| 안정형 (BALANCED, default) | **false** | **false** | **false** |
+| 공격형 (AGGRESSIVE) | **false** | **false** | **false** |
+
+> ⚠️  공격형 도 자동 물타기 허용 안 함. 위험 성향에 따라 종목당 한도 / 일일
+> 한도 / 종목 비중 *값* 은 다르지만, 추가매수 자체는 *별도 명시 옵트인* 만
+> 가능.
+
+### 5-4. 동일 종목 추가매수 정책 (P-12 + P-13)
+
+- **기본값**: 금지 (`allow_additional_buy = False`)
+- **차단 사유 코드**: `DUPLICATE_POSITION_BUY_BLOCKED` (P-12)
+- **사용자 표시 문구**: `"이미 보유 중인 종목이라 추가 매수 차단"`
+- **옵트인 방법** (사용자 명시 설정 필요): `allow_additional_buy=True` →
+  P-12 결과 `ADDITIONAL_BUY_ALLOWED`. 단, 다른 layer (cash / daily /
+  weight / RiskManager / PermissionGate) 는 *그대로 적용*.
+
+### 5-5. 물타기 정책 (Averaging Down)
+
+- **기본값**: 금지 (`allow_averaging_down = False`)
+- **정책 코드**: `AVERAGING_DOWN_DISABLED`
+- **사용자 표시 문구**: `"물타기는 손실 확대 위험으로 기본 금지입니다."`
+- **사유**: 손실 중인 포지션에 추가매수하면 평균단가는 내려가지만 **노출이
+  커진다** — 반대 방향 움직임이 계속되면 손실이 *기하급수* 로 증가. Paper
+  검증 단계에서도 동일 위험.
+- **향후 허용 시**: 별도 PR + 전략 검증 + 최대 손실 / 종목비중 / 일일 한도 /
+  현금잔고 체크 *유지* 필수.
+
+### 5-6. 피라미딩 정책 (Pyramiding)
+
+- **기본값**: 금지 (`allow_pyramiding = False`)
+- **정책 코드**: `PYRAMIDING_DISABLED`
+- **사용자 표시 문구**: `"피라미딩은 기본 금지입니다."`
+- **사유**: 수익 중인 포지션에 추가매수도 *추세 반전 시 손실 확대* 위험.
+  전략별 검증 (예: trailing stop / volatility breakout) 후에만 옵트인.
+- **향후 허용 시**: 전략별 명시 설정 + 위험관리 룰 확인.
+
+### 5-7. 설정 우선순위 (사용자 요청서 §7 정확)
+
+```
+1. 사용자 명시 설정 (manual_allow_additional_buy)
+2. 전략별 명시 설정 (strategy.allow_additional_buy)   ← 후속 PR
+3. risk profile 기본 설정                              ← 모든 profile False
+4. 시스템 기본값 (DEFAULT_ALLOW_*)                     ← 영구 False
+```
+
+**시스템 기본값은 항상 safe**:
+- `DEFAULT_ALLOW_ADDITIONAL_BUY = False`
+- `DEFAULT_ALLOW_AVERAGING_DOWN = False`
+- `DEFAULT_ALLOW_PYRAMIDING = False`
+
+### 5-8. 허용 시 필요한 추가 조건
+
+`allow_additional_buy=True` 같은 옵트인이 있어도 BUY 가 실제 진행되려면 다음을
+*모두* 통과해야 한다 (사용자 요청서 §8):
+
+1. **P-07 Paper 현금 충분** (cash check)
+2. **P-10 일일 최대 매수금액 이내** (daily buy limit)
+3. **P-11 종목별 최대 비중 이내** (symbol weight limit)
+4. **RiskManager 통과**
+5. **PermissionGate 통과**
+6. **Audit log 기록** (모든 차단 / 허용 사유 carry)
+
+옵트인은 *중복 보유 차단만* 해제 — 다른 안전 검사는 *그대로 적용* 된다.
+
+### 5-9. reason_code 일람표
+
+본 시리즈에서 사용하는 *추가매수 / 물타기 / 피라미딩 / 한도 / 현금* 관련
+reason_code 정렬 (사용자 요청서 §9):
+
+| reason_code | 의미 | 발생 layer |
+|---|---|---|
+| `ADDITIONAL_BUY_DISABLED` | 추가매수 시스템 정책 금지 | P-13 |
+| `AVERAGING_DOWN_DISABLED` | 물타기 시스템 정책 금지 | P-13 |
+| `PYRAMIDING_DISABLED` | 피라미딩 시스템 정책 금지 | P-13 |
+| `DUPLICATE_POSITION_BUY_BLOCKED` | 보유 중 종목 추가 BUY 차단 | P-12 |
+| `SYMBOL_WEIGHT_LIMIT_EXCEEDED` | 종목별 최대 비중 초과 | P-11 |
+| `DAILY_BUY_LIMIT_EXCEEDED` | 일일 최대 매수금액 초과 | P-10 |
+| `INSUFFICIENT_PAPER_CASH` | Paper 현금 부족 | P-07 |
+
+### 5-10. 운영 단계별 정책 (사용자 요청서 §10)
+
+| 단계 | 추가매수 기본 정책 |
+|---|---|
+| **Simulation** | 추가매수 기본 금지 (테스트 시 옵트인 가능) |
+| **Paper** | 추가매수 기본 금지 — 명시 설정 시에만 테스트 가능 |
+| **Shadow** | 추가매수 기본 금지 |
+| **Live Manual** | 별도 PR 전까지 금지 |
+| **Live AI Execution** | **금지 (Live AI Execution 자체가 미허가 상태)** |
+
+> ⚠️  `LIVE_AI_EXECUTION` 모드에서의 자동 추가매수는 *영구 미허가* —
+> `AIExecutionActivationGate` (#75) 가 `futures_allowed=False` 와 동등하게
+> 추가매수도 별도 promotion gate 필요.
+
+### 5-11. 변경 절차
+
+추가매수 / 물타기 / 피라미딩 *기본 정책* 을 변경하려면:
+
+1. **별도 PR** — capital_allocation_policy.md + capital_config.py + 테스트
+   동시 갱신.
+2. **테스트 보강** — 새로운 default 가 적용된 후의 시나리오를 모든 risk
+   profile / 운영 단계에서 검증.
+3. **문서 동기** — `docs/capital_allocation_policy.md` 의 §5 표를 함께 갱신.
+4. **실거래 연결은 promotion gate 필요** — Paper Gate (#72) / Live Manual
+   Gate (#73) / AI Assist Gate (#74) / AI Execution Gate (#75) 통과 + 운영자
+   명시 옵트인.
+
+### 5-12. 절대 invariant (테스트로 lock)
+
+- `DEFAULT_ALLOW_ADDITIONAL_BUY` / `DEFAULT_ALLOW_AVERAGING_DOWN` /
+  `DEFAULT_ALLOW_PYRAMIDING` 의 *기본값* 은 영구 `False` — 본 PR 의 정적
+  grep + pytest 가 강제.
+- `ENABLE_LIVE_TRADING` / `ENABLE_AI_EXECUTION` / `LIVE_AI_EXECUTION` 변경
+  0건.
+- 옵트인 시에도 broker / OrderExecutor / route_order 호출 0건 — 본 정책 모듈
+  은 *advisory only*.
+- 모든 정책 응답에 `is_paper_only=True` / `is_live_authorization=False` /
+  `is_order_signal=False` 영구.
