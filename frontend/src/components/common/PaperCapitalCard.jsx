@@ -13,7 +13,7 @@
  *    임의 KRW 입력 form 0개 (잘못된 값 입력 차단).
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 
 import { Card, SectionLabel } from "./index";
 import { backendApi } from "../../services/backend/client";
@@ -520,16 +520,17 @@ export function PaperCapitalCard({
                 매수 가능 수량
               </span>
               {(minLotPreview.examples || []).map((ex) => (
-                <>
+                // React.Fragment 명시 사용 — 단축 <> 형은 key prop 을 받지
+                // 못해 map 결과의 unique key 경고를 유발한다. 같은 ex.price
+                // 를 row key 로 사용해 안정적 식별.
+                <Fragment key={`ex-${ex.price}`}>
                   <span
-                    key={`p-${ex.price}`}
                     data-testid={`${testId}-min-lot-example-price-${ex.price}`}
                     style={{ fontFamily: "monospace" }}
                   >
                     {Number(ex.price).toLocaleString("ko-KR")} KRW
                   </span>
                   <span
-                    key={`s-${ex.price}`}
                     style={{
                       fontSize: 9,
                       color: ex.is_affordable ? "#15803d" : "#b91c1c",
@@ -538,7 +539,6 @@ export function PaperCapitalCard({
                     {ex.is_affordable ? "✓ 가능" : "✗ 1주 미만"}
                   </span>
                   <span
-                    key={`q-${ex.price}`}
                     data-testid={`${testId}-min-lot-example-qty-${ex.price}`}
                     style={{
                       fontFamily: "monospace", textAlign: "right",
@@ -549,7 +549,7 @@ export function PaperCapitalCard({
                   >
                     {ex.affordable_quantity}주
                   </span>
-                </>
+                </Fragment>
               ))}
             </div>
             <div

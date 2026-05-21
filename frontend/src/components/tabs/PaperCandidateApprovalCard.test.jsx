@@ -13,7 +13,9 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import PaperCandidateApprovalCard from "./PaperCandidateApprovalCard";
+import PaperCandidateApprovalCard, {
+  normalizeCandidatesResponse,
+} from "./PaperCandidateApprovalCard";
 
 
 afterEach(cleanup);
@@ -219,6 +221,223 @@ describe("PaperCandidateApprovalCard — candidate row + actions", () => {
     ).toBeTruthy());
     expect(screen.getByTestId("candidate-approval-error").textContent)
       .toContain("approval_blocked_risk");
+  });
+});
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// fix/ci-paper-candidate-and-lint: normalizer 가 다양한 응답 모양을 모두
+// 받아들이고 후보 row 가 정상 렌더링되는지 검증.
+// ────────────────────────────────────────────────────────────────────────────
+describe("normalizeCandidatesResponse — response shape coverage", () => {
+  it("handles null", () => {
+    const n = normalizeCandidatesResponse(null);
+    expect(n.candidates).toEqual([]);
+    expect(n.readiness_state).toBe("NO_CANDIDATE");
+  });
+
+  it("handles undefined", () => {
+    const n = normalizeCandidatesResponse(undefined);
+    expect(n.candidates).toEqual([]);
+    expect(n.readiness_state).toBe("NO_CANDIDATE");
+  });
+
+  it("handles empty array", () => {
+    const n = normalizeCandidatesResponse([]);
+    expect(n.candidates).toEqual([]);
+    expect(n.readiness_state).toBe("NO_CANDIDATE");
+  });
+
+  it("handles array directly returned", () => {
+    const n = normalizeCandidatesResponse([_candidate()]);
+    expect(n.candidates.length).toBe(1);
+    expect(n.candidates[0].candidate_id).toBe("MOMENTUM::005930::rank1");
+    // status=PENDING_APPROVAL → readiness 추론.
+    expect(n.readiness_state).toBe("WAITING_APPROVAL");
+  });
+
+  it("handles { candidates: [...] }", () => {
+    const n = normalizeCandidatesResponse({ candidates: [_candidate()] });
+    expect(n.candidates.length).toBe(1);
+    expect(n.readiness_state).toBe("WAITING_APPROVAL");
+  });
+
+  it("handles { items: [...] }", () => {
+    const n = normalizeCandidatesResponse({ items: [_candidate()] });
+    expect(n.candidates.length).toBe(1);
+    expect(n.readiness_state).toBe("WAITING_APPROVAL");
+  });
+
+  it("handles { entries: [...] }", () => {
+    const n = normalizeCandidatesResponse({ entries: [_candidate()] });
+    expect(n.candidates.length).toBe(1);
+    expect(n.readiness_state).toBe("WAITING_APPROVAL");
+  });
+
+  it("handles { data: { candidates: [...] } }", () => {
+    const n = normalizeCandidatesResponse({
+      data: { candidates: [_candidate()] },
+    });
+    expect(n.candidates.length).toBe(1);
+    expect(n.candidates[0].candidate_id).toBe("MOMENTUM::005930::rank1");
+  });
+
+  it("handles { data: { items: [...] } }", () => {
+    const n = normalizeCandidatesResponse({
+      data: { items: [_candidate()] },
+    });
+    expect(n.candidates.length).toBe(1);
+  });
+
+  it("handles { result: { candidates: [...] } }", () => {
+    const n = normalizeCandidatesResponse({
+      result: { candidates: [_candidate()] },
+    });
+    expect(n.candidates.length).toBe(1);
+  });
+
+  it("preserves explicit readiness_state when provided", () => {
+    const n = normalizeCandidatesResponse({
+      readiness_state: "CANDIDATE_READY",
+      candidates: [_candidate({ status: "APPROVED" })],
+    });
+    expect(n.readiness_state).toBe("CANDIDATE_READY");
+  });
+
+  it("infers CANDIDATE_READY when all candidates APPROVED + no explicit state", () => {
+    const n = normalizeCandidatesResponse([
+      _candidate({ status: "APPROVED" }),
+    ]);
+    expect(n.readiness_state).toBe("CANDIDATE_READY");
+  });
+
+  it("filters entries without candidate_id (defensive)", () => {
+    const n = normalizeCandidatesResponse({
+      candidates: [
+        _candidate(),
+        { candidate: { name: "X" } },  // candidate_id missing → drop
+        null,
+        "not an object",
+      ],
+    });
+    expect(n.candidates.length).toBe(1);
+  });
+
+  it("rendering: candidate row appears with { items: [...] } shape", async () => {
+    // 사용자 요청서 실패 케이스 재현 — backend 가 `items` 키로 응답해도
+    // 후보 row 가 반드시 표시되어야 한다.
+    const api = {
+      autoPaperCandidates: vi.fn(async () => ({ items: [_candidate()] })),
+      autoPaperActiveCandidate: vi.fn(async () => ({
+        has_active: false, readiness_state: "WAITING_APPROVAL", active: null,
+      })),
+      autoPaperApproveCandidate: vi.fn(),
+      autoPaperRejectCandidate: vi.fn(),
+    };
+    render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
+    expect(
+      screen.getByTestId("candidate-row-MOMENTUM::005930::rank1"),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("candidate-approval-empty")).toBeNull();
+  });
+
+  it("rendering: candidate row appears with bare array response", async () => {
+    const api = {
+      autoPaperCandidates: vi.fn(async () => [_candidate()]),
+      autoPaperActiveCandidate: vi.fn(async () => ({
+        has_active: false, readiness_state: "WAITING_APPROVAL", active: null,
+      })),
+      autoPaperApproveCandidate: vi.fn(),
+      autoPaperRejectCandidate: vi.fn(),
+    };
+    render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
+    expect(
+      screen.getByTestId("candidate-row-MOMENTUM::005930::rank1"),
+    ).toBeTruthy();
+  });
+
+  it("rendering: candidate row appears with { data: { candidates: [...] } }", async () => {
+    const api = {
+      autoPaperCandidates: vi.fn(async () => ({
+        data: { candidates: [_candidate()] },
+      })),
+      autoPaperActiveCandidate: vi.fn(async () => ({
+        has_active: false, readiness_state: "WAITING_APPROVAL", active: null,
+      })),
+      autoPaperApproveCandidate: vi.fn(),
+      autoPaperRejectCandidate: vi.fn(),
+    };
+    render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
+    expect(
+      screen.getByTestId("candidate-row-MOMENTUM::005930::rank1"),
+    ).toBeTruthy();
+  });
+
+  it("rendering: empty state only when truly empty (no candidate rows)", async () => {
+    const api = {
+      autoPaperCandidates: vi.fn(async () => ({ candidates: [] })),
+      autoPaperActiveCandidate: vi.fn(async () => ({
+        has_active: false, readiness_state: "NO_CANDIDATE", active: null,
+      })),
+      autoPaperApproveCandidate: vi.fn(),
+      autoPaperRejectCandidate: vi.fn(),
+    };
+    render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
+    expect(screen.getByTestId("candidate-approval-empty")).toBeTruthy();
+    // 어떤 candidate-row 도 없어야 함.
+    expect(
+      document.querySelector('[data-testid^="candidate-row-"]'),
+    ).toBeNull();
+  });
+
+  it("does not render both empty + list at the same time", async () => {
+    // 후보가 있는 응답에서 empty state 와 list 가 *동시* 표시되는 회귀 차단.
+    const api = {
+      autoPaperCandidates: vi.fn(async () => ({
+        // readiness_state 가 누락된 응답에서도 동작해야 함.
+        candidates: [_candidate()],
+      })),
+      autoPaperActiveCandidate: vi.fn(async () => ({
+        has_active: false, readiness_state: "WAITING_APPROVAL", active: null,
+      })),
+      autoPaperApproveCandidate: vi.fn(),
+      autoPaperRejectCandidate: vi.fn(),
+    };
+    render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
+    expect(
+      screen.getByTestId("candidate-row-MOMENTUM::005930::rank1"),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("candidate-approval-empty")).toBeNull();
+  });
+
+  it("approve / reject buttons still work with { items: [...] } shape", async () => {
+    const api = {
+      autoPaperCandidates: vi.fn(async () => ({ items: [_candidate()] })),
+      autoPaperActiveCandidate: vi.fn(async () => ({
+        has_active: false, readiness_state: "WAITING_APPROVAL", active: null,
+      })),
+      autoPaperApproveCandidate: vi.fn(async () => ({})),
+      autoPaperRejectCandidate: vi.fn(async () => ({})),
+    };
+    render(<PaperCandidateApprovalCard
+      apiClient={api} pollIntervalMs={0} defaultOperatorId="op-B"
+    />);
+    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId(
+      "candidate-approve-btn-MOMENTUM::005930::rank1",
+    ));
+    await waitFor(() =>
+      expect(api.autoPaperApproveCandidate).toHaveBeenCalled(),
+    );
+    expect(api.autoPaperApproveCandidate.mock.calls[0][0])
+      .toBe("MOMENTUM::005930::rank1");
+    expect(api.autoPaperApproveCandidate.mock.calls[0][1])
+      .toEqual({ approved_by: "op-B" });
   });
 });
 
