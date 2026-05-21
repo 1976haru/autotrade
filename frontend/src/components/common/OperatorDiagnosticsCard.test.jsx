@@ -18,6 +18,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import {
   OperatorDiagnosticsCard,
   __test__ as _internals,
+  buildCopyPayload,
+  containsSecretDeep,
 } from "./OperatorDiagnosticsCard";
 
 
@@ -825,5 +827,261 @@ describe("OperatorDiagnosticsCard — secret copy guard (hardened)", () => {
     );
     fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
     await waitFor(() => expect(clipboard.writeText).toHaveBeenCalled());
+  });
+});
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// H. fix/frontend-ci-operator-diagnostics-secret-guard
+//    containsSecretDeep (WeakSet 기반 iterative walk) 단위 + UI 통합 보강
+// ────────────────────────────────────────────────────────────────────────────
+
+
+describe("buildCopyPayload — pure function", () => {
+  it("returns diagnostics + recent_events + generated_at + note", () => {
+    const payload = buildCopyPayload({
+      report: { overall_status: "HEALTHY" },
+      events: [{ id: 1 }, { id: 2 }],
+    });
+    expect(payload.diagnostics).toEqual({ overall_status: "HEALTHY" });
+    expect(payload.recent_events).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(typeof payload.generated_at).toBe("string");
+    expect(payload.note).toContain("민감정보는 포함되지 않습니다");
+  });
+
+  it("caps recent_events to last 50", () => {
+    const events = Array.from({ length: 200 }, (_, i) => ({ id: i }));
+    const payload = buildCopyPayload({ report: null, events });
+    expect(payload.recent_events.length).toBe(50);
+    expect(payload.recent_events[0].id).toBe(150);
+  });
+
+  it("handles null/undefined safely", () => {
+    expect(buildCopyPayload({ report: null, events: undefined }).recent_events)
+      .toEqual([]);
+    expect(buildCopyPayload({ report: undefined, events: null }).diagnostics)
+      .toBe(null);
+  });
+});
+
+
+describe("containsSecretDeep — iterative walk + WeakSet", () => {
+  it("returns null for null / primitives", () => {
+    expect(containsSecretDeep(null)).toBeNull();
+    expect(containsSecretDeep(undefined)).toBeNull();
+    expect(containsSecretDeep(0)).toBeNull();
+    expect(containsSecretDeep(false)).toBeNull();
+    expect(containsSecretDeep(true)).toBeNull();
+    expect(containsSecretDeep(123)).toBeNull();
+  });
+
+  it("returns hit for direct string with sk- pattern", () => {
+    expect(containsSecretDeep("token sk-ABCDEFGHIJKLMNOPQRST")).toMatch(/value_pattern:/);
+  });
+
+  it("returns null for safe string", () => {
+    expect(containsSecretDeep("Paper / SIMULATION 진단")).toBeNull();
+  });
+
+  it("walks nested object — finds value pattern at depth", () => {
+    expect(containsSecretDeep({
+      a: { b: { c: "Bearer ABCDEFGHIJKLMNOPQRSTUVWXYZ" } },
+    })).toMatch(/value_pattern:/);
+  });
+
+  it("walks array — finds suspicious key in nested object", () => {
+    expect(containsSecretDeep({
+      events: [
+        { id: 1, message: "ok" },
+        { id: 2, details: { api_key: "abc123" } },
+      ],
+    })).toMatch(/key_name:/);
+  });
+
+  it("flags 'token' as suspicious key when value is non-empty string", () => {
+    expect(containsSecretDeep({ token: "abc" })).toMatch(/key_name:/);
+  });
+
+  it("flags 'authorization' as suspicious key", () => {
+    expect(containsSecretDeep({ authorization: "Basic abc" })).toMatch(/key_name:/);
+  });
+
+  it("flags 'bearer' as suspicious key", () => {
+    expect(containsSecretDeep({ bearer: "abc" })).toMatch(/key_name:/);
+  });
+
+  it("flags 'apiKey' (camelCase) as suspicious key", () => {
+    expect(containsSecretDeep({ apiKey: "abc" })).toMatch(/key_name:/);
+  });
+
+  it("flags 'apiSecret' (camelCase) as suspicious key", () => {
+    expect(containsSecretDeep({ apiSecret: "abc" })).toMatch(/key_name:/);
+  });
+
+  it("flags 'accountNumber' (camelCase) as suspicious key", () => {
+    expect(containsSecretDeep({ accountNumber: "abc" })).toMatch(/key_name:/);
+  });
+
+  it("does NOT flag boolean-valued safe keys (contains_secret=false etc)", () => {
+    expect(containsSecretDeep({
+      contains_secret: false, safe_for_ui: true,
+      is_order_signal: false, is_live_authorization: false,
+      is_paper_safe_only: true,
+    })).toBeNull();
+  });
+
+  it("does NOT flag general Korean / English text", () => {
+    expect(containsSecretDeep({
+      message: "민감정보 없음", note: "실거래 권한 없음",
+      conclusion: "Paper / SIMULATION 진단 — 정상",
+    })).toBeNull();
+  });
+
+  it("survives circular references via WeakSet", () => {
+    const a = { id: 1 };
+    const b = { parent: a };
+    a.child = b;
+    // 순환 — 무한 루프 없이 종료해야 함.
+    expect(() => containsSecretDeep(a)).not.toThrow();
+    expect(containsSecretDeep(a)).toBeNull();
+  });
+
+  it("survives circular reference WITH embedded secret", () => {
+    const root = { name: "root" };
+    root.self = root;
+    root.details = { api_key: "leaked" };
+    expect(containsSecretDeep(root)).toMatch(/key_name:/);
+  });
+
+  it("returns null on empty string / empty array / empty object", () => {
+    expect(containsSecretDeep("")).toBeNull();
+    expect(containsSecretDeep([])).toBeNull();
+    expect(containsSecretDeep({})).toBeNull();
+  });
+
+  it("handles wide arrays without stack overflow", () => {
+    const wide = Array.from({ length: 2000 }, (_, i) => ({ id: i }));
+    expect(() => containsSecretDeep(wide)).not.toThrow();
+    expect(containsSecretDeep(wide)).toBeNull();
+  });
+});
+
+
+describe("OperatorDiagnosticsCard — copy-blocked integration (extended)", () => {
+  // 사용자 요청서 §5 필수 시나리오 5종
+  it.each([
+    ["api_key in diagnostics root",
+     _mkReport({ api_key: "leaked-value" })],
+    ["apiSecret in diagnostics root",
+     _mkReport({ apiSecret: "leaked-value" })],
+    ["sk- token in zero_order_primary_message",
+     _mkReport({
+       zero_order_primary_message: "leak sk-ABCDEFGHIJKLMNOPQRST",
+     })],
+    ["Bearer token in events.message",
+     undefined],   // 별도 events override 아래서 처리
+    ["token in events.details",
+     undefined],
+  ])("blocks copy for: %s", async (_name, reportOverride) => {
+    const events = (() => {
+      if (_name === "Bearer token in events.message") {
+        return [{
+          id: 1, timestamp: "2026-05-21T01:00:00+00:00",
+          level: "INFO", category: "SYSTEM",
+          code: "X", message: "Bearer ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+          details: {}, safe_for_ui: true, contains_secret: false,
+          is_order_signal: false, is_live_authorization: false,
+        }];
+      }
+      if (_name === "token in events.details") {
+        return [{
+          id: 1, timestamp: "2026-05-21T01:00:00+00:00",
+          level: "INFO", category: "SYSTEM",
+          code: "X", message: "ok",
+          details: { token: "leaked" },
+          safe_for_ui: true, contains_secret: false,
+          is_order_signal: false, is_live_authorization: false,
+        }];
+      }
+      return undefined;
+    })();
+    const api = _mkApiClient({
+      report: reportOverride || _mkReport(),
+      events: events || _mkEvents(),
+    });
+    const clipboard = { writeText: vi.fn(async () => {}) };
+    render(<OperatorDiagnosticsCard
+      apiClient={api} pollIntervalMs={0} clipboard={clipboard}
+    />);
+    await waitFor(() =>
+      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+    );
+    fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
+    await waitFor(() =>
+      screen.getByTestId("operator-diagnostics-card-copy-blocked"),
+    );
+    // 사용자 요청서 §3 정책 C 1번: clipboard.writeText 절대 미호출.
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+    // 사용자 요청서 §3 정책 C 4번: 표시 문구 정확 검증.
+    expect(
+      screen.getByTestId("operator-diagnostics-card-copy-blocked").textContent,
+    ).toContain("민감정보가 감지되어 복사가 차단되었습니다");
+  });
+
+  it("does NOT show copy-blocked + does call writeText on clean payload", async () => {
+    const api = _mkApiClient();
+    const clipboard = { writeText: vi.fn(async () => {}) };
+    render(<OperatorDiagnosticsCard
+      apiClient={api} pollIntervalMs={0} clipboard={clipboard}
+    />);
+    await waitFor(() =>
+      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+    );
+    fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
+    await waitFor(() => expect(clipboard.writeText).toHaveBeenCalled());
+    expect(
+      screen.queryByTestId("operator-diagnostics-card-copy-blocked"),
+    ).toBeNull();
+  });
+
+  it("blocks copy when secret is buried 3 levels deep", async () => {
+    const api = _mkApiClient({
+      events: [{
+        id: 1, timestamp: "x", level: "INFO", category: "SYSTEM",
+        code: "X", message: "ok",
+        details: { nested: { deeper: { password: "x" } } },
+        safe_for_ui: true, contains_secret: false,
+        is_order_signal: false, is_live_authorization: false,
+      }],
+    });
+    const clipboard = { writeText: vi.fn(async () => {}) };
+    render(<OperatorDiagnosticsCard
+      apiClient={api} pollIntervalMs={0} clipboard={clipboard}
+    />);
+    await waitFor(() =>
+      screen.getByTestId("operator-diagnostics-card-copy-report-btn"),
+    );
+    fireEvent.click(screen.getByTestId("operator-diagnostics-card-copy-report-btn"));
+    await waitFor(() =>
+      screen.getByTestId("operator-diagnostics-card-copy-blocked"),
+    );
+    expect(clipboard.writeText).not.toHaveBeenCalled();
+  });
+
+  it("does NOT render '실거래 활성화' / 'ENABLE_LIVE_TRADING' buttons", async () => {
+    // 회귀 방지 — 본 카드에 실거래 활성화 버튼이 생기면 안 됨.
+    const api = _mkApiClient();
+    const { container } = render(
+      <OperatorDiagnosticsCard apiClient={api} pollIntervalMs={0} />,
+    );
+    await waitFor(() => screen.getByTestId("operator-diagnostics-card"));
+    const buttons = container.querySelectorAll("button");
+    for (const b of buttons) {
+      const t = (b.textContent || "").trim();
+      expect(t.toLowerCase()).not.toContain("enable_live_trading");
+      expect(t).not.toContain("실거래 활성화 시작");
+      expect(t).not.toContain("실거래 시작");
+      expect(t).not.toContain("AI 자동매매 활성화");
+    }
   });
 });

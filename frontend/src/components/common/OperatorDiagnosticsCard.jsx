@@ -52,16 +52,18 @@ const _LOG_PATH_HINT_KO = (
 );
 
 
-// secret *값* 패턴 — 진단 리포트에 흘러들어온 token / key / 계좌번호 패턴.
-// clipboard copy 전 *마지막* 방어선 (backend 가 이미 fail-closed 로 차단
-// 하므로 정상 흐름에서 도달하지 않음). `\b` 경계 없는 form 도 함께 등록 —
-// JSON quote/comma 등 비-word 경계가 누락된 경우에도 안전.
+// fix/frontend-ci-operator-diagnostics-secret-guard:
+// 단순 regex 만으로는 환경별 (CI vs local) 매칭 차이로 누락이 발생할 수
+// 있으므로 *structured deep walk* + *value regex* + *key name 화이트리스트*
+// 3-layer 방어선. 순환 참조는 WeakSet 으로 안전 처리.
+
+// ── value 패턴 (값에 있을 때만 매칭) ─────────────────────────────────────
 const _SECRET_VALUE_PATTERNS = [
   /sk-ant-[A-Za-z0-9\-_]{20,}/i,             // Anthropic
   /sk-[A-Za-z0-9]{16,}/,                     // OpenAI sk-... (16자 이상)
   /ghp_[A-Za-z0-9]{20,}/,                    // GitHub PAT
   /xox[bpaoist]-[A-Za-z0-9-]{10,}/i,         // Slack
-  /\bBearer\s+[A-Za-z0-9.\-_]{20,}/i,        // Bearer token
+  /\bBearer\s+[A-Za-z0-9.\-_]{20,}/i,        // Bearer 헤더
   /eyJ[A-Za-z0-9\-_]{8,}\.[A-Za-z0-9\-_]{8,}\.[A-Za-z0-9\-_]{8,}/, // JWT
   /\b\d{8}-\d{2}\b/,                         // 한국 계좌번호 8-2 형식  // security-scan: ignore
   /\b\d{6}-\d{7}\b/,                         // 주민등록번호 패턴
@@ -71,21 +73,46 @@ const _SECRET_VALUE_PATTERNS = [
 ];
 
 
-// secret *key 이름* — 값과 무관하게 key 이름 자체가 의심스러우면 차단.
-// 사용자 요청서 정책 B: "key 이름에 secret/token/password/api_key/account_no
-// 등이 포함되면 값과 무관하게 차단해도 된다."
+// ── key 이름 화이트리스트 (값이 비어있지 않은 string 일 때만 매칭) ─────
+// 사용자 요청서 §4: 명백히 secret 계열이면 값이 짧아도 차단.
+// 정규화: lowercase + 영숫자 외 제거 → 이 normalized 형태가 candidate 의
+// normalized 형태와 *상호 포함* 되면 매칭. 예: "apiKey" → "apikey" 와
+// "api_key" → "apikey" 가 동일 → 매칭.
 const _SECRET_KEY_NAMES = [
-  "api_key", "apisecret", "api_secret",
-  "app_key", "app_secret",
-  "access_token", "refresh_token",
-  "secret_token", "secret",
+  // 사용자 요청서 §4 explicit 리스트
+  "api_key", "apikey", "api_secret", "apisecret",
+  "app_secret", "appsecret", "app_key", "appkey",
+  "secret", "token", "access_token", "refresh_token",
   "password", "passwd",
-  "telegram_bot_token", "bot_token",
+  "telegram_bot_token",
   "kis_app_key", "kis_app_secret", "kis_account_no",
+  "account_no", "accountnumber", "account_number",
+  "authorization", "bearer",
+  // 추가 안전 키워드
   "anthropic_api_key", "openai_api_key",
   "private_key", "client_secret",
-  "account_no", "account_number",
+  "secret_token", "bot_token",
 ];
+
+
+// candidate 의 normalized 형태를 사전 계산해 매번 reformat 비용 절약.
+const _SECRET_KEY_NORMALIZED = _SECRET_KEY_NAMES.map(
+  (k) => k.toLowerCase().replace(/[^a-z0-9]/g, ""),
+);
+
+
+// 일반 텍스트 false-positive 회피를 위한 *safe* 키 (이 이름은 차단하지 않음).
+// 사용자 요청서 §4 주의: "민감정보 없음" 같은 일반 문구가 차단되면 안 됨.
+const _SAFE_KEY_NAMES_NORMALIZED = new Set([
+  "containssecret",       // contains_secret: false (안전 flag 라벨)
+  "issecret",             // is_secret: false
+  "safeforui",
+  "isordersignal",
+  "isliveauthorization",
+  "ispapersafeonly",
+  "ispaperonly",
+  "issuspicious",
+]);
 
 
 function _matchSecretValue(value) {
@@ -102,9 +129,15 @@ function _matchSecretValue(value) {
 function _isSuspiciousKeyName(key) {
   if (typeof key !== "string" || !key) return null;
   const norm = key.toLowerCase().replace(/[^a-z0-9]/g, "");
-  for (const candidate of _SECRET_KEY_NAMES) {
-    const candidateNorm = candidate.replace(/[^a-z0-9]/g, "");
-    if (norm.includes(candidateNorm)) {
+  if (!norm) return null;
+  // safe 화이트리스트 — 즉시 통과.
+  if (_SAFE_KEY_NAMES_NORMALIZED.has(norm)) return null;
+  // candidate 매칭 — 양방향 substring (key 가 candidate 를 포함 OR candidate 가
+  // key 를 정확 매칭). 'apiKey' 와 'api_key' 모두 'apikey' 로 정규화되어 매칭.
+  for (let i = 0; i < _SECRET_KEY_NORMALIZED.length; i++) {
+    const candidate = _SECRET_KEY_NORMALIZED[i];
+    if (!candidate) continue;
+    if (norm.includes(candidate)) {
       return `key_name:${key}`;
     }
   }
@@ -126,49 +159,103 @@ function _isSecretCandidateValue(v) {
 
 
 /**
- * structured walk — payload 의 모든 (key, value) 를 재귀로 점검.
+ * containsSecretDeep — 사용자 요청서 §3 정의의 *iterative* 안전 walk.
  *
- * 차단 규칙:
- *  1. *값* 이 string 이고 regex 매칭 → 즉시 차단 ("value_pattern:...").
- *  2. key 이름이 의심스럽고 + 값이 *비어있지 않은 string* → 차단
- *     ("key_name:..."). boolean / 숫자 / null 값은 차단 대상 아님 (예:
- *     `contains_secret: false` 같은 안전 flag 라벨 false positive 방지).
- *  3. object / array → 재귀.
+ * 차단 규칙 (첫 매칭 즉시 사유 반환):
+ *  1. *값* 이 string 이고 value regex 매칭 → "value_pattern:..."
+ *  2. key 이름이 의심 + 값이 *비어있지 않은 string* → "key_name:..."
+ *  3. object / array → iterative stack 으로 자식 탐색 (재귀 X — stack
+ *     overflow 회피)
+ *  4. 순환 참조 → WeakSet 으로 *방문한 객체 추적*, 다시 진입하지 않음
+ *  5. depth 상한 4096 단계 — 비정상적으로 깊은 객체에서도 무한 루프 0
  *
- * @returns 첫 매칭 사유 문자열 또는 null.
+ * 사용자 요청서 §3 / §5: 안전 boundary + WeakSet 둘 다 적용.
+ *
+ * @returns 첫 매칭 사유 문자열 또는 null (안전).
  */
-function _findSecret(node, depth) {
-  if (depth > 8) return null;          // 안전: 무한 재귀 방지
-  if (node == null) return null;
-  if (typeof node === "string") {
-    return _matchSecretValue(node);
-  }
-  if (typeof node !== "object") return null;
-  if (Array.isArray(node)) {
-    for (const item of node) {
-      const found = _findSecret(item, depth + 1);
-      if (found) return found;
+export function containsSecretDeep(root) {
+  if (root == null) return null;
+  if (typeof root === "string") return _matchSecretValue(root);
+  if (typeof root !== "object") return null;
+
+  // 방문 추적 — WeakSet 은 객체만 받음 (string/number 는 추적 불필요).
+  const seen = new WeakSet();
+  // iterative stack — root 부터 자식까지 탐색.
+  const stack = [root];
+  let safety = 0;
+  while (stack.length > 0) {
+    if (++safety > 4096) return null;      // depth 상한 — 비정상 객체 안전 종료
+    const node = stack.pop();
+    if (node == null) continue;
+    if (typeof node === "string") {
+      const hit = _matchSecretValue(node);
+      if (hit) return hit;
+      continue;
     }
-    return null;
-  }
-  // object → key 이름 + 값 모두 점검.
-  for (const [k, v] of Object.entries(node)) {
-    if (_isSecretCandidateValue(v)) {
-      const keyHit = _isSuspiciousKeyName(k);
-      if (keyHit) return keyHit;
+    if (typeof node !== "object") continue;
+    // 순환 방지.
+    if (seen.has(node)) continue;
+    seen.add(node);
+
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        if (item != null && (typeof item === "object" || typeof item === "string")) {
+          stack.push(item);
+        }
+      }
+      continue;
     }
-    const valHit = _findSecret(v, depth + 1);
-    if (valHit) return valHit;
+
+    // object — key + value 점검.
+    let keys;
+    try {
+      keys = Object.keys(node);
+    } catch {
+      continue;
+    }
+    for (const k of keys) {
+      let v;
+      try {
+        v = node[k];
+      } catch {
+        continue;
+      }
+      if (_isSecretCandidateValue(v)) {
+        const keyHit = _isSuspiciousKeyName(k);
+        if (keyHit) return keyHit;
+      }
+      if (v != null && (typeof v === "object" || typeof v === "string")) {
+        stack.push(v);
+      }
+    }
   }
   return null;
 }
 
 
-// 호환용 — text 기반 1차 빠른 검사 (regex 만). structured walk 보다 약하
-// 지만 빠르고 추가 방어선.
+// 호환 alias.
+const _findSecret = containsSecretDeep;
+// 호환용 — text 기반 1차 빠른 검사 (regex 만).
 function _containsSecret(text) {
   if (!text || typeof text !== "string") return false;
   return _SECRET_VALUE_PATTERNS.some((re) => re.test(text));
+}
+
+
+/**
+ * buildCopyPayload — copy 가 보낼 *명시적* 페이로드.
+ *
+ * 별도 함수로 분리한 이유 (사용자 요청서 §3 §1): copy handler 가 어떤 데이터
+ * 를 clipboard 로 보내는지 명확히 격리하고, 단위 테스트가 쉽게 검증할 수
+ * 있도록.
+ */
+export function buildCopyPayload({ report, events }) {
+  return {
+    diagnostics:   report || null,
+    recent_events: Array.isArray(events) ? events.slice(-50) : [],
+    generated_at:  new Date().toISOString(),
+    note:          "Paper / SIMULATION 진단 — 민감정보는 포함되지 않습니다.",
+  };
 }
 
 
@@ -179,6 +266,8 @@ export const __test__ = {
   _isSuspiciousKeyName,
   _findSecret,
   _containsSecret,
+  containsSecretDeep,
+  buildCopyPayload,
 };
 
 
@@ -228,38 +317,45 @@ export function OperatorDiagnosticsCard({
     return undefined;
   }, [refresh, pollIntervalMs]);
 
+  // fix/frontend-ci-operator-diagnostics-secret-guard:
+  // 명시적 3-step 흐름 (사용자 요청서 §10):
+  //   ① buildCopyPayload — 항상 같은 모양 생성
+  //   ② containsSecretDeep — *동기* 깊이 검사 (WeakSet 순환 안전)
+  //   ③ 매칭 시 setCopyState("blocked") 후 즉시 return (clipboard 미호출)
+  //      매칭 안 됐을 때만 await clipboard.writeText.
+  // useCallback dependency 는 `report`/`events`/`clipboard` 만 — 안정적 함수.
   const onCopyReport = useCallback(async () => {
     if (!report) {
       setCopyState("fail");
       return;
     }
-    const payload = {
-      diagnostics: report,
-      recent_events: events.slice(-50),
-      generated_at: new Date().toISOString(),
-      note: "Paper / SIMULATION 진단 — 민감정보는 포함되지 않습니다.",
-    };
 
-    // fix/operator-diagnostics-copy-secret-guard: 2-layer 방어 — 먼저
-    // *구조적* (key 이름 + 값 정규식) 점검 → JSON.stringify 결과 정규식
-    // 보조 점검. 어느 한쪽이라도 매칭되면 clipboard.writeText 호출 *전*
-    // 에 blocked 상태로 전환하고 즉시 반환. clipboard 는 절대 호출되지
-    // 않는다 (사용자 요청서 정책 C 1번).
-    const structuredHit = _findSecret(payload, 0);
+    // ① 명시적 payload 생성.
+    const payload = buildCopyPayload({ report, events });
+
+    // ② structured deep scan — *동기* (WeakSet 안전). secret 발견 시
+    //    setCopyState("blocked") 가 *즉시* 호출되고 clipboard 는 *절대*
+    //    호출되지 않는다 (사용자 요청서 §3 정책 C).
+    const structuredHit = containsSecretDeep(payload);
+    if (structuredHit) {
+      setCopyState("blocked");
+      return;
+    }
+
+    // ③ JSON 직렬화 — 실패하면 안전 차단. text 보조 regex 검사.
     let text;
     try {
       text = JSON.stringify(payload, null, 2);
     } catch {
-      // 직렬화 실패 — 안전을 위해 차단 처리.
       setCopyState("blocked");
       return;
     }
-    if (structuredHit || _containsSecret(text)) {
-      // *동기* 상태 업데이트 — async clipboard 호출 *전*. waitFor 가
-      // 안정적으로 catch 할 수 있도록.
+    if (_containsSecret(text)) {
       setCopyState("blocked");
       return;
     }
+
+    // ④ 정상 흐름 — clipboard 가 없으면 fail, 있으면 호출.
     if (!clipboard || typeof clipboard.writeText !== "function") {
       setCopyState("fail");
       return;
