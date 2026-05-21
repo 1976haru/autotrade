@@ -364,6 +364,188 @@ def evaluate_high_price(
     )
 
 
+# ============================================================================
+# P-14: 가격 freshness + 비정상 / 급등락 가격 BUY 차단 wiring
+# ============================================================================
+#
+# 사용자 요청서 §5 — 위에서 정의한 P-06 `evaluate_high_price` 위에 P-14
+# `check_price_freshness` 를 *앞 단계* 로 끼워, 다음 권장 BUY 흐름 (요청서 §5):
+#
+#   시장 데이터 수신
+#   → P-14 price freshness / abnormal check       ← 본 wrapper
+#   → P-08 position sizing                          (caller: position_sizer)
+#   → P-06 최소 1주 / 고가주 처리                    (evaluate_high_price)
+#   → P-12 중복 보유 체크                            (capital_state)
+#   → P-07 Paper cash check                          (capital_state)
+#   → P-10 일일 최대 매수금액                        (loss_limits)
+#   → P-11 종목별 최대 비중                          (position_limits)
+#   → RiskManager → PermissionGate → PaperOrder 후보
+#
+# 본 wrapper 는 P-14 freshness 가 blocked 면 *수량 계산을 진행하지 않고*
+# `evaluate_high_price` 를 호출하지 않는다 — 잘못된 / 급등 가격으로 P-06
+# 고가주 verdict 가 잘못 계산되는 것을 방지.
+
+
+# `check_price_freshness` 는 동일 패키지 외부(app.market.freshness)에서
+# import — P-14 의 단일 진실. 본 모듈은 결과 carry 만 수행 (mutation 0건).
+from app.market.freshness import (  # noqa: E402
+    ABNORMAL_PRICE_MOVE,
+    DEFAULT_MAX_AGE_SECONDS,
+    DEFAULT_MAX_CHANGE_PCT,
+    PRICE_FRESHNESS_OK,
+    PRICE_STALE,
+    PriceFreshnessResult,
+    check_price_freshness,
+)
+
+
+@dataclass(frozen=True)
+class BuyPriceSafetyResult:
+    """P-14 + P-06 통합 결과 — *advisory*.
+
+    P-14 freshness 가 blocked 면 high_price 결과는 None (수량 계산 안 함).
+    OK 면 P-06 `evaluate_high_price` 결과를 carry — 기존 P-06 동작 보존.
+
+    invariants:
+        is_paper_only=True / is_order_signal=False / is_live_authorization=False
+    """
+
+    allowed:                bool
+    blocked_by_freshness:   bool
+    freshness:              PriceFreshnessResult
+    high_price:             HighPriceCheckResult | None
+    affordable_quantity:    int
+    primary_reason_code:    str
+    primary_reason_message: str
+
+    is_paper_only:          bool = True
+    is_order_signal:        bool = False
+    is_live_authorization:  bool = False
+
+    def __post_init__(self) -> None:
+        if self.is_paper_only is not True:
+            raise ValueError(
+                "BuyPriceSafetyResult.is_paper_only must be True"
+            )
+        if self.is_order_signal is not False:
+            raise ValueError(
+                "BuyPriceSafetyResult.is_order_signal must be False"
+            )
+        if self.is_live_authorization is not False:
+            raise ValueError(
+                "BuyPriceSafetyResult.is_live_authorization must be False"
+            )
+        if self.affordable_quantity < 0:
+            raise ValueError(
+                f"affordable_quantity must be >= 0, got "
+                f"{self.affordable_quantity}"
+            )
+        # blocked_by_freshness=True ↔ high_price is None / quantity=0 일관성.
+        if self.blocked_by_freshness and self.high_price is not None:
+            raise ValueError(
+                "blocked_by_freshness=True 이면 high_price 는 None 이어야 함 "
+                "(수량 계산 보류)."
+            )
+        if self.blocked_by_freshness and self.affordable_quantity != 0:
+            raise ValueError(
+                "blocked_by_freshness=True 이면 affordable_quantity=0 이어야 함."
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "allowed":                bool(self.allowed),
+            "blocked_by_freshness":   bool(self.blocked_by_freshness),
+            "freshness":              self.freshness.to_dict(),
+            "high_price":             (
+                self.high_price.to_dict() if self.high_price else None
+            ),
+            "affordable_quantity":    int(self.affordable_quantity),
+            "primary_reason_code":    self.primary_reason_code,
+            "primary_reason_message": self.primary_reason_message,
+            "is_paper_only":          self.is_paper_only,
+            "is_order_signal":        self.is_order_signal,
+            "is_live_authorization":  self.is_live_authorization,
+        }
+
+
+def evaluate_buy_price_safety(
+    *,
+    action:                       str | None,
+    symbol:                       str | None,
+    price:                        float | int | None,
+    effective_per_symbol_cap_krw: int,
+    price_timestamp:              Any                          = None,
+    now:                          Any                          = None,
+    max_age_seconds:              int                          = DEFAULT_MAX_AGE_SECONDS,
+    reference_price:              float | int | None           = None,
+    max_change_pct:               float                        = DEFAULT_MAX_CHANGE_PCT,
+    policy:                       HighPricePolicy | str | None = None,
+) -> BuyPriceSafetyResult:
+    """P-14 freshness + P-06 고가주 처리 통합 평가 — *pure*.
+
+    BUY 가 아니면 freshness=PRICE_CHECK_NOT_APPLICABLE 후 P-06 위임.
+    BUY 인데 P-14 가 blocked → 수량 계산 *보류* (high_price=None,
+    affordable_quantity=0). P-14 OK → P-06 `evaluate_high_price` 위임.
+
+    Returns:
+        BuyPriceSafetyResult — broker / route_order 호출 0건.
+    """
+    freshness = check_price_freshness(
+        symbol=symbol,
+        price=price,
+        price_timestamp=price_timestamp,
+        now=now,
+        max_age_seconds=int(max_age_seconds),
+        reference_price=reference_price,
+        max_change_pct=float(max_change_pct),
+        action=action,
+    )
+
+    # P-14 가 BUY 차단 → 수량 계산 보류, P-06 호출 안 함.
+    if freshness.is_blocked:
+        return BuyPriceSafetyResult(
+            allowed=False,
+            blocked_by_freshness=True,
+            freshness=freshness,
+            high_price=None,
+            affordable_quantity=0,
+            primary_reason_code=freshness.reason_code,
+            primary_reason_message=freshness.reason_message,
+        )
+
+    # P-14 OK → P-06 위임 (기존 동작 보존).
+    hp = evaluate_high_price(
+        action=action,
+        symbol=symbol,
+        price=price,
+        effective_per_symbol_cap_krw=int(effective_per_symbol_cap_krw),
+        policy=policy,
+    )
+
+    # 통합 allowed: P-06 의 verdict 가 AFFORDABLE / SKIP_NON_BUY 이거나
+    # P-14 가 PRICE_CHECK_NOT_APPLICABLE 인 경우 허용. 그 외는 보류.
+    allowed = (
+        hp.verdict in (
+            HighPriceVerdict.AFFORDABLE,
+            HighPriceVerdict.SKIP_NON_BUY,
+        )
+    )
+
+    return BuyPriceSafetyResult(
+        allowed=allowed,
+        blocked_by_freshness=False,
+        freshness=freshness,
+        high_price=hp,
+        affordable_quantity=int(hp.affordable_quantity),
+        primary_reason_code=(
+            PRICE_FRESHNESS_OK if allowed else hp.verdict.value
+        ),
+        primary_reason_message=(
+            freshness.reason_message if allowed else hp.reason_ko
+        ),
+    )
+
+
 __all__ = [
     "HighPricePolicy",
     "DEFAULT_HIGH_PRICE_POLICY",
@@ -371,4 +553,12 @@ __all__ = [
     "HighPriceCheckResult",
     "compute_affordable_quantity",
     "evaluate_high_price",
+    # P-14 추가:
+    "BuyPriceSafetyResult",
+    "evaluate_buy_price_safety",
+    "PRICE_FRESHNESS_OK",
+    "PRICE_STALE",
+    "ABNORMAL_PRICE_MOVE",
+    "DEFAULT_MAX_AGE_SECONDS",
+    "DEFAULT_MAX_CHANGE_PCT",
 ]

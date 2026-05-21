@@ -60,7 +60,13 @@ from app.auto_paper.min_lot_check import (
 from app.auto_paper.affordability import (
     DEFAULT_HIGH_PRICE_POLICY,
     HighPricePolicy,
+    evaluate_buy_price_safety,
     evaluate_high_price,
+)
+from app.market.freshness import (
+    DEFAULT_MAX_AGE_SECONDS as PRICE_DEFAULT_MAX_AGE_SECONDS,
+    DEFAULT_MAX_CHANGE_PCT as PRICE_DEFAULT_MAX_CHANGE_PCT,
+    check_price_freshness,
 )
 from app.auto_paper.capital_state import (
     check_buy_cash_sufficient,
@@ -1565,6 +1571,129 @@ def get_capital_allocation_policy_default_endpoint() -> dict:
         "notice": (
             "Paper 전용 advisory — 실거래 권한 부여 아님. 기본값은 영구 False."
         ),
+    }
+
+
+# ============================================================================
+# P-14: 가격 freshness / 비정상 / 급등락 BUY 차단 advisory endpoint
+# ============================================================================
+
+
+class _PriceFreshnessBody(BaseModel):
+    """가격 freshness + 비정상 / 급등락 BUY 차단 advisory.
+
+    `price_timestamp` / `now` 는 ISO 8601 (Z 또는 +00:00). 둘 다 미지정 시
+    `now=현재 UTC`, `price_timestamp` 미지정 시 PRICE_STALE 분류 (안전 측).
+    `reference_price` 미지정 시 급등락 검사 skip.
+    """
+
+    action:           str | None         = Field(None)
+    symbol:           str | None         = Field(None)
+    price:            float | None       = Field(None)
+    price_timestamp:  str | None         = Field(None)
+    now:              str | None         = Field(None)
+    max_age_seconds:  int                = Field(PRICE_DEFAULT_MAX_AGE_SECONDS)
+    reference_price:  float | None       = Field(None)
+    max_change_pct:   float              = Field(PRICE_DEFAULT_MAX_CHANGE_PCT)
+    effective_per_symbol_cap_krw: int | None = Field(None)
+
+
+@_AP.post("/price-freshness/preview")
+def preview_price_freshness_endpoint(body: _PriceFreshnessBody) -> dict:
+    """P-14: 가격 freshness + 비정상 / 급등락 BUY 차단 advisory.
+
+    BUY 가 아니면 PRICE_CHECK_NOT_APPLICABLE. BUY 인데 stale / invalid /
+    abnormal 이면 차단 (수량 계산 보류). `effective_per_symbol_cap_krw` 가
+    주어지면 P-06 wrapping (`evaluate_buy_price_safety`) 결과까지 carry.
+
+    *advisory only* — broker / route_order / DB write 0건. 안전 flag 변경
+    0건.
+    """
+    if body.effective_per_symbol_cap_krw is not None:
+        result = evaluate_buy_price_safety(
+            action=body.action,
+            symbol=body.symbol,
+            price=body.price,
+            effective_per_symbol_cap_krw=int(body.effective_per_symbol_cap_krw),
+            price_timestamp=body.price_timestamp,
+            now=body.now,
+            max_age_seconds=int(body.max_age_seconds),
+            reference_price=body.reference_price,
+            max_change_pct=float(body.max_change_pct),
+        )
+        return {
+            **result.to_dict(),
+            "diagnostics": _build_price_diagnostics(result.freshness),
+            "defaults": {
+                "max_age_seconds":  PRICE_DEFAULT_MAX_AGE_SECONDS,
+                "max_change_pct":   PRICE_DEFAULT_MAX_CHANGE_PCT,
+            },
+            "notice": _PRICE_NOTICE,
+        }
+
+    freshness = check_price_freshness(
+        symbol=body.symbol,
+        price=body.price,
+        price_timestamp=body.price_timestamp,
+        now=body.now,
+        max_age_seconds=int(body.max_age_seconds),
+        reference_price=body.reference_price,
+        max_change_pct=float(body.max_change_pct),
+        action=body.action,
+    )
+    return {
+        **freshness.to_dict(),
+        "diagnostics": _build_price_diagnostics(freshness),
+        "defaults": {
+            "max_age_seconds":  PRICE_DEFAULT_MAX_AGE_SECONDS,
+            "max_change_pct":   PRICE_DEFAULT_MAX_CHANGE_PCT,
+        },
+        "notice": _PRICE_NOTICE,
+    }
+
+
+@_AP.get("/price-freshness/defaults")
+def get_price_freshness_defaults_endpoint() -> dict:
+    """P-14 기본값 read-only."""
+    return {
+        "max_age_seconds": PRICE_DEFAULT_MAX_AGE_SECONDS,
+        "max_change_pct":  PRICE_DEFAULT_MAX_CHANGE_PCT,
+        "notice":          _PRICE_NOTICE,
+    }
+
+
+_PRICE_NOTICE = (
+    "P-14: 현재가가 stale / 비정상 / 급등락 상태일 때 Paper BUY 를 "
+    "차단합니다. SELL / HOLD / NO_ACTION 은 적용하지 않습니다 — 향후 PR 에서 "
+    "SELL stale 경고 추가 예정. 본 결과는 advisory — 실거래 권한 부여가 "
+    "아닙니다."
+)
+
+
+def _build_price_diagnostics(freshness) -> dict:
+    """OperatorDiagnosticsCard / PaperDiagnosticsCard 가 표시할 진단 payload.
+
+    사용자 요청서 §6 항목 그대로:
+      - last_price_check_at / stale_price / price_age_seconds /
+        max_age_seconds / abnormal_price_move / price_change_pct /
+        max_change_pct / price_reason_code / price_reason_message
+    """
+    return {
+        "last_price_check_at":  (
+            freshness.now.isoformat() if freshness.now else None
+        ),
+        "stale_price":          (
+            freshness.reason_code == "PRICE_STALE"
+        ),
+        "price_age_seconds":    freshness.age_seconds,
+        "max_age_seconds":      int(freshness.max_age_seconds),
+        "abnormal_price_move":  (
+            freshness.reason_code == "ABNORMAL_PRICE_MOVE"
+        ),
+        "price_change_pct":     freshness.price_change_pct,
+        "max_change_pct":       float(freshness.max_change_pct),
+        "price_reason_code":    freshness.reason_code,
+        "price_reason_message": freshness.reason_message,
     }
 
 
