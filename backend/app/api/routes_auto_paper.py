@@ -62,6 +62,11 @@ from app.auto_paper.affordability import (
     HighPricePolicy,
     evaluate_high_price,
 )
+from app.auto_paper.capital_state import (
+    check_buy_cash_sufficient,
+    compute_required_krw,
+    get_capital_state,
+)
 from app.core.config import get_settings
 
 
@@ -899,6 +904,103 @@ def preview_high_price_endpoint(body: _HighPricePreviewBody) -> dict:
         "notice": (
             "본 결과는 advisory — Paper 전용이며 실전 주문 결정과 결합되지 "
             "않습니다. 고가주 정책은 운영자가 선택 가능 (default EXCLUDE)."
+        ),
+    }
+
+
+# ============================================================================
+# P-07: Paper 현금 잔고 (CapitalState) endpoints
+# ============================================================================
+
+
+class _CashCheckPreviewBody(BaseModel):
+    """advisory preview — BUY 후보의 (price × quantity) 가 현재 *남은 Paper
+    현금* 으로 살 수 있는지 사전 시뮬.
+
+    `available_cash_krw` 미주입 시 *현재 CapitalState singleton* 의 잔고를
+    자동 사용. 명시 override 도 허용 (테스트 / what-if 시뮬용).
+    """
+
+    action:             str           = Field("BUY", description="caller 매매 의도 — BUY 만 검사")
+    symbol:             str | None    = Field(None, description="후보 종목 코드")
+    price:              float | None  = Field(None, description="1주 가격 (KRW)")
+    quantity:           int           = Field(0, description="요청 수량 (정수 ≥ 1)")
+    available_cash_krw: int | None    = Field(
+        None,
+        description="남은 Paper 현금. None 이면 현재 CapitalState singleton 자동 사용.",
+    )
+
+
+@_AP.post("/cash-check/preview")
+def preview_paper_cash_check_endpoint(body: _CashCheckPreviewBody) -> dict:
+    """Paper BUY 후보의 *현금 잔고 충분성* 사전 advisory check (P-07).
+
+    Returns:
+        CashCheckResult.to_dict() — verdict / reason_ko / required_krw /
+        available_cash_krw / shortfall_krw carry.
+
+    종목당 한도와는 *별개* — 한도가 충분해도 누적 BUY 로 현금이 부족하면
+    INSUFFICIENT_PAPER_CASH 반환. SELL/HOLD 는 SKIP_NON_BUY.
+
+    broker / route_order 호출 0건. *상태 변경 0건* — 본 endpoint 는
+    `CapitalState.precheck_buy` 만 호출 (reservation / commit 없음).
+    """
+    state = get_capital_state()
+    if body.available_cash_krw is not None:
+        result = check_buy_cash_sufficient(
+            action=body.action,
+            symbol=body.symbol,
+            price=body.price,
+            quantity=body.quantity,
+            available_cash_krw=int(body.available_cash_krw),
+        )
+    else:
+        result = state.precheck_buy(
+            action=body.action,
+            symbol=body.symbol,
+            price=body.price,
+            quantity=body.quantity,
+        )
+    return {
+        **result.to_dict(),
+        "notice": (
+            "본 결과는 advisory — Paper 전용이며 실거래 주문 결정과 결합되지 "
+            "않습니다. 차단된 BUY 는 Paper 현금을 차감하지 않습니다."
+        ),
+    }
+
+
+@_AP.get("/cash-state")
+def get_paper_cash_state_endpoint() -> dict:
+    """현재 Paper 현금 잔고 (CapitalState) snapshot — read-only.
+
+    `available_cash_krw` 가 BUY 가능성의 *실제 기준*. broker / 실 계좌와
+    *결합 0건* — `is_paper_only=True` carry.
+    """
+    snap = get_capital_state().snapshot()
+    return {
+        **snap.to_dict(),
+        "notice": (
+            "Paper 모의매매 전용 현금 잔고. 실거래 계좌와 무관합니다. "
+            "broker / OrderExecutor 호출 0건."
+        ),
+    }
+
+
+@_AP.post("/cash-state/reset")
+def reset_paper_cash_state_endpoint() -> dict:
+    """현재 PaperCapitalConfig.initial_cash 로 CapitalState 초기화.
+
+    운영자가 *Paper 시드머니* 를 변경한 뒤 누적 BUY/SELL 이력을 리셋할 때
+    사용. broker 호출 0건, 실거래 영향 0건.
+    """
+    cfg = get_paper_capital_config()
+    state = get_capital_state()
+    snap = state.reset(initial_cash_krw=int(cfg.initial_cash))
+    return {
+        **snap.to_dict(),
+        "notice": (
+            "Paper 현금 잔고 리셋 완료 — 누적 BUY/SELL 카운트와 invested 초기화."
         ),
     }
 
