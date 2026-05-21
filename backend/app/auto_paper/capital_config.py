@@ -664,6 +664,59 @@ def is_allowed_max_concurrent_positions(value: int) -> bool:
 # system 기본값 — 사용자 요청서 §2 권장.
 DEFAULT_DAILY_BUY_LIMIT_KRW: int = 3_000_000
 
+# ============================================================================
+# P-11: 종목별 최대 비중 — capital_config 측 helper
+# ============================================================================
+#
+# 핵심 check 함수는 `app/risk/position_limits.py::check_symbol_weight_limit`.
+# 본 모듈은 *resolve* layer — 사용자 수동값 / P-09 risk profile 기반 /
+# 시스템 default 의 우선순위 단일 진실 (사용자 요청서 §2).
+
+# 시스템 기본값 — 사용자 요청서 §2 권장 (20%).
+DEFAULT_MAX_SYMBOL_WEIGHT_PCT: float = 0.20
+
+# P-09 risk profile 기반 종목별 비중 — 사용자 요청서 §2 권장 매핑.
+# (P-09 의 per_symbol_allocation_ratio 과 *동일 값* 이라 그것을 직접 carry.)
+_RISK_PROFILE_SYMBOL_WEIGHT_PCT: dict[str, float] = {
+    "CONSERVATIVE": 0.10,
+    "BALANCED":     0.20,
+    "AGGRESSIVE":   0.30,
+}
+
+
+def resolve_symbol_weight_limit_pct(
+    *,
+    manual_max_symbol_weight_pct: float | None = None,
+    risk_profile:                  str | None  = None,
+) -> tuple[float, str]:
+    """종목별 최대 비중 resolve — 우선순위 (사용자 요청서 §2):
+
+      1. 사용자 수동값 (`manual_max_symbol_weight_pct` 가 (0, 1] 일 때)
+      2. P-09 risk profile 기반 자동값 (보수 10% / 안정 20% / 공격 30%)
+      3. 시스템 기본값 (`DEFAULT_MAX_SYMBOL_WEIGHT_PCT` = 20%)
+
+    Returns:
+        tuple(pct, source) — source 는 "manual" / "risk_profile" /
+        "system_default" 중 하나.
+    """
+    # 1. 수동값.
+    if manual_max_symbol_weight_pct is not None:
+        try:
+            v = float(manual_max_symbol_weight_pct)
+        except (TypeError, ValueError):
+            v = -1.0
+        if 0.0 < v <= 1.0:
+            return v, "manual"
+
+    # 2. P-09 risk profile.
+    if risk_profile is not None:
+        key = str(risk_profile).strip().upper()
+        if key in _RISK_PROFILE_SYMBOL_WEIGHT_PCT:
+            return _RISK_PROFILE_SYMBOL_WEIGHT_PCT[key], "risk_profile"
+
+    # 3. 시스템 기본값.
+    return DEFAULT_MAX_SYMBOL_WEIGHT_PCT, "system_default"
+
 
 def resolve_daily_buy_limit(
     *,
@@ -740,4 +793,7 @@ __all__ = [
     # P-10
     "DEFAULT_DAILY_BUY_LIMIT_KRW",
     "resolve_daily_buy_limit",
+    # P-11
+    "DEFAULT_MAX_SYMBOL_WEIGHT_PCT",
+    "resolve_symbol_weight_limit_pct",
 ]
