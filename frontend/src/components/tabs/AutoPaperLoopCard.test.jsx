@@ -1367,3 +1367,168 @@ describe("<AutoPaperLoopCard> — P-15 capital settings", () => {
     );
   });
 });
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// 자동매매 실행 점검판 + 강제 진단 run-once
+//   - run-readiness 가 universe / 시장 세션 / 권한을 점검판에 표시.
+//   - run-once 버튼이 autoPaperRunOnceDiagnostic 호출 → 결과(reason_code) 표시.
+//   - RUNNING + cycle 0 → "거래는 아직 없지만 루프가 실행 중" 안내.
+//   - 실거래 / 매수 / 매도 / Place Order 라벨 0건.
+//   - readiness/run-once 함수가 없는 mock 에서도 안전.
+// ────────────────────────────────────────────────────────────────────────────
+
+
+function _readinessFixture(overrides = {}) {
+  return {
+    loop: {
+      state: "RUNNING", cycle_count: 0, last_tick_at: null, last_error: null,
+      health_code: "RUNNING_NO_TICKS",
+      health_message: "루프는 RUNNING 이지만 아직 tick 기록이 없습니다 — 진단 run-once 로 파이프라인 연결을 검증하세요.",
+      ...(overrides.loop || {}),
+    },
+    market_session: { phase: "OPEN", kst_time: "2026-05-22 10:00:00", kst_weekday: 4, is_open: true, ...(overrides.market_session || {}) },
+    universe: { source: "FALLBACK_MARKET_CAP_TOP50", count: 50, fallback_used: true, warning_ko: "fallback", ...(overrides.universe || {}) },
+    market_data: { provider: "mock", is_mock: true, ...(overrides.market_data || {}) },
+    permission: { paper_virtual_execution_allowed: true, live_execution_blocked: true, ...(overrides.permission || {}) },
+    paper_capital: { effective_per_symbol_cap_krw: 1_000_000, available_cash_krw: 10_000_000, initial_cash_krw: 10_000_000, ...(overrides.paper_capital || {}) },
+    can_run_once_diagnostic: true,
+    is_order_signal: false,
+    is_live_authorization: false,
+  };
+}
+
+
+describe("<AutoPaperLoopCard> — 실행 점검판 + run-once 진단", () => {
+  afterEach(cleanup);
+
+  function _mockApiWithDiag(status, readiness, runOnceResult) {
+    const api = _mockApi(status);
+    api.autoPaperRunReadiness = vi.fn(async () => readiness);
+    api.autoPaperRunOnceDiagnostic = vi.fn(async () => runOnceResult);
+    return api;
+  }
+
+  it("점검판이 항상 렌더된다 (run-once 버튼 포함)", async () => {
+    const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    expect(screen.getByTestId("auto-paper-exec-diagnostics")).toBeTruthy();
+    expect(screen.getByTestId("btn-run-once-diagnostic")).toBeTruthy();
+  });
+
+  it("readiness 가 universe / 시장 세션 / 권한 / 현금을 표시", async () => {
+    const api = _mockApiWithDiag(
+      { state: "RUNNING", cycle_count: 0 },
+      _readinessFixture(),
+      null,
+    );
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperRunReadiness).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByTestId("exec-universe").textContent).toMatch(/FALLBACK_MARKET_CAP_TOP50/),
+    );
+    expect(screen.getByTestId("exec-universe").textContent).toMatch(/50개/);
+    expect(screen.getByTestId("exec-market-session").textContent).toMatch(/OPEN/);
+    expect(screen.getByTestId("exec-market-data").textContent).toMatch(/mock/);
+    expect(screen.getByTestId("exec-permission").textContent).toMatch(/실거래 차단/);
+    expect(screen.getByTestId("exec-paper-cash").textContent).toMatch(/10,000,000/);
+  });
+
+  it("RUNNING + cycle 0 → '거래는 아직 없지만 루프가 실행 중' 안내", async () => {
+    const api = _mockApiWithDiag(
+      { state: "RUNNING", cycle_count: 0 },
+      _readinessFixture(),
+      null,
+    );
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("exec-loop-health").textContent)
+        .toMatch(/거래는 아직 없지만 루프가 실행 중/),
+    );
+  });
+
+  it("run-once 버튼 클릭 → autoPaperRunOnceDiagnostic 호출 + 정상 결과 표시", async () => {
+    const result = {
+      result_code: "PAPER_DRY_RUN_OK", ok: true, dry_run: true,
+      symbol: "005930", price: 75000, quantity: 13, notional_krw: 975000,
+      reason_message: "dry-run 통과 — 파이프라인 전 단계 정상",
+      stages: [
+        { stage: "UNIVERSE", ok: true, reason_code: "OK", message: "" },
+        { stage: "FINAL", ok: true, reason_code: "PAPER_DRY_RUN_OK", message: "" },
+      ],
+      broker_order_sent: false,
+    };
+    const api = _mockApiWithDiag({ state: "RUNNING", cycle_count: 0 }, _readinessFixture(), result);
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(screen.getByTestId("btn-run-once-diagnostic")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("btn-run-once-diagnostic"));
+    await waitFor(() => expect(api.autoPaperRunOnceDiagnostic).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.getByTestId("run-once-result-code").textContent).toBe("PAPER_DRY_RUN_OK"),
+    );
+    expect(screen.getByTestId("run-once-qty").textContent).toMatch(/13주/);
+    expect(screen.getByTestId("run-once-reason").textContent).toMatch(/파이프라인 전 단계 정상/);
+    expect(screen.getByTestId("run-once-stages").textContent).toMatch(/UNIVERSE/);
+  });
+
+  it("run-once 차단 결과(reason_code)도 표시된다", async () => {
+    const result = {
+      result_code: "MIN_LOT_NOT_AFFORDABLE", ok: false, dry_run: true,
+      symbol: "005930", price: 2000000, quantity: 0, notional_krw: 0,
+      reason_message: "종목당 투자금으로 1주도 살 수 없어 매수를 진행하지 않았습니다 (고가주).",
+      stages: [{ stage: "SIZING", ok: false, reason_code: "MIN_LOT_NOT_AFFORDABLE", message: "" }],
+      broker_order_sent: false,
+    };
+    const api = _mockApiWithDiag({ state: "RUNNING", cycle_count: 0 }, _readinessFixture(), result);
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(screen.getByTestId("btn-run-once-diagnostic")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("btn-run-once-diagnostic"));
+    await waitFor(() =>
+      expect(screen.getByTestId("run-once-result-code").textContent).toBe("MIN_LOT_NOT_AFFORDABLE"),
+    );
+    expect(screen.getByTestId("run-once-result").getAttribute("data-ok")).toBe("false");
+    expect(screen.getByTestId("run-once-reason").textContent).toMatch(/고가주/);
+  });
+
+  it("readiness / run-once 함수가 없는 mock 에서도 throw 없이 렌더", async () => {
+    const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+    // 명시적으로 미정의 — 구버전 backend / 최소 mock.
+    expect(api.autoPaperRunReadiness).toBeUndefined();
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    expect(screen.getByTestId("auto-paper-exec-diagnostics")).toBeTruthy();
+    // 함수 없으면 클릭해도 throw 없이 무시.
+    fireEvent.click(screen.getByTestId("btn-run-once-diagnostic"));
+    expect(screen.queryByTestId("run-once-result")).toBeNull();
+  });
+
+  it("점검판 + run-once 결과에 금지 라벨 0건", async () => {
+    const result = {
+      result_code: "VIRTUAL_ORDER_CANDIDATE_CREATED", ok: true, dry_run: false,
+      symbol: "005930", price: 75000, quantity: 13, notional_krw: 975000,
+      reason_message: "Paper 가상 주문 후보가 정상 생성되었습니다 (실거래 아님).",
+      stages: [], broker_order_sent: false,
+    };
+    const api = _mockApiWithDiag({ state: "RUNNING", cycle_count: 1 }, _readinessFixture(), result);
+    const { container } = render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(screen.getByTestId("btn-run-once-diagnostic")).toBeTruthy());
+    fireEvent.click(screen.getByTestId("btn-run-once-diagnostic"));
+    await waitFor(() => expect(api.autoPaperRunOnceDiagnostic).toHaveBeenCalled());
+    const banned = [
+      "Place Order", "지금 매수", "지금 매도", "실거래 시작",
+      "실거래 활성화 시작", "ENABLE_LIVE_TRADING=true", "AI 자동매매 켜기",
+    ];
+    for (const b of banned) {
+      expect(container.textContent).not.toContain(b);
+    }
+    // run-once 버튼 라벨에 매수/매도/buy/sell 0건.
+    const btn = screen.getByTestId("btn-run-once-diagnostic");
+    const t = (btn.textContent || "").toLowerCase();
+    expect(t).not.toContain("매수");
+    expect(t).not.toContain("매도");
+    expect(t).not.toContain("buy");
+    expect(t).not.toContain("sell");
+    expect(t).not.toContain("place order");
+  });
+});
