@@ -38,6 +38,23 @@ def _f(v: Any) -> float | None:
         return None
 
 
+def _parse_hhmm(v: Any) -> int | None:
+    """\"HH:MM\" (KST) → 자정 기준 분(minutes). 파싱 실패는 None."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    if ":" not in s:
+        return None
+    try:
+        hh, mm = s.split(":")[:2]
+        h, m = int(hh), int(mm)
+    except (TypeError, ValueError):
+        return None
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return None
+    return h * 60 + m
+
+
 def _norm_pct(v: Any) -> float | None:
     """손절/익절 % 정규화 → percent (2.0 = 2%). 0<v<=1 은 ratio 로 보고 *100.
 
@@ -69,8 +86,14 @@ class PositionContext:
     # 3-05: 트레일링 스탑 — high_watermark(장중 최고가) 대비 trailing_stop_pct 하락.
     high_watermark:      float | None = None
     trailing_stop_pct:   float | None = None
-    market_time_phase:   str | None = None       # PRE_MARKET/.../CLOSING/...
+    market_time_phase:   str | None = None       # PRE_MARKET/.../CLOSING/... (legacy)
     market_close_exit_enabled: bool = False
+    # 3-06: 장마감 강제청산 — KST 시각이 force_exit_time_kst 이상이면 청산 후보.
+    #       오버나이트 허용 전략(allow_overnight=True)은 강제청산 미발동.
+    current_time_kst:    str | None = None        # "HH:MM" (KST). caller 가 채움.
+    force_exit_time_kst: str = "15:20"            # 기본 강제청산 시각.
+    market_close_time_kst: str = "15:30"
+    allow_overnight:     bool = False
 
     # SELL 은 보유 청산만 — 숏 진입 아님 (영구 False).
     is_short_entry:      bool = False
@@ -152,6 +175,23 @@ class PositionContext:
             return None, TRAILING_STOP_NOT_IN_PROFIT
         return round(hwm * (1.0 - p / 100.0), 4), "pct"
 
+    def is_market_close_exit_triggered(self) -> bool:
+        """장마감 강제청산 트리거 — 보유 + 강제청산 enabled + (시각 ≥ 강제청산시각).
+
+        오버나이트 허용(allow_overnight=True)이면 항상 False. KST 시각 비교
+        (`current_time_kst` ≥ `force_exit_time_kst`). legacy `market_time_phase
+        =="CLOSING"` 도 트리거로 인정 (하위호환).
+        """
+        if not self.is_sellable or self.allow_overnight:
+            return False
+        if not self.market_close_exit_enabled:
+            return False
+        cur = _parse_hhmm(self.current_time_kst)
+        fe = _parse_hhmm(self.force_exit_time_kst)
+        if cur is not None and fe is not None and cur >= fe:
+            return True
+        return str(self.market_time_phase or "").upper() == "CLOSING"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "held_position":       bool(self.held_position),
@@ -171,6 +211,10 @@ class PositionContext:
             "resolved_trailing_stop_price": self.resolve_trailing_stop_price()[0],
             "unrealized_return_pct": self.unrealized_return_pct,
             "market_time_phase":   self.market_time_phase,
+            "current_time_kst":    self.current_time_kst,
+            "force_exit_time_kst": self.force_exit_time_kst,
+            "allow_overnight":     bool(self.allow_overnight),
+            "market_close_exit_triggered": self.is_market_close_exit_triggered(),
             "is_short_entry":      False,
             "short_position":      False,
         }
@@ -204,8 +248,7 @@ def infer_position_sell_reason(
             default_trailing_stop_pct=default_trailing_stop_pct)
         if ts is not None and ts > 0 and cur <= ts:
             return SELL_TRAILING_STOP
-    if position.market_close_exit_enabled \
-            and str(position.market_time_phase or "").upper() == "CLOSING":
+    if position.is_market_close_exit_triggered():
         return SELL_MARKET_CLOSE_EXIT
     return None
 
