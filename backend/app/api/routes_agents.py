@@ -1612,3 +1612,26 @@ def review_completed_episodes(
             "거래 복기는 *학습/개선용* 입니다. 다음 주문 신호가 아닙니다."
         ),
     }
+
+
+# ============================================================================
+# P-28: 전략별 성과 대시보드 (read-only analytics) — 실 계좌 미사용
+# ============================================================================
+
+
+@router.get("/strategy-performance")
+def strategy_performance(
+    limit: int = Query(500, ge=1, le=2000),
+    db:    _Session = Depends(get_db),
+) -> dict:
+    """ORB / MOMENTUM / GAP / VWAP / Agent Council 전략별 성과 (read-only).
+
+    decision episode(P-21~P-27) 기록의 추정 수익률만 사용 — **실제 계좌 잔고
+    미사용**. broker / OrderExecutor / route_order 호출 0건, secret 0건,
+    is_live_authorization=False.
+    """
+    from app.agents.decision_episode import list_episodes
+    from app.analytics.strategy_performance import calculate_strategy_performance
+    episodes = list_episodes(db, limit=limit)
+    report = calculate_strategy_performance(episodes)
+    return report.to_dict()

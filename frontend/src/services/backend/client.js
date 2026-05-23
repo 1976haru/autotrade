@@ -520,6 +520,9 @@ export const backendApi = {
     if (action) qs.set("action", action);
     return backendFetch(`/api/agents/decision-episodes?${qs.toString()}`);
   },
+  // P-28: 전략별 성과 대시보드 (read-only, 실 계좌 미사용).
+  agentStrategyPerformance: ({ limit = 500 } = {}) =>
+    backendFetch(`/api/agents/strategy-performance?limit=${limit}`),
   // 193: Virtual order ledger surface.
   virtualOrders: ({ limit = 50, offset = 0, status = null, symbol = null } = {}) => {
     const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
