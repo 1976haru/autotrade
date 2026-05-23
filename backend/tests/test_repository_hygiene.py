@@ -248,6 +248,20 @@ def test_workflow_files_exist_and_non_empty():
         assert p.stat().st_size > 0, f".github/workflows/{name} 비어 있음"
 
 
+def test_backend_ci_fast_pytest_has_per_test_timeout():
+    """Backend CI fast job 이 per-test timeout 을 사용 — 단일 테스트 hang 이
+    전체 job 을 10분 timeout 으로 silent cancel 시키던 회귀를 차단.
+
+    (candidate_registry 비재진입 lock deadlock 으로 `test` job 이 만성적으로
+    cancelled 되던 문제의 방어선 — pytest-timeout 으로 hang 테스트만 빠르게
+    실패시키고 stack 을 남긴다.)
+    """
+    src = (_WORKFLOW_DIR / "backend-ci.yml").read_text(encoding="utf-8")
+    assert "--timeout=" in src, "backend-ci.yml fast pytest 에 --timeout 누락"
+    req = (_ROOT / "backend" / "requirements.txt").read_text(encoding="utf-8")
+    assert "pytest-timeout" in req, "requirements.txt 에 pytest-timeout 누락"
+
+
 def test_workflow_yamls_parse():
     """PyYAML 이 있으면 모든 workflow 파일을 parse — 없으면 본 테스트 skip
     (수동 검토 필요, system_hygiene_report.md 에 기록).

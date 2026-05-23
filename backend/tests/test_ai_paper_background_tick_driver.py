@@ -96,7 +96,7 @@ def _driver(settings, loop, events=None, pipeline=None, now=OPEN_TIME):
 # ── config 기본값 ────────────────────────────────────────────────────────────
 
 
-def test_flag_default_false():
+def test_flag_default_false(safe_default_flags):
     s = Settings()
     assert s.enable_ai_paper_background_tick is False
     assert s.ai_paper_tick_interval_seconds == 30
@@ -344,7 +344,7 @@ def test_singleton_status_keys():
     reset_background_tick_driver_for_tests()
 
 
-def test_run_readiness_includes_background_tick(client):
+def test_run_readiness_includes_background_tick(safe_default_flags, client):
     res = client.get("/api/auto-paper/run-readiness")
     assert res.status_code == 200
     bt = res.json()["background_tick"]
