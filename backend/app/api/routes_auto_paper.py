@@ -172,6 +172,10 @@ class _PaperCapitalSettingsBody(BaseModel):
     max_daily_buy_amount:   int   | None = Field(None, ge=1)
     max_symbol_weight_pct:  float | None = Field(None, gt=0, le=1)
     allow_additional_buy:   bool  | None = Field(None)
+    # AI 운용 성향 — CONSERVATIVE/BALANCED/AGGRESSIVE. 소문자/한국어/별칭/None
+    # 모두 backend RiskProfile 로 정규화(실패값 없이 항상 유효 enum, default
+    # BALANCED). *실거래 권한과 무관* — AGGRESSIVE 도 is_live_authorization=False.
+    risk_profile:           Optional[str]  = Field(None)
 
 
 class _StartBody(BaseModel):
@@ -1716,6 +1720,10 @@ def validate_paper_capital_settings_endpoint(
         `is_order_signal=False` invariant carry
       - 잘못된 값은 Pydantic 단에서 422 로 차단 (정수 범위 / 비율 0~1)
     """
+    # risk_profile 정규화 — 소문자/한국어/별칭/None → 표준 RiskProfile (실패값
+    # 없이 항상 유효 enum, default BALANCED). AGGRESSIVE 도 실거래 권한 아님.
+    from app.agents.risk_profile import policy_for as _policy_for
+    risk_profile_value = _policy_for(body.risk_profile).profile.value
     return {
         "total_paper_capital":   body.total_paper_capital,
         "per_symbol_allocation": body.per_symbol_allocation,
@@ -1726,6 +1734,7 @@ def validate_paper_capital_settings_endpoint(
             False if body.allow_additional_buy is None
             else bool(body.allow_additional_buy)
         ),
+        "risk_profile":          risk_profile_value,
         "is_paper_only":         True,
         "is_order_signal":       False,
         "is_live_authorization": False,

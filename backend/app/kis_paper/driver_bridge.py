@@ -34,33 +34,64 @@ def _broker_is_kis_paper(broker) -> bool:
     )
 
 
-def build_decision_from_pipeline(
-    *, settings: Any, now: datetime,
-) -> KisPaperAutoDecision:
-    """run-once 파이프라인 후보 → KIS 자동주문 결정 래핑.
+def _market_input_from_pipeline(symbol: str, price: float):
+    """파이프라인 후보(단일 현재가)로부터 Agent Council 입력 구성.
 
-    AI Agent + 4전략 조합의 *결정 산출* 은 후속 확장 — 현재는 파이프라인이
-    고른 후보(universe→시세→sizing)를 결정으로 사용하고 전략 라벨을 carry.
-    신호가 없으면 side=HOLD (게이트가 NO_STRATEGY_SIGNAL 로 차단).
+    mock 시세는 단일 현재가만 주므로, 데모/검증용 *결정론적 상승* 시리즈를
+    합성해 council 이 실제 4전략 투표를 수행하게 한다 (실 KIS 시세 연동 시에는
+    caller 가 실제 series 를 채운 StrategyMarketInput 을 council 에 직접 전달).
     """
+    from app.agents.agent_council import StrategyMarketInput
+    p = float(price)
+    closes = tuple(round(p * (1 + 0.01 * (i - 4)), 2) for i in range(5))  # 완만한 상승
+    return StrategyMarketInput(
+        symbol=symbol, current_price=p, prev_close=round(p * 0.985, 2),
+        open_price=round(p * 0.99, 2), vwap=round(p * 0.995, 2),
+        opening_range_high=round(p * 0.997, 2), opening_range_low=round(p * 0.985, 2),
+        recent_closes=closes, current_volume=120.0, avg_volume=100.0,
+        market_regime="TREND_UP", regime_decision="ALLOW",
+    )
+
+
+def build_decision_from_pipeline(
+    *, settings: Any, now: datetime, risk_profile: Any = None,
+) -> tuple[KisPaperAutoDecision, Any]:
+    """run-once 파이프라인 후보 → Agent Council 투표 → KIS 자동주문 결정.
+
+    4 전략(ORB/Momentum/Gap/VWAP) 투표를 Agent Council 이 종합해 BUY/SELL/HOLD
+    를 결정하고, BUY/SELL 이면 KisPaperAutoDecision 으로 변환. HOLD 면 side=HOLD
+    (게이트가 NO_STRATEGY_SIGNAL 로 차단). council 결정 객체도 함께 반환해
+    AgentDecisionLog / UI 가 vote 내역을 기록·표시할 수 있게 한다.
+    """
+    from app.agents.agent_council import CouncilAction, run_agent_council
     provider = str(getattr(settings, "market_data_provider", "mock"))
     ro = run_paper_pipeline_once(
         symbol=None, force_mock_market_data=(provider.strip().lower() == "mock"),
         dry_run=False, market_data_provider=provider, record=False, now=now,
     )
     if not ro.ok or ro.symbol is None or ro.price is None or ro.quantity < 1:
-        return KisPaperAutoDecision(
-            symbol=ro.symbol or "NONE", side="HOLD",
-            quantity=0, price=int(ro.price or 0),
-            entry_reason=ro.reason_message,
+        return (
+            KisPaperAutoDecision(
+                symbol=ro.symbol or "NONE", side="HOLD",
+                quantity=0, price=int(ro.price or 0),
+                entry_reason=ro.reason_message,
+            ),
+            None,
         )
-    return KisPaperAutoDecision(
-        symbol=ro.symbol, side="BUY", quantity=int(ro.quantity),
-        price=int(ro.price), selected_strategies=["MOMENTUM", "VWAP"],
-        confidence=0.72, quality_score=75, entry_reason=ro.reason_message,
-        has_exit_plan=True,
-        exit_plan={"stop_loss_pct": 1.5, "take_profit_pct": 3.0, "trailing_stop": False},
+    council = run_agent_council(
+        _market_input_from_pipeline(ro.symbol, ro.price),
+        risk_profile=risk_profile, held_position=False,
     )
+    if council.final_action == CouncilAction.HOLD:
+        return (
+            KisPaperAutoDecision(
+                symbol=ro.symbol, side="HOLD", quantity=0, price=int(ro.price),
+                entry_reason=council.reason or "council HOLD",
+            ),
+            council,
+        )
+    kd = council.to_kis_paper_decision(quantity=int(ro.quantity), price=int(ro.price))
+    return (kd, council)
 
 
 async def kis_paper_auto_tick(
@@ -100,7 +131,11 @@ async def kis_paper_auto_tick(
             risk = get_risk_manager()
         rd = evaluate_readiness(settings)
         creds = bool(rd.kis_key_present and rd.kis_secret_present and rd.kis_account_present)
-        dec = decision or build_decision_from_pipeline(settings=settings, now=now)
+        council = None
+        if decision is not None:
+            dec = decision
+        else:
+            dec, council = build_decision_from_pipeline(settings=settings, now=now)
         result = await execute_kis_paper_auto_order(
             db, decision=dec, settings=settings, broker=broker, risk=risk,
             broker_is_kis_paper=_broker_is_kis_paper(broker),
@@ -110,7 +145,12 @@ async def kis_paper_auto_tick(
             db.commit()
         except Exception:  # noqa: BLE001
             db.rollback()
-        return result.to_dict()
+        out = result.to_dict()
+        if council is not None:
+            # Agent Council vote 내역을 결과에 carry (AgentDecisionLog 는 executor
+            # 가 selected_strategies 를 이미 기록; 여기선 UI/디버그용 votes 동봉).
+            out["council"] = council.to_dict()
+        return out
     except Exception as exc:  # noqa: BLE001 — driver tick 보호.
         try:
             db.rollback()

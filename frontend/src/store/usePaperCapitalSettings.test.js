@@ -197,7 +197,7 @@ describe("buildPaperCapitalSummary + toStartPayloadCapitalSettings", () => {
     expect(s).toMatch(/종목비중/);
   });
 
-  it("start payload snake_case + 6 키", () => {
+  it("start payload snake_case + 7 키 (risk_profile 포함)", () => {
     const p = toStartPayloadCapitalSettings(DEFAULT_PAPER_CAPITAL_SETTINGS);
     expect(p).toEqual({
       total_paper_capital:    10_000_000,
@@ -206,6 +206,7 @@ describe("buildPaperCapitalSummary + toStartPayloadCapitalSettings", () => {
       max_daily_buy_amount:   3_000_000,
       max_symbol_weight_pct:  0.2,
       allow_additional_buy:   false,
+      risk_profile:           "BALANCED",
     });
   });
 });
