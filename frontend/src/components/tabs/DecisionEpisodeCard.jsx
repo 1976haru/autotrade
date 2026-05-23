@@ -167,6 +167,16 @@ export function DecisionEpisodeCard({
                       )}
                     </div>
                   )}
+                  {/* 2-08: RiskOfficer veto (위험 플래그 초과로 HOLD 강등 시) */}
+                  {council.risk_veto_result && council.risk_veto_result.veto_applied && (
+                    <div data-testid={`episode-risk-veto-${ep.episode_id}`}
+                         style={{ color: "#dc2626", marginTop: 1, fontWeight: "var(--fw-bold)" }}>
+                      RiskOfficer veto: 위험 플래그 {council.risk_veto_result.risk_flag_count}개 &gt;
+                      허용 {council.risk_veto_result.max_risk_flags}개
+                      ({council.risk_veto_result.risk_profile}) ·
+                      {" "}{council.risk_veto_result.pre_veto_action} → HOLD 강등
+                    </div>
+                  )}
                   {/* P-24: 주문·체결 품질 요약 */}
                   {hasOq && (
                     <div data-testid={`episode-quality-${ep.episode_id}`}

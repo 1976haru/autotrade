@@ -154,6 +154,8 @@ class AgentCouncilDecision:
     metadata:       dict[str, Any] = field(default_factory=dict)
     # P-26: 매도(SELL) 사유 — final_action=SELL 일 때만 채워짐 (그 외 빈 dict).
     sell_reason:    dict[str, Any] = field(default_factory=dict)
+    # 2-08: RiskOfficer veto 결과 (risk_flags 허용치 초과 시 HOLD 강등 정보).
+    risk_veto_result: dict[str, Any] = field(default_factory=dict)
 
     is_order_signal:       bool = False
     auto_apply_allowed:    bool = False
@@ -187,6 +189,8 @@ class AgentCouncilDecision:
             "metadata":       dict(self.metadata),
             # P-26: 매도 사유 (SELL 일 때만 비어있지 않음).
             "sell_reason":    dict(self.sell_reason),
+            # 2-08: RiskOfficer veto 결과 (위험 플래그 초과 → HOLD 강등).
+            "risk_veto_result": dict(self.risk_veto_result),
             # P-23: 진입 임계 스냅샷 — "왜 BUY/왜 HOLD" 사후 분석용.
             "threshold_snapshot": self._threshold_snapshot(),
             "is_order_signal":       False,
@@ -408,7 +412,6 @@ def run_agent_council(
         all_flags.extend(v.risk_flags)
     uniq_flags = sorted(set(all_flags))
     risk_penalty = min(len(uniq_flags) * 10, 40)
-    risk_veto = len(uniq_flags) > int(thr["max_risk_flags"])
 
     # 4. 잠정 action — 최고 점수 bucket.
     top = max(
@@ -436,9 +439,6 @@ def run_agent_council(
         if regime_block_buy:
             final = CouncilAction.HOLD
             reasons.append(f"장세({inp.market_regime}/{inp.regime_decision})로 신규 BUY 억제")
-        elif risk_veto:
-            final = CouncilAction.HOLD
-            reasons.append(f"risk_flags {len(uniq_flags)}개 > 허용 {int(thr['max_risk_flags'])} — BUY 차단")
         elif confidence < thr["min_confidence"]:
             final = CouncilAction.HOLD
             reasons.append(f"confidence {confidence:.2f} < 임계 {thr['min_confidence']:.2f}")
@@ -461,6 +461,17 @@ def run_agent_council(
                 f"SELL 채택 (sell_score={sell_score:.1f}, 전략={[v.strategy for v in supporting]})")
     else:
         reasons.append("전략 신호 약함 / 중립 — HOLD")
+
+    # 6. RiskOfficer veto — risk_flags 허용치 초과 시 BUY/SELL → HOLD 강등.
+    #    AGGRESSIVE 도 무제한 진입 불가. RiskManager/PermissionGate 대체 아님(사전 필터).
+    from app.agents.risk_officer import evaluate_risk_officer_veto
+    veto = evaluate_risk_officer_veto(
+        action=final.value, risk_flags=uniq_flags, risk_profile=profile.value,
+        max_risk_flags=int(thr["max_risk_flags"]),
+    )
+    if veto.veto_applied:
+        final = CouncilAction.HOLD
+        reasons.append(veto.reason)
 
     selected = [v.strategy for v in votes if v.signal == final and v.score > 0] \
         if final != CouncilAction.HOLD else []
@@ -486,6 +497,7 @@ def run_agent_council(
         has_exit_plan=bool(exit_plan) and final == CouncilAction.BUY,
         exit_plan=(exit_plan if final == CouncilAction.BUY else {}),
         sell_reason=sell_reason,
+        risk_veto_result=veto.to_dict(),
         metadata={"weights": dict(STRATEGY_WEIGHTS),
                   "thresholds": dict(thr),
                   "risk_penalty": risk_penalty,
