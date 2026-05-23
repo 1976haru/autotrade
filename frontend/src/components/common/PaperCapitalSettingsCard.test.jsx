@@ -198,6 +198,28 @@ describe("<PaperCapitalSettingsCard>", () => {
       .toMatch(/RiskManager/);
   });
 
+  // ── P-20: Paper capital ↔ Live capital 분리 안내 ──
+
+  it("P-20: Paper 자금 != 실전 주문 한도 / Live 자금 검토 문구 노출", () => {
+    render(<PaperCapitalSettingsCard storage={_mkStorage()} />);
+    const note = screen.getByTestId("paper-capital-live-separation-note");
+    expect(note.textContent).toMatch(/Paper 자금 설정은 실전 주문 한도가 아닙니다/);
+    expect(note.textContent).toMatch(/별도 Live\s*자금 검토가 필요합니다/);
+  });
+
+  it("P-20: Live 활성화 / Live 자금 승인 / ENABLE_ 토글 버튼 0개", () => {
+    render(<PaperCapitalSettingsCard storage={_mkStorage()} />);
+    const labels = Array.from(document.querySelectorAll("button"))
+      .map((b) => (b.textContent || "").trim());
+    for (const txt of labels) {
+      expect(txt).not.toMatch(/실거래 활성화/);
+      expect(txt).not.toMatch(/Live 자금 승인/);
+      expect(txt).not.toMatch(/실전 전환/);
+      expect(txt).not.toMatch(/ENABLE_LIVE_TRADING/);
+      expect(txt).not.toMatch(/ENABLE_AI_EXECUTION/);
+    }
+  });
+
   // ── P-16: 영구 저장 상태 / .env 분리 안내 ──
 
   it("P-16: 저장 상태 영역 + .env 분리 안내 노출", () => {

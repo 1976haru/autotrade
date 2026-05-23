@@ -754,3 +754,90 @@ reason_code 정렬 (사용자 요청서 §9):
   은 *advisory only*.
 - 모든 정책 응답에 `is_paper_only=True` / `is_live_authorization=False` /
   `is_order_signal=False` 영구.
+
+---
+
+## Paper Capital vs Live Capital Separation (P-20)
+
+> **핵심 원칙: Paper capital 은 가상 자금이며, 실전 계좌 잔고도 실전 주문 가능
+> 금액도 아니다.** Paper 자금 설정값이 Live 주문 금액 / 수량 / 한도로 *자동
+> 연결되면 안 된다*. Live 전환은 별도 live capital review + manual approval +
+> promotion gate 를 반드시 거친다.
+
+### P-20-1. Paper capital 정의
+
+- Paper capital 은 AI Paper / SIMULATION / SHADOW 검증을 위한 **가상 자금** 이다.
+- **실제 증권계좌 잔고가 아니다.**
+- **실제 주문 가능 금액이 아니다.**
+- 시드머니 / 종목당 투자금 / 일일 매수 한도 / 최대 보유 / 종목 비중 / risk
+  profile 모두 *Paper 운용 기준* 일 뿐이다.
+
+### P-20-2. Live capital 정의
+
+- Live capital 은 **실제 증권계좌 잔고 + 운영자가 승인한 실전 주문 한도** 를
+  의미한다.
+- Live capital 은 Paper capital 과 **별도 검토 / 별도 설정 / 별도 승인** 이
+  필요하다.
+- 본 프로젝트는 Live capital 설정 기능을 *아직 제공하지 않는다* — placeholder
+  (`live_capital_review_status` / `LIVE_CAPITAL_REVIEW_REQUIRED`) 만 둔다.
+
+### P-20-3. 절대 원칙
+
+- Paper capital 설정은 **Live 주문 금액으로 사용하지 않는다.**
+- Paper per-symbol allocation 은 **Live per-order amount 가 아니다.**
+- Paper max daily buy amount 는 **Live daily order limit 이 아니다.**
+- Paper max positions 는 **Live max positions 가 아니다.**
+- Paper risk profile 은 **Live risk authorization 이 아니다.**
+
+### P-20-4. Live 전환 조건
+
+`ENABLE_LIVE_TRADING=true` *만으로 충분하지 않다*. 다음을 모두 거쳐야 한다:
+
+- 운영자 manual approval (PermissionGate 큐)
+- live capital review (별도 설정 — 본 PR 미구현, placeholder)
+- live order notional cap (별도 설정)
+- promotion gate (Paper Gate #72 / Live Manual Gate #73 / AI Assist Gate #74 /
+  AI Execution Gate #75)
+- audit log
+- canary 또는 최소 주문 한도 정책
+
+### P-20-5. 금지 예시
+
+- ❌ Paper 시드머니 10,000,000원을 실전 계좌 주문 한도로 사용
+- ❌ Paper 종목당 투자금 1,000,000원을 실전 1회 주문 금액으로 자동 사용
+- ❌ Paper 일일 매수 한도 3,000,000원을 실전 일일 주문 한도로 자동 사용
+
+### P-20-6. 허용 예시
+
+- ✅ Paper 결과를 *참고자료* 로 보는 것
+- ✅ Live 주문 금액은 별도 live capital config 또는 manual approval 에서만 결정
+- ✅ Live order 는 PermissionGate / RiskManager / operator approval 을 반드시 통과
+
+### P-20-7. reason_code 표
+
+| reason_code | 의미 | 한국어 메시지 |
+|---|---|---|
+| `PAPER_CAPITAL_NOT_LIVE_CAPITAL` | Live 경로에 paper capital 이 섞임 (무시됨) | Paper 자금 설정은 실전 주문 한도가 아닙니다. |
+| `LIVE_CAPITAL_REVIEW_REQUIRED` | live capital 미검토/미승인 | 실전 주문에는 별도 Live 자금 검토가 필요합니다. |
+| `LIVE_ORDER_NOTIONAL_NOT_CONFIGURED` | live order notional 미설정 | 실전 주문 금액(live order notional)이 설정되지 않았습니다. |
+| `LIVE_CAPITAL_PERMISSION_DENIED` | live 자금 권한 거부 | 실전 자금 권한이 거부되었습니다. |
+| `PAPER_MODE_PAPER_CAPITAL_OK` | 비-live 모드에서 paper capital 정상 사용 | 현재 설정은 Paper / AI Paper 전용입니다. |
+
+구현: `app/permission/live_capital_guard.py::evaluate_live_capital_authorization`.
+`LiveCapitalReviewResult.live_capital_approved=False` / `is_live_authorization=
+False` 영구 (placeholder — 실전 활성화 기능 아님).
+
+### P-20-8. 운영 단계별 정책
+
+| 모드 | Paper capital | Live 주문 |
+|---|---|---|
+| `SIMULATION` | 사용 가능 (paper sizing) | 없음 |
+| `PAPER` | 사용 가능 (paper sizing) | 없음 |
+| `LIVE_SHADOW` | 비교/시뮬레이션용 | 실주문 없음 (RiskManager 가 모두 REJECTED) |
+| `LIVE_MANUAL_APPROVAL` | **자동 사용 금지** | live approval 필요 (`LIVE_CAPITAL_REVIEW_REQUIRED`) |
+| `LIVE_AI_ASSIST` | **자동 사용 금지** | live approval 필요 |
+| `LIVE_AI_EXECUTION` | **자동 사용 금지** | 별도 promotion gate 전까지 차단 |
+
+> **PermissionGate.approve 는 paper capital 을 읽지 않는다** — 주문 수량/가격은
+> 제출 시점 `PendingApproval` 스냅샷에서 복원되며, paper capital 설정과 결합
+> 0건. 본 가드는 그 분리를 코드/문서/테스트로 *고정* 한다.

@@ -470,6 +470,24 @@ export function PaperCapitalSettingsCard({
         이 설정은 Paper / AI Paper 기준입니다. 실거래 활성화 설정이 아닙니다.
         RiskManager 와 PermissionGate 는 계속 적용됩니다.
       </div>
+
+      {/* P-20: Paper capital ↔ Live capital 분리 안전 문구 (read-only). */}
+      <div
+        data-testid="paper-capital-live-separation-note"
+        style={{
+          marginTop: 8,
+          padding: "8px 10px",
+          background: "#fff7ed",
+          border: "1px solid #fed7aa",
+          borderRadius: 4,
+          color: "#7c2d12",
+          fontSize: "var(--fs-xs)",
+          lineHeight: 1.6,
+        }}
+      >
+        Paper 자금 설정은 실전 주문 한도가 아닙니다. 실전 주문에는 별도 Live
+        자금 검토가 필요합니다.
+      </div>
       </div>
     </Card>
   );
