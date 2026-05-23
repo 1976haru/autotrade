@@ -8,6 +8,7 @@ import { AgentCouncilCard } from "./AgentCouncilCard";
 import { BuyBlockReasonsCard } from "./BuyBlockReasonsCard";
 import { DecisionEpisodeCard } from "./DecisionEpisodeCard";
 import { PerformanceDashboard } from "./PerformanceDashboard";
+import { WeightRecommendationCard } from "./WeightRecommendationCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
@@ -63,6 +64,8 @@ export function AISignal({ activeStratIds }) {
       <DecisionEpisodeCard />
       {/* P-28: 전략별 성과 대시보드 — episode 추정 수익률 기반 (실 계좌 미사용). */}
       <PerformanceDashboard />
+      {/* P-29: 전략 가중치 개선 후보 — 자동 적용 금지, 운영자 승인 전 변경 없음. */}
+      <WeightRecommendationCard />
       <AgentDecisionSummaryCard />
       <AgentStatsCard />
       {/* 44: AI Assist 제안 카드 — AI는 제안만, 사람 승인 후 주문. */}
