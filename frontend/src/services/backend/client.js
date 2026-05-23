@@ -523,6 +523,14 @@ export const backendApi = {
   // P-28: 전략별 성과 대시보드 (read-only, 실 계좌 미사용).
   agentStrategyPerformance: ({ limit = 500 } = {}) =>
     backendFetch(`/api/agents/strategy-performance?limit=${limit}`),
+  // P-29: 전략 가중치 개선 후보 추천 (read-only, 자동 적용 금지).
+  agentWeightRecommendation: ({ lookbackCount = 100, riskProfile = null,
+                                marketRegime = null } = {}) => {
+    const qs = new URLSearchParams({ lookback_count: String(lookbackCount) });
+    if (riskProfile) qs.set("risk_profile", riskProfile);
+    if (marketRegime) qs.set("market_regime", marketRegime);
+    return backendFetch(`/api/agents/weight-recommendation?${qs.toString()}`);
+  },
   // 193: Virtual order ledger surface.
   virtualOrders: ({ limit = 50, offset = 0, status = null, symbol = null } = {}) => {
     const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });

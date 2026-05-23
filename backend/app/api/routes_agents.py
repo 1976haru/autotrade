@@ -1635,3 +1635,54 @@ def strategy_performance(
     episodes = list_episodes(db, limit=limit)
     report = calculate_strategy_performance(episodes)
     return report.to_dict()
+
+
+# ============================================================================
+# P-29: Agent 전략 가중치 개선 *후보* 추천 (read-only, 자동 적용 금지)
+# ============================================================================
+
+
+@router.get("/weight-recommendation")
+def weight_recommendation(
+    lookback_count: int = Query(100, ge=1, le=2000),
+    risk_profile:   str | None = Query(None, description="CONSERVATIVE/BALANCED/AGGRESSIVE"),
+    market_regime:  str | None = Query(None, description="시장 국면 필터 (예: TREND_UP)"),
+    db:             _Session = Depends(get_db),
+) -> dict:
+    """전략 가중치 조정 *후보* 추천 (read-only).
+
+    **자동 적용 금지** — 추천만 생성하며 Agent 설정(STRATEGY_WEIGHTS)을 변경하지
+    않는다. requires_operator_approval=True / auto_apply_allowed=False. 실제 계좌
+    잔고 미사용, broker / OrderExecutor / route_order 호출 0건, secret 0건.
+    """
+    from app.agents.decision_episode import list_episodes
+    from app.agents.weight_recommendation import recommend_strategy_weights
+    from app.analytics.strategy_performance import calculate_strategy_performance
+
+    episodes = list_episodes(db, limit=lookback_count)
+    regime = (market_regime or "").strip().upper()
+    if regime and regime != "ALL":
+        episodes = [
+            e for e in episodes
+            if str((e.get("council") or {}).get("market_regime", "")).upper() == regime
+            or str((e.get("market_summary") or {}).get("market_regime", "")).upper() == regime
+        ]
+    report = calculate_strategy_performance(episodes)
+    rec = recommend_strategy_weights(
+        report,
+        lookback_count=lookback_count,
+        risk_profile=(risk_profile or "BALANCED"),
+        market_regime=(market_regime or "ALL"),
+    )
+    return {
+        "recommendation":    rec.to_dict(),
+        "performance_basis": report.to_dict(),
+        "summary": {
+            "status":                     rec.status,
+            "requires_operator_approval": True,
+            "auto_apply_allowed":         False,
+            "is_order_signal":            False,
+            "is_live_authorization":      False,
+            "contains_secret":            False,
+        },
+    }
