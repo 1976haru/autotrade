@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -61,6 +62,7 @@ class BackgroundTickReason(StrEnum):
     MARKET_CLOSED                = "MARKET_CLOSED"
     AUTO_LOOP_NOT_RUNNING        = "AUTO_LOOP_NOT_RUNNING"
     BACKGROUND_TICK_MAX_PER_DAY  = "BACKGROUND_TICK_MAX_PER_DAY"
+    BACKGROUND_TICK_ERROR        = "BACKGROUND_TICK_ERROR"
 
 
 _REASON_MESSAGE_KO: dict[str, str] = {
@@ -80,11 +82,32 @@ _REASON_MESSAGE_KO: dict[str, str] = {
         "AutoPaperLoop 정지 상태 — driver tick 중단.",
     BackgroundTickReason.BACKGROUND_TICK_MAX_PER_DAY:
         "오늘 자동 tick 한도에 도달하여 추가 tick 을 실행하지 않습니다.",
+    BackgroundTickReason.BACKGROUND_TICK_ERROR:
+        "자동 tick 실행 중 오류가 발생했습니다 — 다음 주기에 재시도합니다 (실거래 영향 0건).",
 }
 
 
 def reason_message_ko(code: str) -> str:
     return _REASON_MESSAGE_KO.get(code, code)
+
+
+# secret 추정 패턴 — 에러 메시지를 RuntimeEvent 로 남기기 전 마스킹.
+_SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"sk-[A-Za-z0-9_\-]{12,}"),
+    re.compile(r"sk-ant-[A-Za-z0-9_\-]{12,}"),
+    re.compile(r"ghp_[A-Za-z0-9]{20,}"),
+    re.compile(r"Bearer\s+[A-Za-z0-9._\-]{12,}"),
+    re.compile(r"PST[A-Za-z0-9]{20,}"),
+    re.compile(r"\b\d{6,}-\d{2,}\b"),     # 한국 계좌번호 형태.
+)
+
+
+def _redact_secret(text: str) -> str:
+    """에러 메시지의 secret 추정 토큰을 [REDACTED] 로 치환."""
+    out = str(text)
+    for pat in _SECRET_PATTERNS:
+        out = pat.sub("[REDACTED]", out)
+    return out[:500]
 
 
 @dataclass(frozen=True)
@@ -97,6 +120,17 @@ class DriverTickResult:
     cycle_count:         int
     pipeline_result_code: str | None = None
     recorded_event:      bool = False
+    # tick 실행 모드 + 모의 체결 결과 carry.
+    tick_mode:           str = "DIAGNOSTIC_DRY_RUN"   # DIAGNOSTIC_DRY_RUN / SIMULATED_TRADE
+    simulated_fills_enabled: bool = False
+    order_created:       bool = False
+    order_id:            int | None = None
+    fill_status:         str | None = None            # FILLED / None
+    quantity:            int = 0
+    notional_krw:        int = 0
+    cash_before:         int | None = None
+    cash_after:          int | None = None
+    position_quantity:   int = 0
 
     # 절대 invariant.
     is_order_signal:       bool = False
@@ -119,6 +153,16 @@ class DriverTickResult:
             "cycle_count":          int(self.cycle_count),
             "pipeline_result_code": self.pipeline_result_code,
             "recorded_event":       bool(self.recorded_event),
+            "tick_mode":            self.tick_mode,
+            "simulated_fills_enabled": bool(self.simulated_fills_enabled),
+            "order_created":        bool(self.order_created),
+            "order_id":             self.order_id,
+            "fill_status":          self.fill_status,
+            "quantity":             int(self.quantity),
+            "notional_krw":         int(self.notional_krw),
+            "cash_before":          self.cash_before,
+            "cash_after":           self.cash_after,
+            "position_quantity":    int(self.position_quantity),
             "is_order_signal":       self.is_order_signal,
             "is_live_authorization": self.is_live_authorization,
             "broker_order_sent":     self.broker_order_sent,
@@ -144,12 +188,25 @@ class BackgroundTickDriver:
         pipeline_runner:   Optional[Callable[..., RunOnceResult]] = None,
         event_sink:        Optional[Callable[..., None]] = None,
         now_provider:      Optional[Callable[[], datetime]] = None,
+        # simulated trade mode 의존성 — 모두 주입 가능 (테스트 용이성).
+        # session_factory(): DB session 반환 (default app.db.session.SessionLocal).
+        # trade_flow_runner(db, ...): execute_paper_trade_flow 호환.
+        # risk_check_builder(risk_manager, db, available_cash_krw): paper risk_check.
+        # risk_manager_provider(): RiskManager 인스턴스.
+        session_factory:   Optional[Callable[[], Any]] = None,
+        trade_flow_runner: Optional[Callable[..., Any]] = None,
+        risk_check_builder: Optional[Callable[..., Any]] = None,
+        risk_manager_provider: Optional[Callable[[], Any]] = None,
     ):
         self._settings_provider = settings_provider
         self._loop_provider = loop_provider
         self._pipeline_runner = pipeline_runner or run_paper_pipeline_once
         self._event_sink = event_sink
         self._now_provider = now_provider or (lambda: datetime.now(timezone.utc))
+        self._session_factory = session_factory
+        self._trade_flow_runner = trade_flow_runner
+        self._risk_check_builder = risk_check_builder
+        self._risk_manager_provider = risk_manager_provider
         # 상태.
         self._task: asyncio.Task | None = None
         self._stop_event: asyncio.Event | None = None
@@ -160,6 +217,15 @@ class BackgroundTickDriver:
         self._tick_count_today: int = 0
         self._tick_count_date: str | None = None    # KST date (YYYY-MM-DD)
         self._last_emitted_block_reason: str | None = None
+        # simulated trade mode 의 최근 결과 carry (run-readiness / UI 표시용).
+        self._last_tick_mode: str = "DIAGNOSTIC_DRY_RUN"
+        self._last_order_id: int | None = None
+        self._last_fill_status: str | None = None
+        self._last_quantity: int = 0
+        self._last_notional_krw: int = 0
+        self._last_cash_before: int | None = None
+        self._last_cash_after: int | None = None
+        self._last_position_quantity: int = 0
 
     # ── settings / loop accessors ──────────────────────────────────────────
 
@@ -173,6 +239,36 @@ class BackgroundTickDriver:
         if self._loop_provider is not None:
             return self._loop_provider()
         return get_auto_paper_loop()
+
+    def _open_session(self):
+        """DB session 1개 열기 — caller 가 close 책임. lazy import (broker 무관)."""
+        if self._session_factory is not None:
+            return self._session_factory()
+        from app.db.session import SessionLocal
+        return SessionLocal()
+
+    def _trade_flow(self):
+        if self._trade_flow_runner is not None:
+            return self._trade_flow_runner
+        from app.auto_paper.paper_trade_flow import execute_paper_trade_flow
+        return execute_paper_trade_flow
+
+    def _build_risk_check(self, db, available_cash_krw: int):
+        """주입된 RiskManager 로 paper risk_check 콜러블 생성 (broker 무접촉)."""
+        try:
+            if self._risk_check_builder is not None:
+                rm = (self._risk_manager_provider() if self._risk_manager_provider
+                      else None)
+                return self._risk_check_builder(rm, db, available_cash_krw)
+            from app.auto_paper.paper_risk_check import build_paper_risk_check
+            if self._risk_manager_provider is not None:
+                rm = self._risk_manager_provider()
+            else:
+                from app.api.deps import get_risk_manager
+                rm = get_risk_manager()
+            return build_paper_risk_check(rm, db, available_cash_krw)
+        except Exception:  # noqa: BLE001 — risk_check 미가용 시 paper 가드만 적용.
+            return None
 
     def _emit(self, *, level: str, code: str, message: str,
               details: dict[str, Any] | None = None) -> bool:
@@ -302,34 +398,145 @@ class BackgroundTickDriver:
                 recorded_event=True,
             )
 
-        result: RunOnceResult = self._pipeline_runner(
-            symbol=None,
-            force_mock_market_data=force_mock,
-            dry_run=dry_run,
-            market_data_provider=provider,
-            record=True,                # ledger NO_OP heartbeat 기록
-            now=now,
-        )
-        self._last_pipeline_result_code = result.result_code.value
-        # 실행 tick 의 last_reason_code 는 *파이프라인 result_code* 를 carry.
-        self._last_reason_code = result.result_code.value
-        self._last_reason_message = result.reason_message
+        # tick 실행 모드 분리:
+        #  - dry_run=True 또는 allow_simulated_fills=False → DIAGNOSTIC_DRY_RUN
+        #    (기존 run_paper_pipeline_once — 판단/사유만, 주문/체결/현금 반영 0건)
+        #  - dry_run=False AND allow_simulated_fills=True → SIMULATED_TRADE
+        #    (execute_paper_trade_flow — VirtualOrder + Paper 체결 + 현금/포지션)
+        allow_fills = bool(getattr(s, "ai_paper_allow_simulated_fills", False))
+        simulated = (not dry_run) and allow_fills
         self._tick_count_today += 1
 
+        if not simulated:
+            return self._tick_diagnostic(
+                cycle=cycle, force_mock=force_mock, provider=provider,
+                dry_run=dry_run, allow_fills=allow_fills, now=now,
+            )
+        return self._tick_simulated_trade(
+            cycle=cycle, force_mock=force_mock, provider=provider,
+            allow_fills=allow_fills, now=now,
+        )
+
+    # ── 모드 A: 진단 dry-run ──────────────────────────────────────────────────
+
+    def _tick_diagnostic(self, *, cycle, force_mock, provider, dry_run,
+                         allow_fills, now) -> DriverTickResult:
+        self._last_tick_mode = "DIAGNOSTIC_DRY_RUN"
+        result: RunOnceResult = self._pipeline_runner(
+            symbol=None, force_mock_market_data=force_mock, dry_run=dry_run,
+            market_data_provider=provider, record=True, now=now,
+        )
+        self._last_pipeline_result_code = result.result_code.value
+        self._last_reason_code = result.result_code.value
+        self._last_reason_message = result.reason_message
+        self._last_order_id = None
+        self._last_fill_status = None
+        self._last_quantity = 0
+        self._last_notional_krw = 0
+        self._last_cash_before = None
+        self._last_cash_after = None
         recorded = self._emit(
             level="INFO", code=f"AI_PAPER_TICK_{result.result_code.value}",
             message=result.reason_message,
-            details={"executed": True, "cycle": cycle,
+            details={"executed": True, "cycle": cycle, "tick_mode": "DIAGNOSTIC_DRY_RUN",
                      "result_code": result.result_code.value,
-                     "dry_run": dry_run, "broker_order_sent": False},
+                     "dry_run": True, "broker_order_sent": False},
         )
         return DriverTickResult(
-            executed=True,
-            reason_code=result.result_code.value,
-            reason_message=result.reason_message,
-            cycle_count=cycle,
-            pipeline_result_code=result.result_code.value,
-            recorded_event=recorded,
+            executed=True, reason_code=result.result_code.value,
+            reason_message=result.reason_message, cycle_count=cycle,
+            pipeline_result_code=result.result_code.value, recorded_event=recorded,
+            tick_mode="DIAGNOSTIC_DRY_RUN", simulated_fills_enabled=allow_fills,
+        )
+
+    # ── 모드 B: Paper 모의 체결 ────────────────────────────────────────────────
+
+    def _tick_simulated_trade(self, *, cycle, force_mock, provider,
+                              allow_fills, now) -> DriverTickResult:
+        self._last_tick_mode = "SIMULATED_TRADE"
+        db = None
+        try:
+            db = self._open_session()
+            from app.auto_paper.capital_state import get_capital_state
+            avail = int(get_capital_state().snapshot().available_cash_krw)
+            risk_check = self._build_risk_check(db, avail)
+            slippage = float(getattr(self._settings(), "ai_paper_fill_slippage_bps", 0.0))
+            flow = self._trade_flow()(
+                db,
+                symbol=None, force_mock_market_data=force_mock,
+                dry_run=False, allow_simulated_fills=True,
+                market_data_provider=provider, slippage_bps=slippage,
+                risk_check=risk_check, now=now,
+            )
+            try:
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
+            # 포지션 수량 (FIFO) carry.
+            pos_qty = 0
+            try:
+                from app.virtual.position_engine import compute_open_positions
+                for p in compute_open_positions(db, now=now):
+                    if p.symbol == flow.symbol:
+                        pos_qty += int(p.quantity)
+            except Exception:  # noqa: BLE001
+                pos_qty = 0
+        except Exception as exc:  # noqa: BLE001 — trade flow 오류는 task 를 죽이지 않음.
+            if db is not None:
+                try:
+                    db.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+            safe = _redact_secret(f"{type(exc).__name__}: {exc}")
+            reason = BackgroundTickReason.BACKGROUND_TICK_ERROR
+            self._last_reason_code = reason.value
+            self._last_reason_message = reason_message_ko(reason.value)
+            self._last_pipeline_result_code = None
+            self._emit(level="WARN", code=f"AI_PAPER_TICK_{reason.value}",
+                       message=safe,
+                       details={"executed": True, "cycle": cycle,
+                                "tick_mode": "SIMULATED_TRADE", "broker_order_sent": False})
+            return DriverTickResult(
+                executed=True, reason_code=reason.value,
+                reason_message=self._last_reason_message, cycle_count=cycle,
+                recorded_event=True, tick_mode="SIMULATED_TRADE",
+                simulated_fills_enabled=allow_fills,
+            )
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+        self._last_pipeline_result_code = flow.run_once_result_code
+        self._last_reason_code = flow.reason_code
+        self._last_reason_message = flow.reason_message
+        self._last_order_id = flow.order_id
+        self._last_fill_status = ("FILLED" if flow.filled else None)
+        self._last_quantity = int(flow.filled_quantity or flow.quantity or 0)
+        self._last_notional_krw = int(flow.fill_notional_krw or flow.notional_krw or 0)
+        self._last_cash_before = flow.cash_before
+        self._last_cash_after = flow.cash_after
+        self._last_position_quantity = pos_qty
+        recorded = self._emit(
+            level="INFO", code=f"AI_PAPER_TICK_{flow.reason_code}",
+            message=flow.reason_message,
+            details={"executed": True, "cycle": cycle, "tick_mode": "SIMULATED_TRADE",
+                     "reason_code": flow.reason_code, "order_id": flow.order_id,
+                     "filled": bool(flow.filled), "broker_order_sent": False},
+        )
+        return DriverTickResult(
+            executed=True, reason_code=flow.reason_code,
+            reason_message=flow.reason_message, cycle_count=cycle,
+            pipeline_result_code=flow.run_once_result_code, recorded_event=recorded,
+            tick_mode="SIMULATED_TRADE", simulated_fills_enabled=allow_fills,
+            order_created=bool(flow.order_created), order_id=flow.order_id,
+            fill_status=("FILLED" if flow.filled else None),
+            quantity=int(flow.filled_quantity or flow.quantity or 0),
+            notional_krw=int(flow.fill_notional_krw or flow.notional_krw or 0),
+            cash_before=flow.cash_before, cash_after=flow.cash_after,
+            position_quantity=pos_qty,
         )
 
     # ── async run loop ───────────────────────────────────────────────────────
@@ -403,11 +610,22 @@ class BackgroundTickDriver:
             "interval_seconds": int(getattr(s, "ai_paper_tick_interval_seconds", 30)),
             "dry_run":          bool(getattr(s, "ai_paper_tick_dry_run", True)),
             "max_per_day":      int(getattr(s, "ai_paper_tick_max_per_day", 0) or 0),
+            "allow_simulated_fills": bool(getattr(s, "ai_paper_allow_simulated_fills", False)),
             "tick_count_today": int(self._tick_count_today),
             "last_tick_at":     self._last_tick_at,
             "last_reason_code": self._last_reason_code,
             "last_reason_message": self._last_reason_message,
             "last_pipeline_result_code": self._last_pipeline_result_code,
+            # tick 모드 + 최근 모의 체결 결과 carry (UI / run-readiness 표시).
+            "tick_mode":              self._last_tick_mode,
+            "simulated_fills_enabled": bool(getattr(s, "ai_paper_allow_simulated_fills", False)),
+            "last_order_id":          self._last_order_id,
+            "last_fill_status":       self._last_fill_status,
+            "last_quantity":          int(self._last_quantity),
+            "last_notional_krw":      int(self._last_notional_krw),
+            "last_cash_before":       self._last_cash_before,
+            "last_cash_after":        self._last_cash_after,
+            "last_position_quantity": int(self._last_position_quantity),
             # 절대 invariant.
             "is_order_signal":       False,
             "is_live_authorization": False,

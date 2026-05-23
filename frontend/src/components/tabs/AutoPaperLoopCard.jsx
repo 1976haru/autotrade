@@ -802,14 +802,59 @@ export function AutoPaperLoopCard({
                 </span>
               </div>
               <div data-testid="bg-tick-message">{msg}</div>
+
+              {/* tick 실행 모드 — 진단 dry-run vs Paper 모의 체결. */}
+              {bt && (
+                <div
+                  data-testid="bg-tick-mode"
+                  data-tick-mode={bt.tick_mode || "DIAGNOSTIC_DRY_RUN"}
+                  style={{ marginTop: 2, color: "var(--c-text-2)" }}
+                >
+                  현재 모드:{" "}
+                  <strong>
+                    {bt.tick_mode === "SIMULATED_TRADE"
+                      ? "Paper 모의 체결 — VirtualOrder와 가상 포트폴리오에 반영"
+                      : "진단 dry-run — 주문/체결 반영 없음"}
+                  </strong>
+                  {" · "}
+                  <span data-testid="bg-tick-simulated-fills">
+                    {bt.simulated_fills_enabled
+                      ? "Paper 체결 시뮬레이션 반영"
+                      : "판단만 기록"}
+                  </span>
+                </div>
+              )}
+
+              {/* 최근 모의 체결 결과 — order_id / fill_status / 수량 / 명목 / 현금 변화. */}
+              {bt?.last_order_id != null && (
+                <div data-testid="bg-tick-last-order" style={{ marginTop: 2, color: "var(--c-text)" }}>
+                  최근 모의 체결: <code data-testid="bg-tick-order-id">#{bt.last_order_id}</code>
+                  {bt.last_fill_status ? (
+                    <span data-testid="bg-tick-fill-status"> · {bt.last_fill_status}</span>
+                  ) : null}
+                  {bt.last_quantity ? (
+                    <span data-testid="bg-tick-quantity"> · {bt.last_quantity}주</span>
+                  ) : null}
+                  {bt.last_notional_krw ? (
+                    <span data-testid="bg-tick-notional"> · {Number(bt.last_notional_krw).toLocaleString()}원</span>
+                  ) : null}
+                  {bt.last_cash_before != null && bt.last_cash_after != null && (
+                    <div data-testid="bg-tick-cash-change" style={{ color: "var(--c-text-2)" }}>
+                      현금 변화: {Number(bt.last_cash_before).toLocaleString()}원 →{" "}
+                      {Number(bt.last_cash_after).toLocaleString()}원
+                    </div>
+                  )}
+                </div>
+              )}
+
               {bt?.last_reason_code && (
                 <div data-testid="bg-tick-last-reason" style={{ marginTop: 2, color: "var(--c-text-2)" }}>
                   마지막 tick 사유: <code>{bt.last_reason_code}</code>
                   {bt.last_tick_at ? ` (${String(bt.last_tick_at).slice(11, 19)})` : ""}
                 </div>
               )}
-              <div style={{ marginTop: 2, color: "var(--c-text-3)" }}>
-                Paper 전용 · 실거래 주문 권한 아님
+              <div data-testid="bg-tick-safety" style={{ marginTop: 2, color: "var(--c-text-3)" }}>
+                실제 주문 아님 · broker_order_sent=false · is_live_authorization=false
               </div>
             </div>
           );
