@@ -11,6 +11,7 @@ import { PerformanceDashboard } from "./PerformanceDashboard";
 import { WeightRecommendationCard } from "./WeightRecommendationCard";
 import { PaperGateReportCard } from "./PaperGateReportCard";
 import { DecisionEpisodeExportButton } from "../common/DecisionEpisodeExportButton";
+import { EventIntegrityDiagnosticsCard } from "../common/EventIntegrityDiagnosticsCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
@@ -72,6 +73,8 @@ export function AISignal({ activeStratIds }) {
       <PaperGateReportCard />
       {/* P-31: 분석용 데이터 내보내기 (CSV/JSONL) — secret 미포함, 주문 신호 아님. */}
       <DecisionEpisodeExportButton />
+      {/* P-32: 이벤트 로그 품질 점검 — 진단 전용, 자동 주문 중단 아님. */}
+      <EventIntegrityDiagnosticsCard />
       <AgentDecisionSummaryCard />
       <AgentStatsCard />
       {/* 44: AI Assist 제안 카드 — AI는 제안만, 사람 승인 후 주문. */}

@@ -402,6 +402,49 @@ def emit_runtime_event(
     )
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# P-32: 이벤트 로그 품질 점검 (read-only diagnostics) — DB write 0건
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@router.get("/diagnostics/event-integrity")
+def get_event_integrity_diagnostics(
+    lookback_days: int = 7,
+    include_info:  bool = False,
+) -> dict:
+    """decision episode 이벤트 정합성 진단 (read-only).
+
+    판단→주문→체결→성과→복기→포트폴리오 연결 누락/불일치를 점검한다. DB write
+    0건(SELECT only), broker / OrderExecutor / route_order / 실 계좌 조회 0건,
+    secret 0건, is_live_authorization=False. **진단만 — 자동 주문 중단 없음**.
+    """
+    from app.db.session import SessionLocal
+    from app.diagnostics.event_integrity import (
+        SEV_INFO,
+        run_event_integrity_diagnostics,
+    )
+    db = SessionLocal()
+    try:
+        report = run_event_integrity_diagnostics(
+            db, lookback_days=max(1, min(365, int(lookback_days))))
+    finally:
+        db.close()
+    d = report.to_dict()
+    if not include_info:
+        d["issues"] = [i for i in d["issues"] if i.get("severity") != SEV_INFO]
+    return {
+        "report": d,
+        "summary": {
+            "integrity_score":   d["integrity_score"],
+            "safe_for_analysis": d["safe_for_analysis"],
+            "safe_for_paper_gate": d["safe_for_paper_gate"],
+            "issue_counts":      d["issue_counts"],
+            "contains_secret":       False,
+            "is_live_authorization": False,
+        },
+    }
+
+
 __all__ = ["router", "emit_runtime_event"]
 
 
