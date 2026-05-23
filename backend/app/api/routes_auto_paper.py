@@ -338,6 +338,50 @@ def get_events_endpoint(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# P-17: 매수 불가 사유 집계 (read-only, 표시 전용 — 실제 매수 로직 0건)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _today_utc_iso_date() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+@_AP.get("/blocked-reasons/today")
+def get_blocked_reasons_today(
+    limit: int = 10,
+    all_events: bool = False,
+) -> dict:
+    """오늘 매수 불가 사유 집계 — 기존 ledger event 를 read-only 로 분석.
+
+    "왜 안 샀는지" 를 사용자에게 설명하는 *표시 전용* endpoint. 실제 매수 로직을
+    열지 않으며 broker / OrderExecutor 호출 0건, audit row 0건, DB write 0건.
+    응답 invariant: `is_order_signal=False` / `auto_apply_allowed=False` /
+    `is_live_authorization=False`. Secret / API key / 계좌번호 필드 0건.
+
+    `all_events=true` 면 ledger 전체(capacity 내), 아니면 오늘(UTC) event 만.
+    """
+    from app.auto_paper.blocked_reasons import summarize_blocked_reasons
+
+    events = [e.to_dict() for e in get_ledger().all_events()]
+    if not all_events:
+        today = _today_utc_iso_date()
+        events = [
+            e for e in events
+            if str(e.get("timestamp") or "").startswith(today)
+        ]
+    summary = summarize_blocked_reasons(events, limit=max(1, int(limit)))
+    return {
+        **summary.to_dict(),
+        "advisory_disclaimer": (
+            "AI Paper / AutoPaperLoop 가 매수하지 *않은* 사유 요약 — 표시 전용. "
+            "실제 매수 로직 / broker 호출 0건."
+        ),
+        "scope": "today" if not all_events else "all",
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # #2-10: AI Paper 자동매수/매도 skeleton — tick + decision/latest
 # ─────────────────────────────────────────────────────────────────────────────
 

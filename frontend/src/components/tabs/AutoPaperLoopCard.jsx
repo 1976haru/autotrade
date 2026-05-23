@@ -6,6 +6,7 @@ import AgentRiskProfileSelector, {
   normalizeRiskProfile,
 } from "../AgentRiskProfileSelector";
 import { backendApi } from "../../services/backend/client";
+import { formatBuyBlockReason } from "../../utils/buyBlockReasons";
 import {
   buildPaperCapitalSummary,
   fromBackendSettings,
@@ -173,6 +174,8 @@ export function AutoPaperLoopCard({
   const [backendCapital, setBackendCapital] = useState(null);
   // #2-09: Paper Loop advisory ledger — 최근 AI 판단 / 가상 체결 noise-low 표시.
   const [ledgerEvents, setLedgerEvents] = useState([]);
+  // P-17: 오늘 매수 불가 사유 요약 (표시 전용 — 실제 매수 로직 0건).
+  const [blockedSummary, setBlockedSummary] = useState(null);
   // #4-RiskProfileUI: 사용자가 선택한 AI 운용 성향 — 기본값 BALANCED.
   // start 시점에 backend POST /api/auto-paper/start 요청 body 에 동봉.
   // 영속: 선택한 성향을 localStorage(Paper 자금 설정) 에 저장 → 재마운트/poll
@@ -229,6 +232,15 @@ export function AutoPaperLoopCard({
         if (rr) setReadiness(rr);
       } catch {
         // readiness 가 없는 환경 (구버전 backend / 테스트 mock) — 조용히 무시.
+      }
+    }
+    // P-17: 오늘 매수 불가 사유 요약 — *별도*, 실패해도 main 표시 유지.
+    if (typeof apiClient.autoPaperBlockedReasonsToday === "function") {
+      try {
+        const bs = await apiClient.autoPaperBlockedReasonsToday({ limit: 5 });
+        if (bs) setBlockedSummary(bs);
+      } catch {
+        // 구버전 backend / 테스트 mock — 조용히 무시.
       }
     }
   }, [apiClient]);
@@ -1035,6 +1047,39 @@ export function AutoPaperLoopCard({
           </div>
         )}
       </div>
+
+      {/* P-17: 오늘 매수 불가 사유 요약 — 표시 전용 (실제 매수 로직 0건). */}
+      {blockedSummary && (blockedSummary.total_blocked ?? 0) > 0 && (
+        <div
+          data-testid="auto-paper-blocked-summary"
+          style={{
+            marginTop: 12,
+            padding: 10,
+            background: "#fff7ed",
+            border: "1px solid #fed7aa",
+            borderRadius: "var(--r-md)",
+            fontSize: "var(--fs-xs)",
+            lineHeight: 1.7,
+            color: "#7c2d12",
+          }}
+        >
+          <div style={{ fontWeight: "var(--fw-bold)", marginBottom: 2 }}>
+            🚫 오늘 매수 차단 {blockedSummary.total_blocked}건
+          </div>
+          {blockedSummary.last_block && (
+            <>
+              <div data-testid="auto-paper-last-block">
+                마지막 차단: {formatBuyBlockReason(blockedSummary.last_block).title}
+                {blockedSummary.last_block.symbol
+                  ? ` (${blockedSummary.last_block.symbol})` : ""}
+              </div>
+              <div data-testid="auto-paper-last-block-code" style={{ color: "#9a3412" }}>
+                최근 사유: {formatBuyBlockReason(blockedSummary.last_block).code}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* #2-09 + #2-10: 최근 AI 판단 / Paper 가상 체결 ledger — read-only advisory */}
       {ledgerEvents.length > 0 && (
