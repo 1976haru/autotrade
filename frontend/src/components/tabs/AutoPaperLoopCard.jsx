@@ -751,6 +751,70 @@ export function AutoPaperLoopCard({
           </div>
         </div>
 
+        {/* 자동 tick driver 상태 — opt-in, Paper 전용. 실거래 토글 없음. */}
+        {(() => {
+          const bt = readiness?.background_tick;
+          const enabled = bt?.enabled === true;
+          const running = bt?.running === true;
+          let msg;
+          if (!bt) {
+            msg = "자동 tick driver 상태 미확인 — run-once 진단은 수동 실행 가능합니다.";
+          } else if (!enabled) {
+            msg = "자동 tick driver 비활성 — 현재는 run-once 진단만 수동 실행됩니다.";
+          } else if (state === "EMERGENCY_STOP") {
+            msg = "긴급정지 ON — driver tick 차단";
+          } else if (state === "WAITING_MARKET") {
+            msg = "장 시작 전 — driver는 대기 중입니다.";
+          } else if (state !== "RUNNING") {
+            msg = "AutoPaperLoop 정지 상태 — driver tick 중단";
+          } else if (running) {
+            msg = `자동 tick driver 활성 — 장중 ${bt.interval_seconds ?? 30}초마다 AI Paper 판단을 실행합니다.`;
+          } else {
+            msg = `자동 tick driver 활성(대기) — 장중 ${bt.interval_seconds ?? 30}초마다 실행 예정.`;
+          }
+          return (
+            <div
+              data-testid="background-tick-status"
+              data-enabled={String(enabled)}
+              data-running={String(running)}
+              style={{
+                marginTop: 10,
+                padding: "8px 10px",
+                background: enabled ? "#ecfeff" : "#f1f5f9",
+                border: `1px solid ${enabled ? "#a5f3fc" : "#cbd5e1"}`,
+                borderRadius: "var(--r-sm)",
+                fontSize: "var(--fs-xs)",
+                color: "var(--c-text)",
+              }}
+            >
+              <div style={{ fontWeight: "var(--fw-bold)", marginBottom: 2 }}>
+                자동 tick driver:{" "}
+                <span data-testid="bg-tick-state-label">
+                  {enabled ? (running ? "활성" : "활성(대기)") : "비활성"}
+                </span>
+                {bt?.dry_run === true && (
+                  <span data-testid="bg-tick-dry-run" style={{ marginLeft: 6, color: "var(--c-text-3)" }}>
+                    · dry-run
+                  </span>
+                )}
+                <span data-testid="bg-tick-interval" style={{ marginLeft: 6, color: "var(--c-text-3)" }}>
+                  · {bt?.interval_seconds ?? 30}초 간격
+                </span>
+              </div>
+              <div data-testid="bg-tick-message">{msg}</div>
+              {bt?.last_reason_code && (
+                <div data-testid="bg-tick-last-reason" style={{ marginTop: 2, color: "var(--c-text-2)" }}>
+                  마지막 tick 사유: <code>{bt.last_reason_code}</code>
+                  {bt.last_tick_at ? ` (${String(bt.last_tick_at).slice(11, 19)})` : ""}
+                </div>
+              )}
+              <div style={{ marginTop: 2, color: "var(--c-text-3)" }}>
+                Paper 전용 · 실거래 주문 권한 아님
+              </div>
+            </div>
+          );
+        })()}
+
         <button
           data-testid="btn-run-once-diagnostic"
           onClick={onRunOnce}

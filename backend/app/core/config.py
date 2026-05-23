@@ -93,6 +93,18 @@ class Settings(BaseSettings):
     # 183: 일일(KST date) 최대 주문 횟수 한도. 0이면 비활성.
     max_orders_per_day: int = 0
 
+    # AI Paper background tick driver — *opt-in*, 기본 OFF. RUNNING + 장중 +
+    # PAPER/SIM 모드일 때만 N초마다 run-once diagnostic 파이프라인을 자동 반복
+    # 실행한다. **실거래 주문 권한이 아니다** — broker / OrderExecutor /
+    # route_order 를 호출하지 않으며, Paper 가상 후보 / dry-run 까지만. LIVE 와
+    # 무관하고 `enable_live_trading=true` 면 driver 는 *절대 실행되지 않는다*.
+    enable_ai_paper_background_tick: bool = False
+    ai_paper_tick_interval_seconds:  int  = 30
+    # 일일(KST date) 최대 자동 tick 횟수. 0이면 무제한 (장중 내내).
+    ai_paper_tick_max_per_day:       int  = 0
+    # True (기본) 이면 ledger 에 체결처럼 반영하지 않고 판단/사유만 기록.
+    ai_paper_tick_dry_run:           bool = True
+
     def symbol_whitelist_set(self) -> set[str]:
         """env 콤마 문자열을 set으로 파싱. 공백 strip."""
         if not self.symbol_whitelist:

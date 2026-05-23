@@ -359,6 +359,51 @@ def test_api_run_once_diagnostic_permission_block(client):
     assert res.json()["result_code"] == "PAPER_EXECUTION_DISABLED"
 
 
+def test_background_driver_reuses_run_once_pipeline():
+    """background tick driver ON 일 때 동일한 run_paper_pipeline_once 를 재사용."""
+    from types import SimpleNamespace
+    from datetime import timedelta
+    from app.auto_paper.background_driver import BackgroundTickDriver
+    from app.core.modes import OperationMode
+
+    kst = timezone(timedelta(hours=9))
+    open_time = datetime(2026, 5, 22, 10, 0, tzinfo=kst).astimezone(timezone.utc)
+
+    calls: list[dict] = []
+
+    def runner(**kwargs):
+        calls.append(kwargs)
+        return run_paper_pipeline_once(**kwargs)
+
+    class _Loop:
+        def __init__(self):
+            self._c = 0
+
+        def status(self, now=None):
+            return SimpleNamespace(state="RUNNING", cycle_count=self._c)
+
+        def tick(self):
+            self._c += 1
+            return SimpleNamespace(cycle_count=self._c)
+
+    settings = SimpleNamespace(
+        enable_ai_paper_background_tick=True, enable_live_trading=False,
+        default_mode=OperationMode.PAPER, kis_is_paper=True,
+        ai_paper_tick_dry_run=True, ai_paper_tick_max_per_day=0,
+        ai_paper_tick_interval_seconds=30, market_data_provider="mock",
+    )
+    d = BackgroundTickDriver(
+        settings_provider=lambda: settings, loop_provider=lambda: _Loop(),
+        event_sink=lambda **kw: None, now_provider=lambda: open_time,
+        pipeline_runner=runner,
+    )
+    r = d.tick_once(open_time)
+    assert r.executed is True
+    assert len(calls) == 1                       # run_once 파이프라인 재사용.
+    assert calls[0]["record"] is True
+    assert r.broker_order_sent is False
+
+
 def test_api_run_once_diagnostic_default_body(client):
     # body 없이도 동작 (force_mock 기본 True).
     res = client.post("/api/auto-paper/run-once-diagnostic", json={})

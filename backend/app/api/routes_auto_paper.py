@@ -1782,6 +1782,9 @@ from app.auto_paper.run_once import (   # noqa: E402
     RunOnceResultCode,
     run_paper_pipeline_once,
 )
+from app.auto_paper.background_driver import (   # noqa: E402
+    get_background_tick_driver,
+)
 
 
 def _loop_health_label(state: str, cycle_count: int) -> tuple[str, str]:
@@ -1873,6 +1876,7 @@ def get_run_readiness() -> dict:
             "kis_is_paper":                settings.kis_is_paper,
             "default_mode":                settings.default_mode.value,
         },
+        "background_tick": get_background_tick_driver().status(),
         "can_run_once_diagnostic": True,
         "is_order_signal":         False,
         "is_live_authorization":   False,

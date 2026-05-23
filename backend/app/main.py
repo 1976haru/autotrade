@@ -169,6 +169,24 @@ async def lifespan(_app: FastAPI):
     except Exception:  # noqa: BLE001 — event log 실패가 startup 을 막지 않음.
         pass
 
+    # AI Paper background tick driver — *opt-in*, 기본 OFF. flag 가 켜져 있고
+    # enable_live_trading=false 일 때만 asyncio task 시작. Paper 전용 — broker /
+    # OrderExecutor / route_order 호출 0건. 실패해도 startup 을 막지 않는다.
+    bg_driver = None
+    try:
+        from app.auto_paper.background_driver import get_background_tick_driver
+        bg_driver = get_background_tick_driver()
+        if bg_driver.start():
+            _startup_logger.info(
+                "[startup] AI Paper background tick driver started "
+                "(opt-in, PAPER only — no broker orders)"
+            )
+    except Exception as exc:  # noqa: BLE001
+        _startup_logger.warning(
+            "[startup] background tick driver not started: %s: %s",
+            type(exc).__name__, exc,
+        )
+
     try:
         yield
     finally:
@@ -181,6 +199,11 @@ async def lifespan(_app: FastAPI):
             )
         except Exception:  # noqa: BLE001
             pass
+        if bg_driver is not None:
+            try:
+                await bg_driver.stop()
+            except Exception:  # noqa: BLE001 — shutdown 정리는 best-effort.
+                pass
         if poller_starter_task is not None and not poller_starter_task.done():
             poller_starter_task.cancel()
             try:
