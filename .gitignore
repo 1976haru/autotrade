@@ -79,6 +79,10 @@ data/
 reports/*
 !reports/.gitkeep
 
+# ---------- local analysis exports — decision_episode CSV/JSONL (P-31) ----------
+# 생성 export 파일은 git 미커밋 (학습/분석 로컬 산출물).
+exports/
+
 
 # ---------- DB backups (#69) ----------
 # scripts/backup_db.sh 산출물. 운영 데이터(주문 / 감사 로그 / 가상 거래 등)가

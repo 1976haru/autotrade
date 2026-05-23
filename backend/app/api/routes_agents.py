@@ -1748,3 +1748,62 @@ def paper_gate_report_export(
             "않습니다. 실전 전환은 별도 수동 승인이 필요합니다."
         ),
     }
+
+
+# ============================================================================
+# P-31: decision_episode 학습/분석 데이터 export (CSV / JSONL) — secret-safe
+# ============================================================================
+
+
+class _EpisodeExportIn(BaseModel):
+    """export 필터 입력 (분석용, 주문 권한 아님). secret 필드 0개."""
+    format:         str = "csv"               # csv | jsonl
+    start_date:     str | None = None
+    end_date:       str | None = None
+    symbols:        list[str] = []
+    strategies:     list[str] = []
+    final_actions:  list[str] = []
+    risk_profiles:  list[str] = []
+    outcome_labels: list[str] = []
+    review_tags:    list[str] = []
+    max_rows:       int = 10_000
+
+
+@router.post("/decision-episodes/export")
+def export_decision_episodes_endpoint(
+    body: _EpisodeExportIn | None = None,
+    db:   _Session = Depends(get_db),
+) -> dict:
+    """decision episode 를 CSV/JSONL 로 export (read DB → 파일 작성).
+
+    **민감정보(secret/account/API key/token) export 0건** — 키/값 이중 가드.
+    broker / OrderExecutor / route_order 호출 0건. 결과는 분석용이며 주문 신호
+    아님 (is_order_signal=False / is_live_authorization=False).
+    """
+    from fastapi import HTTPException
+
+    from app.agents.decision_episode import list_episodes
+    from app.reports.decision_episode_export import (
+        DecisionEpisodeExportOptions,
+        ExportSafetyError,
+        SecretLeakError,
+        export_decision_episodes,
+    )
+    body = body or _EpisodeExportIn()
+    options = DecisionEpisodeExportOptions(
+        start_date=body.start_date, end_date=body.end_date,
+        symbols=tuple(body.symbols or ()), strategies=tuple(body.strategies or ()),
+        final_actions=tuple(body.final_actions or ()),
+        risk_profiles=tuple(body.risk_profiles or ()),
+        outcome_labels=tuple(body.outcome_labels or ()),
+        review_tags=tuple(body.review_tags or ()),
+        max_rows=max(1, min(50_000, int(body.max_rows or 10_000))),
+    )
+    episodes = list_episodes(db, limit=options.max_rows)
+    try:
+        result = export_decision_episodes(episodes, options, fmt=body.format)
+    except (ExportSafetyError, SecretLeakError) as exc:
+        raise HTTPException(status_code=400, detail=f"export_blocked: {exc}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"result": result}

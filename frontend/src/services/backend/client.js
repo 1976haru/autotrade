@@ -534,6 +534,12 @@ export const backendApi = {
   // P-30: Paper Gate 성과 리포트 (read-only, 실 계좌 미사용).
   agentPaperGateReport: ({ limit = 1000 } = {}) =>
     backendFetch(`/api/agents/paper-gate-report?limit=${limit}`),
+  // P-31: decision_episode 학습/분석 데이터 export (CSV/JSONL, secret-safe).
+  agentExportDecisionEpisodes: (body = {}) =>
+    backendFetch("/api/agents/decision-episodes/export", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
   // 193: Virtual order ledger surface.
   virtualOrders: ({ limit = 50, offset = 0, status = null, symbol = null } = {}) => {
     const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
