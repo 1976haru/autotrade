@@ -1,0 +1,128 @@
+/**
+ * P-21: Decision Episode 카드 — Agent 탭, read-only.
+ *
+ * AI 판단→주문→체결→성과를 episode 단위로 연결한 학습용 기록을 최근 N개 표시.
+ * **주문 신호가 아니며 실거래 권한이 아니다** — 표시 전용, 버튼/입력 0개.
+ */
+
+import { useCallback, useEffect, useState } from "react";
+
+import { Card, SectionLabel } from "../common";
+import { backendApi } from "../../services/backend/client";
+
+const _ACTION_COLOR = { BUY: "#16a34a", SELL: "#d97706", HOLD: "#64748b" };
+
+export function DecisionEpisodeCard({
+  apiClient = backendApi,
+  testId = "decision-episode-card",
+  limit = 5,
+} = {}) {
+  const [episodes, setEpisodes] = useState([]);
+  const [summary, setSummary] = useState(null);
+  const [error, setError] = useState("");
+
+  const refresh = useCallback(async () => {
+    if (typeof apiClient.agentDecisionEpisodes !== "function") return;
+    try {
+      const r = await apiClient.agentDecisionEpisodes({ limit });
+      setEpisodes(Array.isArray(r?.episodes) ? r.episodes : []);
+      setSummary(r?.summary || null);
+      setError("");
+    } catch (e) {
+      setError(e?.message || String(e));
+    }
+  }, [apiClient, limit]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  return (
+    <Card accentColor="#6366f133">
+      <div data-testid={testId}>
+        <SectionLabel>🧠 Decision Episode</SectionLabel>
+
+        <div data-testid="episode-badges" style={{ marginBottom: 8, display: "flex", gap: 4, flexWrap: "wrap" }}>
+          <span data-testid="episode-badge-learning"
+                style={{ padding: "3px 8px", borderRadius: 4, fontSize: "var(--fs-xs)",
+                         fontWeight: "var(--fw-bold)", background: "#6b7280", color: "#fff" }}>
+            학습용 기록 · 주문 신호 아님
+          </span>
+        </div>
+
+        <div data-testid="episode-intro"
+             style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)", marginBottom: 8 }}>
+          AI 판단 → 주문 → 체결 → 성과를 episode 단위로 연결한 기록입니다.
+        </div>
+
+        {error && (
+          <div data-testid="episode-error"
+               style={{ fontSize: "var(--fs-xs)", color: "#7f1d1d", marginBottom: 6 }}>
+            {error}
+          </div>
+        )}
+
+        {summary && (
+          <div data-testid="episode-summary"
+               style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-2)", marginBottom: 8 }}>
+            총 {summary.total ?? 0}건 · 제출 {summary.submitted_count ?? 0}건
+          </div>
+        )}
+
+        {episodes.length === 0 ? (
+          <div data-testid="episode-empty"
+               style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)" }}>
+            아직 기록된 Decision Episode가 없습니다.
+          </div>
+        ) : (
+          <div data-testid="episode-list">
+            {episodes.map((ep) => {
+              const action = ep.final_action || "—";
+              const strategies = Array.isArray(ep.selected_strategies)
+                ? ep.selected_strategies.join(", ") : "";
+              const hasOrder = !!ep.broker_order_no;
+              const outcome = ep.outcome && ep.outcome.label ? ep.outcome.label : "미정";
+              return (
+                <div
+                  key={ep.episode_id}
+                  data-testid={`episode-row-${ep.episode_id}`}
+                  style={{ padding: "6px 0", borderTop: "1px solid var(--c-border)",
+                           fontSize: "var(--fs-xs)" }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                    <span style={{ fontWeight: "var(--fw-bold)" }}>{ep.symbol || "—"}</span>
+                    <span style={{ fontWeight: "var(--fw-bold)",
+                                   color: _ACTION_COLOR[action] || "var(--c-text)" }}>
+                      {action}
+                    </span>
+                    {ep.confidence != null && (
+                      <span style={{ color: "var(--c-text-3)" }}>conf {ep.confidence}</span>
+                    )}
+                    {ep.quality_score != null && (
+                      <span style={{ color: "var(--c-text-3)" }}>q {ep.quality_score}</span>
+                    )}
+                    {ep.reason_code && (
+                      <span style={{ color: "var(--c-text-3)" }}>· {ep.reason_code}</span>
+                    )}
+                  </div>
+                  <div style={{ color: "var(--c-text-3)", marginTop: 1 }}>
+                    {strategies && <span>전략: {strategies} · </span>}
+                    <span data-testid={`episode-order-${ep.episode_id}`}>
+                      주문: {hasOrder ? `있음(${ep.broker_order_no})` : "없음"}
+                    </span>
+                    {" · 성과: "}{outcome}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <div data-testid="episode-footer"
+             style={{ marginTop: 8, fontSize: "var(--fs-xs)", color: "var(--c-text-3)" }}>
+          학습용 기록입니다. 주문 신호가 아니며 실거래 권한이 아닙니다.
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+export default DecisionEpisodeCard;
