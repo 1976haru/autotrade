@@ -721,6 +721,48 @@ def _kst_today_iso(now=None) -> str:
     return kst.strftime("%Y-%m-%d")
 
 
+def _to_kst_date(v) -> str | None:
+    """timestamp(datetime/ISO string) → **KST 기준** YYYY-MM-DD.
+
+    핵심 버그 수정: 저장값 `created_at` 은 UTC 이므로, UTC 15:00~24:00(KST 익일
+    00:00~09:00) 구간에서 UTC 날짜와 KST 날짜가 달라 오늘 매수가 과소 집계됐다.
+    timestamp 는 KST 로 변환한 뒤 날짜를 비교한다.
+
+    - datetime: naive 는 UTC 로 간주 후 +9h 변환.
+    - ISO string: `Z` / `+00:00` 처리, naive 는 UTC 간주. 파싱 실패는 best-effort.
+    - date-only(YYYY-MM-DD, 시간 성분 없음): 이미 날짜이므로 그대로(변환 안 함).
+    - 잘못된 값: None 반환 (예외로 전체 계산을 죽이지 않음 — 보수적으로 제외).
+    """
+    from datetime import datetime, timedelta, timezone
+    try:
+        if v is None:
+            return None
+        dt = None
+        if isinstance(v, datetime):
+            dt = v
+        elif isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return None
+            # date-only — 시간 성분 없음 → 이미 (KST) 날짜로 간주, 변환 안 함.
+            if len(s) == 10 and "T" not in s and " " not in s:
+                return s
+            try:
+                dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            except ValueError:
+                # 파싱 불가 — best-effort 로 앞 10자 (변환 없이).
+                return s[:10] if len(s) >= 10 else None
+        else:
+            return None
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)   # naive 저장값 = UTC.
+        return dt.astimezone(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
+    except Exception:  # noqa: BLE001 — 방어: 잘못된 값은 제외(None).
+        return None
+
+
 def calculate_today_buy_used_amount(
     orders,
     *,
@@ -756,14 +798,18 @@ def calculate_today_buy_used_amount(
     today = today_kst or _kst_today_iso(now=now)
 
     def _date_of(o) -> str | None:
-        for key in ("kst_date", "order_date", "date",
-                    "created_at", "executed_at", "filled_at"):
+        # kst_date 는 *명시적으로 KST 날짜* — 변환 없이 그대로 사용.
+        kd = _get(o, "kst_date")
+        if kd:
+            return str(kd)[:10]
+        # 나머지 필드(특히 created_at/executed_at/filled_at)는 UTC timestamp 일 수
+        # 있으므로 KST 로 변환 후 날짜 비교 (date-only 문자열은 그대로 유지).
+        for key in ("order_date", "date", "created_at", "executed_at", "filled_at"):
             v = _get(o, key)
             if v:
-                # ISO 형태 — 앞 10자 (YYYY-MM-DD) 만 비교. KST timezone 변환은
-                # caller (storage) 가 이미 한 것으로 가정.
-                if isinstance(v, str) and len(v) >= 10:
-                    return v[:10]
+                d = _to_kst_date(v)
+                if d:
+                    return d
         return None
 
     def _get(o, key, default=None):

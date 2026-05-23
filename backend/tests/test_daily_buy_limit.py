@@ -463,6 +463,52 @@ class TestCalculateTodayBuyUsed:
         total = calculate_today_buy_used_amount(orders, today_kst="2026-05-22")
         assert total == 500_000
 
+    # ── KST 경계 버그 수정 (UTC created_at → KST 날짜 변환) ──
+
+    def test_utc_after_1500_counts_as_kst_next_day(self):
+        # UTC 15:00 = KST 익일 00:00. naive UTC 저장값(SQLite round-trip 형태).
+        # UTC 2026-05-23T21:40 = KST 2026-05-24T06:40 → KST today 05-24 로 집계.
+        order = {"side": "BUY", "status": "FILLED", "notional_krw": 750_000,
+                 "created_at": "2026-05-23T21:40:00"}   # naive = UTC
+        assert calculate_today_buy_used_amount([order], today_kst="2026-05-24") == 750_000
+        # 같은 주문을 UTC 날짜(05-23) 기준으로 보면 오늘이 아님 → 0.
+        assert calculate_today_buy_used_amount([order], today_kst="2026-05-23") == 0
+
+    def test_utc_before_1500_stays_kst_same_day(self):
+        # UTC 14:59 = KST 23:59 같은 날. UTC 2026-05-23T14:59 = KST 2026-05-23T23:59.
+        order = {"side": "BUY", "status": "FILLED", "notional_krw": 600_000,
+                 "created_at": "2026-05-23T14:59:00"}   # naive = UTC
+        assert calculate_today_buy_used_amount([order], today_kst="2026-05-23") == 600_000
+        assert calculate_today_buy_used_amount([order], today_kst="2026-05-24") == 0
+
+    def test_utc_zulu_suffix_converted_to_kst(self):
+        order = {"side": "BUY", "status": "FILLED", "notional_krw": 500_000,
+                 "created_at": "2026-05-23T15:30:00Z"}   # Z = UTC → KST 익일
+        assert calculate_today_buy_used_amount([order], today_kst="2026-05-24") == 500_000
+
+    def test_naive_datetime_object_treated_as_utc(self):
+        from datetime import datetime
+        order = {"side": "BUY", "status": "FILLED", "notional_krw": 400_000,
+                 "created_at": datetime(2026, 5, 23, 16, 0, 0)}   # naive = UTC → KST 익일 01:00
+        assert calculate_today_buy_used_amount([order], today_kst="2026-05-24") == 400_000
+
+    def test_invalid_created_at_excluded_safely(self):
+        # 잘못된 created_at 은 예외 없이 보수적으로 제외 (전체 계산 죽지 않음).
+        orders = [
+            {"side": "BUY", "status": "FILLED", "notional_krw": 111_111,
+             "created_at": "not-a-date"},
+            {"side": "BUY", "status": "FILLED", "notional_krw": 222_222,
+             "kst_date": "2026-05-24"},
+        ]
+        # garbage created_at 은 제외, kst_date 정상분만 합산.
+        assert calculate_today_buy_used_amount(orders, today_kst="2026-05-24") == 222_222
+
+    def test_kst_date_field_not_double_converted(self):
+        # kst_date 는 이미 KST — 변환 없이 그대로 비교.
+        order = {"side": "BUY", "status": "FILLED", "notional_krw": 333_333,
+                 "kst_date": "2026-05-24"}
+        assert calculate_today_buy_used_amount([order], today_kst="2026-05-24") == 333_333
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 8. resolve_daily_buy_limit (capital_config layer)
