@@ -39,6 +39,15 @@ const _SAMPLE = {
         status: "COMPLETE", label: "PROFITABLE", return_5m: 0.32, return_30m: 1.25,
         return_close: 0.95, max_favorable_excursion: 1.8, max_adverse_excursion: -0.4,
       },
+      // P-27: 거래 복기.
+      review_summary: {
+        review_status: "COMPLETE", grade: "GOOD", primary_tag: "GOOD_DECISION",
+        summary: "MOMENTUM+VWAP 진입이 수익(+0.95%)으로 연결됨 — 좋은 판단.",
+      },
+      review: {
+        review_status: "COMPLETE", grade: "GOOD", primary_tag: "GOOD_DECISION",
+        improvement_suggestions: ["MFE 대비 종가 수익률이 낮음 — 익절 타이밍 보완 필요"],
+      },
     },
     {
       episode_id: "ep-002", symbol: "000660", final_action: "HOLD",
@@ -55,6 +64,8 @@ const _SAMPLE = {
       is_live_authorization: false,
       market_summary: { data_status: "PRICE_STALE", reason_code: "PRICE_STALE" },
       outcome_summary: { status: "UNAVAILABLE", label: "OUTCOME_UNAVAILABLE" },
+      // P-27: 성과 부족 → 복기 보류.
+      review_summary: { review_status: "DATA_INSUFFICIENT", grade: "DATA_INSUFFICIENT" },
     },
     {
       // P-26: SELL episode — 매도 사유 표시.
@@ -79,6 +90,8 @@ const _SAMPLE = {
     total: 4, submitted_count: 1, is_live_authorization: false,
     by_data_status: { OK: 2, NO_MARKET_DATA: 1, PRICE_STALE: 1 },
     by_sell_reason: { STOP_LOSS: 1 }, by_sell_category: { RISK_EXIT: 1 },
+    by_review_grade: { GOOD: 1, DATA_INSUFFICIENT: 1 },
+    by_review_tag: { GOOD_DECISION: 1 },
   },
   is_live_authorization: false,
 };
@@ -279,6 +292,43 @@ describe("<DecisionEpisodeCard>", () => {
   it("P-26: 매도 사유 줄에 secret/실거래/매수·매도 버튼 없음", async () => {
     const { container } = render(<DecisionEpisodeCard apiClient={_api()} />);
     await waitFor(() => expect(screen.getByTestId("episode-sell-reason-ep-004")).toBeTruthy());
+    expect(container.querySelectorAll("button").length).toBe(0);
+    for (const b of ["app_secret", "account_no", "Place Order", "실거래 시작",
+                     "지금 매도", "지금 매수"]) {
+      expect(container.textContent).not.toContain(b);
+    }
+  });
+
+  // ── P-27: 거래 복기 표시 ──
+
+  it("P-27: COMPLETE 복기 — 등급/primary_tag/요약/개선 제안 표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-review-ep-001")).toBeTruthy());
+    const t = screen.getByTestId("episode-review-ep-001").textContent;
+    expect(t).toMatch(/복기/);
+    expect(t).toMatch(/GOOD/);
+    expect(t).toMatch(/GOOD_DECISION/);
+    expect(t).toMatch(/수익으로 연결됨|좋은 판단/);
+    expect(screen.getByTestId("episode-review-suggest-ep-001").textContent)
+      .toMatch(/개선 제안.*익절 타이밍 보완/);
+  });
+
+  it("P-27: DATA_INSUFFICIENT 복기 표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-review-ep-003")).toBeTruthy());
+    expect(screen.getByTestId("episode-review-ep-003").textContent)
+      .toMatch(/성과 데이터 부족|DATA_INSUFFICIENT/);
+  });
+
+  it("P-27: review 없는 episode 는 복기 줄 미표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-row-ep-002")).toBeTruthy());
+    expect(screen.queryByTestId("episode-review-ep-002")).toBeNull();
+  });
+
+  it("P-27: 복기 줄에 secret/실거래/매수·매도 버튼 없음", async () => {
+    const { container } = render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-review-ep-001")).toBeTruthy());
     expect(container.querySelectorAll("button").length).toBe(0);
     for (const b of ["app_secret", "account_no", "Place Order", "실거래 시작",
                      "지금 매도", "지금 매수"]) {

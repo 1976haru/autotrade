@@ -261,6 +261,8 @@ class AgentDecisionEpisode(Base):
     portfolio_delta:   Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # 사후 성과 라벨 placeholder (P-28 에서 채움).
     outcome:           Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # P-27: 거래 복기 (PostTradeReviewAgent) — 판단 품질 등급 + 개선 후보.
+    review:            Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # 주문/체결 cross-ref (있으면).
     broker_order_no: Mapped[str | None]  = mapped_column(String(64), nullable=True, index=True)

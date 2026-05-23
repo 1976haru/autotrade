@@ -97,6 +97,10 @@ export function DecisionEpisodeCard({
               // P-26: 매도 사유 (SELL episode 만).
               const sr = ep.sell_reason_summary || {};
               const isSell = String(action).toUpperCase() === "SELL";
+              // P-27: 거래 복기 요약.
+              const rev = ep.review_summary || {};
+              const revSuggest = Array.isArray((ep.review || {}).improvement_suggestions)
+                ? ep.review.improvement_suggestions : [];
               return (
                 <div
                   key={ep.episode_id}
@@ -204,6 +208,27 @@ export function DecisionEpisodeCard({
                          style={{ color: "#b45309", marginTop: 1, fontWeight: "var(--fw-bold)" }}>
                       매도 사유: {sr.reason_code}
                       {sr.message ? ` · ${sr.message}` : ""}
+                    </div>
+                  )}
+                  {/* P-27: 거래 복기 (review_status 있을 때만) */}
+                  {rev.review_status && (
+                    <div data-testid={`episode-review-${ep.episode_id}`}
+                         style={{ color: "#4338ca", marginTop: 1 }}>
+                      {rev.review_status === "DATA_INSUFFICIENT"
+                        ? "복기: 성과 데이터 부족 (DATA_INSUFFICIENT)"
+                        : (
+                          <>
+                            복기: {rev.grade}
+                            {rev.primary_tag ? ` · ${rev.primary_tag}` : ""}
+                            {rev.summary ? ` · ${rev.summary}` : ""}
+                            {revSuggest.length > 0 && (
+                              <div data-testid={`episode-review-suggest-${ep.episode_id}`}
+                                   style={{ color: "var(--c-text-3)", marginTop: 1 }}>
+                                개선 제안: {revSuggest.slice(0, 2).join(" / ")}
+                              </div>
+                            )}
+                          </>
+                        )}
                     </div>
                   )}
                   <div style={{ color: "var(--c-text-3)", marginTop: 1 }}>
