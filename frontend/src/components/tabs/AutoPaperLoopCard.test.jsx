@@ -1661,6 +1661,66 @@ describe("<AutoPaperLoopCard> — 실행 점검판 + run-once 진단", () => {
     for (const b of banned) expect(container.textContent).not.toContain(b);
   });
 
+  it("KIS_PAPER_AUTO 모드 → 'KIS 모의투자 자동주문' + 주문번호 + 안전 문구 표시", async () => {
+    const api = _mockApiWithDiag(
+      { state: "RUNNING", cycle_count: 5 },
+      _readinessFixture({
+        loop: { state: "RUNNING", cycle_count: 5 },
+        background_tick: {
+          enabled: true, running: true, tick_mode: "KIS_PAPER_AUTO",
+          kis_paper_auto_enabled: true, kis_paper_auto_dry_run: false,
+          last_broker_order_no: "PAPER-0001", last_order_status: "FILLED",
+          last_fill_status: "FILLED", last_reason_code: "KIS_PAPER_SUBMITTED",
+        },
+      }),
+      null,
+    );
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("bg-tick-mode").getAttribute("data-tick-mode")).toBe("KIS_PAPER_AUTO"),
+    );
+    expect(screen.getByTestId("bg-tick-mode").textContent).toMatch(/KIS 모의투자 자동주문/);
+    const kis = screen.getByTestId("bg-tick-kis-auto");
+    expect(kis.getAttribute("data-kis-enabled")).toBe("true");
+    expect(screen.getByTestId("bg-tick-kis-state").textContent).toMatch(/ON/);
+    expect(screen.getByTestId("bg-tick-kis-order-no").textContent).toMatch(/PAPER-0001/);
+    expect(screen.getByTestId("bg-tick-kis-order-status").textContent).toMatch(/FILLED/);
+    expect(screen.getByTestId("bg-tick-kis-safety").textContent).toMatch(/한투 모의투자 API 주문/);
+    expect(screen.getByTestId("bg-tick-kis-safety").textContent).toMatch(/실제 돈이 나가지 않습니다/);
+    expect(screen.getByTestId("bg-tick-kis-safety").textContent).toMatch(/broker_order_type=KIS_PAPER/);
+    expect(screen.getByTestId("bg-tick-kis-safety").textContent).toMatch(/is_live_authorization=false/);
+  });
+
+  it("KIS 자동주문 OFF → KIS 블록 미표시", async () => {
+    const api = _mockApiWithDiag(
+      { state: "RUNNING", cycle_count: 1 },
+      _readinessFixture({ background_tick: { enabled: true, running: true } }),
+      null,
+    );
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(screen.getByTestId("bg-tick-mode")).toBeTruthy());
+    expect(screen.queryByTestId("bg-tick-kis-auto")).toBeNull();
+  });
+
+  it("KIS dry-run 모드 표시 + 실거래/ENABLE_* 문구 0건", async () => {
+    const api = _mockApiWithDiag(
+      { state: "RUNNING", cycle_count: 1 },
+      _readinessFixture({
+        background_tick: {
+          enabled: true, running: true, tick_mode: "KIS_PAPER_AUTO",
+          kis_paper_auto_enabled: true, kis_paper_auto_dry_run: true,
+          last_reason_code: "KIS_PAPER_DRY_RUN_OK",
+        },
+      }),
+      null,
+    );
+    const { container } = render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(screen.getByTestId("bg-tick-kis-dry-run")).toBeTruthy());
+    expect(screen.getByTestId("bg-tick-kis-dry-run").textContent).toMatch(/dry-run/);
+    const banned = ["ENABLE_LIVE_TRADING", "ENABLE_AI_EXECUTION", "실거래 시작", "실거래 활성화 시작", "지금 매수", "Place Order"];
+    for (const b of banned) expect(container.textContent).not.toContain(b);
+  });
+
   it("점검판 + run-once 결과에 금지 라벨 0건", async () => {
     const result = {
       result_code: "VIRTUAL_ORDER_CANDIDATE_CREATED", ok: true, dry_run: false,

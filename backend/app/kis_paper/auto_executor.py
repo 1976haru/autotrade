@@ -1,0 +1,381 @@
+"""KIS Paper Auto Trading executor — AI/전략 결정 → KIS 모의투자 API 주문.
+
+AI Agent + 4가지 전략 조합이 만든 BUY/SELL 결정을 받아, KIS 모의 자동주문
+권한 게이트를 통과한 뒤 **기존 sanctioned 경로**(`route_order` → RiskManager →
+PermissionGate → OrderExecutor → `KisBrokerAdapter.place_order(is_paper=True)`)
+로 위임한다. 본 모듈은 *broker.place_order 를 직접 호출하지 않는다* — 단일
+진입점(OrderExecutor)을 우회하지 않으며, RiskManager / PermissionGate 도
+우회하지 않는다.
+
+**실거래가 아니다.** KIS_IS_PAPER=true + ENABLE_LIVE_TRADING=false 가 게이트에서
+강제되며, 주문 직전 `assert_paper_broker` 로 live broker 를 한 번 더 차단한다
+(`NotPaperBrokerError`). 모든 결과는 `is_live_authorization=False`, broker_order_type
+="KIS_PAPER".
+
+dry_run 정책:
+- dry_run=True → 게이트만 통과 검증, KIS API 호출 0건 (KIS_PAPER_DRY_RUN_OK).
+- dry_run=False → route_order 로 실제 KIS 모의투자 주문 전송.
+"""
+
+from __future__ import annotations
+
+import logging
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Callable
+
+from sqlalchemy.orm import Session
+
+from app.auto_paper.events import DecisionAction, PaperFillStatus
+from app.auto_paper.ledger import record_paper_event
+from app.db.models import AgentDecisionLog, OrderAuditLog
+from app.execution.paper_trader import assert_paper_broker
+from app.kis_paper.auto_permission import (
+    KisPaperOrderPermissionInput,
+    evaluate_kis_paper_order_permission,
+)
+
+
+_log = logging.getLogger("autotrade.kis_paper.auto")
+
+# route_order 와 동일 시그니처의 콜러블 — 테스트는 mock 주입.
+RouteOrderFn = Callable[..., Any]
+
+# 추가 결과 reason codes.
+KIS_PAPER_DRY_RUN_OK   = "KIS_PAPER_DRY_RUN_OK"
+KIS_PAPER_SUBMITTED    = "KIS_PAPER_SUBMITTED"
+KIS_PAPER_REJECTED     = "KIS_PAPER_REJECTED"
+KIS_PAPER_NEEDS_APPROVAL = "KIS_PAPER_NEEDS_APPROVAL"
+KIS_PAPER_ERROR        = "KIS_PAPER_ERROR"
+BLOCKED_BY_RISK_MANAGER = "BLOCKED_BY_RISK_MANAGER"
+BLOCKED_BY_PERMISSION_GATE = "BLOCKED_BY_PERMISSION_GATE"
+
+
+@dataclass(frozen=True)
+class KisPaperAutoDecision:
+    """AI Agent + 4전략 조합이 만든 *결정* — 주문 권한이 아님."""
+
+    symbol:              str
+    side:                str               # BUY / SELL / HOLD
+    quantity:            int
+    price:               int
+    selected_strategies: list[str]         = field(default_factory=list)
+    confidence:          float             = 0.0   # 0~1
+    quality_score:       int               = 0     # 0~100
+    entry_reason:        str               = ""
+    has_exit_plan:       bool              = False
+    exit_plan:           dict[str, Any]    = field(default_factory=dict)
+
+    @property
+    def notional_krw(self) -> int:
+        return int(self.price) * int(self.quantity)
+
+
+@dataclass(frozen=True)
+class KisPaperAutoResult:
+    """KIS 모의 자동주문 결과 — *advisory*. is_live_authorization=False 영구."""
+
+    reason_code:     str
+    reason_message:  str
+    submitted:       bool                  # 실제 KIS API 주문 전송됨
+    dry_run:         bool
+    symbol:          str | None
+    side:            str
+    quantity:        int
+    notional_krw:    int
+    broker_order_no: str | None = None
+    order_status:    str | None = None
+    fill_status:     str | None = None
+    audit_id:        int | None = None
+    decision_log_id: int | None = None
+    metadata:        dict[str, Any] = field(default_factory=dict)
+
+    # 절대 invariant.
+    broker_order_type:     str  = "KIS_PAPER"
+    broker_order_sent:     bool = False     # 실제 broker 주문 전송 여부 (paper)
+    is_live_authorization: bool = False
+    is_order_signal:       bool = False
+
+    def __post_init__(self) -> None:
+        if self.is_live_authorization is not False:
+            raise ValueError("KisPaperAutoResult.is_live_authorization must be False")
+        if self.is_order_signal is not False:
+            raise ValueError("KisPaperAutoResult.is_order_signal must be False")
+        if self.broker_order_type != "KIS_PAPER":
+            raise ValueError("KisPaperAutoResult.broker_order_type must be KIS_PAPER")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "reason_code":     self.reason_code,
+            "reason_message":  self.reason_message,
+            "submitted":       bool(self.submitted),
+            "dry_run":         bool(self.dry_run),
+            "symbol":          self.symbol,
+            "side":            self.side,
+            "quantity":        int(self.quantity),
+            "notional_krw":    int(self.notional_krw),
+            "broker_order_no": self.broker_order_no,
+            "order_status":    self.order_status,
+            "fill_status":     self.fill_status,
+            "audit_id":        self.audit_id,
+            "decision_log_id": self.decision_log_id,
+            "metadata":        dict(self.metadata),
+            "broker_order_type":     self.broker_order_type,
+            "broker_order_sent":     self.broker_order_sent,
+            "is_live_authorization": self.is_live_authorization,
+            "is_order_signal":       self.is_order_signal,
+            "advisory_disclaimer": (
+                "한투 모의투자 API 주문 — 실제 돈이 나가지 않습니다. 실거래 OFF · "
+                "KIS_IS_PAPER=true. broker_order_type=KIS_PAPER, "
+                "is_live_authorization=false."
+            ),
+        }
+
+
+def _today_kis_paper_order_count(db: Session, now: datetime) -> int:
+    """오늘(UTC date) KIS 모의 자동주문(trade_reason='kis_paper_auto') 카운트."""
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    try:
+        return (
+            db.query(OrderAuditLog)
+            .filter(OrderAuditLog.trade_reason == "kis_paper_auto")
+            .filter(OrderAuditLog.created_at >= start)
+            .filter(OrderAuditLog.executed.is_(True))
+            .count()
+        )
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def build_permission_input(
+    *,
+    settings: Any,
+    decision: KisPaperAutoDecision,
+    broker_is_kis_paper: bool,
+    credentials_present: bool,
+    emergency_stop: bool,
+    daily_order_count: int,
+    now: datetime,
+) -> KisPaperOrderPermissionInput:
+    """settings + decision → 게이트 입력 DTO (secret 값 없음)."""
+    return KisPaperOrderPermissionInput(
+        enable_kis_paper_auto_trading=bool(getattr(settings, "enable_kis_paper_auto_trading", False)),
+        dry_run=bool(getattr(settings, "kis_paper_auto_order_dry_run", True)),
+        kis_is_paper=bool(getattr(settings, "kis_is_paper", True)),
+        enable_live_trading=bool(getattr(settings, "enable_live_trading", False)),
+        broker_is_kis_paper=bool(broker_is_kis_paper),
+        credentials_present=bool(credentials_present),
+        emergency_stop=bool(emergency_stop),
+        side=decision.side,
+        notional_krw=decision.notional_krw,
+        confidence=float(decision.confidence),
+        quality_score=int(decision.quality_score),
+        has_exit_plan=bool(decision.has_exit_plan),
+        max_order_notional=int(getattr(settings, "kis_paper_auto_max_order_notional", 1_000_000)),
+        daily_order_count=int(daily_order_count),
+        max_orders_per_day=int(getattr(settings, "kis_paper_auto_max_orders_per_day", 10)),
+        window_start=str(getattr(settings, "kis_paper_auto_order_window_start", "09:05")),
+        window_end=str(getattr(settings, "kis_paper_auto_order_window_end", "14:50")),
+        min_confidence=float(getattr(settings, "kis_paper_auto_min_confidence", 0.6)),
+        min_quality_score=int(getattr(settings, "kis_paper_auto_min_quality_score", 60)),
+        now=now,
+    )
+
+
+async def execute_kis_paper_auto_order(
+    db: Session,
+    *,
+    decision: KisPaperAutoDecision,
+    settings: Any,
+    broker: Any,
+    risk: Any,
+    broker_is_kis_paper: bool,
+    credentials_present: bool,
+    emergency_stop: bool = False,
+    route_order_fn: RouteOrderFn,
+    now: datetime | None = None,
+    record: bool = True,
+    chain_id: str | None = None,
+) -> KisPaperAutoResult:
+    """KIS 모의 자동주문 1건 실행 — 게이트 통과 시 route_order 로 위임.
+
+    broker.place_order 직접 호출 0건. RiskManager / PermissionGate 우회 0건.
+    매 호출마다 AgentDecisionLog + ledger 기록 (거래 0건이어도 기록 0건 불가).
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    chain_id = chain_id or f"kis-paper-{uuid.uuid4().hex[:12]}"
+
+    daily_count = _today_kis_paper_order_count(db, now)
+    perm = evaluate_kis_paper_order_permission(build_permission_input(
+        settings=settings, decision=decision,
+        broker_is_kis_paper=broker_is_kis_paper,
+        credentials_present=credentials_present,
+        emergency_stop=emergency_stop, daily_order_count=daily_count, now=now,
+    ))
+
+    def _finish(reason_code: str, reason_message: str, *,
+                submitted: bool = False, broker_order_no=None, order_status=None,
+                fill_status=None, audit_id=None, broker_order_sent=False,
+                extra_meta=None) -> KisPaperAutoResult:
+        log_id: int | None = None
+        if record:
+            try:
+                row = AgentDecisionLog(
+                    agent_name="kis_paper_auto_executor",
+                    symbol=decision.symbol, mode="PAPER",
+                    decision=(decision.side if decision.side in ("BUY", "SELL") else "HOLD"),
+                    confidence=int(decision.confidence * 100),
+                    reasons=[reason_code, reason_message,
+                             *(decision.selected_strategies or [])],
+                    meta={
+                        "reason_code": reason_code,
+                        "broker_order_type": "KIS_PAPER",
+                        "broker_order_no": broker_order_no,
+                        "broker_order_sent": bool(broker_order_sent),
+                        "submitted": bool(submitted),
+                        "dry_run": bool(perm.dry_run),
+                        "is_live_authorization": False,
+                        "selected_strategies": list(decision.selected_strategies or []),
+                        "quality_score": int(decision.quality_score),
+                        **(extra_meta or {}),
+                    },
+                    chain_id=chain_id,
+                )
+                db.add(row)
+                db.flush()
+                log_id = row.id
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("[kis-paper-auto] AgentDecisionLog write failed: %s", exc)
+            try:
+                action = (
+                    DecisionAction.BUY if (submitted and decision.side == "BUY")
+                    else DecisionAction.SELL if (submitted and decision.side == "SELL")
+                    else DecisionAction.NO_OP
+                )
+                fill = (
+                    PaperFillStatus.PAPER_FILLED if fill_status == "FILLED"
+                    else PaperFillStatus.PAPER_PENDING if submitted
+                    else PaperFillStatus.NA
+                )
+                record_paper_event(
+                    loop_state="RUNNING", strategy="kis_paper_auto",
+                    symbol=decision.symbol,
+                    decision_action=action, confidence=decision.confidence,
+                    reason=f"[kis-paper-auto] {reason_code}: {reason_message}",
+                    paper_order_id=str(broker_order_no or ""),
+                    paper_fill_status=fill,
+                    metadata={"broker_order_type": "KIS_PAPER",
+                              "broker_order_no": broker_order_no,
+                              "broker_order_sent": bool(broker_order_sent),
+                              "reason_code": reason_code},
+                )
+            except Exception:  # noqa: BLE001
+                pass
+        return KisPaperAutoResult(
+            reason_code=reason_code, reason_message=reason_message,
+            submitted=submitted, dry_run=bool(perm.dry_run),
+            symbol=decision.symbol, side=decision.side,
+            quantity=int(decision.quantity), notional_krw=decision.notional_krw,
+            broker_order_no=broker_order_no, order_status=order_status,
+            fill_status=fill_status, audit_id=audit_id, decision_log_id=log_id,
+            broker_order_sent=broker_order_sent, metadata=extra_meta or {},
+        )
+
+    # 1. 게이트 차단.
+    if not perm.allowed:
+        return _finish(perm.reason_code, perm.reason_message)
+
+    # 2. dry_run → KIS API 호출 없이 통과 검증만.
+    if perm.dry_run:
+        return _finish(
+            KIS_PAPER_DRY_RUN_OK,
+            "KIS 모의 자동주문 권한 통과 — dry-run 이라 주문 전송 없이 검증만.",
+        )
+
+    # 3. 주문 직전 paper-safety 백스톱 (live broker 차단).
+    assert_paper_broker(broker)
+
+    # 4. sanctioned 경로 위임 — route_order (RiskManager → PermissionGate →
+    #    OrderExecutor → KisBrokerAdapter.place_order(is_paper=True)).
+    from app.brokers.base import OrderRequest, OrderSide, OrderType
+    side_enum = OrderSide.BUY if decision.side == "BUY" else OrderSide.SELL
+    order = OrderRequest(
+        symbol=decision.symbol, side=side_enum, quantity=int(decision.quantity),
+        order_type=OrderType.MARKET, trade_reason="kis_paper_auto",
+        strategy=",".join(decision.selected_strategies or []) or "kis_paper_auto",
+        signal_confidence=int(decision.confidence * 100),
+        signal_strength=int(decision.quality_score),
+        client_order_id=chain_id,
+        ai_decision_meta={
+            "source": "KIS_PAPER_AUTO",
+            "selected_strategies": list(decision.selected_strategies or []),
+            "reasons": [decision.entry_reason or "kis_paper_auto"],
+            "exit_plan": dict(decision.exit_plan or {}),
+        },
+    )
+    try:
+        # requested_by_ai=False — RiskManager 의 LIVE AI 실행 게이트(현재 모드
+        # 에서 차단)를 트리거하지 않고 표준 위험 한도만 평가. AI provenance 는
+        # ai_decision_meta + AgentDecisionLog 에 기록.
+        from app.core.modes import OperationMode
+        from app.risk.risk_manager import RiskDecision
+        routing = await route_order_fn(
+            order=order, requested_by_ai=False, mode=OperationMode.PAPER,
+            broker=broker, risk=risk, db=db,
+        )
+    except Exception as exc:  # noqa: BLE001 — 주문 흐름이 죽지 않게.
+        _log.warning("[kis-paper-auto] route_order raised: %s: %s",
+                     type(exc).__name__, exc)
+        return _finish(KIS_PAPER_ERROR, f"{type(exc).__name__}: {exc}")
+
+    audit = routing.audit
+    broker_order_no = getattr(audit, "broker_order_id", None)
+    order_status = getattr(audit, "broker_status", None)
+    filled_qty = int(getattr(audit, "filled_quantity", 0) or 0)
+    fill_status = (
+        "FILLED" if order_status == "FILLED"
+        else "PARTIALLY_FILLED" if filled_qty > 0
+        else None
+    )
+    decision_val = routing.decision
+    if decision_val == RiskDecision.APPROVED:
+        executed = bool(getattr(audit, "executed", False))
+        return _finish(
+            KIS_PAPER_SUBMITTED if executed else KIS_PAPER_ERROR,
+            ("KIS 모의투자 주문 전송 완료 (실제 돈 0원)." if executed
+             else "주문 승인되었으나 전송이 확인되지 않았습니다."),
+            submitted=executed, broker_order_no=broker_order_no,
+            order_status=order_status, fill_status=fill_status,
+            audit_id=getattr(audit, "id", None), broker_order_sent=executed,
+            extra_meta={"routing_reasons": list(routing.reasons or [])},
+        )
+    if decision_val == RiskDecision.NEEDS_APPROVAL:
+        return _finish(
+            BLOCKED_BY_PERMISSION_GATE,
+            "KIS 모의 주문이 승인 대기 큐로 이동했습니다 (운영자 승인 필요).",
+            audit_id=getattr(audit, "id", None),
+            extra_meta={"routing_reasons": list(routing.reasons or [])},
+        )
+    # REJECTED / BLOCKED.
+    return _finish(
+        BLOCKED_BY_RISK_MANAGER,
+        "; ".join(routing.reasons or []) or "RiskManager 가 주문을 차단했습니다.",
+        audit_id=getattr(audit, "id", None),
+        extra_meta={"routing_reasons": list(routing.reasons or [])},
+    )
+
+
+__all__ = [
+    "KisPaperAutoDecision",
+    "KisPaperAutoResult",
+    "RouteOrderFn",
+    "build_permission_input",
+    "execute_kis_paper_auto_order",
+    "KIS_PAPER_DRY_RUN_OK",
+    "KIS_PAPER_SUBMITTED",
+    "KIS_PAPER_REJECTED",
+    "KIS_PAPER_NEEDS_APPROVAL",
+    "KIS_PAPER_ERROR",
+]

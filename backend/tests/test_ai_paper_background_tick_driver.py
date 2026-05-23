@@ -251,10 +251,18 @@ def test_result_invariants():
     r = d.tick_once(OPEN_TIME)
     assert r.is_order_signal is False
     assert r.is_live_authorization is False
-    assert r.broker_order_sent is False
+    assert r.broker_order_sent is False   # diagnostic/simulated 모드는 broker 무관
+    # is_live_authorization=True 는 절대 금지 (실거래 아님).
     with pytest.raises(ValueError):
         DriverTickResult(executed=True, reason_code="X", reason_message="x",
-                         cycle_count=1, broker_order_sent=True)
+                         cycle_count=1, is_live_authorization=True)
+    # KIS_PAPER_AUTO 모드에서는 *모의* broker 주문 전송 시 broker_order_sent=True
+    # 허용 (한투 모의투자 — 실거래 아님). is_live_authorization 은 여전히 False.
+    ok = DriverTickResult(executed=True, reason_code="KIS_PAPER_SUBMITTED",
+                          reason_message="x", cycle_count=1,
+                          tick_mode="KIS_PAPER_AUTO", broker_order_sent=True)
+    assert ok.broker_order_sent is True
+    assert ok.is_live_authorization is False
 
 
 def test_static_no_broker_or_route_order_imports():

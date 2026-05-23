@@ -208,3 +208,129 @@ def get_kis_paper_report() -> Optional[KisPaperReportOut]:
     if engine.last_report is None:
         return None
     return KisPaperReportOut(**engine.last_report.to_dict())
+
+
+# ============================================================================
+# KIS Paper Auto Trading — AI/전략 결정 → KIS 모의투자 API 주문 (실거래 아님)
+# ============================================================================
+
+
+from fastapi import Depends   # noqa: E402
+from sqlalchemy.orm import Session   # noqa: E402
+
+from app.api.deps import get_broker, get_risk_manager   # noqa: E402
+from app.db.session import get_db   # noqa: E402
+from app.execution.order_router import route_order   # noqa: E402
+from app.kis_paper.auto_executor import (   # noqa: E402
+    KisPaperAutoDecision,
+    execute_kis_paper_auto_order,
+)
+
+
+def _broker_is_kis_paper(broker) -> bool:
+    """broker 가 KIS *모의투자* 어댑터인지 — live KIS / Mock 은 False."""
+    return (
+        type(broker).__name__ == "KisBrokerAdapter"
+        and bool(getattr(broker, "is_paper", False))
+    )
+
+
+def _kis_auto_config(settings) -> dict:
+    return {
+        "enable_kis_paper_auto_trading": bool(settings.enable_kis_paper_auto_trading),
+        "dry_run":                       bool(settings.kis_paper_auto_order_dry_run),
+        "max_orders_per_day":            int(settings.kis_paper_auto_max_orders_per_day),
+        "max_order_notional":            int(settings.kis_paper_auto_max_order_notional),
+        "window_start":                  settings.kis_paper_auto_order_window_start,
+        "window_end":                    settings.kis_paper_auto_order_window_end,
+        "min_confidence":                float(settings.kis_paper_auto_min_confidence),
+        "min_quality_score":             int(settings.kis_paper_auto_min_quality_score),
+        "kis_is_paper":                  bool(settings.kis_is_paper),
+        "enable_live_trading":           bool(settings.enable_live_trading),
+        "fill_polling":                  bool(settings.kis_paper_fill_polling),
+    }
+
+
+@router.get("/auto/status")
+def get_kis_paper_auto_status() -> dict:
+    """KIS 모의 자동주문 설정/상태 — read-only. broker 호출 0건.
+
+    실거래 활성화 토글을 제공하지 않는다 — ENABLE_KIS_PAPER_AUTO_TRADING 은
+    .env 에서만 변경.
+    """
+    settings = get_settings()
+    rd = evaluate_readiness(settings)
+    return {
+        **_kis_auto_config(settings),
+        "credentials_present": bool(
+            rd.kis_key_present and rd.kis_secret_present and rd.kis_account_present
+        ),
+        "is_live_authorization": False,
+        "broker_order_type":     "KIS_PAPER",
+        "notice": (
+            "KIS Paper Auto Trading은 한투 모의투자 API 전용이며 실거래 권한이 "
+            "아닙니다. 실제 돈이 나가지 않습니다. ENABLE_KIS_PAPER_AUTO_TRADING은 "
+            ".env에서만 켤 수 있습니다."
+        ),
+    }
+
+
+class _KisAutoRunOnceBody(BaseModel):
+    """KIS 모의 자동주문 1건 실행 입력 — AI/전략 결정 carry."""
+
+    symbol:              str
+    side:                str                       # BUY / SELL / HOLD
+    quantity:            int
+    price:               int
+    selected_strategies: Optional[list[str]]       = None
+    confidence:          float                      = 0.0
+    quality_score:       int                        = 0
+    entry_reason:        str                        = ""
+    has_exit_plan:       bool                       = False
+    exit_plan:           Optional[dict]             = None
+
+
+@router.post("/auto/run-once")
+async def post_kis_paper_auto_run_once(
+    body: _KisAutoRunOnceBody,
+    db: Session = Depends(get_db),
+    broker = Depends(get_broker),
+    risk = Depends(get_risk_manager),
+) -> dict:
+    """AI/전략 결정을 받아 KIS 모의 자동주문 1건 실행 (게이트 통과 시).
+
+    기본 flag OFF → KIS_PAPER_AUTO_DISABLED. dry_run=true → KIS_PAPER_DRY_RUN_OK
+    (KIS API 호출 0건). dry_run=false + 게이트 통과 → route_order 로 KIS 모의
+    주문 전송. broker.place_order 직접 호출 0건, 실거래 0건.
+    """
+    settings = get_settings()
+    rd = evaluate_readiness(settings)
+    decision = KisPaperAutoDecision(
+        symbol=body.symbol, side=body.side.strip().upper(),
+        quantity=int(body.quantity), price=int(body.price),
+        selected_strategies=list(body.selected_strategies or []),
+        confidence=float(body.confidence), quality_score=int(body.quality_score),
+        entry_reason=body.entry_reason, has_exit_plan=bool(body.has_exit_plan),
+        exit_plan=dict(body.exit_plan or {}),
+    )
+    try:
+        result = await execute_kis_paper_auto_order(
+            db, decision=decision, settings=settings, broker=broker, risk=risk,
+            broker_is_kis_paper=_broker_is_kis_paper(broker),
+            credentials_present=bool(
+                rd.kis_key_present and rd.kis_secret_present and rd.kis_account_present
+            ),
+            route_order_fn=route_order,
+        )
+        db.commit()
+    except Exception as exc:   # noqa: BLE001 — 흐름이 500 으로 죽지 않게.
+        db.rollback()
+        return {
+            "reason_code":     "KIS_PAPER_ERROR",
+            "submitted":       False,
+            "reason_message":  f"{type(exc).__name__}: {exc}",
+            "broker_order_type":     "KIS_PAPER",
+            "broker_order_sent":     False,
+            "is_live_authorization": False,
+        }
+    return result.to_dict()
