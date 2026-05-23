@@ -513,6 +513,13 @@ export const backendApi = {
   },
   aiAgentDecisionsSummary: (lookbackDays = 0) =>
     backendFetch(`/api/ai/agent-decisions/summary?lookback_days=${lookbackDays}`),
+  // P-21: Agent Decision Episode (read-only) — 판단→주문→체결→성과 추적.
+  agentDecisionEpisodes: ({ limit = 5, symbol = null, action = null } = {}) => {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (symbol) qs.set("symbol", symbol);
+    if (action) qs.set("action", action);
+    return backendFetch(`/api/agents/decision-episodes?${qs.toString()}`);
+  },
   // 193: Virtual order ledger surface.
   virtualOrders: ({ limit = 50, offset = 0, status = null, symbol = null } = {}) => {
     const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });

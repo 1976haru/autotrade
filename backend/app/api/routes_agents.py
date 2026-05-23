@@ -1382,3 +1382,52 @@ def post_council_evaluate(body: _CouncilEvalBody) -> dict:
         inp, risk_profile=body.risk_profile, held_position=bool(body.held_position),
     )
     return decision.to_dict()
+
+
+# ============================================================================
+# P-21: Agent Decision Episode (read-only) — 판단→주문→체결→성과 추적
+# ============================================================================
+
+
+@router.get("/decision-episodes")
+def list_decision_episodes(
+    limit:  int = Query(20, ge=1, le=200),
+    symbol: str | None = Query(None),
+    action: str | None = Query(None, description="BUY/SELL/HOLD"),
+    db:     _Session = Depends(get_db),
+) -> dict:
+    """최근 Agent Decision Episode 목록 + 집계 (read-only).
+
+    broker / OrderExecutor / route_order 호출 0건. secret 0건.
+    `is_live_authorization=False` 영구.
+    """
+    from app.agents.decision_episode import list_episodes, summarize_episodes
+    episodes = list_episodes(db, limit=limit, symbol=symbol, action=action)
+    summary = summarize_episodes(db, limit=200)
+    return {
+        "episodes":  episodes,
+        "count":     len(episodes),
+        "summary":   summary,
+        "is_order_signal":       False,
+        "is_live_authorization": False,
+        "advisory_disclaimer": (
+            "Agent Decision Episode 는 판단→주문→체결→성과를 episode 단위로 "
+            "연결한 *학습용 기록* 입니다. 주문 신호가 아니며 실거래 권한이 "
+            "아닙니다."
+        ),
+    }
+
+
+@router.get("/decision-episodes/{episode_id}")
+def get_decision_episode(
+    episode_id: str,
+    db:         _Session = Depends(get_db),
+) -> dict:
+    """단일 episode 상세 (read-only)."""
+    from fastapi import HTTPException
+
+    from app.agents.decision_episode import get_episode
+    ep = get_episode(db, episode_id)
+    if ep is None:
+        raise HTTPException(status_code=404, detail="episode not found")
+    return {**ep, "advisory_disclaimer": "학습용 기록 — 주문 신호 아님."}

@@ -94,6 +94,74 @@ def build_decision_from_pipeline(
     return (kd, council)
 
 
+def _record_episode_best_effort(db, *, episode_id, decision, council, result) -> None:
+    """P-21: 한 tick 의 판단→주문 결과를 episode 행으로 기록 (best-effort).
+
+    실패(secret sanitize / DB 오류 등)해도 예외를 던지지 않는다 — tick 결과
+    유지가 우선. broker / route_order 호출 0건 (순수 기록).
+    """
+    try:
+        from app.agents.decision_episode import record_episode
+
+        final_action = (
+            council.final_action.value if council is not None
+            else getattr(decision, "side", "HOLD")
+        )
+        conf = (council.confidence if council is not None
+                else getattr(decision, "confidence", 0.0))
+        confidence_pct = int(round(float(conf or 0.0) * 100)) if conf is not None else None
+        quality = (council.quality_score if council is not None
+                   else getattr(decision, "quality_score", None))
+        rc = getattr(result, "reason_code", None)
+        market_snapshot = {
+            "symbol":        getattr(decision, "symbol", None),
+            "current_price": getattr(decision, "price", None),
+            "market_regime": (council.market_regime if council is not None else None),
+        }
+        votes = (
+            [v.to_dict() for v in council.votes]
+            if council is not None and getattr(council, "votes", None) else []
+        )
+        council_dict = council.to_dict() if council is not None else None
+        risk_result = {
+            "reason_code":     rc,
+            "blocked_by_risk": rc == "BLOCKED_BY_RISK_MANAGER",
+            "approved":        rc == "KIS_PAPER_SUBMITTED",
+        }
+        permission_result = {
+            "reason_code":    rc,
+            "needs_approval": rc == "BLOCKED_BY_PERMISSION_GATE",
+        }
+        record_episode(
+            db,
+            episode_id=episode_id,
+            final_action=final_action,
+            symbol=getattr(decision, "symbol", None),
+            mode="PAPER",
+            confidence=confidence_pct,
+            quality_score=quality,
+            reason_code=rc,
+            market_snapshot=market_snapshot,
+            votes=votes,
+            council=council_dict,
+            risk_result=risk_result,
+            permission_result=permission_result,
+            kis_order_result=result.to_dict() if hasattr(result, "to_dict") else None,
+            broker_order_no=getattr(result, "broker_order_no", None),
+            audit_id=getattr(result, "audit_id", None),
+            decision_log_id=getattr(result, "decision_log_id", None),
+            outcome=None,
+        )
+        db.commit()
+    except Exception as exc:  # noqa: BLE001 — episode 기록 실패는 tick 을 막지 않음.
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        _log.warning("[kis-paper-bridge] episode record failed: %s: %s",
+                     type(exc).__name__, exc)
+
+
 async def kis_paper_auto_tick(
     *,
     now: datetime | None = None,
@@ -136,16 +204,26 @@ async def kis_paper_auto_tick(
             dec = decision
         else:
             dec, council = build_decision_from_pipeline(settings=settings, now=now)
+        # P-21: episode_id 발급 — chain_id 로 전달해 AgentDecisionLog / OrderRequest /
+        # episode 행을 동일 키로 연결.
+        from app.agents.decision_episode import new_episode_id
+        episode_id = new_episode_id()
         result = await execute_kis_paper_auto_order(
             db, decision=dec, settings=settings, broker=broker, risk=risk,
             broker_is_kis_paper=_broker_is_kis_paper(broker),
             credentials_present=creds, route_order_fn=route_order_fn, now=now,
+            chain_id=episode_id,
         )
         try:
             db.commit()
         except Exception:  # noqa: BLE001
             db.rollback()
+        # P-21: episode 기록 (best-effort — 실패해도 tick 결과는 유지).
+        _record_episode_best_effort(
+            db, episode_id=episode_id, decision=dec, council=council, result=result,
+        )
         out = result.to_dict()
+        out["decision_episode_id"] = episode_id
         if council is not None:
             # Agent Council vote 내역을 결과에 carry (AgentDecisionLog 는 executor
             # 가 selected_strategies 를 이미 기록; 여기선 UI/디버그용 votes 동봉).

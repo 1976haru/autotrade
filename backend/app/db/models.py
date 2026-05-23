@@ -219,6 +219,58 @@ class AgentDecisionLog(Base):
     chain_id:    Mapped[str | None]     = mapped_column(String(64), nullable=True, index=True)
 
 
+class AgentDecisionEpisode(Base):
+    """P-21: 하나의 BUY/SELL/HOLD 판단을 *episode* 단위로 연결한 학습용 기록.
+
+    AI 판단 → 시장 스냅샷 → 4전략 vote → Agent Council 최종판단 → RiskManager
+    결과 → PermissionGate 결과 → KIS Paper 주문 결과 → 체결 → 포트폴리오 변화 →
+    사후 성과 라벨을 하나의 `episode_id` 로 묶는다. 에이전트 성능 개선용 데이터셋.
+
+    절대 invariant:
+    - 본 행은 *주문 신호가 아니다* — `is_live_authorization`=False 영구.
+    - secret / API key / 계좌번호 carry 0건 (저장 전 sanitize, fail-closed).
+    - 본 테이블은 *기록 전용* — broker / OrderExecutor / route_order 가 본
+      테이블을 읽어 주문을 만들지 않는다 (advisory dataset only).
+    """
+
+    __tablename__ = "agent_decision_episode"
+
+    id:          Mapped[int]            = mapped_column(primary_key=True)
+    created_at:  Mapped[datetime]       = mapped_column(DateTime, default=_utcnow, index=True)
+    updated_at:  Mapped[datetime]       = mapped_column(DateTime, default=_utcnow)
+
+    # episode 추적 키 — AgentDecisionLog.chain_id / OrderRequest.client_order_id
+    # 와 동일 값으로 연결.
+    episode_id:  Mapped[str]            = mapped_column(String(64), index=True, unique=True)
+
+    symbol:        Mapped[str | None]   = mapped_column(String(16), nullable=True, index=True)
+    mode:          Mapped[str]          = mapped_column(String(32), index=True, default="PAPER")
+    final_action:  Mapped[str]          = mapped_column(String(16), index=True)  # BUY/SELL/HOLD
+    confidence:    Mapped[int | None]   = mapped_column(Integer, nullable=True)
+    quality_score: Mapped[int | None]   = mapped_column(Integer, nullable=True)
+    reason_code:   Mapped[str | None]   = mapped_column(String(64), nullable=True, index=True)
+
+    # 단계별 JSON 스냅샷 (각 단계 dict — secret 0건).
+    market_snapshot:   Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    votes:             Mapped[list | None] = mapped_column(JSON, nullable=True)   # 4전략 vote
+    council:           Mapped[dict | None] = mapped_column(JSON, nullable=True)   # 최종판단
+    risk_result:       Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    permission_result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    kis_order_result:  Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    fill_result:       Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    portfolio_delta:   Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 사후 성과 라벨 placeholder (P-28 에서 채움).
+    outcome:           Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    # 주문/체결 cross-ref (있으면).
+    broker_order_no: Mapped[str | None]  = mapped_column(String(64), nullable=True, index=True)
+    audit_id:        Mapped[int | None]  = mapped_column(Integer, nullable=True, index=True)
+    decision_log_id: Mapped[int | None]  = mapped_column(Integer, nullable=True, index=True)
+
+    # 절대 invariant — 영구 False.
+    is_live_authorization: Mapped[bool]  = mapped_column(Boolean, default=False)
+
+
 class FuturesOrderAuditLog(Base):
     """선물 주문/청산 감사 로그 (169, MUST).
 
