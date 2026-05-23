@@ -5,6 +5,7 @@ import { STRATEGIES } from "../../config/strategies";
 import { SIGNAL_COLOR, confluenceColor } from "../../utils/format";
 import { fmtKRW } from "../../utils/format";
 import { AgentCouncilCard } from "./AgentCouncilCard";
+import { BuyBlockReasonsCard } from "./BuyBlockReasonsCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
@@ -54,6 +55,8 @@ export function AISignal({ activeStratIds }) {
       <OperatingLoopCard />
       <ThemeSignalsCard />
       <AgentCouncilCard />
+      {/* P-17: 오늘 매수 불가 사유 — Agent Council 결정 근처 표시 (표시 전용). */}
+      <BuyBlockReasonsCard />
       <AgentDecisionSummaryCard />
       <AgentStatsCard />
       {/* 44: AI Assist 제안 카드 — AI는 제안만, 사람 승인 후 주문. */}

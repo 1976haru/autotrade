@@ -23,6 +23,49 @@ import { useEffect, useState } from "react";
 
 import { Card, SectionLabel } from "../common";
 import { backendApi } from "../../services/backend/client";
+import {
+  buyBlockSeverityColor,
+  formatBuyBlockReason,
+  normalizeReasonCode,
+} from "../../utils/buyBlockReasons";
+
+
+/** decision log entry 에서 매수 불가(block) reason_code 를 추정. 없으면 null. */
+function deriveBlockReason(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  const candidates = [];
+  if (Array.isArray(entry.risk_flags)) candidates.push(...entry.risk_flags);
+  if (Array.isArray(entry.risk_veto_reasons)) candidates.push(...entry.risk_veto_reasons);
+  if (entry.sizing_verdict) candidates.push(entry.sizing_verdict);
+  for (const c of candidates) {
+    const code = normalizeReasonCode(c);
+    if (code !== "UNKNOWN") return formatBuyBlockReason({ reason_code: code });
+  }
+  // 거절 상태인데 code 불명 → UNKNOWN block 으로 표시.
+  if (entry.paper_fill_status === "PAPER_REJECTED") {
+    return formatBuyBlockReason({ reason_code: "UNKNOWN" });
+  }
+  return null;
+}
+
+
+function BlockReasonChip({ entry }) {
+  const f = deriveBlockReason(entry);
+  if (!f) return null;
+  return (
+    <span
+      data-testid={`decision-log-block-reason-${entry.decision_id}`}
+      style={{
+        marginLeft: 4, marginTop: 2, display: "inline-block",
+        padding: "1px 6px", borderRadius: 4, fontSize: 11,
+        background: "#fff7ed", color: "#7c2d12",
+        border: `1px solid ${buyBlockSeverityColor(f.severity)}55`,
+      }}
+    >
+      🚫 {f.title}{f.detail ? ` · ${f.detail}` : ""}
+    </span>
+  );
+}
 
 
 const ACTION_COLOR = {
@@ -193,6 +236,8 @@ function EntryRow({ entry }) {
         <VetoChip entry={entry} />
         <RiskFlagsChips flags={entry.risk_flags} />
       </div>
+      {/* P-17: 매수 불가 사유 — 한국어 표시 (표시 전용). */}
+      <BlockReasonChip entry={entry} />
       {entry.reason ? (
         <div style={{ marginLeft: 4, marginTop: 2, color: "#475569" }}>
           {entry.reason}

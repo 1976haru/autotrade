@@ -310,6 +310,13 @@ export const backendApi = {
   // #2-10: AI Paper 자동매수/매도 skeleton — read-only latest decision.
   autoPaperLatestDecision: () =>
     backendFetch("/api/auto-paper/decision/latest"),
+
+  // P-17: 오늘 매수 불가 사유 집계 (read-only 표시 전용).
+  autoPaperBlockedReasonsToday: ({ limit = 10, allEvents = false } = {}) => {
+    const qs = new URLSearchParams({ limit: String(limit) });
+    if (allEvents) qs.set("all_events", "true");
+    return backendFetch(`/api/auto-paper/blocked-reasons/today?${qs.toString()}`);
+  },
   // 자동매매 실행 점검: run-readiness (준비 상태 한눈에) — read-only.
   autoPaperRunReadiness: () =>
     backendFetch("/api/auto-paper/run-readiness"),
