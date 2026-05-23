@@ -878,4 +878,6 @@ export const backendApi = {
   kisPaperStop: () => backendFetch("/api/kis-paper/stop", { method: "POST" }),
   kisPaperStatus: () => backendFetch("/api/kis-paper/status"),
   kisPaperReport: () => backendFetch("/api/kis-paper/report"),
+  // 0-04: KIS 모의 자동매매 env/설정 상태 (read-only). secret 값 0건.
+  kisPaperAutoStatus: () => backendFetch("/api/kis-paper/auto/status"),
 };
