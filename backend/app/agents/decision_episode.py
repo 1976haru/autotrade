@@ -71,6 +71,7 @@ def record_episode(
     fill_result: dict | None = None,
     portfolio_delta: dict | None = None,
     outcome: dict | None = None,
+    sell_reason: dict | None = None,
     broker_order_no: str | None = None,
     audit_id: int | None = None,
     decision_log_id: int | None = None,
@@ -79,8 +80,23 @@ def record_episode(
 
     `final_action` 은 BUY/SELL/HOLD. 그 외 값은 그대로 저장하되 index 용도이므로
     상한 16자. `is_live_authorization` 은 항상 False (모델 default).
+
+    P-26: `sell_reason`(dict) 가 주어지면 council JSON 에 nest + kis_order_result
+    에 sell_reason_code carry. SELL 인데 reason_code 가 비어있으면 sell_reason 의
+    reason_code 로 연결 (마이그레이션 0건 — 기존 JSON 컬럼 재사용).
     """
     action = (final_action or "HOLD").upper()
+    # P-26: SELL sell_reason 을 council / kis_order_result JSON 에 nest (no migration).
+    if isinstance(sell_reason, dict) and sell_reason.get("reason_code"):
+        if isinstance(council, dict):
+            council = {**council, "sell_reason": sell_reason}
+        else:
+            council = {"sell_reason": sell_reason}
+        if isinstance(kis_order_result, dict):
+            kis_order_result = {**kis_order_result,
+                                "sell_reason_code": sell_reason.get("reason_code")}
+        if action == "SELL" and not reason_code:
+            reason_code = sell_reason.get("reason_code")
     row = AgentDecisionEpisode(
         episode_id=str(episode_id),
         symbol=(symbol[:16] if isinstance(symbol, str) else symbol),
@@ -197,10 +213,26 @@ def episode_to_dict(row: AgentDecisionEpisode) -> dict[str, Any]:
         "order_quality_summary": _order_quality_summary(row.kis_order_result),
         # P-25: 사후 성과 요약 (전체는 outcome 에).
         "outcome_summary": _outcome_summary_for(row.outcome),
+        # P-26: 매도 사유 (SELL 일 때만 비어있지 않음 — 전체는 council.sell_reason 에).
+        "sell_reason":         _sell_reason_for(row),
+        "sell_reason_summary": _sell_reason_summary_for(row),
         # invariant carry.
         "is_live_authorization": False,
         "is_order_signal":       False,
     }
+
+
+def _sell_reason_for(row: AgentDecisionEpisode) -> dict[str, Any]:
+    """council.sell_reason → 상세 dict (SELL 이 아니면 빈 dict)."""
+    c = row.council if isinstance(row.council, dict) else {}
+    sr = c.get("sell_reason")
+    return sr if isinstance(sr, dict) and sr.get("reason_code") else {}
+
+
+def _sell_reason_summary_for(row: AgentDecisionEpisode) -> dict[str, Any]:
+    """council.sell_reason → 목록 표시용 요약 (sell_reason.sell_reason_summary 위임)."""
+    from app.agents.sell_reason import sell_reason_summary
+    return sell_reason_summary(_sell_reason_for(row) or None)
 
 
 def _outcome_summary_for(outcome: Any) -> dict[str, Any]:
@@ -318,6 +350,8 @@ def summarize_episodes(db: Session, *, limit: int = 200) -> dict[str, Any]:
     by_fill_status: dict[str, int] = {}   # P-24
     by_outcome_label: dict[str, int] = {}   # P-25
     by_outcome_status: dict[str, int] = {}  # P-25
+    by_sell_reason: dict[str, int] = {}      # P-26: SELL 사유별 카운트
+    by_sell_category: dict[str, int] = {}    # P-26: SELL 사유 카테고리별
     latencies: list[int] = []
     slippages: list[float] = []
     rejected_count = 0
@@ -369,6 +403,14 @@ def summarize_episodes(db: Session, *, limit: int = 200) -> dict[str, Any]:
             by_outcome_label[ol] = by_outcome_label.get(ol, 0) + 1
             ost = r.outcome.get("status") or "PENDING"
             by_outcome_status[ost] = by_outcome_status.get(ost, 0) + 1
+        # P-26: SELL 사유 집계 (council.sell_reason).
+        if r.final_action == "SELL" and isinstance(r.council, dict):
+            sr = r.council.get("sell_reason")
+            if isinstance(sr, dict) and sr.get("reason_code"):
+                code = sr.get("reason_code")
+                by_sell_reason[code] = by_sell_reason.get(code, 0) + 1
+                cat = sr.get("category") or "UNKNOWN"
+                by_sell_category[cat] = by_sell_category.get(cat, 0) + 1
     return {
         "total":           len(rows),
         "by_action":       by_action,
@@ -380,6 +422,8 @@ def summarize_episodes(db: Session, *, limit: int = 200) -> dict[str, Any]:
         "by_fill_status":  by_fill_status,
         "by_outcome_label":  by_outcome_label,
         "by_outcome_status": by_outcome_status,
+        "by_sell_reason":    by_sell_reason,
+        "by_sell_category":  by_sell_category,
         "avg_latency_ms":  (round(sum(latencies) / len(latencies), 1) if latencies else None),
         "avg_slippage_bps": (round(sum(slippages) / len(slippages), 2) if slippages else None),
         "rejected_count":     rejected_count,

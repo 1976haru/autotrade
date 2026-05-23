@@ -56,11 +56,29 @@ const _SAMPLE = {
       market_summary: { data_status: "PRICE_STALE", reason_code: "PRICE_STALE" },
       outcome_summary: { status: "UNAVAILABLE", label: "OUTCOME_UNAVAILABLE" },
     },
+    {
+      // P-26: SELL episode — 매도 사유 표시.
+      episode_id: "ep-004", symbol: "068270", final_action: "SELL",
+      confidence: 64, quality_score: 70, reason_code: "STOP_LOSS",
+      selected_strategies: ["VWAP"], broker_order_no: "PAPER-9", outcome: null,
+      is_live_authorization: false,
+      market_summary: { data_status: "OK", price: 41000 },
+      outcome_summary: { status: "PENDING", label: "OUTCOME_PENDING" },
+      sell_reason: {
+        reason_code: "STOP_LOSS", category: "RISK_EXIT",
+        message: "손절 기준에 도달하여 매도 판단",
+      },
+      sell_reason_summary: {
+        reason_code: "STOP_LOSS", category: "RISK_EXIT",
+        message: "손절 기준에 도달하여 매도 판단",
+      },
+    },
   ],
-  count: 3,
+  count: 4,
   summary: {
-    total: 3, submitted_count: 1, is_live_authorization: false,
-    by_data_status: { OK: 1, NO_MARKET_DATA: 1, PRICE_STALE: 1 },
+    total: 4, submitted_count: 1, is_live_authorization: false,
+    by_data_status: { OK: 2, NO_MARKET_DATA: 1, PRICE_STALE: 1 },
+    by_sell_reason: { STOP_LOSS: 1 }, by_sell_category: { RISK_EXIT: 1 },
   },
   is_live_authorization: false,
 };
@@ -99,7 +117,7 @@ describe("<DecisionEpisodeCard>", () => {
   it("summary 표시", async () => {
     render(<DecisionEpisodeCard apiClient={_api()} />);
     await waitFor(() => expect(screen.getByTestId("episode-summary").textContent)
-      .toMatch(/총 3건 · 제출 1건/));
+      .toMatch(/총 4건 · 제출 1건/));
   });
 
   it("empty state", async () => {
@@ -236,6 +254,34 @@ describe("<DecisionEpisodeCard>", () => {
     await waitFor(() => expect(screen.getByTestId("episode-outcome-ep-001")).toBeTruthy());
     expect(container.querySelectorAll("button").length).toBe(0);
     for (const b of ["app_secret", "account_no", "Place Order", "실거래 시작"]) {
+      expect(container.textContent).not.toContain(b);
+    }
+  });
+
+  // ── P-26: 매도 사유 표시 ──
+
+  it("P-26: SELL episode 에 매도 사유(STOP_LOSS) + 메시지 표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-sell-reason-ep-004")).toBeTruthy());
+    const t = screen.getByTestId("episode-sell-reason-ep-004").textContent;
+    expect(t).toMatch(/매도 사유/);
+    expect(t).toMatch(/STOP_LOSS/);
+    expect(t).toMatch(/손절 기준에 도달/);
+  });
+
+  it("P-26: BUY/HOLD episode 에는 매도 사유 영역 미표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-row-ep-001")).toBeTruthy());
+    expect(screen.queryByTestId("episode-sell-reason-ep-001")).toBeNull();  // BUY
+    expect(screen.queryByTestId("episode-sell-reason-ep-002")).toBeNull();  // HOLD
+  });
+
+  it("P-26: 매도 사유 줄에 secret/실거래/매수·매도 버튼 없음", async () => {
+    const { container } = render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-sell-reason-ep-004")).toBeTruthy());
+    expect(container.querySelectorAll("button").length).toBe(0);
+    for (const b of ["app_secret", "account_no", "Place Order", "실거래 시작",
+                     "지금 매도", "지금 매수"]) {
       expect(container.textContent).not.toContain(b);
     }
   });

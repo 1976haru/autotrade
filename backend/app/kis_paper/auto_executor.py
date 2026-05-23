@@ -220,6 +220,20 @@ async def execute_kis_paper_auto_order(
         emergency_stop=emergency_stop, daily_order_count=daily_count, now=now,
     ))
 
+    # P-26: SELL 이면 매도 사유 reason_code 를 산출해 AgentDecisionLog / ledger 에 carry.
+    sell_meta: dict[str, Any] = {}
+    if decision.side == "SELL":
+        try:
+            from app.agents.sell_reason import infer_sell_reason
+            _sr = infer_sell_reason(
+                decision=decision, selected_strategies=decision.selected_strategies,
+                exit_plan=decision.exit_plan,
+            )
+            sell_meta = {"sell_reason_code": _sr.reason_code,
+                         "sell_reason_category": _sr.category}
+        except Exception:  # noqa: BLE001 — sell_reason 실패는 주문 흐름을 막지 않음.
+            sell_meta = {}
+
     def _finish(reason_code: str, reason_message: str, *,
                 submitted: bool = False, broker_order_no=None, order_status=None,
                 fill_status=None, audit_id=None, broker_order_sent=False,
@@ -245,6 +259,7 @@ async def execute_kis_paper_auto_order(
                         "is_live_authorization": False,
                         "selected_strategies": list(decision.selected_strategies or []),
                         "quality_score": int(decision.quality_score),
+                        **sell_meta,
                         **(extra_meta or {}),
                     },
                     chain_id=chain_id,
@@ -275,7 +290,8 @@ async def execute_kis_paper_auto_order(
                     metadata={"broker_order_type": "KIS_PAPER",
                               "broker_order_no": broker_order_no,
                               "broker_order_sent": bool(broker_order_sent),
-                              "reason_code": reason_code},
+                              "reason_code": reason_code,
+                              **sell_meta},
                 )
             except Exception:  # noqa: BLE001
                 pass

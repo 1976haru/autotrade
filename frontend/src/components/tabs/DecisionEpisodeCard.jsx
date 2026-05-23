@@ -94,6 +94,9 @@ export function DecisionEpisodeCard({
               const hasOq = oq.order_status != null;
               const os = ep.outcome_summary || {};
               const _pct = (v) => (v != null ? `${v >= 0 ? "+" : ""}${v}%` : null);
+              // P-26: 매도 사유 (SELL episode 만).
+              const sr = ep.sell_reason_summary || {};
+              const isSell = String(action).toUpperCase() === "SELL";
               return (
                 <div
                   key={ep.episode_id}
@@ -195,6 +198,14 @@ export function DecisionEpisodeCard({
                           </>
                         )}
                   </div>
+                  {/* P-26: 매도 사유 (SELL episode 만) */}
+                  {isSell && sr.reason_code && (
+                    <div data-testid={`episode-sell-reason-${ep.episode_id}`}
+                         style={{ color: "#b45309", marginTop: 1, fontWeight: "var(--fw-bold)" }}>
+                      매도 사유: {sr.reason_code}
+                      {sr.message ? ` · ${sr.message}` : ""}
+                    </div>
+                  )}
                   <div style={{ color: "var(--c-text-3)", marginTop: 1 }}>
                     {strategies && <span>선택: {strategies} · </span>}
                     <span data-testid={`episode-order-${ep.episode_id}`}>
