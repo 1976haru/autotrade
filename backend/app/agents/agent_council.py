@@ -552,7 +552,8 @@ def run_agent_council(
         _def_sl_pct = round(_pol.default_stop_loss_pct * 100, 2)
         pos_sell_reason = infer_position_sell_reason(
             position, default_stop_loss_pct=_def_sl_pct,
-            default_take_profit_pct=round(_def_sl_pct * 2, 2))
+            default_take_profit_pct=round(_def_sl_pct * 2, 2),
+            default_trailing_stop_pct=_def_sl_pct)   # 트레일링 default ≈ stop 폭.
         if pos_sell_reason is not None:
             final = CouncilAction.SELL
             reasons.append(f"보유 포지션 청산 트리거({pos_sell_reason}) — SELL")
