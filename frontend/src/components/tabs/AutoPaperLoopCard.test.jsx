@@ -1392,6 +1392,14 @@ function _readinessFixture(overrides = {}) {
     market_data: { provider: "mock", is_mock: true, ...(overrides.market_data || {}) },
     permission: { paper_virtual_execution_allowed: true, live_execution_blocked: true, ...(overrides.permission || {}) },
     paper_capital: { effective_per_symbol_cap_krw: 1_000_000, available_cash_krw: 10_000_000, initial_cash_krw: 10_000_000, ...(overrides.paper_capital || {}) },
+    background_tick: {
+      enabled: false, running: false, interval_seconds: 30, dry_run: true,
+      max_per_day: 0, tick_count_today: 0, last_tick_at: null,
+      last_reason_code: null, last_reason_message: null,
+      last_pipeline_result_code: null,
+      is_order_signal: false, is_live_authorization: false, broker_order_sent: false,
+      ...(overrides.background_tick || {}),
+    },
     can_run_once_diagnostic: true,
     is_order_signal: false,
     is_live_authorization: false,
@@ -1501,6 +1509,89 @@ describe("<AutoPaperLoopCard> — 실행 점검판 + run-once 진단", () => {
     // 함수 없으면 클릭해도 throw 없이 무시.
     fireEvent.click(screen.getByTestId("btn-run-once-diagnostic"));
     expect(screen.queryByTestId("run-once-result")).toBeNull();
+  });
+
+  it("background_tick.enabled=false → '자동 tick driver 비활성' 표시", async () => {
+    const api = _mockApiWithDiag(
+      { state: "RUNNING", cycle_count: 0 },
+      _readinessFixture({ background_tick: { enabled: false, running: false } }),
+      null,
+    );
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("background-tick-status").getAttribute("data-enabled")).toBe("false"),
+    );
+    expect(screen.getByTestId("bg-tick-state-label").textContent).toMatch(/비활성/);
+    expect(screen.getByTestId("bg-tick-message").textContent).toMatch(/run-once 진단만 수동 실행/);
+    expect(screen.getByTestId("bg-tick-interval").textContent).toMatch(/30초/);
+    expect(screen.getByTestId("bg-tick-dry-run").textContent).toMatch(/dry-run/);
+  });
+
+  it("background_tick.enabled=true/running=true + RUNNING → '활성' + N초 안내", async () => {
+    const api = _mockApiWithDiag(
+      { state: "RUNNING", cycle_count: 3 },
+      _readinessFixture({
+        loop: { state: "RUNNING", cycle_count: 3 },
+        background_tick: {
+          enabled: true, running: true, interval_seconds: 30, dry_run: true,
+          last_reason_code: "PAPER_DRY_RUN_OK", last_tick_at: "2026-05-22T10:00:30+00:00",
+        },
+      }),
+      null,
+    );
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("background-tick-status").getAttribute("data-running")).toBe("true"),
+    );
+    expect(screen.getByTestId("bg-tick-state-label").textContent).toMatch(/활성/);
+    expect(screen.getByTestId("bg-tick-message").textContent).toMatch(/30초마다 AI Paper 판단/);
+    expect(screen.getByTestId("bg-tick-last-reason").textContent).toMatch(/PAPER_DRY_RUN_OK/);
+  });
+
+  it("background_tick enabled + WAITING_MARKET → 장 시작 전 대기 문구", async () => {
+    const api = _mockApiWithDiag(
+      { state: "WAITING_MARKET", cycle_count: 0 },
+      _readinessFixture({
+        loop: { state: "WAITING_MARKET", cycle_count: 0 },
+        market_session: { phase: "PRE_OPEN", is_open: false },
+        background_tick: { enabled: true, running: true, interval_seconds: 30 },
+      }),
+      null,
+    );
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("bg-tick-message").textContent).toMatch(/장 시작 전/),
+    );
+  });
+
+  it("background_tick enabled + EMERGENCY_STOP → tick 차단 문구", async () => {
+    const api = _mockApiWithDiag(
+      { state: "EMERGENCY_STOP", cycle_count: 0 },
+      _readinessFixture({
+        loop: { state: "EMERGENCY_STOP", cycle_count: 0 },
+        background_tick: { enabled: true, running: true },
+      }),
+      null,
+    );
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("bg-tick-message").textContent).toMatch(/긴급정지 ON/),
+    );
+  });
+
+  it("background_tick 영역에 실거래/ENABLE_* 토글 버튼 0개", async () => {
+    const api = _mockApiWithDiag(
+      { state: "RUNNING", cycle_count: 1 },
+      _readinessFixture({ background_tick: { enabled: true, running: true } }),
+      null,
+    );
+    const { container } = render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(screen.getByTestId("background-tick-status")).toBeTruthy());
+    const btStatus = screen.getByTestId("background-tick-status");
+    expect(btStatus.querySelectorAll("button").length).toBe(0);
+    expect(btStatus.textContent).toMatch(/Paper 전용/);
+    const banned = ["ENABLE_LIVE_TRADING", "ENABLE_AI_EXECUTION", "실거래 시작", "AI 자동매매 켜기", "Place Order"];
+    for (const b of banned) expect(container.textContent).not.toContain(b);
   });
 
   it("점검판 + run-once 결과에 금지 라벨 0건", async () => {
