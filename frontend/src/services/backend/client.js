@@ -540,6 +540,10 @@ export const backendApi = {
       method: "POST",
       body: JSON.stringify(body || {}),
     }),
+  // P-32: 이벤트 로그 품질 점검 (read-only diagnostics).
+  eventIntegrityDiagnostics: ({ lookbackDays = 7, includeInfo = false } = {}) =>
+    backendFetch(`/api/diagnostics/event-integrity?lookback_days=${lookbackDays}`
+                 + `&include_info=${includeInfo ? "true" : "false"}`),
   // 193: Virtual order ledger surface.
   virtualOrders: ({ limit = 50, offset = 0, status = null, symbol = null } = {}) => {
     const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
