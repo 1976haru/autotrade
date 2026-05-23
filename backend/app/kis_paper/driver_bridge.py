@@ -55,13 +55,16 @@ def _market_input_from_pipeline(symbol: str, price: float):
 
 def build_decision_from_pipeline(
     *, settings: Any, now: datetime, risk_profile: Any = None,
-) -> tuple[KisPaperAutoDecision, Any]:
+) -> tuple[KisPaperAutoDecision, Any, Any]:
     """run-once 파이프라인 후보 → Agent Council 투표 → KIS 자동주문 결정.
 
     4 전략(ORB/Momentum/Gap/VWAP) 투표를 Agent Council 이 종합해 BUY/SELL/HOLD
     를 결정하고, BUY/SELL 이면 KisPaperAutoDecision 으로 변환. HOLD 면 side=HOLD
-    (게이트가 NO_STRATEGY_SIGNAL 로 차단). council 결정 객체도 함께 반환해
-    AgentDecisionLog / UI 가 vote 내역을 기록·표시할 수 있게 한다.
+    (게이트가 NO_STRATEGY_SIGNAL 로 차단). council 결정 객체 + 시장 입력
+    (StrategyMarketInput) 도 함께 반환해 AgentDecisionLog / episode market_snapshot
+    / UI 가 vote 내역과 시장상태를 기록·표시할 수 있게 한다.
+
+    Returns: (decision, council|None, market_input|None).
     """
     from app.agents.agent_council import CouncilAction, run_agent_council
     provider = str(getattr(settings, "market_data_provider", "mock"))
@@ -77,10 +80,11 @@ def build_decision_from_pipeline(
                 entry_reason=ro.reason_message,
             ),
             None,
+            None,
         )
+    market_input = _market_input_from_pipeline(ro.symbol, ro.price)
     council = run_agent_council(
-        _market_input_from_pipeline(ro.symbol, ro.price),
-        risk_profile=risk_profile, held_position=False,
+        market_input, risk_profile=risk_profile, held_position=False,
     )
     if council.final_action == CouncilAction.HOLD:
         return (
@@ -89,19 +93,23 @@ def build_decision_from_pipeline(
                 entry_reason=council.reason or "council HOLD",
             ),
             council,
+            market_input,
         )
     kd = council.to_kis_paper_decision(quantity=int(ro.quantity), price=int(ro.price))
-    return (kd, council)
+    return (kd, council, market_input)
 
 
-def _record_episode_best_effort(db, *, episode_id, decision, council, result) -> None:
-    """P-21: 한 tick 의 판단→주문 결과를 episode 행으로 기록 (best-effort).
+def _record_episode_best_effort(
+    db, *, episode_id, decision, council, result, market_input=None, now=None,
+) -> None:
+    """P-21/P-22: 한 tick 의 판단→주문 결과 + 시장 스냅샷을 episode 행으로 기록.
 
-    실패(secret sanitize / DB 오류 등)해도 예외를 던지지 않는다 — tick 결과
-    유지가 우선. broker / route_order 호출 0건 (순수 기록).
+    best-effort — 실패(secret sanitize / DB 오류 등)해도 예외를 던지지 않는다
+    (tick 결과 유지 우선). broker / route_order 호출 0건 (순수 기록).
     """
     try:
         from app.agents.decision_episode import record_episode
+        from app.agents.market_snapshot import build_market_snapshot
 
         final_action = (
             council.final_action.value if council is not None
@@ -113,11 +121,14 @@ def _record_episode_best_effort(db, *, episode_id, decision, council, result) ->
         quality = (council.quality_score if council is not None
                    else getattr(decision, "quality_score", None))
         rc = getattr(result, "reason_code", None)
-        market_snapshot = {
-            "symbol":        getattr(decision, "symbol", None),
-            "current_price": getattr(decision, "price", None),
-            "market_regime": (council.market_regime if council is not None else None),
-        }
+        regime = council.market_regime if council is not None else None
+        # P-22: 판단 당시 시장 스냅샷 (market_input 우선, 없으면 decision 가격으로
+        # 최소 구성). best-effort.
+        market_snapshot = build_market_snapshot(
+            market_input=market_input, now=now, market_regime=regime,
+            symbol=getattr(decision, "symbol", None),
+            price=getattr(decision, "price", None),
+        ).to_dict()
         votes = (
             [v.to_dict() for v in council.votes]
             if council is not None and getattr(council, "votes", None) else []
@@ -200,10 +211,13 @@ async def kis_paper_auto_tick(
         rd = evaluate_readiness(settings)
         creds = bool(rd.kis_key_present and rd.kis_secret_present and rd.kis_account_present)
         council = None
+        market_input = None
         if decision is not None:
             dec = decision
         else:
-            dec, council = build_decision_from_pipeline(settings=settings, now=now)
+            dec, council, market_input = build_decision_from_pipeline(
+                settings=settings, now=now,
+            )
         # P-21: episode_id 발급 — chain_id 로 전달해 AgentDecisionLog / OrderRequest /
         # episode 행을 동일 키로 연결.
         from app.agents.decision_episode import new_episode_id
@@ -218,9 +232,10 @@ async def kis_paper_auto_tick(
             db.commit()
         except Exception:  # noqa: BLE001
             db.rollback()
-        # P-21: episode 기록 (best-effort — 실패해도 tick 결과는 유지).
+        # P-21/P-22: episode 기록 + 시장 스냅샷 (best-effort — 실패해도 tick 유지).
         _record_episode_best_effort(
-            db, episode_id=episode_id, decision=dec, council=council, result=result,
+            db, episode_id=episode_id, decision=dec, council=council,
+            result=result, market_input=market_input, now=now,
         )
         out = result.to_dict()
         out["decision_episode_id"] = episode_id

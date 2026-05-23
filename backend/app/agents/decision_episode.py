@@ -170,9 +170,27 @@ def episode_to_dict(row: AgentDecisionEpisode) -> dict[str, Any]:
             (row.council or {}).get("selected_strategies", [])
             if isinstance(row.council, dict) else []
         ),
+        # P-22: market_snapshot 요약 (목록 표시용 — 전체는 market_snapshot 에).
+        "market_summary":  _market_summary(row.market_snapshot),
         # invariant carry.
         "is_live_authorization": False,
         "is_order_signal":       False,
+    }
+
+
+def _market_summary(snap: Any) -> dict[str, Any]:
+    """market_snapshot 에서 목록 표시용 핵심 필드만 추출."""
+    if not isinstance(snap, dict):
+        return {"data_status": "NO_MARKET_DATA"}
+    return {
+        "price":             snap.get("price"),
+        "market_regime":     snap.get("market_regime"),
+        "data_status":       snap.get("data_status"),
+        "reason_code":       snap.get("reason_code"),
+        "price_age_seconds": snap.get("price_age_seconds"),
+        "vwap":              snap.get("vwap"),
+        "rsi":               snap.get("rsi"),
+        "gap_pct":           snap.get("gap_pct"),
     }
 
 
@@ -209,6 +227,7 @@ def summarize_episodes(db: Session, *, limit: int = 200) -> dict[str, Any]:
     rows = db.execute(stmt).scalars().all()
     by_action: dict[str, int] = {}
     by_reason: dict[str, int] = {}
+    by_data_status: dict[str, int] = {}
     submitted = 0
     with_order_no = 0
     for r in rows:
@@ -219,10 +238,16 @@ def summarize_episodes(db: Session, *, limit: int = 200) -> dict[str, Any]:
             submitted += 1
         if r.broker_order_no:
             with_order_no += 1
+        # P-22: market_snapshot data_status 집계.
+        ds = (r.market_snapshot or {}).get("data_status") if isinstance(
+            r.market_snapshot, dict) else None
+        ds = ds or "UNKNOWN"
+        by_data_status[ds] = by_data_status.get(ds, 0) + 1
     return {
         "total":           len(rows),
         "by_action":       by_action,
         "by_reason_code":  by_reason,
+        "by_data_status":  by_data_status,
         "submitted_count": submitted,
         "with_broker_order_no": with_order_no,
         "is_live_authorization": False,
