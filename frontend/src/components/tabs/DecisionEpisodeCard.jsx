@@ -80,6 +80,8 @@ export function DecisionEpisodeCard({
                 ? ep.selected_strategies.join(", ") : "";
               const hasOrder = !!ep.broker_order_no;
               const outcome = ep.outcome && ep.outcome.label ? ep.outcome.label : "미정";
+              const ms = ep.market_summary || {};
+              const dataStatus = ms.data_status || "—";
               return (
                 <div
                   key={ep.episode_id}
@@ -102,6 +104,28 @@ export function DecisionEpisodeCard({
                     {ep.reason_code && (
                       <span style={{ color: "var(--c-text-3)" }}>· {ep.reason_code}</span>
                     )}
+                  </div>
+                  {/* P-22: 시장 스냅샷 요약 */}
+                  <div data-testid={`episode-market-${ep.episode_id}`}
+                       style={{ color: "var(--c-text-3)", marginTop: 1 }}>
+                    {dataStatus === "NO_MARKET_DATA"
+                      ? "시장 데이터 없음"
+                      : dataStatus === "PRICE_STALE"
+                        ? "현재가가 오래되어 PRICE_STALE"
+                        : (
+                          <>
+                            {ms.price != null && <span>현재가 {Number(ms.price).toLocaleString("ko-KR")}원</span>}
+                            {ms.market_regime && <span> · {ms.market_regime}</span>}
+                            {ms.vwap != null && <span> · VWAP {Number(ms.vwap).toLocaleString("ko-KR")}</span>}
+                            {ms.rsi != null && <span> · RSI {ms.rsi}</span>}
+                            {ms.gap_pct != null && (
+                              <span> · Gap {ms.gap_pct >= 0 ? "+" : ""}{ms.gap_pct}%</span>
+                            )}
+                            {ms.price_age_seconds != null && (
+                              <span> · age {Math.round(ms.price_age_seconds)}s</span>
+                            )}
+                          </>
+                        )}
                   </div>
                   <div style={{ color: "var(--c-text-3)", marginTop: 1 }}>
                     {strategies && <span>전략: {strategies} · </span>}

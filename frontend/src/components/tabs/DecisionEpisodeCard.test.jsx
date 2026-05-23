@@ -20,16 +20,31 @@ const _SAMPLE = {
       confidence: 72, quality_score: 82, reason_code: "KIS_PAPER_SUBMITTED",
       selected_strategies: ["MOMENTUM", "VWAP"], broker_order_no: "PAPER-1",
       outcome: { label: "WIN" }, is_live_authorization: false,
+      market_summary: {
+        price: 75000, market_regime: "TREND_UP", data_status: "OK",
+        vwap: 75200, rsi: 58.2, gap_pct: 0.68, price_age_seconds: 5,
+      },
     },
     {
       episode_id: "ep-002", symbol: "000660", final_action: "HOLD",
       confidence: 40, quality_score: 30, reason_code: "NO_STRATEGY_SIGNAL",
       selected_strategies: [], broker_order_no: null, outcome: null,
       is_live_authorization: false,
+      market_summary: { data_status: "NO_MARKET_DATA" },
+    },
+    {
+      episode_id: "ep-003", symbol: "035720", final_action: "BUY",
+      confidence: 60, quality_score: 65, reason_code: "PRICE_STALE",
+      selected_strategies: ["ORB"], broker_order_no: null, outcome: null,
+      is_live_authorization: false,
+      market_summary: { data_status: "PRICE_STALE", reason_code: "PRICE_STALE" },
     },
   ],
-  count: 2,
-  summary: { total: 2, submitted_count: 1, is_live_authorization: false },
+  count: 3,
+  summary: {
+    total: 3, submitted_count: 1, is_live_authorization: false,
+    by_data_status: { OK: 1, NO_MARKET_DATA: 1, PRICE_STALE: 1 },
+  },
   is_live_authorization: false,
 };
 
@@ -67,7 +82,7 @@ describe("<DecisionEpisodeCard>", () => {
   it("summary 표시", async () => {
     render(<DecisionEpisodeCard apiClient={_api()} />);
     await waitFor(() => expect(screen.getByTestId("episode-summary").textContent)
-      .toMatch(/총 2건 · 제출 1건/));
+      .toMatch(/총 3건 · 제출 1건/));
   });
 
   it("empty state", async () => {
@@ -96,5 +111,33 @@ describe("<DecisionEpisodeCard>", () => {
     render(<DecisionEpisodeCard apiClient={_api()} />);
     await waitFor(() => expect(screen.getByTestId("episode-footer").textContent)
       .toMatch(/주문 신호가 아니며 실거래 권한이 아닙니다/));
+  });
+
+  // ── P-22: market snapshot 요약 표시 ──
+
+  it("P-22: 현재가/regime/VWAP/RSI/Gap 표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-market-ep-001")).toBeTruthy());
+    const m = screen.getByTestId("episode-market-ep-001").textContent;
+    expect(m).toMatch(/현재가 75,000원/);
+    expect(m).toMatch(/TREND_UP/);
+    expect(m).toMatch(/VWAP 75,200/);
+    expect(m).toMatch(/RSI 58\.2/);
+    expect(m).toMatch(/Gap \+0\.68%/);
+    expect(m).toMatch(/age 5s/);
+  });
+
+  it("P-22: NO_MARKET_DATA 표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-market-ep-002")).toBeTruthy());
+    expect(screen.getByTestId("episode-market-ep-002").textContent)
+      .toMatch(/시장 데이터 없음/);
+  });
+
+  it("P-22: PRICE_STALE 표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-market-ep-003")).toBeTruthy());
+    expect(screen.getByTestId("episode-market-ep-003").textContent)
+      .toMatch(/현재가가 오래되어 PRICE_STALE/);
   });
 });
