@@ -90,6 +90,8 @@ export function DecisionEpisodeCard({
                 if (v && v.strategy) votesByStrat[v.strategy] = v;
               }
               const council = ep.council || {};
+              const oq = ep.order_quality_summary || {};
+              const hasOq = oq.order_status != null;
               return (
                 <div
                   key={ep.episode_id}
@@ -154,6 +156,18 @@ export function DecisionEpisodeCard({
                           (buy {council.buy_score} / sell {council.sell_score} / hold {council.hold_score})
                         </span>
                       )}
+                    </div>
+                  )}
+                  {/* P-24: 주문·체결 품질 요약 */}
+                  {hasOq && (
+                    <div data-testid={`episode-quality-${ep.episode_id}`}
+                         style={{ color: "var(--c-text-3)", marginTop: 1 }}>
+                      주문 {oq.broker_order_no ? `#${oq.broker_order_no}` : ""} ·
+                      {" "}{oq.order_status}
+                      {oq.fill_status ? ` / ${oq.fill_status}` : ""}
+                      {oq.latency_ms != null && <span> · 지연 {oq.latency_ms}ms</span>}
+                      {oq.slippage_bps != null && <span> · 슬리피지 {oq.slippage_bps}bps</span>}
+                      {oq.partial_fill ? <span> · 부분체결</span> : null}
                     </div>
                   )}
                   <div style={{ color: "var(--c-text-3)", marginTop: 1 }}>

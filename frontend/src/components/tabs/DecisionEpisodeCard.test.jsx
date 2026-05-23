@@ -31,6 +31,10 @@ const _SAMPLE = {
         { strategy: "VWAP", signal: "BUY", score: 76, confidence: 0.7 },
       ],
       council: { buy_score: 45.5, sell_score: 0, hold_score: 14 },
+      order_quality_summary: {
+        broker_order_no: "PAPER-1", order_status: "FILLED", fill_status: "FILLED",
+        latency_ms: 333, slippage_bps: 13.33, partial_fill: false,
+      },
     },
     {
       episode_id: "ep-002", symbol: "000660", final_action: "HOLD",
@@ -172,5 +176,23 @@ describe("<DecisionEpisodeCard>", () => {
     const row = screen.getByTestId("episode-row-ep-001").textContent;
     expect(row).toMatch(/BUY/);
     expect(row).toMatch(/선택: MOMENTUM, VWAP/);
+  });
+
+  // ── P-24: 주문·체결 품질 표시 ──
+
+  it("P-24: 주문번호/상태/체결/지연/슬리피지 표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-quality-ep-001")).toBeTruthy());
+    const q = screen.getByTestId("episode-quality-ep-001").textContent;
+    expect(q).toMatch(/PAPER-1/);
+    expect(q).toMatch(/FILLED/);
+    expect(q).toMatch(/지연 333ms/);
+    expect(q).toMatch(/슬리피지 13\.33bps/);
+  });
+
+  it("P-24: order_quality 없는 episode 는 품질 줄 미표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-row-ep-002")).toBeTruthy());
+    expect(screen.queryByTestId("episode-quality-ep-002")).toBeNull();
   });
 });

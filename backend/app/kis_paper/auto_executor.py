@@ -89,6 +89,9 @@ class KisPaperAutoResult:
     fill_status:     str | None = None
     audit_id:        int | None = None
     decision_log_id: int | None = None
+    # P-24: 체결 품질 산출용 (slippage/부분체결 계산). 기본 0/None.
+    filled_quantity: int = 0
+    avg_fill_price:  int | None = None
     metadata:        dict[str, Any] = field(default_factory=dict)
 
     # 절대 invariant.
@@ -120,6 +123,8 @@ class KisPaperAutoResult:
             "fill_status":     self.fill_status,
             "audit_id":        self.audit_id,
             "decision_log_id": self.decision_log_id,
+            "filled_quantity": int(self.filled_quantity),
+            "avg_fill_price":  self.avg_fill_price,
             "metadata":        dict(self.metadata),
             "broker_order_type":     self.broker_order_type,
             "broker_order_sent":     self.broker_order_sent,
@@ -218,6 +223,7 @@ async def execute_kis_paper_auto_order(
     def _finish(reason_code: str, reason_message: str, *,
                 submitted: bool = False, broker_order_no=None, order_status=None,
                 fill_status=None, audit_id=None, broker_order_sent=False,
+                filled_quantity: int = 0, avg_fill_price=None,
                 extra_meta=None) -> KisPaperAutoResult:
         log_id: int | None = None
         if record:
@@ -280,6 +286,7 @@ async def execute_kis_paper_auto_order(
             quantity=int(decision.quantity), notional_krw=decision.notional_krw,
             broker_order_no=broker_order_no, order_status=order_status,
             fill_status=fill_status, audit_id=audit_id, decision_log_id=log_id,
+            filled_quantity=int(filled_quantity or 0), avg_fill_price=avg_fill_price,
             broker_order_sent=broker_order_sent, metadata=extra_meta or {},
         )
 
@@ -334,6 +341,8 @@ async def execute_kis_paper_auto_order(
     broker_order_no = getattr(audit, "broker_order_id", None)
     order_status = getattr(audit, "broker_status", None)
     filled_qty = int(getattr(audit, "filled_quantity", 0) or 0)
+    avg_fill_price = getattr(audit, "avg_fill_price", None) or getattr(
+        audit, "broker_avg_price", None)
     fill_status = (
         "FILLED" if order_status == "FILLED"
         else "PARTIALLY_FILLED" if filled_qty > 0
@@ -349,6 +358,7 @@ async def execute_kis_paper_auto_order(
             submitted=executed, broker_order_no=broker_order_no,
             order_status=order_status, fill_status=fill_status,
             audit_id=getattr(audit, "id", None), broker_order_sent=executed,
+            filled_quantity=filled_qty, avg_fill_price=avg_fill_price,
             extra_meta={"routing_reasons": list(routing.reasons or [])},
         )
     if decision_val == RiskDecision.NEEDS_APPROVAL:
