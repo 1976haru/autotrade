@@ -9,6 +9,7 @@ import { BuyBlockReasonsCard } from "./BuyBlockReasonsCard";
 import { DecisionEpisodeCard } from "./DecisionEpisodeCard";
 import { PerformanceDashboard } from "./PerformanceDashboard";
 import { WeightRecommendationCard } from "./WeightRecommendationCard";
+import { PaperGateReportCard } from "./PaperGateReportCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
@@ -66,6 +67,8 @@ export function AISignal({ activeStratIds }) {
       <PerformanceDashboard />
       {/* P-29: 전략 가중치 개선 후보 — 자동 적용 금지, 운영자 승인 전 변경 없음. */}
       <WeightRecommendationCard />
+      {/* P-30: Paper Gate 성과 리포트 — 100건 미만 실전 전환 검토 불가, 자동 전환 없음. */}
+      <PaperGateReportCard />
       <AgentDecisionSummaryCard />
       <AgentStatsCard />
       {/* 44: AI Assist 제안 카드 — AI는 제안만, 사람 승인 후 주문. */}

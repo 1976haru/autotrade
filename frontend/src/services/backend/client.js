@@ -531,6 +531,9 @@ export const backendApi = {
     if (marketRegime) qs.set("market_regime", marketRegime);
     return backendFetch(`/api/agents/weight-recommendation?${qs.toString()}`);
   },
+  // P-30: Paper Gate 성과 리포트 (read-only, 실 계좌 미사용).
+  agentPaperGateReport: ({ limit = 1000 } = {}) =>
+    backendFetch(`/api/agents/paper-gate-report?limit=${limit}`),
   // 193: Virtual order ledger surface.
   virtualOrders: ({ limit = 50, offset = 0, status = null, symbol = null } = {}) => {
     const qs = new URLSearchParams({ limit: String(limit), offset: String(offset) });
