@@ -421,6 +421,31 @@ class TestSerialization:
         assert d["readiness_state"] == "WAITING_APPROVAL"
         assert d["is_order_signal"] is False
 
+    def test_to_dict_does_not_deadlock(self):
+        """회귀 가드: to_dict() 가 lock 보유 중 readiness_state()/active_candidate()
+        를 호출하므로 비재진입 Lock 이면 deadlock(hang). RLock 로 5초 안에 종료.
+
+        (Backend CI `test` job 이 10분 timeout 으로 cancelled 되던 근본 원인.)
+        """
+        import threading as _t
+        reg = _load_two_pending()
+        result: dict = {}
+
+        def _call():
+            result["d"] = reg.to_dict()
+
+        th = _t.Thread(target=_call, daemon=True)
+        th.start()
+        th.join(timeout=5.0)
+        assert not th.is_alive(), "registry.to_dict() deadlocked (non-reentrant lock)"
+        assert result["d"]["total"] == 2
+
+    def test_lock_is_reentrant(self):
+        """비재진입 Lock 으로 되돌아가면 deadlock 회귀 — RLock 임을 명시 lock."""
+        import threading as _t
+        reg = _load_two_pending()
+        assert isinstance(reg._lock, type(_t.RLock()))
+
     def test_managed_candidate_invariant_violation_raises(self):
         reg = _load_two_pending()
         m = reg.list_candidates()[0]

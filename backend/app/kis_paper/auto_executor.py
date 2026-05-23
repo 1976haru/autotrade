@@ -2,8 +2,8 @@
 
 AI Agent + 4가지 전략 조합이 만든 BUY/SELL 결정을 받아, KIS 모의 자동주문
 권한 게이트를 통과한 뒤 **기존 sanctioned 경로**(`route_order` → RiskManager →
-PermissionGate → OrderExecutor → `KisBrokerAdapter.place_order(is_paper=True)`)
-로 위임한다. 본 모듈은 *broker.place_order 를 직접 호출하지 않는다* — 단일
+PermissionGate → OrderExecutor → KisBrokerAdapter[place_order, is_paper=True])
+로 위임한다. 본 모듈은 *broker 주문 메서드를 직접 호출하지 않는다* — 단일
 진입점(OrderExecutor)을 우회하지 않으며, RiskManager / PermissionGate 도
 우회하지 않는다.
 
@@ -298,7 +298,7 @@ async def execute_kis_paper_auto_order(
     assert_paper_broker(broker)
 
     # 4. sanctioned 경로 위임 — route_order (RiskManager → PermissionGate →
-    #    OrderExecutor → KisBrokerAdapter.place_order(is_paper=True)).
+    #    OrderExecutor → KisBrokerAdapter[place_order, is_paper=True]).
     from app.brokers.base import OrderRequest, OrderSide, OrderType
     side_enum = OrderSide.BUY if decision.side == "BUY" else OrderSide.SELL
     order = OrderRequest(

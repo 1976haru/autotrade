@@ -325,29 +325,47 @@ def _read(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+# route_order 직접 사용을 *금지* 하는 레거시 counter-only 모듈. KIS Paper Auto
+# Trading 모듈(auto_executor / driver_bridge)은 *sanctioned* route_order 경로로
+# 위임한다 (route_order 자체가 RiskManager → PermissionGate → OrderExecutor 단일
+# 진입점을 통제 — CLAUDE.md "모든 주문은 route_order 를 통과"). 따라서 broker
+# *직접* 주문 호출 금지는 *모든* 모듈에 적용하되, route_order 비사용 제약은
+# counter-only 모듈에만 적용한다.
+_NO_ROUTE_ORDER_MODULES = frozenset({
+    "engine.py", "scoring.py", "readiness.py", "__init__.py",
+})
+
+
 def test_kis_paper_modules_no_direct_broker_place_order_call():
-    """본 패키지의 어떤 파일도 broker.place_order( 를 *직접* 호출하지 않는다 —
-    실제 주문 흐름은 route_order 가 통제. 본 PR 시점 본 모듈은 broker /
-    OrderExecutor / route_order 를 *runtime 호출* 자체가 없다.
+    """본 패키지의 어떤 파일도 broker 주문 메서드를 *직접* 호출하지 않는다 —
+    실제 주문 흐름은 route_order → OrderExecutor 단일 진입점이 통제.
+
+    counter-only 모듈(engine/scoring/readiness)은 route_order 자체도 사용 0건
+    이어야 한다. KIS 자동주문 모듈(auto_executor/driver_bridge)은 route_order
+    *위임* 은 허용 — 단, broker.place_order 직접 호출은 *모든* 모듈에서 0건.
     """
     root = pathlib.Path(__file__).parent.parent / "app" / "kis_paper"
-    for f in root.glob("*.py"):
+
+    def _scan(f, banned_tokens):
         src = _read(f)
-        for banned in (
-            ".place_order(",
-            "broker.cancel_order(",
-            "route_order(",
-            "= route_order",
-        ):
-            # docstring 안의 *언급* 은 OK — 실제 호출 라인은 0건.
-            for line in src.splitlines():
-                stripped = line.split("#", 1)[0].strip()
-                # docstring 내부 줄은 따옴표로 시작/감싸이는 패턴 — 단순 skip.
-                if stripped.startswith('"') or stripped.startswith("'"):
-                    continue
+        for line in src.splitlines():
+            stripped = line.split("#", 1)[0].strip()
+            if stripped.startswith('"') or stripped.startswith("'"):
+                continue
+            for banned in banned_tokens:
                 assert banned not in stripped, (
-                    f"{f.name}: banned call '{banned}' at line: {line!r}"
+                    f"{f.name}: banned '{banned}' at line: {line!r}"
                 )
+
+    # 1) broker 주문 메서드 *직접* 호출은 모든 모듈에서 0건 (단일 진입점 강제).
+    direct_broker = (".place_order(", "broker.place_order(", "broker.cancel_order(")
+    for f in root.glob("*.py"):
+        _scan(f, direct_broker)
+
+    # 2) route_order 비사용은 counter-only 모듈에만 적용.
+    for f in root.glob("*.py"):
+        if f.name in _NO_ROUTE_ORDER_MODULES:
+            _scan(f, ("route_order(", "= route_order"))
 
 
 def test_kis_paper_engine_does_not_import_kis_adapter_at_top_level():

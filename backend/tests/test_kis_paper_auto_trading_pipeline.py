@@ -389,7 +389,7 @@ def test_static_executor_no_direct_broker_place_order():
                     assert "brokers" not in m and "order_router" not in m and "executor" not in m
 
 
-def test_safety_flags_defaults_off():
+def test_safety_flags_defaults_off(safe_default_flags):
     s = Settings()
     assert s.enable_kis_paper_auto_trading is False
     assert s.kis_paper_auto_order_dry_run is True
@@ -403,7 +403,7 @@ def test_safety_flags_defaults_off():
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def test_api_auto_status(client):
+def test_api_auto_status(safe_default_flags, client):
     res = client.get("/api/kis-paper/auto/status")
     assert res.status_code == 200
     j = res.json()
@@ -413,7 +413,7 @@ def test_api_auto_status(client):
     assert j["broker_order_type"] == "KIS_PAPER"
 
 
-def test_api_auto_run_once_disabled_by_default(client):
+def test_api_auto_run_once_disabled_by_default(safe_default_flags, client):
     res = client.post("/api/kis-paper/auto/run-once", json={
         "symbol": "005930", "side": "BUY", "quantity": 13, "price": 75_000,
         "confidence": 0.74, "quality_score": 82, "has_exit_plan": True,

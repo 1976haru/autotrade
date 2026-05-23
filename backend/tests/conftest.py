@@ -14,6 +14,39 @@ from app.market.mock import MockMarketData
 from app.risk.risk_manager import RiskManager, RiskPolicy
 
 
+@pytest.fixture
+def safe_default_flags(monkeypatch):
+    """안전 flag 를 *코드 default* 로 강제 + get_settings 캐시 clear.
+
+    운영자가 로컬 backend/.env 에서 KIS Paper Auto / background tick 을 켜 두면
+    (완료 조건대로) `Settings()` 가 그 값을 읽어 *default 검증* 테스트가 로컬에서
+    실패한다. 본 fixture 는 os.environ 으로 default 값을 주입(.env 보다 우선)해
+    테스트를 hermetic 하게 만든다. CI(.env 없음)에서는 동일하게 default 적용.
+
+    실거래 flag 는 *항상* false/true(KIS_IS_PAPER) 안전값으로 고정 — 본 fixture
+    가 실거래를 켜는 일은 결코 없다.
+    """
+    from app.core.config import get_settings
+    defaults = {
+        "ENABLE_LIVE_TRADING": "false",
+        "ENABLE_AI_EXECUTION": "false",
+        "KIS_IS_PAPER": "true",
+        "ENABLE_AI_PAPER_BACKGROUND_TICK": "false",
+        "AI_PAPER_TICK_DRY_RUN": "true",
+        "AI_PAPER_TICK_MAX_PER_DAY": "0",
+        "AI_PAPER_TICK_INTERVAL_SECONDS": "30",
+        "AI_PAPER_ALLOW_SIMULATED_FILLS": "false",
+        "ENABLE_KIS_PAPER_AUTO_TRADING": "false",
+        "KIS_PAPER_AUTO_ORDER_DRY_RUN": "true",
+        "KIS_PAPER_FILL_POLLING": "false",
+    }
+    for k, v in defaults.items():
+        monkeypatch.setenv(k, v)
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 class _FakeAiClient(AiClient):
     """기본 픽스처용. analyze()가 더미 응답을 반환한다."""
 

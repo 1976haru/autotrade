@@ -185,7 +185,13 @@ class CandidateRegistry:
     """
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        # *Reentrant* lock — `to_dict()` 가 lock 을 보유한 채 `readiness_state()`
+        # / `active_candidate()` (둘 다 같은 lock 획득) 를 호출하므로 비재진입
+        # `threading.Lock` 이면 동일 thread 가 자기 자신의 lock 을 기다리며
+        # *deadlock* 한다 (Backend CI `test_registry_to_dict` 가 10분 timeout
+        # 으로 hang 한 근본 원인 + `GET /api/auto-paper/candidates` 운영 hang).
+        # RLock 은 같은 thread 의 중첩 획득을 허용해 원자적 스냅샷을 보장한다.
+        self._lock = threading.RLock()
         # candidate_id → ManagedCandidate (insertion order = rank order)
         self._candidates: dict[str, ManagedCandidate] = {}
 
