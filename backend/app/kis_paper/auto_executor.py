@@ -76,6 +76,17 @@ class KisPaperAutoDecision:
     # 2-12: 4전략 vote 상세 + risk_flags carry (AgentDecisionLog 판단 근거 보존).
     votes:                list[dict[str, Any]] = field(default_factory=list)
     risk_flags:           list[str]         = field(default_factory=list)
+    # 3-02: 보유 포지션 청산(SELL) context — SELL 은 보유 청산만, 숏 진입 아님.
+    held_position:        bool              = False
+    position_quantity:    int               = 0
+    is_short_entry:       bool              = False
+    short_position:       bool              = False
+
+    def __post_init__(self) -> None:
+        if self.is_short_entry is not False:
+            raise ValueError("KisPaperAutoDecision.is_short_entry must be False (no short entry)")
+        if self.short_position is not False:
+            raise ValueError("KisPaperAutoDecision.short_position must be False")
 
     @property
     def notional_krw(self) -> int:

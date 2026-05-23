@@ -23,9 +23,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.agents.risk_profile import DEFAULT_RISK_PROFILE, RiskProfile, policy_for
+
+if TYPE_CHECKING:
+    from app.agents.position_context import PositionContext
 
 
 class CouncilAction(StrEnum):
@@ -159,6 +162,11 @@ class AgentCouncilDecision:
     # 2-09: exit_plan 검증 결과 + 강등 전 action (BUY 는 valid exit_plan 필수).
     exit_plan_validation: dict[str, Any] = field(default_factory=dict)
     pre_exit_plan_action: str | None = None
+    # 3-02: 보유 포지션 청산(SELL) context — SELL 은 보유 청산만, 숏 진입 아님.
+    held_position:    bool = False
+    position_quantity: int = 0
+    is_short_entry:   bool = False
+    short_position:   bool = False
 
     is_order_signal:       bool = False
     auto_apply_allowed:    bool = False
@@ -171,6 +179,10 @@ class AgentCouncilDecision:
             raise ValueError("AgentCouncilDecision.auto_apply_allowed must be False")
         if self.is_live_authorization is not False:
             raise ValueError("AgentCouncilDecision.is_live_authorization must be False")
+        if self.is_short_entry is not False:
+            raise ValueError("AgentCouncilDecision.is_short_entry must be False (no short entry)")
+        if self.short_position is not False:
+            raise ValueError("AgentCouncilDecision.short_position must be False")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -198,6 +210,11 @@ class AgentCouncilDecision:
             "exit_plan_validation": dict(self.exit_plan_validation),
             "pre_exit_plan_action": self.pre_exit_plan_action,
             "exit_plan_required":   True,
+            # 3-02: 보유 포지션 청산 context (SELL 은 보유 청산만, 숏 진입 아님).
+            "held_position":     bool(self.held_position),
+            "position_quantity": int(self.position_quantity),
+            "is_short_entry":    False,
+            "short_position":    False,
             # P-23: 진입 임계 스냅샷 — "왜 BUY/왜 HOLD" 사후 분석용.
             "threshold_snapshot": self._threshold_snapshot(),
             "is_order_signal":       False,
@@ -230,9 +247,13 @@ class AgentCouncilDecision:
             return None
         from app.kis_paper.auto_executor import KisPaperAutoDecision
         sr = self.sell_reason if isinstance(self.sell_reason, dict) else {}
+        # 3-02: SELL 은 보유(청산 가능) 수량 이하로 제한 — 보유 청산만, 숏 진입 아님.
+        qty = int(quantity)
+        if self.final_action == CouncilAction.SELL and int(self.position_quantity) > 0:
+            qty = min(qty, int(self.position_quantity))
         return KisPaperAutoDecision(
             symbol=self.symbol, side=self.final_action.value,
-            quantity=int(quantity), price=int(price),
+            quantity=qty, price=int(price),
             selected_strategies=list(self.selected_strategies),
             confidence=float(self.confidence), quality_score=int(self.quality_score),
             entry_reason=self.reason, has_exit_plan=bool(self.has_exit_plan),
@@ -246,6 +267,9 @@ class AgentCouncilDecision:
             # 2-12: 4전략 vote 상세 + risk_flags carry (판단 근거 로그 보존).
             votes=[v.to_dict() for v in self.votes],
             risk_flags=list(self.risk_flags),
+            # 3-02: 보유 포지션 청산 context (SELL 은 보유 청산만, 숏 진입 아님).
+            held_position=bool(self.held_position),
+            position_quantity=int(self.position_quantity),
         )
 
 
@@ -397,12 +421,21 @@ def run_agent_council(
     *,
     risk_profile: RiskProfile | str | None = None,
     held_position: bool = False,
+    position: "PositionContext | None" = None,
 ) -> AgentCouncilDecision:
     """4 전략 투표 → MarketRegime → RiskOfficer → ChiefTrading → 최종 결정.
 
     held_position=True 면 SELL 판단(청산)을 허용 — 보유 없으면 SELL 은 HOLD 로
     강등(naked SELL 방지). broker 호출 0건.
+
+    3-02: `position`(PositionContext) 가 주어지면 그 보유 정보를 우선한다 —
+    held_position 은 position.is_sellable 로 결정되고, stop_loss/take_profit/
+    장마감 청산 트리거가 발생하면 SELL 을 강제(청산 우선). SELL 은 *보유 청산만*
+    이며 신규 숏 진입이 아니다(is_short_entry=False).
     """
+    # 3-02: position 이 있으면 held_position 을 보유/청산가능 수량으로 결정.
+    if position is not None:
+        held_position = position.is_sellable
     profile = policy_for(risk_profile).profile
     thr = _PROFILE_THRESHOLDS[profile]
     votes = evaluate_all_strategies(inp)
@@ -468,7 +501,7 @@ def run_agent_council(
     elif top == CouncilAction.SELL:
         if not held_position:
             final = CouncilAction.HOLD
-            reasons.append("보유 포지션 없음 — SELL 미적용(HOLD)")
+            reasons.append("보유 포지션 없음 — SELL 미적용(HOLD, NO_HELD_POSITION_FOR_SELL)")
         else:
             reasons.append(
                 f"SELL 채택 (sell_score={sell_score:.1f}, 전략={[v.strategy for v in supporting]})")
@@ -509,18 +542,36 @@ def run_agent_council(
             final = CouncilAction.HOLD
             reasons.append(f"ExitPlan 검증 실패({vres.reason_code}) — BUY → HOLD 강등")
 
+    # 8. 3-02: 보유 포지션 청산 트리거 — stop_loss/take_profit/장마감 발생 시 SELL 강제.
+    #    위험관리 청산은 BUY 보다 우선이며 RiskOfficer veto 로 막지 않는다(보유 청산은
+    #    위험 *축소*). SELL 은 보유 청산만 — 신규 숏 진입 아님.
+    pos_sell_reason: str | None = None
+    if position is not None and held_position:
+        from app.agents.position_context import infer_position_sell_reason
+        pos_sell_reason = infer_position_sell_reason(position)
+        if pos_sell_reason is not None:
+            final = CouncilAction.SELL
+            reasons.append(f"보유 포지션 청산 트리거({pos_sell_reason}) — SELL")
+    # position 이 있는데 보유가 아니면 vote 기반 SELL 도 금지(naked SELL 방지).
+    if position is not None and not held_position and final == CouncilAction.SELL:
+        final = CouncilAction.HOLD
+        reasons.append("NO_HELD_POSITION_FOR_SELL — 보유 포지션 없음, SELL 금지")
+
     selected = [v.strategy for v in votes if v.signal == final and v.score > 0] \
         if final != CouncilAction.HOLD else []
 
-    # P-26: SELL 이면 매도 사유를 표준 reason_code 로 산출 (UNKNOWN 금지).
+    # P-26 / 3-02: SELL 이면 매도 사유를 표준 reason_code 로 산출 (UNKNOWN 금지).
     sell_reason: dict[str, Any] = {}
     if final == CouncilAction.SELL:
         from app.agents.sell_reason import infer_sell_reason
+        pos_dict = position.to_dict() if position is not None else None
         sell_reason = infer_sell_reason(
             votes=[v.to_dict() for v in votes],
             selected_strategies=selected,
             market_snapshot={"price": inp.current_price, "vwap": inp.vwap},
             exit_plan=exit_plan,
+            position=pos_dict,
+            explicit_reason_code=pos_sell_reason,
         ).to_dict()
 
     return AgentCouncilDecision(
@@ -536,10 +587,13 @@ def run_agent_council(
         risk_veto_result=veto.to_dict(),
         exit_plan_validation=exit_plan_validation,
         pre_exit_plan_action=pre_exit_plan_action,
+        held_position=bool(held_position),
+        position_quantity=(position.sellable_quantity if position is not None else 0),
         metadata={"weights": dict(STRATEGY_WEIGHTS),
                   "thresholds": dict(thr),
                   "risk_penalty": risk_penalty,
-                  "held_position": bool(held_position)},
+                  "held_position": bool(held_position),
+                  "position": (position.to_dict() if position is not None else None)},
     )
 
 
