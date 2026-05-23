@@ -3,6 +3,14 @@
  *
  * AI Paper 모의매매에 사용할 *가상 자본* 을 설정하는 UI.
  *
+ * 저장 인터페이스 정책 (fix/ci-policy):
+ *  - 본 카드(P-01)의 저장 경로는 `backendApi.setPaperCapitalConfig` (in-memory
+ *    seed config) — *하위 호환 유지*.
+ *  - 동시에 Paper 자금 *단일 진실* 인 P-16 persistent settings
+ *    (usePaperCapitalSettings.totalPaperCapital) 에도 mirror 한다. 그래서 P-15/
+ *    P-16 `PaperCapitalSettingsCard` 와 같은 시드머니 값을 공유한다.
+ *  - 두 카드는 분리된 컴포넌트지만 시드머니 단일 값을 향한다 (drift 방지).
+ *
  * 절대 invariant (테스트로 lock):
  *  - 본 카드는 broker / 실거래 API / OrderExecutor 호출 0건.
  *  - "지금 매수" / "Place Order" / "실거래 시작" / "BUY/SELL/HOLD" 라벨 button
@@ -17,6 +25,10 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 
 import { Card, SectionLabel } from "./index";
 import { backendApi } from "../../services/backend/client";
+import {
+  loadPaperCapitalSettings,
+  savePaperCapitalSettings,
+} from "../../store/usePaperCapitalSettings";
 
 
 /** 표시용 KRW 포맷 — 1,000만원 / 3,000만원 / 5,000만원. */
@@ -99,6 +111,16 @@ export function PaperCapitalCard({
     try {
       const c = await backendApi.setPaperCapitalConfig({ initialCash: amount });
       setConfig(c);
+      // fix(ci-policy): Paper 자금 단일 진실은 P-16 persistent settings
+      // (usePaperCapitalSettings). 본 P-01 카드의 시드머니 선택을 persistent
+      // store(totalPaperCapital)에 *mirror* 해 두 카드(P-01 / P-15·16)가 같은
+      // 값을 보도록 한다. setPaperCapitalConfig (in-memory)는 하위 호환으로 유지.
+      try {
+        const cur = loadPaperCapitalSettings();
+        savePaperCapitalSettings({ ...cur, totalPaperCapital: amount });
+      } catch {
+        // localStorage 미가용 — in-memory config 갱신은 이미 성공.
+      }
       _refreshMinLotPreview();
     } catch (e) {
       setError(e?.message || "Paper 시드머니 설정 변경 실패");

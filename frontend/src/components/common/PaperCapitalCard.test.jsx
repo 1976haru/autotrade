@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { PaperCapitalCard } from "./PaperCapitalCard";
+import { PAPER_CAPITAL_SETTINGS_LS_KEY } from "../../store/usePaperCapitalSettings";
 
 
 vi.mock("../../services/backend/client", () => ({
@@ -81,6 +82,8 @@ beforeEach(() => {
   // default mock — min-lot preview 가 항상 응답하도록 (P-01~04 tests 들이
   // 본 preview 를 명시 mock 하지 않아도 동작).
   backendApi.paperMinLotPreview.mockResolvedValue(_DEFAULT_MIN_LOT_PREVIEW);
+  // persistent store mirror(fix/ci-policy) 검증을 위해 매 테스트 전 청소.
+  try { window.localStorage.clear(); } catch { /* jsdom */ }
 });
 afterEach(cleanup);
 
@@ -132,6 +135,7 @@ describe("<PaperCapitalCard>", () => {
     render(<PaperCapitalCard />);
     await waitFor(() => screen.getByTestId("paper-capital-card-option-50000000"));
     fireEvent.click(screen.getByTestId("paper-capital-card-option-50000000"));
+    // 정책: P-01 in-memory config 저장 (하위 호환 — setPaperCapitalConfig 호출).
     await waitFor(() => {
       expect(backendApi.setPaperCapitalConfig).toHaveBeenCalledWith({
         initialCash: 50_000_000,
@@ -141,6 +145,27 @@ describe("<PaperCapitalCard>", () => {
       expect(
         screen.getByTestId("paper-capital-card-current-value").textContent,
       ).toContain("5,000만원");
+    });
+  });
+
+  it("fix(ci-policy): 시드머니 선택이 P-16 persistent store(단일 진실)에 mirror", async () => {
+    // 정책: Paper 자금 단일 진실은 usePaperCapitalSettings(P-16). 본 P-01 카드
+    // 선택이 persistent store(totalPaperCapital)에 반영되어 PaperCapitalSettingsCard
+    // 와 같은 값을 공유한다. (setPaperCapitalConfig in-memory 호출도 유지.)
+    backendApi.paperCapitalConfig.mockResolvedValue(_DEFAULT_CONFIG);
+    backendApi.setPaperCapitalConfig.mockResolvedValue({
+      ..._DEFAULT_CONFIG, initial_cash: 50_000_000, fallback_used: false,
+    });
+    render(<PaperCapitalCard />);
+    await waitFor(() => screen.getByTestId("paper-capital-card-option-50000000"));
+    fireEvent.click(screen.getByTestId("paper-capital-card-option-50000000"));
+    await waitFor(() =>
+      expect(backendApi.setPaperCapitalConfig).toHaveBeenCalled());
+    // persistent store(localStorage)에 totalPaperCapital=50,000,000 mirror.
+    await waitFor(() => {
+      const raw = window.localStorage.getItem(PAPER_CAPITAL_SETTINGS_LS_KEY);
+      expect(raw).toBeTruthy();
+      expect(JSON.parse(raw).totalPaperCapital).toBe(50_000_000);
     });
   });
 

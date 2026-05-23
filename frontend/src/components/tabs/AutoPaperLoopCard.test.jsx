@@ -997,17 +997,51 @@ describe("<AutoPaperLoopCard>", () => {
       expect(payload.pre_market.start_allowed).toBe(true);
     });
 
-    it("selector disabled while RUNNING — clicks do not change selection", async () => {
+    it("RUNNING 중에도 risk profile 선택 가능 — 다음 tick 적용 안내 표시", async () => {
+      // fix(ci-policy): RUNNING 중 성향 변경 정책 확정 —
+      // 선택은 가능하되 "다음 tick(다음 판단)부터 적용" 안내. 주문/실거래 권한과 무관.
       const api = _mockApi({ state: "RUNNING", cycle_count: 3 });
       render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
       await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-      const conservativeCard = screen.getByTestId(
-        "risk-profile-card-CONSERVATIVE",
-      );
-      // disabled button click is a no-op; selection should stay BALANCED.
-      fireEvent.click(conservativeCard);
+      // RUNNING 안내 문구가 보인다.
+      expect(screen.getByTestId("risk-profile-running-notice").textContent)
+        .toMatch(/다음 tick|다음 판단/);
+      // CONSERVATIVE 클릭 → 선택값이 CONSERVATIVE 로 변경된다 (RUNNING 중에도 가능).
+      fireEvent.click(screen.getByTestId("risk-profile-card-CONSERVATIVE"));
       expect(screen.getByTestId("risk-profile-radiogroup")
-        .getAttribute("data-selected")).toBe("BALANCED");
+        .getAttribute("data-selected")).toBe("CONSERVATIVE");
+      expect(screen.getByTestId("current-risk-profile")
+        .getAttribute("data-risk-profile")).toBe("CONSERVATIVE");
+    });
+
+    it("RUNNING 중 risk profile 선택이 start payload(다음 시작)에 반영", async () => {
+      // 선택값은 store/payload 에 저장 — 다음 start 시 그 값을 동봉.
+      const api = _mockApi({ state: "RUNNING", cycle_count: 3 });
+      render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      fireEvent.click(screen.getByTestId("risk-profile-card-CONSERVATIVE"));
+      // localStorage(Paper 자금 설정)에 선택값이 영속된다.
+      const raw = window.localStorage.getItem("agent_trader_paper_capital_settings");
+      expect(raw).toBeTruthy();
+      expect(JSON.parse(raw).riskProfile).toBe("CONSERVATIVE");
+    });
+
+    it("RUNNING 중 AGGRESSIVE 선택해도 실거래/ENABLE_* 버튼 0개", async () => {
+      const api = _mockApi({ state: "RUNNING", cycle_count: 3 });
+      const { container } = render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+      await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+      fireEvent.click(screen.getByTestId("risk-profile-card-AGGRESSIVE"));
+      expect(screen.getByTestId("risk-profile-radiogroup")
+        .getAttribute("data-selected")).toBe("AGGRESSIVE");
+      const labels = Array.from(container.querySelectorAll("button"))
+        .map((b) => (b.textContent || "").trim());
+      for (const t of labels) {
+        expect(t).not.toMatch(/Place Order/i);
+        expect(t).not.toMatch(/지금 매수/);
+        expect(t).not.toMatch(/실거래 시작/);
+        expect(t).not.toMatch(/ENABLE_LIVE_TRADING/);
+        expect(t).not.toMatch(/ENABLE_AI_EXECUTION/);
+      }
     });
 
     it("AGGRESSIVE selected — no Place Order / 지금 매수 / 실거래 시작 anywhere in DOM", async () => {
