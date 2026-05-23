@@ -1,8 +1,37 @@
-# Desktop EXE/MSI 빌드 상태 — 2026-05 (#90 갱신)
+# Desktop EXE/MSI 빌드 상태 — 2026-05 (#90 → 0-06 갱신)
 
 > 본 문서는 *현재 시점* 의 Windows installer 산출물 존재 여부 + 빌드 시도
 > 결과를 기록한다. 사용자 (베타테스터) 가 "EXE 가 이미 있는가?" 라는 질문에
 > 즉시 답할 수 있는 단일 진실.
+
+## 0. 최신 빌드 (0-06 — main 기준 재빌드 성공)
+
+**✅ main 브랜치(`1334d26`) 기준 Windows installer 재빌드 성공.** #90 시점과
+달리 본 작업 환경에 Rust/cargo/tauri-cli/PyInstaller 가 모두 설치되어
+`scripts/build_windows_installer.ps1` 가 *실제 실행*되었다. P-16 ~ P-20 +
+0-04 / 0-05 의 backend 모듈(예: `app.permission.live_capital_guard`)이
+PyInstaller sidecar 에 포함되고, 최신 frontend dist 가 EXE 에 임베드되었다.
+
+| 항목 | 값 |
+|---|---|
+| 빌드 기준 commit | `1334d26` (main, 0-05 병합 후) |
+| 빌드 시각 | 2026-05-23 17:42 (KST) |
+| NSIS installer | `src-tauri/target/release/bundle/nsis/Agent Trader v1_1.0.0_x64-setup.exe` |
+| installer 크기 | 91,297,859 bytes |
+| installer sha256 | `E4D3982C018830EBF469BA4123B1EE14431F4FF7745430B7C8E2C7B0DCB928EC` |
+| app exe | `src-tauri/target/release/agent-trader-v1.exe` (14,697,984 bytes) |
+| backend sidecar | `src-tauri/binaries/autotrade-backend-x86_64-pc-windows-msvc.exe` (88,500,128 bytes) |
+| sidecar sha256 | `4F6566252B27C1316F65665DAB2D3D2624B79D235291BD789AF57DDFD3AE17B5` |
+| app version 표시 | `1.0.0` (VITE_APP_VERSION ← package.json) |
+| git commit hash 표시 | ❌ 미주입 (현재 화면에 commit hash/build-time 미표시 — 후속 개선 항목) |
+| 안전 flag | ENABLE_LIVE_TRADING/AI/FUTURES 변경 0건, KIS_IS_PAPER=true, secret bundle 포함 0건 |
+| 검증 게이트 | backend pytest 6146 pass / ruff clean / frontend 2475 pass / lint 0 errors / build OK |
+
+> **본 작업(0-06)은 자동 업데이트 완성 전 *임시 수동 빌드*다.** EXE 바이너리는
+> git 에 커밋하지 않으며(gitignored), GitHub Release / 별도 배포 절차에서 다룬다.
+> 아래 §1~ 의 #90 기록은 *과거 스냅샷* 으로 보존한다.
+
+## 1. 한 줄 결론 (#90 시점 — 과거 스냅샷)
 
 ## 1. 한 줄 결론 (#90 시점)
 
