@@ -177,6 +177,23 @@ export function DecisionEpisodeCard({
                       {" "}{council.risk_veto_result.pre_veto_action} → HOLD 강등
                     </div>
                   )}
+                  {/* 2-09: ExitPlan — valid BUY 면 손절/익절 표시, 검증 실패면 강등 사유 */}
+                  {council.exit_plan && council.exit_plan.stop_loss != null && (
+                    <div data-testid={`episode-exit-plan-${ep.episode_id}`}
+                         style={{ color: "var(--c-text-3)", marginTop: 1 }}>
+                      Exit plan: 손절 {Number(council.exit_plan.stop_loss).toLocaleString("ko-KR")}원
+                      {" / 익절 "}{Number(council.exit_plan.take_profit).toLocaleString("ko-KR")}원
+                      {council.exit_plan.risk_reward_ratio != null
+                        && ` (RR ${council.exit_plan.risk_reward_ratio})`}
+                    </div>
+                  )}
+                  {council.exit_plan_validation
+                    && council.exit_plan_validation.valid === false && (
+                    <div data-testid={`episode-exit-plan-veto-${ep.episode_id}`}
+                         style={{ color: "#dc2626", marginTop: 1, fontWeight: "var(--fw-bold)" }}>
+                      BUY 차단: exit_plan {council.exit_plan_validation.reason_code} → HOLD 강등
+                    </div>
+                  )}
                   {/* P-24: 주문·체결 품질 요약 */}
                   {hasOq && (
                     <div data-testid={`episode-quality-${ep.episode_id}`}

@@ -30,7 +30,13 @@ const _SAMPLE = {
         { strategy: "GAP", signal: "HOLD", score: 20, confidence: 0.3 },
         { strategy: "VWAP", signal: "BUY", score: 76, confidence: 0.7 },
       ],
-      council: { buy_score: 45.5, sell_score: 0, hold_score: 14 },
+      council: {
+        buy_score: 45.5, sell_score: 0, hold_score: 14,
+        // 2-09: valid BUY exit_plan.
+        exit_plan: { entry_price: 75000, stop_loss: 73500, take_profit: 77250,
+                     risk_reward_ratio: 1.5, exit_strategy: "STOP_LOSS_TAKE_PROFIT" },
+        exit_plan_validation: { valid: true, reason_code: "EXIT_PLAN_OK" },
+      },
       order_quality_summary: {
         broker_order_no: "PAPER-1", order_status: "FILLED", fill_status: "FILLED",
         latency_ms: 333, slippage_bps: 13.33, partial_fill: false,
@@ -72,6 +78,10 @@ const _SAMPLE = {
           veto_applied: true, pre_veto_action: "BUY", final_action: "HOLD",
           risk_flag_count: 2, max_risk_flags: 1, risk_profile: "BALANCED",
           reason_code: "RISK_OFFICER_VETO",
+        },
+        // 2-09: exit_plan 검증 실패 → BUY 차단.
+        exit_plan_validation: {
+          valid: false, reason_code: "EXIT_PLAN_MISSING", forced_action: "HOLD",
         },
       },
     },
@@ -361,5 +371,29 @@ describe("<DecisionEpisodeCard>", () => {
     render(<DecisionEpisodeCard apiClient={_api()} />);
     await waitFor(() => expect(screen.getByTestId("episode-row-ep-001")).toBeTruthy());
     expect(screen.queryByTestId("episode-risk-veto-ep-001")).toBeNull();
+  });
+
+  // ── 2-09: ExitPlan 표시 ──
+
+  it("2-09: valid BUY 에 exit plan(손절/익절) 표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-exit-plan-ep-001")).toBeTruthy());
+    const t = screen.getByTestId("episode-exit-plan-ep-001").textContent;
+    expect(t).toMatch(/Exit plan/);
+    expect(t).toMatch(/손절 73,500원/);
+    expect(t).toMatch(/익절 77,250원/);
+  });
+
+  it("2-09: exit_plan 검증 실패 시 BUY 차단 줄 표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-exit-plan-veto-ep-003")).toBeTruthy());
+    expect(screen.getByTestId("episode-exit-plan-veto-ep-003").textContent)
+      .toMatch(/BUY 차단.*EXIT_PLAN_MISSING.*HOLD 강등/);
+  });
+
+  it("2-09: exit_plan 없는 episode 는 exit plan 줄 미표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-row-ep-002")).toBeTruthy());
+    expect(screen.queryByTestId("episode-exit-plan-ep-002")).toBeNull();
   });
 });
