@@ -36,6 +36,11 @@ venv/
 .venv-310/
 backend/.venv-310/
 
+# ---------- P-16: persistent user settings (Paper 자금 기준) ----------
+# backend 가 OS 사용자 설정 폴더 부재 시 fallback 으로 쓰는 런타임 설정 폴더.
+# Paper 자금 기준만 들어가지만(secret 0건) 운영 로컬 상태이므로 git 추적 0건.
+backend/.runtime/
+
 
 # ---------- Node / build ----------
 node_modules/

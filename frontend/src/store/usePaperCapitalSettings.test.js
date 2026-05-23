@@ -7,8 +7,8 @@
  *  - localStorage key = "agent_trader_paper_capital_settings".
  */
 
-import { afterEach, describe, expect, it } from "vitest";
-import { act, renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
 
 import {
   DEFAULT_PAPER_CAPITAL_SETTINGS,
@@ -16,6 +16,7 @@ import {
   buildPaperCapitalSummary,
   formatKrwLabel,
   formatPctLabel,
+  fromBackendSettings,
   loadPaperCapitalSettings,
   normalizePaperCapitalSettings,
   parsePctInput,
@@ -255,5 +256,128 @@ describe("usePaperCapitalSettings hook", () => {
     act(() => result.current.reset());
     expect(result.current.settings.maxPositions).toBe(5);
     expect(storage._dump()[PAPER_CAPITAL_SETTINGS_LS_KEY]).toBeUndefined();
+  });
+
+  it("api 미주입 시 backend 호출 0건 (source=LOCAL)", () => {
+    const storage = _mkStorage();
+    const { result } = renderHook(() => usePaperCapitalSettings({ storage }));
+    expect(result.current.source).toBe("LOCAL");
+  });
+});
+
+
+describe("fromBackendSettings", () => {
+  it("snake_case → camelCase 매핑", () => {
+    expect(fromBackendSettings({
+      total_paper_capital: 30_000_000,
+      per_symbol_allocation: 2_000_000,
+      max_positions: 8,
+      max_daily_buy_amount: 5_000_000,
+      max_symbol_weight_pct: 0.3,
+      allow_additional_buy: true,
+      risk_profile: "AGGRESSIVE",
+    })).toEqual({
+      totalPaperCapital: 30_000_000,
+      perSymbolAllocation: 2_000_000,
+      maxPositions: 8,
+      maxDailyBuyAmount: 5_000_000,
+      maxSymbolWeightPct: 0.3,
+      allowAdditionalBuy: true,
+      riskProfile: "AGGRESSIVE",
+    });
+  });
+
+  it("null/비객체 → 빈 객체", () => {
+    expect(fromBackendSettings(null)).toEqual({});
+    expect(fromBackendSettings(undefined)).toEqual({});
+    expect(fromBackendSettings("x")).toEqual({});
+  });
+});
+
+
+describe("usePaperCapitalSettings backend 영속 (P-16)", () => {
+  function _mkApi({ getResult, saveResult } = {}) {
+    return {
+      paperCapitalSettingsGet: vi.fn().mockResolvedValue(getResult),
+      paperCapitalSettingsSave: vi.fn().mockResolvedValue(saveResult),
+      paperCapitalSettingsReset: vi.fn().mockResolvedValue({ source: "DEFAULT" }),
+    };
+  }
+
+  it("mount 시 backend GET → 적용 + localStorage mirror", async () => {
+    const storage = _mkStorage();
+    const api = _mkApi({
+      getResult: {
+        settings: { total_paper_capital: 50_000_000, max_positions: 3 },
+        source: "PERSISTED",
+        config_label: "%APPDATA%/Autotrade/config",
+      },
+    });
+    const { result } = renderHook(() =>
+      usePaperCapitalSettings({ storage, api }));
+    await waitFor(() => {
+      expect(result.current.settings.totalPaperCapital).toBe(50_000_000);
+    });
+    expect(result.current.settings.maxPositions).toBe(3);
+    expect(result.current.source).toBe("PERSISTED");
+    expect(result.current.persisted).toBe(true);
+    // localStorage mirror.
+    const raw = JSON.parse(storage._dump()[PAPER_CAPITAL_SETTINGS_LS_KEY]);
+    expect(raw.totalPaperCapital).toBe(50_000_000);
+  });
+
+  it("backend GET 실패 → localStorage fallback (source=LOCAL)", async () => {
+    const storage = _mkStorage();
+    savePaperCapitalSettings(
+      { ...DEFAULT_PAPER_CAPITAL_SETTINGS, maxPositions: 7 }, storage);
+    const api = {
+      paperCapitalSettingsGet: vi.fn().mockRejectedValue(new Error("no backend")),
+    };
+    const { result } = renderHook(() =>
+      usePaperCapitalSettings({ storage, api }));
+    await waitFor(() => expect(result.current.source).toBe("LOCAL"));
+    expect(result.current.settings.maxPositions).toBe(7);
+  });
+
+  it("setField → backend save mirror + saveStatus saved", async () => {
+    const storage = _mkStorage();
+    const api = _mkApi({
+      getResult: { settings: {}, source: "DEFAULT" },
+      saveResult: { source: "PERSISTED", config_label: "x" },
+    });
+    const { result } = renderHook(() =>
+      usePaperCapitalSettings({ storage, api }));
+    await waitFor(() => expect(api.paperCapitalSettingsGet).toHaveBeenCalled());
+    await act(async () => { result.current.setField("maxPositions", 8); });
+    await waitFor(() => expect(result.current.saveStatus).toBe("saved"));
+    expect(api.paperCapitalSettingsSave).toHaveBeenCalledWith(
+      expect.objectContaining({ max_positions: 8 }),
+    );
+  });
+
+  it("backend save 실패 → saveStatus error (localStorage 는 저장)", async () => {
+    const storage = _mkStorage();
+    const api = {
+      paperCapitalSettingsGet: vi.fn().mockResolvedValue({ settings: {}, source: "DEFAULT" }),
+      paperCapitalSettingsSave: vi.fn().mockRejectedValue(new Error("save fail")),
+    };
+    const { result } = renderHook(() =>
+      usePaperCapitalSettings({ storage, api }));
+    await waitFor(() => expect(api.paperCapitalSettingsGet).toHaveBeenCalled());
+    await act(async () => { result.current.setField("maxPositions", 9); });
+    await waitFor(() => expect(result.current.saveStatus).toBe("error"));
+    // localStorage 는 저장됨.
+    const raw = JSON.parse(storage._dump()[PAPER_CAPITAL_SETTINGS_LS_KEY]);
+    expect(raw.maxPositions).toBe(9);
+  });
+
+  it("reset → backend reset 호출", async () => {
+    const storage = _mkStorage();
+    const api = _mkApi({ getResult: { settings: {}, source: "DEFAULT" } });
+    const { result } = renderHook(() =>
+      usePaperCapitalSettings({ storage, api }));
+    await waitFor(() => expect(api.paperCapitalSettingsGet).toHaveBeenCalled());
+    await act(async () => { result.current.reset(); });
+    expect(api.paperCapitalSettingsReset).toHaveBeenCalled();
   });
 });

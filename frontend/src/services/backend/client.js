@@ -114,6 +114,19 @@ export const backendApi = {
   // 모든 경로는 PAPER/SIMULATION 한정 — broker.place_order 호출 0건.
   desktopHealth:          () => backendFetch("/api/desktop/health"),
   autoPaperStatus:        () => backendFetch("/api/auto-paper/status"),
+  // P-16: Paper 자금 설정 영구 저장 — 사용자 설정 폴더(.env 와 분리).
+  //       민감정보 저장 0건, broker.place_order 호출 0건.
+  paperCapitalSettingsGet:   () =>
+    backendFetch("/api/auto-paper/paper-capital-settings"),
+  paperCapitalSettingsSave:  (body = {}) =>
+    backendFetch("/api/auto-paper/paper-capital-settings", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
+  paperCapitalSettingsReset: () =>
+    backendFetch("/api/auto-paper/paper-capital-settings/reset", {
+      method: "POST",
+    }),
   // P-01: Paper 시드머니 설정 — Paper 전용, 실전 계좌와 무관.
   paperCapitalConfig:     () => backendFetch("/api/auto-paper/capital-config"),
   setPaperCapitalConfig:  ({ initialCash, fallbackToDefault = false } = {}) =>

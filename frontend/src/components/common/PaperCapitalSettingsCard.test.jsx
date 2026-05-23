@@ -9,8 +9,10 @@
  *  - 안전 안내 영구 노출
  */
 
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  cleanup, fireEvent, render, screen, waitFor,
+} from "@testing-library/react";
 
 import { PaperCapitalSettingsCard } from "./PaperCapitalSettingsCard";
 import { PAPER_CAPITAL_SETTINGS_LS_KEY } from "../../store/usePaperCapitalSettings";
@@ -194,5 +196,50 @@ describe("<PaperCapitalSettingsCard>", () => {
       .toMatch(/실거래 활성화 설정이 아닙니다/);
     expect(screen.getByTestId("paper-capital-settings-footer").textContent)
       .toMatch(/RiskManager/);
+  });
+
+  // ── P-16: 영구 저장 상태 / .env 분리 안내 ──
+
+  it("P-16: 저장 상태 영역 + .env 분리 안내 노출", () => {
+    render(<PaperCapitalSettingsCard storage={_mkStorage()} />);
+    const block = screen.getByTestId("paper-capital-settings-persistence");
+    expect(block.textContent).toMatch(/재실행 후에도 유지/);
+    expect(block.textContent).toMatch(/\.env/);
+    expect(block.textContent).toMatch(/분리/);
+  });
+
+  it("P-16: api 주입 시 mount backend GET 로드 + 변경 시 backend save", async () => {
+    const storage = _mkStorage();
+    const api = {
+      paperCapitalSettingsGet: vi.fn().mockResolvedValue({
+        settings: { total_paper_capital: 50_000_000 },
+        source: "PERSISTED",
+        config_label: "%APPDATA%/Autotrade/config",
+      }),
+      paperCapitalSettingsSave: vi.fn().mockResolvedValue({ source: "PERSISTED" }),
+      paperCapitalSettingsReset: vi.fn().mockResolvedValue({ source: "DEFAULT" }),
+    };
+    render(<PaperCapitalSettingsCard storage={storage} api={api} />);
+    await waitFor(() => expect(api.paperCapitalSettingsGet).toHaveBeenCalled());
+    // backend 로드 후 상태 라벨이 영속 안내로 갱신.
+    await waitFor(() => {
+      expect(screen.getByTestId("paper-capital-settings-save-status").textContent)
+        .toMatch(/재실행 후에도 유지/);
+    });
+    fireEvent.click(screen.getByTestId("preset-max-positions-8개"));
+    await waitFor(() =>
+      expect(api.paperCapitalSettingsSave).toHaveBeenCalledWith(
+        expect.objectContaining({ max_positions: 8 }),
+      ));
+  });
+
+  it("P-16: backend 미가용(api 없음)이어도 localStorage 로 동작", () => {
+    const storage = _mkStorage();
+    render(<PaperCapitalSettingsCard storage={storage} />);
+    fireEvent.click(screen.getByTestId("preset-max-positions-8개"));
+    const raw = JSON.parse(storage._dump()[PAPER_CAPITAL_SETTINGS_LS_KEY]);
+    expect(raw.maxPositions).toBe(8);
+    expect(screen.getByTestId("paper-capital-settings-save-status").textContent)
+      .toMatch(/저장/);
   });
 });

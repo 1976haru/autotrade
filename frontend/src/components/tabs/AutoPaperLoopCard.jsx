@@ -8,7 +8,9 @@ import AgentRiskProfileSelector, {
 import { backendApi } from "../../services/backend/client";
 import {
   buildPaperCapitalSummary,
+  fromBackendSettings,
   loadPaperCapitalSettings,
+  normalizePaperCapitalSettings,
   savePaperCapitalSettings,
   toStartPayloadCapitalSettings,
 } from "../../store/usePaperCapitalSettings";
@@ -165,6 +167,10 @@ export function AutoPaperLoopCard({
   const [safety, setSafety] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // P-16: backend 영속 Paper 자금 설정 — mount 시 1회 로드해 localStorage 에
+  // mirror. Settings 탭을 방문하지 않아도 start payload 가 *재실행 후에도 유지된*
+  // 자금 기준을 동봉하도록 보장. backend 미가용 시 localStorage fallback.
+  const [backendCapital, setBackendCapital] = useState(null);
   // #2-09: Paper Loop advisory ledger — 최근 AI 판단 / 가상 체결 noise-low 표시.
   const [ledgerEvents, setLedgerEvents] = useState([]);
   // #4-RiskProfileUI: 사용자가 선택한 AI 운용 성향 — 기본값 BALANCED.
@@ -253,6 +259,30 @@ export function AutoPaperLoopCard({
     return () => clearInterval(t);
   }, [refresh, pollIntervalMs]);
 
+  // P-16: mount 시 backend 영속 자금 설정 1회 로드 (있으면) → localStorage mirror.
+  // 실패해도 조용히 무시 — localStorage 값으로 동작 (구버전 backend / 테스트 mock).
+  useEffect(() => {
+    if (paperCapitalSettings) return;   // prop 우선 — backend 조회 생략.
+    if (typeof apiClient.paperCapitalSettingsGet !== "function") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiClient.paperCapitalSettingsGet();
+        if (cancelled || !res || !res.settings) return;
+        const merged = normalizePaperCapitalSettings(
+          fromBackendSettings(res.settings),
+        ).settings;
+        setBackendCapital(merged);
+        savePaperCapitalSettings(merged, undefined);   // localStorage mirror.
+        setRiskProfileState(normalizeRiskProfile(merged.riskProfile));
+      } catch {
+        // backend 미가용 — localStorage fallback.
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiClient]);
+
   // feat/step2-05-pre-market-gate: Pre-market BLOCK 판정.
   // `start_allowed === false` 가 명시적일 때만 차단 — null / undefined 는 미평가.
   const preMarketBlocked = preMarketCheckResult != null
@@ -273,8 +303,10 @@ export function AutoPaperLoopCard({
     }
   };
 
-  // P-15: capital_settings — prop 우선, 없으면 localStorage 에서 로드.
-  const capitalSettings = paperCapitalSettings || loadPaperCapitalSettings();
+  // P-15/P-16: capital_settings — prop 우선, 다음 backend 영속(mount 로드),
+  // 마지막으로 localStorage. 셋 다 동일 shape (normalize 보장).
+  const capitalSettings =
+    paperCapitalSettings || backendCapital || loadPaperCapitalSettings();
   const capitalSummary = buildPaperCapitalSummary(capitalSettings);
   const capitalPayload = toStartPayloadCapitalSettings(capitalSettings);
 
