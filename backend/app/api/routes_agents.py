@@ -1531,3 +1531,84 @@ def infer_sell_reason_endpoint(body: _SellReasonInferIn | None = None) -> dict:
             "권한이 아닙니다."
         ),
     }
+
+
+# ============================================================================
+# P-27: 거래 복기 (PostTradeReviewAgent) — read episode → review → attach
+# ============================================================================
+
+
+@router.post("/decision-episodes/{episode_id}/review")
+def review_decision_episode(
+    episode_id: str,
+    db: _Session = Depends(get_db),
+) -> dict:
+    """단일 episode 거래 복기 + 저장 (read episode → review → attach).
+
+    broker / OrderExecutor / route_order 호출 0건. **복기 결과는 주문 신호가
+    아니다** — is_order_signal=False / is_live_authorization=False. outcome 이
+    PENDING/UNAVAILABLE 이면 review_status=DATA_INSUFFICIENT 로 저장하며 episode
+    를 실패시키지 않는다.
+    """
+    from fastapi import HTTPException
+
+    from app.agents.decision_episode import attach_review, get_episode
+    from app.agents.post_trade_review import review_episode
+    ep = get_episode(db, episode_id)
+    if ep is None:
+        raise HTTPException(status_code=404, detail="episode not found")
+    review = review_episode(ep).to_dict()
+    attach_review(db, episode_id, review)
+    db.commit()
+    refreshed = get_episode(db, episode_id)
+    return {
+        "episode_id": episode_id,
+        "review":     review,
+        "episode":    refreshed,
+        "is_order_signal":       False,
+        "is_live_authorization": False,
+        "advisory_disclaimer": (
+            "거래 복기는 *학습/개선용* 입니다. 다음 주문 신호가 아니며 실거래 "
+            "권한이 아닙니다."
+        ),
+    }
+
+
+@router.post("/decision-episodes/review-completed")
+def review_completed_episodes(
+    limit: int = Query(50, ge=1, le=200),
+    db:    _Session = Depends(get_db),
+) -> dict:
+    """성과(outcome) 가 완료된 최근 episode 들을 일괄 복기 + 저장 (read-only 분석).
+
+    outcome 이 COMPLETE/PARTIAL 인 episode 만 복기 등급 산정 — 그 외는
+    DATA_INSUFFICIENT 로 표기(저장은 skip). broker / 주문 호출 0건.
+    """
+    from app.agents.decision_episode import attach_review, list_episodes
+    from app.agents.post_trade_review import (
+        STATUS_DATA_INSUFFICIENT,
+        review_episode,
+    )
+    episodes = list_episodes(db, limit=limit)
+    reviewed = 0
+    skipped = 0
+    results: list[dict] = []
+    for ep in episodes:
+        rv = review_episode(ep)
+        if rv.review_status == STATUS_DATA_INSUFFICIENT:
+            skipped += 1
+            continue
+        attach_review(db, ep["episode_id"], rv.to_dict())
+        reviewed += 1
+        results.append({"episode_id": ep["episode_id"], **rv.review_summary()})
+    db.commit()
+    return {
+        "reviewed_count": reviewed,
+        "skipped_count":  skipped,
+        "results":        results,
+        "is_order_signal":       False,
+        "is_live_authorization": False,
+        "advisory_disclaimer": (
+            "거래 복기는 *학습/개선용* 입니다. 다음 주문 신호가 아닙니다."
+        ),
+    }

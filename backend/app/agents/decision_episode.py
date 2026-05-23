@@ -150,6 +150,19 @@ def attach_outcome(
     return row
 
 
+def attach_review(
+    db: Session, episode_id: str, review: dict | None,
+) -> AgentDecisionEpisode | None:
+    """P-27: 거래 복기 결과를 episode.review 에 연결 (전용 JSON 컬럼)."""
+    row = _get_row(db, episode_id)
+    if row is None:
+        return None
+    row.review = _scrub(review, field="review")
+    row.updated_at = datetime.now(timezone.utc)
+    db.flush()
+    return row
+
+
 def attach_order_quality(
     db: Session, episode_id: str, quality: dict | None,
 ) -> AgentDecisionEpisode | None:
@@ -198,6 +211,7 @@ def episode_to_dict(row: AgentDecisionEpisode) -> dict[str, Any]:
         "fill_result":     row.fill_result,
         "portfolio_delta": row.portfolio_delta,
         "outcome":         row.outcome,
+        "review":          row.review,
         "broker_order_no": row.broker_order_no,
         "audit_id":        row.audit_id,
         "decision_log_id": row.decision_log_id,
@@ -216,10 +230,18 @@ def episode_to_dict(row: AgentDecisionEpisode) -> dict[str, Any]:
         # P-26: 매도 사유 (SELL 일 때만 비어있지 않음 — 전체는 council.sell_reason 에).
         "sell_reason":         _sell_reason_for(row),
         "sell_reason_summary": _sell_reason_summary_for(row),
+        # P-27: 거래 복기 요약 (전체는 review 에).
+        "review_summary":      _review_summary_for(row.review),
         # invariant carry.
         "is_live_authorization": False,
         "is_order_signal":       False,
     }
+
+
+def _review_summary_for(review: Any) -> dict[str, Any]:
+    """review dict → 목록 표시용 요약 (post_trade_review.review_summary_for 위임)."""
+    from app.agents.post_trade_review import review_summary_for
+    return review_summary_for(review if isinstance(review, dict) else None)
 
 
 def _sell_reason_for(row: AgentDecisionEpisode) -> dict[str, Any]:
@@ -352,6 +374,8 @@ def summarize_episodes(db: Session, *, limit: int = 200) -> dict[str, Any]:
     by_outcome_status: dict[str, int] = {}  # P-25
     by_sell_reason: dict[str, int] = {}      # P-26: SELL 사유별 카운트
     by_sell_category: dict[str, int] = {}    # P-26: SELL 사유 카테고리별
+    by_review_grade: dict[str, int] = {}     # P-27: 복기 등급별
+    by_review_tag: dict[str, int] = {}       # P-27: 복기 태그별
     latencies: list[int] = []
     slippages: list[float] = []
     rejected_count = 0
@@ -411,6 +435,13 @@ def summarize_episodes(db: Session, *, limit: int = 200) -> dict[str, Any]:
                 by_sell_reason[code] = by_sell_reason.get(code, 0) + 1
                 cat = sr.get("category") or "UNKNOWN"
                 by_sell_category[cat] = by_sell_category.get(cat, 0) + 1
+        # P-27: 복기 집계 (review.grade / review.tags).
+        if isinstance(r.review, dict) and r.review.get("review_status"):
+            g = r.review.get("grade") or "UNKNOWN"
+            by_review_grade[g] = by_review_grade.get(g, 0) + 1
+            for t in (r.review.get("tags") or []):
+                if t:
+                    by_review_tag[t] = by_review_tag.get(t, 0) + 1
     return {
         "total":           len(rows),
         "by_action":       by_action,
@@ -424,6 +455,8 @@ def summarize_episodes(db: Session, *, limit: int = 200) -> dict[str, Any]:
         "by_outcome_status": by_outcome_status,
         "by_sell_reason":    by_sell_reason,
         "by_sell_category":  by_sell_category,
+        "by_review_grade":   by_review_grade,
+        "by_review_tag":     by_review_tag,
         "avg_latency_ms":  (round(sum(latencies) / len(latencies), 1) if latencies else None),
         "avg_slippage_bps": (round(sum(slippages) / len(slippages), 2) if slippages else None),
         "rejected_count":     rejected_count,
@@ -439,6 +472,8 @@ __all__ = [
     "record_episode",
     "update_episode_with_portfolio_snapshot",
     "attach_outcome",
+    "attach_review",
+    "attach_order_quality",
     "get_episode",
     "list_episodes",
     "summarize_episodes",
