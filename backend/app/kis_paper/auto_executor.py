@@ -73,6 +73,9 @@ class KisPaperAutoDecision:
     exit_plan_validation: dict[str, Any]    = field(default_factory=dict)
     sell_reason_code:     str | None        = None
     sell_reason_category: str | None        = None
+    # 2-12: 4전략 vote 상세 + risk_flags carry (AgentDecisionLog 판단 근거 보존).
+    votes:                list[dict[str, Any]] = field(default_factory=list)
+    risk_flags:           list[str]         = field(default_factory=list)
 
     @property
     def notional_krw(self) -> int:
@@ -263,14 +266,22 @@ async def execute_kis_paper_auto_order(
         except Exception:  # noqa: BLE001 — sell_reason 실패는 주문 흐름을 막지 않음.
             sell_meta = {}
 
-    # 2-11: Agent Council 판단 근거 carry (감사/추적용 — 주문 동작 영향 없음).
-    council_meta: dict[str, Any] = {}
-    if getattr(decision, "risk_profile", None):
-        council_meta["risk_profile"] = decision.risk_profile
-    if getattr(decision, "risk_veto_result", None):
-        council_meta["risk_veto_result"] = dict(decision.risk_veto_result)
-    if getattr(decision, "exit_plan_validation", None):
-        council_meta["exit_plan_validation"] = dict(decision.exit_plan_validation)
+    # 2-12: AgentDecisionLog meta 표준 빌더 (votes/판단근거/주문결과) — secret-safe.
+    #       Agent Council 판단 근거(2-11 carry)는 helper 가 decision 에서 추출.
+    def _decision_log_meta(*, reason_code, broker_order_no, submitted, dry_run,
+                           broker_order_sent, audit_id, extra_meta) -> dict[str, Any]:
+        from app.agents.decision_log_meta import build_agent_decision_log_meta
+        meta = build_agent_decision_log_meta(
+            decision=decision, reason_code=reason_code, broker_order_no=broker_order_no,
+            submitted=submitted, dry_run=dry_run, broker_order_sent=broker_order_sent,
+            order_created=bool(submitted), audit_id=audit_id, episode_id=chain_id,
+            extra=extra_meta,
+        )
+        # SELL sell_reason 추론 fallback override (council 이 carry 안 한 경우).
+        if sell_meta.get("sell_reason_code") and not meta.get("sell_reason_code"):
+            meta["sell_reason_code"] = sell_meta.get("sell_reason_code")
+            meta["sell_reason_category"] = sell_meta.get("sell_reason_category")
+        return meta
 
     def _finish(reason_code: str, reason_message: str, *,
                 submitted: bool = False, broker_order_no=None, order_status=None,
@@ -287,20 +298,12 @@ async def execute_kis_paper_auto_order(
                     confidence=int(decision.confidence * 100),
                     reasons=[reason_code, reason_message,
                              *(decision.selected_strategies or [])],
-                    meta={
-                        "reason_code": reason_code,
-                        "broker_order_type": "KIS_PAPER",
-                        "broker_order_no": broker_order_no,
-                        "broker_order_sent": bool(broker_order_sent),
-                        "submitted": bool(submitted),
-                        "dry_run": bool(perm.dry_run),
-                        "is_live_authorization": False,
-                        "selected_strategies": list(decision.selected_strategies or []),
-                        "quality_score": int(decision.quality_score),
-                        **sell_meta,
-                        **council_meta,
-                        **(extra_meta or {}),
-                    },
+                    meta=_decision_log_meta(
+                        reason_code=reason_code, broker_order_no=broker_order_no,
+                        submitted=submitted, dry_run=bool(perm.dry_run),
+                        broker_order_sent=broker_order_sent, audit_id=audit_id,
+                        extra_meta=extra_meta,
+                    ),
                     chain_id=chain_id,
                 )
                 db.add(row)

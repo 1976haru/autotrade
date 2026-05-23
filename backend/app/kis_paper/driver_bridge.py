@@ -87,10 +87,21 @@ def build_decision_from_pipeline(
         market_input, risk_profile=risk_profile, held_position=False,
     )
     if council.final_action == CouncilAction.HOLD:
+        # 2-12: HOLD 도 판단 근거(votes/risk_flags/risk_veto/exit_plan_validation)를
+        #       carry 해 AgentDecisionLog 에 보존 (HOLD 는 실패가 아니라 정상 판단).
+        cd = council.to_dict()
         return (
             KisPaperAutoDecision(
                 symbol=ro.symbol, side="HOLD", quantity=0, price=int(ro.price),
                 entry_reason=council.reason or "council HOLD",
+                selected_strategies=list(cd.get("selected_strategies", [])),
+                confidence=float(cd.get("confidence", 0.0) or 0.0),
+                quality_score=int(cd.get("quality_score", 0) or 0),
+                risk_profile=cd.get("risk_profile"),
+                risk_veto_result=dict(cd.get("risk_veto_result", {}) or {}),
+                exit_plan_validation=dict(cd.get("exit_plan_validation", {}) or {}),
+                votes=list(cd.get("votes", []) or []),
+                risk_flags=list(cd.get("risk_flags", []) or []),
             ),
             council,
             market_input,
