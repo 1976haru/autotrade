@@ -606,13 +606,17 @@ export function AutoPaperLoopCard({
         </div>
       )}
 
-      {/* #4-RiskProfileUI: 운용 성향 선택. RUNNING(주문 진행) 중에만 비활성 —
-          장 시작 전(PAUSED/STOPPED/WAITING_MARKET/MARKET_CLOSED)에는 선택 가능. */}
+      {/* #4-RiskProfileUI / fix(ci-policy): 운용 성향 선택 정책 —
+          RUNNING(운용 중)에도 *선택 가능*하다. 단 즉시 현재 tick 에 적용되는
+          것이 아니라 *다음 tick(다음 판단)부터* 적용된다는 점을 안내한다.
+          성향 선택은 주문 권한 / 실거래 권한과 무관 (AGGRESSIVE 선택해도 실거래
+          / 추가매수 자동 허용으로 이어지지 않음). 진행 중 액션(busy)일 때만 잠깐
+          비활성. */}
       <div style={{ marginBottom: 12 }}>
         <AgentRiskProfileSelector
           value={riskProfile}
           onChange={setRiskProfile}
-          disabled={busy || state === "RUNNING"}
+          disabled={busy}
         />
         <div
           data-testid="current-risk-profile"
@@ -621,6 +625,15 @@ export function AutoPaperLoopCard({
         >
           현재 성향: <strong>{getRiskProfileLabel(riskProfile)}</strong>
         </div>
+        {state === "RUNNING" && (
+          <div
+            data-testid="risk-profile-running-notice"
+            style={{ marginTop: 4, fontSize: "var(--fs-xs)", color: "#a16207" }}
+          >
+            변경된 운용 성향은 다음 tick(다음 판단)부터 적용됩니다. 현재 진행
+            중인 주문에는 영향을 주지 않습니다.
+          </div>
+        )}
       </div>
 
       {/* P-15: 적용 자금 기준 요약 — 시작 *전* 사용자에게 노출. */}
