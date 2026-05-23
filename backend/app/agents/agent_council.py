@@ -548,7 +548,11 @@ def run_agent_council(
     pos_sell_reason: str | None = None
     if position is not None and held_position:
         from app.agents.position_context import infer_position_sell_reason
-        pos_sell_reason = infer_position_sell_reason(position)
+        _pol = policy_for(profile)
+        _def_sl_pct = round(_pol.default_stop_loss_pct * 100, 2)
+        pos_sell_reason = infer_position_sell_reason(
+            position, default_stop_loss_pct=_def_sl_pct,
+            default_take_profit_pct=round(_def_sl_pct * 2, 2))
         if pos_sell_reason is not None:
             final = CouncilAction.SELL
             reasons.append(f"보유 포지션 청산 트리거({pos_sell_reason}) — SELL")

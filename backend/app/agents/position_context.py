@@ -21,9 +21,10 @@ SELL_STOP_LOSS         = "STOP_LOSS"
 SELL_TAKE_PROFIT       = "TAKE_PROFIT"
 SELL_MARKET_CLOSE_EXIT = "MARKET_CLOSE_EXIT"
 
-# 보유 없음 차단 reason.
+# 보유 없음 / 손절 미설정 차단 reason.
 NO_HELD_POSITION_FOR_SELL = "NO_HELD_POSITION_FOR_SELL"
 SELL_QUANTITY_EXCEEDS_POSITION = "SELL_QUANTITY_EXCEEDS_POSITION"
+STOP_LOSS_NOT_CONFIGURED = "STOP_LOSS_NOT_CONFIGURED"
 
 
 def _f(v: Any) -> float | None:
@@ -31,6 +32,17 @@ def _f(v: Any) -> float | None:
         return float(v) if v is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _norm_pct(v: Any) -> float | None:
+    """손절/익절 % 정규화 → percent (2.0 = 2%). 0<v<=1 은 ratio 로 보고 *100.
+
+    음수/0/None/비정상은 None(미설정). 예: 2.0→2.0, 0.02→2.0, 1.5→1.5, 0.5→50.0.
+    """
+    f = _f(v)
+    if f is None or f <= 0:
+        return None
+    return round(f * 100.0, 6) if f <= 1.0 else f
 
 
 @dataclass(frozen=True)
@@ -43,8 +55,13 @@ class PositionContext:
     available_quantity:  int = 0
     average_entry_price: float | None = None
     current_price:       float | None = None
-    stop_loss:           float | None = None
-    take_profit:         float | None = None
+    stop_loss:           float | None = None       # 절대 손절가 (최우선)
+    take_profit:         float | None = None       # 절대 익절가 (최우선)
+    # 3-03: 손절/익절 % — 절대가 없을 때 average_entry_price 기준으로 계산.
+    #       **내부 표준은 percent** (2.0 = 2%). 0<v<=1 입력(0.02)은 ratio 로 보고
+    #       *100 정규화(0.02 → 2.0%). 음수/0/None 은 미설정.
+    stop_loss_pct:       float | None = None
+    take_profit_pct:     float | None = None
     market_time_phase:   str | None = None       # PRE_MARKET/.../CLOSING/...
     market_close_exit_enabled: bool = False
 
@@ -78,6 +95,37 @@ class PositionContext:
             return None
         return round((cur - entry) / entry * 100.0, 4)
 
+    def resolve_stop_loss_price(self, *, default_stop_loss_pct: float | None = None
+                                ) -> tuple[float | None, str]:
+        """손절가(절대) 해소 — 우선순위 + source 반환.
+
+        1) `stop_loss`(절대) → ("absolute") 2) `stop_loss_pct`(평단 기준) →
+        ("pct") 3) `default_stop_loss_pct`(risk_profile) → ("default_pct")
+        4) 없음 → (None, "STOP_LOSS_NOT_CONFIGURED").
+        """
+        sl = _f(self.stop_loss)
+        if sl is not None and sl > 0:
+            return sl, "absolute"
+        entry = _f(self.average_entry_price)
+        for pct, src in ((self.stop_loss_pct, "pct"),
+                         (default_stop_loss_pct, "default_pct")):
+            p = _norm_pct(pct)
+            if p is not None and entry is not None and entry > 0:
+                return round(entry * (1.0 - p / 100.0), 4), src
+        return None, "STOP_LOSS_NOT_CONFIGURED"
+
+    def resolve_take_profit_price(self, *, default_take_profit_pct: float | None = None
+                                  ) -> float | None:
+        tp = _f(self.take_profit)
+        if tp is not None and tp > 0:
+            return tp
+        entry = _f(self.average_entry_price)
+        for pct in (self.take_profit_pct, default_take_profit_pct):
+            p = _norm_pct(pct)
+            if p is not None and entry is not None and entry > 0:
+                return round(entry * (1.0 + p / 100.0), 4)
+        return None
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "held_position":       bool(self.held_position),
@@ -89,6 +137,9 @@ class PositionContext:
             "current_price":       _f(self.current_price),
             "stop_loss":           _f(self.stop_loss),
             "take_profit":         _f(self.take_profit),
+            "stop_loss_pct":       _norm_pct(self.stop_loss_pct),
+            "take_profit_pct":     _norm_pct(self.take_profit_pct),
+            "resolved_stop_loss_price": self.resolve_stop_loss_price()[0],
             "unrealized_return_pct": self.unrealized_return_pct,
             "market_time_phase":   self.market_time_phase,
             "is_short_entry":      False,
@@ -96,20 +147,26 @@ class PositionContext:
         }
 
 
-def infer_position_sell_reason(position: PositionContext | None) -> str | None:
+def infer_position_sell_reason(
+    position: PositionContext | None,
+    *,
+    default_stop_loss_pct: float | None = None,
+    default_take_profit_pct: float | None = None,
+) -> str | None:
     """보유 포지션 기반 *청산 트리거* reason_code (우선순위 적용). 없으면 None.
 
-    우선순위: STOP_LOSS > TAKE_PROFIT > MARKET_CLOSE_EXIT. 보유 없음/현재가 없음이면
-    None (vote 기반 SELL 은 council 이 별도 처리). 신규 숏 진입은 생성하지 않는다.
+    우선순위: STOP_LOSS > TAKE_PROFIT > MARKET_CLOSE_EXIT. 손절가는
+    `resolve_stop_loss_price`(절대 > pct > risk_profile default) 로 해소한다.
+    보유 없음/현재가 없음이면 None. 신규 숏 진입은 생성하지 않는다.
     """
     if position is None or not position.is_sellable:
         return None
     cur = _f(position.current_price)
-    sl = _f(position.stop_loss)
-    tp = _f(position.take_profit)
     if cur is not None:
+        sl, _src = position.resolve_stop_loss_price(default_stop_loss_pct=default_stop_loss_pct)
         if sl is not None and sl > 0 and cur <= sl:
             return SELL_STOP_LOSS
+        tp = position.resolve_take_profit_price(default_take_profit_pct=default_take_profit_pct)
         if tp is not None and tp > 0 and cur >= tp:
             return SELL_TAKE_PROFIT
     if position.market_close_exit_enabled \
@@ -130,4 +187,5 @@ __all__ = [
     "PositionContext", "infer_position_sell_reason", "cap_sell_quantity",
     "SELL_STOP_LOSS", "SELL_TAKE_PROFIT", "SELL_MARKET_CLOSE_EXIT",
     "NO_HELD_POSITION_FOR_SELL", "SELL_QUANTITY_EXCEEDS_POSITION",
+    "STOP_LOSS_NOT_CONFIGURED",
 ]
