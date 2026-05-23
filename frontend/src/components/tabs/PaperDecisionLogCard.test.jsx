@@ -249,3 +249,47 @@ describe("PaperDecisionLogCard — footer note", () => {
     expect(note.textContent).toContain("0건");
   });
 });
+
+
+describe("P-17: PaperDecisionLogCard 매수 불가 사유 표시", () => {
+  const _BLOCKED = [
+    {
+      decision_id: "blk-1", timestamp: "2026-05-23T01:00:00+00:00",
+      strategy: "sma_crossover", symbol: "005930", mode: "PAPER",
+      decision_action: "BUY", confidence: 70, reason: "[paper-flow] block",
+      risk_flags: ["INSUFFICIENT_PAPER_CASH"], market_regime: "TREND_UP",
+      risk_veto: false, risk_veto_reasons: [], position_size: 0,
+      sizing_verdict: null, paper_order_id: null,
+      paper_fill_status: "PAPER_REJECTED", chain_id: "c",
+      is_order_signal: false, auto_apply_allowed: false, is_live_authorization: false,
+    },
+    {
+      decision_id: "blk-2", timestamp: "2026-05-23T01:01:00+00:00",
+      strategy: "rsi_reversion", symbol: "035720", mode: "PAPER",
+      decision_action: "HOLD", confidence: null, reason: "veto",
+      risk_flags: [], market_regime: "SIDEWAYS",
+      risk_veto: true, risk_veto_reasons: ["STALE_DATA"], position_size: 0,
+      sizing_verdict: null, paper_order_id: null, paper_fill_status: "NA",
+      chain_id: "c", is_order_signal: false, auto_apply_allowed: false,
+      is_live_authorization: false,
+    },
+  ];
+
+  it("BLOCKED row 에 한국어 매수 불가 사유 chip 표시", () => {
+    render(<PaperDecisionLogCard entries={_BLOCKED} summary={{}} />);
+    const chip = screen.getByTestId("decision-log-block-reason-blk-1");
+    expect(chip.textContent).toMatch(/남은 Paper 현금이 부족하여 매수 차단/);
+  });
+
+  it("risk_veto STALE_DATA → 현재가 stale 사유로 매핑 표시", () => {
+    render(<PaperDecisionLogCard entries={_BLOCKED} summary={{}} />);
+    const chip = screen.getByTestId("decision-log-block-reason-blk-2");
+    expect(chip.textContent).toMatch(/현재가가 오래되어 매수 차단/);
+  });
+
+  it("정상 체결(FILLED) row 에는 block chip 없음", () => {
+    render(<PaperDecisionLogCard entries={_SAMPLE} summary={_SUMMARY} />);
+    // _SAMPLE[0] 은 BUY/PAPER_FILLED — 차단 chip 없음.
+    expect(screen.queryByTestId("decision-log-block-reason-abc-1")).toBeNull();
+  });
+});

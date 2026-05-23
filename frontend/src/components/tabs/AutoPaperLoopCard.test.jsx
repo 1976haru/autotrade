@@ -1811,3 +1811,62 @@ describe("<AutoPaperLoopCard> — risk_profile 영속/표시", () => {
     expect(screen.getByTestId("current-risk-profile").getAttribute("data-risk-profile")).toBe("BALANCED");
   });
 });
+
+
+describe("P-17: 매수 불가 사유 요약", () => {
+  afterEach(cleanup);
+
+  function _withBlocked(api, summary) {
+    return { ...api, autoPaperBlockedReasonsToday: vi.fn(async () => summary) };
+  }
+
+  const _SUMMARY = {
+    total_blocked: 3,
+    by_reason: { MIN_LOT_NOT_AFFORDABLE: 2, INSUFFICIENT_PAPER_CASH: 1 },
+    recent: [],
+    last_block: { reason_code: "MIN_LOT_NOT_AFFORDABLE", symbol: "373220" },
+    is_order_signal: false,
+    is_live_authorization: false,
+  };
+
+  it("오늘 차단 건수 + 마지막 차단 사유 표시", async () => {
+    const api = _withBlocked(_mockApi({ state: "RUNNING", cycle_count: 1 }), _SUMMARY);
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("auto-paper-blocked-summary")).toBeTruthy());
+    expect(screen.getByTestId("auto-paper-blocked-summary").textContent)
+      .toMatch(/오늘 매수 차단 3건/);
+    expect(screen.getByTestId("auto-paper-last-block").textContent)
+      .toMatch(/1주 가격이 투자한도 초과로 제외/);
+    expect(screen.getByTestId("auto-paper-last-block").textContent).toMatch(/373220/);
+    expect(screen.getByTestId("auto-paper-last-block-code").textContent)
+      .toMatch(/MIN_LOT_NOT_AFFORDABLE/);
+  });
+
+  it("차단 0건이면 요약 패널 비표시", async () => {
+    const api = _withBlocked(_mockApi({ state: "RUNNING", cycle_count: 1 }), {
+      total_blocked: 0, by_reason: {}, recent: [], last_block: null,
+      is_order_signal: false, is_live_authorization: false,
+    });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    expect(screen.queryByTestId("auto-paper-blocked-summary")).toBeNull();
+  });
+
+  it("정지 버튼은 매수 불가 요약과 무관하게 RUNNING 에서 동작", async () => {
+    const api = _withBlocked(_mockApi({ state: "RUNNING", cycle_count: 1 }), _SUMMARY);
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(screen.getByTestId("auto-paper-blocked-summary")).toBeTruthy());
+    const stopBtn = screen.getByTestId("btn-stop-auto-paper");
+    expect(stopBtn.disabled).toBe(false);
+    fireEvent.click(stopBtn);
+    await waitFor(() => expect(api.autoPaperStop).toHaveBeenCalled());
+  });
+
+  it("blocked-reasons API 미지원이어도 크래시 없음", async () => {
+    const api = _mockApi({ state: "RUNNING", cycle_count: 1 });   // 메서드 없음.
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    expect(screen.queryByTestId("auto-paper-blocked-summary")).toBeNull();
+  });
+});
