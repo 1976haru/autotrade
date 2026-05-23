@@ -111,6 +111,28 @@ class Settings(BaseSettings):
     # Paper 체결 시뮬 슬리피지 (bps). 0 (기본) 이면 현재가 그대로 체결.
     ai_paper_fill_slippage_bps:      float = 0.0
 
+    # KIS Paper Auto Trading — 한투 *모의투자* API 자동주문. **실거래 권한이
+    # 아니다.** 기본 OFF. True + dry_run=false 일 때만 KIS 모의투자 API 로 실제
+    # 모의 주문을 전송한다 (모의 계좌, 실제 돈 0원). KIS_IS_PAPER=true +
+    # ENABLE_LIVE_TRADING=false 가 *반드시* 필요 — 둘 중 하나라도 어긋나면 차단.
+    # 주문은 기존 sanctioned 경로(route_order → RiskManager → PermissionGate →
+    # OrderExecutor → KisBrokerAdapter.place_order(is_paper=True))를 통과한다.
+    enable_kis_paper_auto_trading:   bool  = False
+    # True (기본) 이면 주문 전송 직전까지만 검증하고 KIS API 호출 0건
+    # (KIS_PAPER_DRY_RUN_OK). False 일 때만 실제 KIS 모의투자 주문 전송.
+    kis_paper_auto_order_dry_run:    bool  = True
+    kis_paper_auto_max_orders_per_day: int = 10
+    kis_paper_auto_max_order_notional: int = 1_000_000
+    # 주문 허용 시간창 (KST "HH:MM"). 장 시작 직후/마감 직전 변동성 회피.
+    kis_paper_auto_order_window_start: str = "09:05"
+    kis_paper_auto_order_window_end:   str = "14:50"
+    # 신호 품질 최소 기준 (자동주문 진입 게이트).
+    kis_paper_auto_min_confidence:    float = 0.6   # 0~1
+    kis_paper_auto_min_quality_score: int   = 60    # 0~100
+    # KIS 모의 체결 조회 polling — 기본 OFF (안전). enable_fill_polling 와 별개.
+    kis_paper_fill_polling:           bool  = False
+    kis_paper_fill_poll_interval_seconds: int = 10
+
     def symbol_whitelist_set(self) -> set[str]:
         """env 콤마 문자열을 set으로 파싱. 공백 strip."""
         if not self.symbol_whitelist:

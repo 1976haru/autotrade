@@ -812,7 +812,9 @@ export function AutoPaperLoopCard({
                 >
                   현재 모드:{" "}
                   <strong>
-                    {bt.tick_mode === "SIMULATED_TRADE"
+                    {bt.tick_mode === "KIS_PAPER_AUTO"
+                      ? "KIS 모의투자 자동주문 — 한투 모의 API로 주문 전송"
+                      : bt.tick_mode === "SIMULATED_TRADE"
                       ? "Paper 모의 체결 — VirtualOrder와 가상 포트폴리오에 반영"
                       : "진단 dry-run — 주문/체결 반영 없음"}
                   </strong>
@@ -822,6 +824,45 @@ export function AutoPaperLoopCard({
                       ? "Paper 체결 시뮬레이션 반영"
                       : "판단만 기록"}
                   </span>
+                </div>
+              )}
+
+              {/* KIS 모의 자동주문 상태 — 한투 모의투자 API 전용. 실거래 아님. */}
+              {(bt?.kis_paper_auto_enabled || bt?.tick_mode === "KIS_PAPER_AUTO") && (
+                <div
+                  data-testid="bg-tick-kis-auto"
+                  data-kis-enabled={String(!!bt?.kis_paper_auto_enabled)}
+                  style={{
+                    marginTop: 4, padding: "6px 8px", background: "#fffbeb",
+                    border: "1px solid #fde68a", borderRadius: "var(--r-sm)",
+                    color: "var(--c-text)",
+                  }}
+                >
+                  <div style={{ fontWeight: "var(--fw-bold)" }}>
+                    KIS 모의 자동주문:{" "}
+                    <span data-testid="bg-tick-kis-state">
+                      {bt?.kis_paper_auto_enabled ? "ON" : "OFF"}
+                    </span>
+                    {bt?.kis_paper_auto_dry_run ? (
+                      <span data-testid="bg-tick-kis-dry-run" style={{ marginLeft: 6, color: "var(--c-text-3)" }}>
+                        · dry-run (전송 없음)
+                      </span>
+                    ) : (
+                      <span style={{ marginLeft: 6, color: "var(--c-text-3)" }}>· 주문 전송</span>
+                    )}
+                  </div>
+                  {bt?.last_broker_order_no && (
+                    <div data-testid="bg-tick-kis-order-no" style={{ marginTop: 2 }}>
+                      마지막 KIS 모의 주문번호: <code>{bt.last_broker_order_no}</code>
+                      {bt?.last_order_status ? (
+                        <span data-testid="bg-tick-kis-order-status"> · {bt.last_order_status}</span>
+                      ) : null}
+                    </div>
+                  )}
+                  <div data-testid="bg-tick-kis-safety" style={{ marginTop: 2, color: "var(--c-text-3)" }}>
+                    한투 모의투자 API 주문 · 실제 돈이 나가지 않습니다 · 실거래 OFF ·
+                    broker_order_type=KIS_PAPER · is_live_authorization=false
+                  </div>
                 </div>
               )}
 

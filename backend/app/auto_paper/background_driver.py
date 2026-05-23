@@ -131,6 +131,9 @@ class DriverTickResult:
     cash_before:         int | None = None
     cash_after:          int | None = None
     position_quantity:   int = 0
+    # KIS_PAPER_AUTO carry.
+    broker_order_no:     str | None = None
+    order_status:        str | None = None
 
     # 절대 invariant.
     is_order_signal:       bool = False
@@ -138,12 +141,14 @@ class DriverTickResult:
     broker_order_sent:     bool = False
 
     def __post_init__(self) -> None:
+        # is_order_signal / is_live_authorization 는 *항상* False (실거래/주문
+        # 신호 아님). broker_order_sent 는 KIS_PAPER_AUTO 모드에서 *모의* 주문이
+        # 실제 전송되면 True 가 될 수 있다 (한투 모의투자 API — 실거래 아님);
+        # DIAGNOSTIC / SIMULATED_TRADE 모드에서는 False.
         if self.is_order_signal is not False:
             raise ValueError("DriverTickResult.is_order_signal must be False")
         if self.is_live_authorization is not False:
             raise ValueError("DriverTickResult.is_live_authorization must be False")
-        if self.broker_order_sent is not False:
-            raise ValueError("DriverTickResult.broker_order_sent must be False")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -163,6 +168,8 @@ class DriverTickResult:
             "cash_before":          self.cash_before,
             "cash_after":           self.cash_after,
             "position_quantity":    int(self.position_quantity),
+            "broker_order_no":      self.broker_order_no,
+            "order_status":         self.order_status,
             "is_order_signal":       self.is_order_signal,
             "is_live_authorization": self.is_live_authorization,
             "broker_order_sent":     self.broker_order_sent,
@@ -197,6 +204,10 @@ class BackgroundTickDriver:
         trade_flow_runner: Optional[Callable[..., Any]] = None,
         risk_check_builder: Optional[Callable[..., Any]] = None,
         risk_manager_provider: Optional[Callable[[], Any]] = None,
+        # KIS_PAPER_AUTO mode 의존성 — broker / route_order 를 import 하지 않기
+        # 위해 *주입된 async 콜러블* 로만 KIS 주문 흐름을 호출한다. 미주입 시
+        # `app.kis_paper.driver_bridge.kis_paper_auto_tick` 를 lazy import.
+        kis_auto_tick_fn:  Optional[Callable[..., Any]] = None,
     ):
         self._settings_provider = settings_provider
         self._loop_provider = loop_provider
@@ -207,6 +218,7 @@ class BackgroundTickDriver:
         self._trade_flow_runner = trade_flow_runner
         self._risk_check_builder = risk_check_builder
         self._risk_manager_provider = risk_manager_provider
+        self._kis_auto_tick_fn = kis_auto_tick_fn
         # 상태.
         self._task: asyncio.Task | None = None
         self._stop_event: asyncio.Event | None = None
@@ -226,6 +238,9 @@ class BackgroundTickDriver:
         self._last_cash_before: int | None = None
         self._last_cash_after: int | None = None
         self._last_position_quantity: int = 0
+        # KIS_PAPER_AUTO 최근 주문 결과 carry.
+        self._last_broker_order_no: str | None = None
+        self._last_order_status: str | None = None
 
     # ── settings / loop accessors ──────────────────────────────────────────
 
@@ -539,16 +554,105 @@ class BackgroundTickDriver:
             position_quantity=pos_qty,
         )
 
+    # ── 모드 C: KIS Paper Auto (한투 모의투자 API 주문) ────────────────────────
+
+    def _kis_auto_tick_callable(self):
+        """주입된 KIS tick 콜러블 — 미주입 시 bridge lazy import (broker 무관)."""
+        if self._kis_auto_tick_fn is not None:
+            return self._kis_auto_tick_fn
+        from app.kis_paper.driver_bridge import kis_paper_auto_tick
+        return kis_paper_auto_tick
+
+    async def kis_paper_tick(self, now: datetime | None = None) -> DriverTickResult:
+        """KIS_PAPER_AUTO 1 tick — 게이트 통과 시 주입 콜러블로 KIS 주문 흐름 위임.
+
+        broker / route_order 직접 호출 0건 (콜러블 격리). 차단/실행 모든 경우
+        reason 기록. 실거래 0건.
+        """
+        if now is None:
+            now = self._now_provider()
+        self._last_tick_at = now.isoformat()
+        self._last_tick_mode = "KIS_PAPER_AUTO"
+
+        allowed, reason_code, reason_msg = self.evaluate_gate(now)
+        if not allowed:
+            self._last_reason_code = reason_code
+            self._last_reason_message = reason_msg
+            self._emit(level="INFO", code=f"KIS_PAPER_TICK_{reason_code}",
+                       message=reason_msg,
+                       details={"executed": False, "tick_mode": "KIS_PAPER_AUTO"})
+            return DriverTickResult(
+                executed=False, reason_code=reason_code, reason_message=reason_msg,
+                cycle_count=int(self._loop().status(now=now).cycle_count),
+                recorded_event=True, tick_mode="KIS_PAPER_AUTO",
+            )
+
+        # cycle 증가.
+        try:
+            cycle = int(self._loop().tick().cycle_count)
+        except Exception:  # noqa: BLE001
+            cycle = int(self._loop().status(now=now).cycle_count)
+
+        self._tick_count_today += 1
+        try:
+            res = await self._kis_auto_tick_callable()(now=now)
+        except Exception as exc:  # noqa: BLE001 — KIS tick 오류는 loop 를 죽이지 않음.
+            safe = _redact_secret(f"{type(exc).__name__}: {exc}")
+            self._last_reason_code = "KIS_PAPER_ERROR"
+            self._last_reason_message = safe
+            self._emit(level="WARN", code="KIS_PAPER_TICK_ERROR", message=safe,
+                       details={"executed": True, "tick_mode": "KIS_PAPER_AUTO"})
+            return DriverTickResult(
+                executed=True, reason_code="KIS_PAPER_ERROR", reason_message=safe,
+                cycle_count=cycle, recorded_event=True, tick_mode="KIS_PAPER_AUTO",
+            )
+
+        res = dict(res or {})
+        rc = str(res.get("reason_code") or "KIS_PAPER_ERROR")
+        self._last_reason_code = rc
+        self._last_reason_message = str(res.get("reason_message") or rc)
+        self._last_broker_order_no = res.get("broker_order_no")
+        self._last_order_status = res.get("order_status")
+        self._last_fill_status = res.get("fill_status")
+        self._last_quantity = int(res.get("quantity") or 0)
+        self._last_notional_krw = int(res.get("notional_krw") or 0)
+        recorded = self._emit(
+            level="INFO", code=f"KIS_PAPER_TICK_{rc}",
+            message=self._last_reason_message,
+            details={"executed": True, "cycle": cycle, "tick_mode": "KIS_PAPER_AUTO",
+                     "reason_code": rc, "broker_order_no": res.get("broker_order_no"),
+                     "submitted": bool(res.get("submitted")),
+                     "broker_order_sent": bool(res.get("broker_order_sent")),
+                     "is_live_authorization": False},
+        )
+        return DriverTickResult(
+            executed=True, reason_code=rc, reason_message=self._last_reason_message,
+            cycle_count=cycle, recorded_event=recorded, tick_mode="KIS_PAPER_AUTO",
+            fill_status=res.get("fill_status"),
+            quantity=int(res.get("quantity") or 0),
+            notional_krw=int(res.get("notional_krw") or 0),
+            broker_order_no=res.get("broker_order_no"),
+            order_status=res.get("order_status"),
+            broker_order_sent=bool(res.get("broker_order_sent")),
+        )
+
     # ── async run loop ───────────────────────────────────────────────────────
 
     async def run_forever(self) -> None:
-        """asyncio task body — interval 마다 tick_once. stop() 으로 취소."""
+        """asyncio task body — interval 마다 tick. stop() 으로 취소.
+
+        ENABLE_KIS_PAPER_AUTO_TRADING=true 면 KIS_PAPER_AUTO async tick,
+        아니면 sync tick_once (diagnostic / simulated trade).
+        """
         assert self._stop_event is not None
         _log.info("[bg-tick] driver loop started")
         try:
             while not self._stop_event.is_set():
                 try:
-                    self.tick_once()
+                    if bool(getattr(self._settings(), "enable_kis_paper_auto_trading", False)):
+                        await self.kis_paper_tick()
+                    else:
+                        self.tick_once()
                 except Exception as exc:  # noqa: BLE001 — tick 실패가 loop 를 죽이지 않음.
                     _log.warning("[bg-tick] tick raised: %s: %s",
                                  type(exc).__name__, exc)
@@ -626,6 +730,11 @@ class BackgroundTickDriver:
             "last_cash_before":       self._last_cash_before,
             "last_cash_after":        self._last_cash_after,
             "last_position_quantity": int(self._last_position_quantity),
+            # KIS_PAPER_AUTO carry.
+            "kis_paper_auto_enabled": bool(getattr(s, "enable_kis_paper_auto_trading", False)),
+            "kis_paper_auto_dry_run": bool(getattr(s, "kis_paper_auto_order_dry_run", True)),
+            "last_broker_order_no":   self._last_broker_order_no,
+            "last_order_status":      self._last_order_status,
             # 절대 invariant.
             "is_order_signal":       False,
             "is_live_authorization": False,
