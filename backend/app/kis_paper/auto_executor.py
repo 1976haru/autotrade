@@ -66,10 +66,33 @@ class KisPaperAutoDecision:
     entry_reason:        str               = ""
     has_exit_plan:       bool              = False
     exit_plan:           dict[str, Any]    = field(default_factory=dict)
+    # 2-11: Agent Council carry — 사후 추적/감사용 (주문 동작에는 영향 없음).
+    reason_code:          str | None        = None
+    risk_profile:         str | None        = None
+    risk_veto_result:     dict[str, Any]    = field(default_factory=dict)
+    exit_plan_validation: dict[str, Any]    = field(default_factory=dict)
+    sell_reason_code:     str | None        = None
+    sell_reason_category: str | None        = None
 
     @property
     def notional_krw(self) -> int:
         return int(self.price) * int(self.quantity)
+
+
+def build_kis_paper_decision_from_council(
+    council_decision, *, quantity: int, price: int,
+):
+    """2-11: Agent Council 결정 → KisPaperAutoDecision (BUY/SELL 만, HOLD → None).
+
+    council 의 `to_kis_paper_decision` 에 위임 — final_action 이 HOLD(또는 veto /
+    exit_plan 검증 실패로 HOLD 강등) 이면 None 을 반환해 주문이 생성되지 않는다.
+    selected_strategies / confidence / quality_score / exit_plan / risk_profile /
+    risk_veto_result / exit_plan_validation / sell_reason 을 carry.
+    """
+    if council_decision is None:
+        return None
+    return council_decision.to_kis_paper_decision(
+        quantity=int(quantity), price=int(price))
 
 
 @dataclass(frozen=True)
@@ -220,19 +243,34 @@ async def execute_kis_paper_auto_order(
         emergency_stop=emergency_stop, daily_order_count=daily_count, now=now,
     ))
 
-    # P-26: SELL 이면 매도 사유 reason_code 를 산출해 AgentDecisionLog / ledger 에 carry.
+    # P-26: SELL 이면 매도 사유 reason_code 를 AgentDecisionLog / ledger 에 carry.
+    # 2-11: Agent Council 이 sell_reason 을 이미 전달했으면(decision) 그 값을 우선,
+    #       아니면 infer_sell_reason 으로 산출.
     sell_meta: dict[str, Any] = {}
     if decision.side == "SELL":
         try:
-            from app.agents.sell_reason import infer_sell_reason
-            _sr = infer_sell_reason(
-                decision=decision, selected_strategies=decision.selected_strategies,
-                exit_plan=decision.exit_plan,
-            )
-            sell_meta = {"sell_reason_code": _sr.reason_code,
-                         "sell_reason_category": _sr.category}
+            if getattr(decision, "sell_reason_code", None):
+                sell_meta = {"sell_reason_code": decision.sell_reason_code,
+                             "sell_reason_category": getattr(decision, "sell_reason_category", None)}
+            else:
+                from app.agents.sell_reason import infer_sell_reason
+                _sr = infer_sell_reason(
+                    decision=decision, selected_strategies=decision.selected_strategies,
+                    exit_plan=decision.exit_plan,
+                )
+                sell_meta = {"sell_reason_code": _sr.reason_code,
+                             "sell_reason_category": _sr.category}
         except Exception:  # noqa: BLE001 — sell_reason 실패는 주문 흐름을 막지 않음.
             sell_meta = {}
+
+    # 2-11: Agent Council 판단 근거 carry (감사/추적용 — 주문 동작 영향 없음).
+    council_meta: dict[str, Any] = {}
+    if getattr(decision, "risk_profile", None):
+        council_meta["risk_profile"] = decision.risk_profile
+    if getattr(decision, "risk_veto_result", None):
+        council_meta["risk_veto_result"] = dict(decision.risk_veto_result)
+    if getattr(decision, "exit_plan_validation", None):
+        council_meta["exit_plan_validation"] = dict(decision.exit_plan_validation)
 
     def _finish(reason_code: str, reason_message: str, *,
                 submitted: bool = False, broker_order_no=None, order_status=None,
@@ -260,6 +298,7 @@ async def execute_kis_paper_auto_order(
                         "selected_strategies": list(decision.selected_strategies or []),
                         "quality_score": int(decision.quality_score),
                         **sell_meta,
+                        **council_meta,
                         **(extra_meta or {}),
                     },
                     chain_id=chain_id,
@@ -398,6 +437,7 @@ __all__ = [
     "KisPaperAutoResult",
     "RouteOrderFn",
     "build_permission_input",
+    "build_kis_paper_decision_from_council",
     "execute_kis_paper_auto_order",
     "KIS_PAPER_DRY_RUN_OK",
     "KIS_PAPER_SUBMITTED",
