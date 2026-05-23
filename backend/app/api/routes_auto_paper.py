@@ -1950,4 +1950,145 @@ def post_run_once_diagnostic(body: _RunOnceDiagnosticBody | None = None) -> dict
     return result.to_dict()
 
 
+# ============================================================================
+# AI Paper 모의매매 전체 흐름 — run-once → VirtualOrder 생성 + 체결 + 현금 반영
+# (사용자 요청서: 단순 진단을 실제 Paper 체결까지 연결. 실거래 아님.)
+# ============================================================================
+
+
+from fastapi import Depends   # noqa: E402
+from sqlalchemy.orm import Session   # noqa: E402
+
+from app.api.deps import get_risk_manager   # noqa: E402
+from app.db.session import get_db   # noqa: E402
+from app.auto_paper.paper_trade_flow import execute_paper_trade_flow   # noqa: E402
+
+
+class _RunOnceTradeBody(BaseModel):
+    """`POST /auto-paper/run-once-trade` 입력 — 모두 optional.
+
+    실거래 절대 불가 — VirtualOrder + Paper 체결 시뮬레이션까지만. dry_run /
+    allow_simulated_fills 미지정 시 *현재 .env 설정* 을 사용 (안전 기본값).
+    """
+
+    symbol:                Optional[str]   = Field(None)
+    price:                 Optional[float] = Field(None)
+    quantity:              Optional[int]   = Field(None)
+    force_mock_market_data: bool           = Field(True)
+    dry_run:               Optional[bool]  = Field(None, description="None 이면 .env AI_PAPER_TICK_DRY_RUN")
+    allow_simulated_fills: Optional[bool]  = Field(None, description="None 이면 .env AI_PAPER_ALLOW_SIMULATED_FILLS")
+    per_symbol_cap_krw:    Optional[int]   = Field(None)
+    available_cash_krw:    Optional[int]   = Field(None)
+    reference_price:       Optional[float] = Field(None)
+    signal_present:        bool            = Field(True)
+    strategy_engine_connected: bool        = Field(True)
+
+
+def _build_paper_risk_check(risk, *, available_cash_krw: int, db: Session):
+    """주입된 RiskManager 로 *read-only* paper risk_check 콜러블 생성.
+
+    broker / OrderExecutor / route_order 를 호출하지 *않는다* — RiskManager.
+    check_order 는 평가만 수행(주문 발신 0건). RiskContext 는 capital_state
+    현금 + VirtualOrder FIFO 포지션으로 구성.
+    """
+    from app.brokers.base import Balance, OrderRequest, OrderSide, OrderType, Position
+    from app.core.modes import OperationMode
+    from app.risk.risk_manager import RiskContext, RiskDecision
+    from app.virtual.position_engine import compute_open_positions
+
+    def _risk_check(symbol: str, side: str, quantity: int, price: float):
+        try:
+            # 표준 risk 한도(notional/cash/exposure/positions) 평가용 order.
+            # requested_by_ai 는 RiskManager 의 *LIVE AI 실행 권한* 게이트를
+            # 트리거하므로 paper 시뮬레이션에서는 False — AI 판단 성격은 별도
+            # AgentDecisionLog / ledger 에 기록되며, 본 단계는 표준 위험 한도만
+            # 검사한다 (실거래 AI 실행 권한 부여 0건).
+            order = OrderRequest(
+                symbol=symbol, side=OrderSide.BUY, quantity=int(quantity),
+                order_type=OrderType.MARKET, trade_reason="ai_paper_trade_flow",
+                strategy="ai_paper",
+            )
+            pos_objs: list[Position] = []
+            try:
+                for p in compute_open_positions(db):
+                    pos_objs.append(Position(
+                        symbol=p.symbol, quantity=int(p.quantity),
+                        avg_price=int(p.avg_price), market_price=int(p.avg_price),
+                    ))
+            except Exception:  # noqa: BLE001
+                pos_objs = []
+            bal = Balance(cash=int(available_cash_krw), equity=int(available_cash_krw),
+                          buying_power=int(available_cash_krw))
+            ctx = RiskContext(
+                mode=OperationMode.PAPER, balance=bal, positions=pos_objs,
+                latest_price=int(price), requested_by_ai=False,
+                latest_price_timestamp=datetime.now(timezone.utc),
+            )
+            res = risk.check_order(order, ctx)
+            allowed = res.decision in (RiskDecision.APPROVED, RiskDecision.NEEDS_APPROVAL)
+            reason = None if allowed else "; ".join(res.reasons) or res.decision.value
+            return allowed, reason
+        except Exception as exc:  # noqa: BLE001 — 평가 실패는 보수적으로 차단.
+            return False, f"risk_check_error: {type(exc).__name__}: {exc}"
+
+    return _risk_check
+
+
+@_AP.post("/run-once-trade")
+def post_run_once_trade(
+    body: _RunOnceTradeBody | None = None,
+    db: Session = Depends(get_db),
+    risk = Depends(get_risk_manager),
+) -> dict:
+    """run-once 판단을 받아 Paper VirtualOrder 생성 + 체결 + 현금 반영까지.
+
+    broker / OrderExecutor / route_order 호출 0건 — Paper 가상 체결만. dry_run
+    또는 allow_simulated_fills 가 꺼져 있으면 주문을 생성하지 않고 판단만 기록.
+    RiskManager 는 *주입* 되어 read-only 로 평가(우회 0건).
+    """
+    body = body or _RunOnceTradeBody()
+    settings = get_settings()
+    dry_run = (
+        bool(body.dry_run) if body.dry_run is not None
+        else bool(settings.ai_paper_tick_dry_run)
+    )
+    allow_fills = (
+        bool(body.allow_simulated_fills) if body.allow_simulated_fills is not None
+        else bool(settings.ai_paper_allow_simulated_fills)
+    )
+    avail = (
+        int(body.available_cash_krw) if body.available_cash_krw is not None
+        else int(get_capital_state().snapshot().available_cash_krw)
+    )
+    risk_check = _build_paper_risk_check(risk, available_cash_krw=avail, db=db)
+    try:
+        result = execute_paper_trade_flow(
+            db,
+            symbol=body.symbol, price=body.price, quantity=body.quantity,
+            force_mock_market_data=bool(body.force_mock_market_data),
+            dry_run=dry_run, allow_simulated_fills=allow_fills,
+            per_symbol_cap_krw=body.per_symbol_cap_krw,
+            available_cash_krw=body.available_cash_krw,
+            reference_price=body.reference_price,
+            market_data_provider=str(settings.market_data_provider),
+            signal_present=bool(body.signal_present),
+            strategy_engine_connected=bool(body.strategy_engine_connected),
+            slippage_bps=float(settings.ai_paper_fill_slippage_bps),
+            risk_check=risk_check,
+        )
+        db.commit()
+    except Exception as exc:   # noqa: BLE001 — 흐름은 절대 500 으로 죽지 않게.
+        db.rollback()
+        return {
+            "reason_code":     RunOnceResultCode.UNKNOWN_ERROR.value,
+            "order_created":   False,
+            "filled":          False,
+            "reason_message":  f"{type(exc).__name__}: {exc}",
+            "is_order_signal":       False,
+            "is_live_authorization": False,
+            "broker_order_sent":     False,
+        }
+    return result.to_dict()
+
+
 router.include_router(_AP)

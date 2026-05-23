@@ -104,6 +104,12 @@ class Settings(BaseSettings):
     ai_paper_tick_max_per_day:       int  = 0
     # True (기본) 이면 ledger 에 체결처럼 반영하지 않고 판단/사유만 기록.
     ai_paper_tick_dry_run:           bool = True
+    # Paper 모의 *체결 시뮬레이션* 허용 — 기본 OFF. True + dry_run=false 일 때만
+    # VirtualOrder 생성 + Paper fill simulator 까지 진행 (실거래 아님, broker
+    # 호출 0건). False 면 가상 후보 생성/체결 없이 판단/사유만 기록.
+    ai_paper_allow_simulated_fills:  bool  = False
+    # Paper 체결 시뮬 슬리피지 (bps). 0 (기본) 이면 현재가 그대로 체결.
+    ai_paper_fill_slippage_bps:      float = 0.0
 
     def symbol_whitelist_set(self) -> set[str]:
         """env 콤마 문자열을 set으로 파싱. 공백 strip."""

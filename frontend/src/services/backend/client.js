@@ -306,6 +306,13 @@ export const backendApi = {
       method: "POST",
       body: JSON.stringify(body || {}),
     }),
+  // Paper 모의매매 전체 흐름 — VirtualOrder 생성 + 체결 + 현금 반영. 실거래 아님.
+  // dry_run / allow_simulated_fills 미지정 시 backend .env 안전 기본값 사용.
+  autoPaperRunOnceTrade: (body = {}) =>
+    backendFetch("/api/auto-paper/run-once-trade", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
   // #PaperCandidateWire: Paper 후보 ↔ Auto Paper Loop 승인 endpoints.
   autoPaperCandidates: () =>
     backendFetch("/api/auto-paper/candidates"),
