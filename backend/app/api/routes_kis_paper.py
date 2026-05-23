@@ -235,6 +235,15 @@ def _broker_is_kis_paper(broker) -> bool:
     )
 
 
+def _resolve_paper_broker_kind(settings) -> str:
+    """paper_broker_kind 효력값 — 미설정 시 default_mode + kis_is_paper 로 추론."""
+    explicit = getattr(settings, "paper_broker_kind", "") or ""
+    if explicit:
+        return str(explicit)
+    from app.execution.paper_trader import _default_paper_broker_kind
+    return _default_paper_broker_kind(settings).value
+
+
 def _kis_auto_config(settings) -> dict:
     return {
         "enable_kis_paper_auto_trading": bool(settings.enable_kis_paper_auto_trading),
@@ -248,6 +257,10 @@ def _kis_auto_config(settings) -> dict:
         "kis_is_paper":                  bool(settings.kis_is_paper),
         "enable_live_trading":           bool(settings.enable_live_trading),
         "fill_polling":                  bool(settings.kis_paper_fill_polling),
+        # 0-04: EXE env 표시용 — 운용모드 + paper broker 종류 carry.
+        "default_mode":                  getattr(
+            settings.default_mode, "value", settings.default_mode),
+        "paper_broker_kind":             _resolve_paper_broker_kind(settings),
     }
 
 
