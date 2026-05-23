@@ -229,6 +229,7 @@ class AgentCouncilDecision:
         if self.final_action == CouncilAction.HOLD:
             return None
         from app.kis_paper.auto_executor import KisPaperAutoDecision
+        sr = self.sell_reason if isinstance(self.sell_reason, dict) else {}
         return KisPaperAutoDecision(
             symbol=self.symbol, side=self.final_action.value,
             quantity=int(quantity), price=int(price),
@@ -236,6 +237,12 @@ class AgentCouncilDecision:
             confidence=float(self.confidence), quality_score=int(self.quality_score),
             entry_reason=self.reason, has_exit_plan=bool(self.has_exit_plan),
             exit_plan=dict(self.exit_plan),
+            # 2-11: Agent Council 판단 근거 carry (감사/추적용).
+            risk_profile=self.risk_profile,
+            risk_veto_result=dict(self.risk_veto_result),
+            exit_plan_validation=dict(self.exit_plan_validation),
+            sell_reason_code=(sr.get("reason_code") if self.final_action == CouncilAction.SELL else None),
+            sell_reason_category=(sr.get("category") if self.final_action == CouncilAction.SELL else None),
         )
 
 
