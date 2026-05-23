@@ -243,6 +243,9 @@ class AgentCouncilDecision:
             exit_plan_validation=dict(self.exit_plan_validation),
             sell_reason_code=(sr.get("reason_code") if self.final_action == CouncilAction.SELL else None),
             sell_reason_category=(sr.get("category") if self.final_action == CouncilAction.SELL else None),
+            # 2-12: 4전략 vote 상세 + risk_flags carry (판단 근거 로그 보존).
+            votes=[v.to_dict() for v in self.votes],
+            risk_flags=list(self.risk_flags),
         )
 
 
