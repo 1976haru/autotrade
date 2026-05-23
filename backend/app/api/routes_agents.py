@@ -1481,3 +1481,53 @@ def evaluate_decision_outcome(
         "is_order_signal":       False,
         "is_live_authorization": False,
     }
+
+
+# ============================================================================
+# P-26: 매도(SELL) 사유 추론 (read-only advisory) — 주문 권한 아님
+# ============================================================================
+
+
+class _SellReasonInferIn(BaseModel):
+    """SELL 사유 추론 입력 (read-only, 주문 권한 아님). secret 필드 0개."""
+    explicit_reason_code: str | None = None
+    triggered_by:         str | None = None
+    market_closed:        bool = False
+    position:             dict | None = None
+    exit_plan:            dict | None = None
+    risk_result:          dict | None = None
+    votes:                list | None = None
+    selected_strategies:  list | None = None
+    market_snapshot:      dict | None = None
+
+
+@router.post("/sell-reason/infer")
+def infer_sell_reason_endpoint(body: _SellReasonInferIn | None = None) -> dict:
+    """매도 사유를 표준 reason_code 로 추론 (read-only).
+
+    broker / OrderExecutor / route_order 호출 0건. DB write 0건.
+    is_order_signal=False / is_live_authorization=False.
+    """
+    from app.agents.sell_reason import infer_sell_reason
+    body = body or _SellReasonInferIn()
+    sr = infer_sell_reason(
+        explicit_reason_code=body.explicit_reason_code,
+        triggered_by=body.triggered_by,
+        market_closed=bool(body.market_closed),
+        position=body.position,
+        exit_plan=body.exit_plan,
+        risk_result=body.risk_result,
+        votes=body.votes,
+        selected_strategies=body.selected_strategies,
+        market_snapshot=body.market_snapshot,
+    )
+    return {
+        "sell_reason": sr.to_dict(),
+        "summary":     sr.summary(),
+        "is_order_signal":       False,
+        "is_live_authorization": False,
+        "advisory_disclaimer": (
+            "매도 사유 추론은 *기록·분석용* 입니다. 주문 신호가 아니며 실거래 "
+            "권한이 아닙니다."
+        ),
+    }

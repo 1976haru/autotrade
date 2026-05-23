@@ -159,6 +159,22 @@ def _record_episode_best_effort(
                 kis_order_result["order_quality"] = quality
         except Exception:  # noqa: BLE001 — 품질 로그 실패는 episode 기록을 막지 않음.
             pass
+        # P-26: SELL 이면 매도 사유를 표준 reason_code 로 산출해 episode 에 carry.
+        sell_reason = None
+        if str(final_action).upper() == "SELL":
+            try:
+                from app.agents.sell_reason import infer_sell_reason
+                sr = (council.sell_reason if council is not None
+                      and getattr(council, "sell_reason", None) else None)
+                if isinstance(sr, dict) and sr.get("reason_code"):
+                    sell_reason = sr
+                else:
+                    sell_reason = infer_sell_reason(
+                        decision=decision, council=council,
+                        market_snapshot=market_snapshot, votes=votes,
+                    ).to_dict()
+            except Exception:  # noqa: BLE001 — sell_reason 실패는 episode 를 막지 않음.
+                sell_reason = None
         record_episode(
             db,
             episode_id=episode_id,
@@ -178,6 +194,7 @@ def _record_episode_best_effort(
             audit_id=getattr(result, "audit_id", None),
             decision_log_id=getattr(result, "decision_log_id", None),
             outcome=None,
+            sell_reason=sell_reason,
         )
         db.commit()
     except Exception as exc:  # noqa: BLE001 — episode 기록 실패는 tick 을 막지 않음.

@@ -152,6 +152,8 @@ class AgentCouncilDecision:
     has_exit_plan:  bool
     exit_plan:      dict[str, Any]
     metadata:       dict[str, Any] = field(default_factory=dict)
+    # P-26: 매도(SELL) 사유 — final_action=SELL 일 때만 채워짐 (그 외 빈 dict).
+    sell_reason:    dict[str, Any] = field(default_factory=dict)
 
     is_order_signal:       bool = False
     auto_apply_allowed:    bool = False
@@ -183,6 +185,8 @@ class AgentCouncilDecision:
             "has_exit_plan":  bool(self.has_exit_plan),
             "exit_plan":      dict(self.exit_plan),
             "metadata":       dict(self.metadata),
+            # P-26: 매도 사유 (SELL 일 때만 비어있지 않음).
+            "sell_reason":    dict(self.sell_reason),
             # P-23: 진입 임계 스냅샷 — "왜 BUY/왜 HOLD" 사후 분석용.
             "threshold_snapshot": self._threshold_snapshot(),
             "is_order_signal":       False,
@@ -461,6 +465,17 @@ def run_agent_council(
     selected = [v.strategy for v in votes if v.signal == final and v.score > 0] \
         if final != CouncilAction.HOLD else []
 
+    # P-26: SELL 이면 매도 사유를 표준 reason_code 로 산출 (UNKNOWN 금지).
+    sell_reason: dict[str, Any] = {}
+    if final == CouncilAction.SELL:
+        from app.agents.sell_reason import infer_sell_reason
+        sell_reason = infer_sell_reason(
+            votes=[v.to_dict() for v in votes],
+            selected_strategies=selected,
+            market_snapshot={"price": inp.current_price, "vwap": inp.vwap},
+            exit_plan=exit_plan,
+        ).to_dict()
+
     return AgentCouncilDecision(
         symbol=inp.symbol, final_action=final,
         confidence=confidence if final != CouncilAction.HOLD else _clamp01(avg_conf),
@@ -470,6 +485,7 @@ def run_agent_council(
         buy_score=buy_score, sell_score=sell_score, hold_score=hold_score,
         has_exit_plan=bool(exit_plan) and final == CouncilAction.BUY,
         exit_plan=(exit_plan if final == CouncilAction.BUY else {}),
+        sell_reason=sell_reason,
         metadata={"weights": dict(STRATEGY_WEIGHTS),
                   "thresholds": dict(thr),
                   "risk_penalty": risk_penalty,
