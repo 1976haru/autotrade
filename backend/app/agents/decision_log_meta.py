@@ -65,6 +65,11 @@ def build_agent_decision_log_meta(
         "exit_plan_validation": dict(getattr(d, "exit_plan_validation", {}) or {}) if d else {},
         "sell_reason_code":  getattr(d, "sell_reason_code", None) if d else None,
         "sell_reason_category": getattr(d, "sell_reason_category", None) if d else None,
+        # 3-02: 보유 포지션 청산 context (SELL 은 보유 청산만, 숏 진입 아님).
+        "held_position":     bool(getattr(d, "held_position", False)) if d else False,
+        "position_quantity": int(getattr(d, "position_quantity", 0) or 0) if d else 0,
+        "is_short_entry":    False,
+        "short_position":    False,
         # 주문 결과 / 안전 invariant.
         "order_created":     bool(order_created),
         "submitted":         bool(submitted),
