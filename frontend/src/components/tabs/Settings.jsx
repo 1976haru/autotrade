@@ -15,6 +15,7 @@ import { FaqCard, HelpFeedbackPanel } from "../common/HelpFeedbackPanel";
 import { DeploymentInfoCard } from "../common/DeploymentInfoCard";
 import { DisplaySettingsCard } from "../common/DisplaySettingsCard";
 import { PaperCapitalSettingsCard } from "../common/PaperCapitalSettingsCard";
+import { backendApi } from "../../services/backend/client";
 import { APP_INFO, appVersionLine } from "../../config/appInfo";
 import { latestReleaseNote } from "../../config/releaseNotes";
 
@@ -239,7 +240,7 @@ export function Settings({ settings }) {
       {/* P-15: Paper 자금 설정 — EXE 사용자가 시드머니 / 종목당 투자금 /
           최대 보유 / 일일 한도 / 종목 비중 / 추가매수 허용 6종을 직접
           설정. localStorage 저장. broker 호출 0건, 실거래 활성화 아님. */}
-      <PaperCapitalSettingsCard />
+      <PaperCapitalSettingsCard api={backendApi} />
 
       {/* #86 데스크톱 업데이트 확인 카드 — mock 단계, 후속 PR 에서 Tauri
           updater 와 실 연결. broker 호출 0건, 안전 flag 변경 0건. */}

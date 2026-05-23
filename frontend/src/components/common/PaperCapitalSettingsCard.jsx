@@ -1,8 +1,14 @@
 /**
- * P-15: Paper 자금 설정 카드 — Settings 탭에 노출.
+ * P-15/P-16: Paper 자금 설정 카드 — Settings 탭에 노출.
  *
  * 사용자가 EXE 에서 Paper / AI Paper 운용 *전* 자금 기준을 직접 설정하는
- * UI. localStorage 에 저장되며, AutoPaperLoopCard 가 시작 payload 에 동봉.
+ * UI. localStorage + (P-16) backend 사용자 설정 폴더에 저장되며 EXE 재실행
+ * 후에도 유지된다. AutoPaperLoopCard 가 시작 payload 에 동봉.
+ *
+ * P-16: `api` (backend client) prop 을 넘기면 변경 시 backend 사용자 설정
+ * 폴더(.env 와 분리)에 영구 저장 + localStorage mirror. 저장 위치 / 저장 상태
+ * ("저장됨" / "재실행 후에도 유지됩니다") 를 카드 하단에 표시. **API key /
+ * Secret / 계좌번호 는 저장하지 않는다** (backend secret scan 으로 차단).
  *
  * 절대 invariant (테스트로 lock — `PaperCapitalSettingsCard.test.jsx`):
  *  - 본 카드는 broker / 실거래 API / OrderExecutor 호출 0건.
@@ -120,8 +126,12 @@ function _NumberInput({ value, onChange, testid, placeholder }) {
 export function PaperCapitalSettingsCard({
   testId = "paper-capital-settings-card",
   storage,
+  api,
 } = {}) {
-  const { settings, errors, setField, reset } = usePaperCapitalSettings({ storage });
+  const {
+    settings, errors, setField, reset,
+    source, saveStatus, configLabel, persisted,
+  } = usePaperCapitalSettings({ storage, api });
   // 사용자 입력 중 임시 문자열 보존 (잘못된 값 입력 시 즉시 reset 되지 않도록).
   const [draftPct, setDraftPct] = useState(
     () => String(Math.round(settings.maxSymbolWeightPct * 100)),
@@ -411,6 +421,41 @@ export function PaperCapitalSettingsCard({
         >
           기본값으로 되돌리기
         </button>
+      </div>
+
+      {/* P-16: 영구 저장 상태 — 재실행 후 유지 / .env 분리 안내 */}
+      <div
+        data-testid="paper-capital-settings-persistence"
+        style={{
+          marginTop: 12,
+          padding: "8px 10px",
+          background: "#f0fdf4",
+          border: "1px solid #bbf7d0",
+          borderRadius: 4,
+          color: "#166534",
+          fontSize: "var(--fs-xs)",
+          lineHeight: 1.6,
+        }}
+      >
+        <div
+          data-testid="paper-capital-settings-save-status"
+          style={{ fontWeight: "var(--fw-bold)" }}
+        >
+          {saveStatus === "saving" && "💾 저장 중…"}
+          {saveStatus === "saved" && "✓ 저장됨 — 재실행 후에도 유지됩니다"}
+          {saveStatus === "error"
+            && "⚠ 백엔드 저장 실패 — 이 기기(localStorage)에는 저장되었습니다"}
+          {saveStatus === "idle"
+            && (persisted
+              ? "✓ 저장된 설정을 불러왔습니다 — 재실행 후에도 유지됩니다"
+              : "변경하면 자동 저장되어 재실행 후에도 유지됩니다")}
+        </div>
+        <div style={{ marginTop: 2, color: "#15803d" }}>
+          API key / Secret / 계좌번호가 저장되는 <code>.env</code> 파일과
+          분리되어 저장되며, 민감정보는 저장되지 않습니다.
+          {configLabel ? ` (저장 위치: ${configLabel})` : ""}
+          {source ? ` · source=${source}` : ""}
+        </div>
       </div>
 
       <div

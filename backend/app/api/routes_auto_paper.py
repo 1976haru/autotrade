@@ -1747,6 +1747,72 @@ def validate_paper_capital_settings_endpoint(
     }
 
 
+# ============================================================================
+# P-16: Paper 자금 설정 영구 저장 (EXE 재실행 후 유지) — 사용자 설정 폴더
+# ============================================================================
+
+
+from fastapi import Body   # noqa: E402
+
+from app.settings.persistent_settings import (   # noqa: E402
+    SecretInSettingsError,
+    load_paper_capital_settings,
+    reset_paper_capital_settings,
+    save_paper_capital_settings,
+)
+
+_P16_NOTICE = (
+    "Paper 자금 설정은 사용자 설정 폴더에 저장되며 EXE 재실행 후에도 "
+    "유지됩니다. API key / Secret / 계좌번호가 저장되는 .env 파일과 분리되며, "
+    "민감정보는 저장되지 않습니다 (저장 전 secret scan)."
+)
+
+
+@_AP.get("/paper-capital-settings")
+def get_persistent_paper_capital_settings() -> dict:
+    """저장된 Paper 자금 설정 로드 (PERSISTED) 또는 기본값 (DEFAULT).
+
+    broker / OrderExecutor 호출 0건. secret 0건. is_live_authorization=False.
+    """
+    res = load_paper_capital_settings()
+    return {**res.to_dict(), "ok": True, "notice": _P16_NOTICE}
+
+
+@_AP.post("/paper-capital-settings")
+def save_persistent_paper_capital_settings(
+    body: dict = Body(default_factory=dict),
+) -> dict:
+    """Paper 자금 설정 저장 — 사용자 설정 폴더에 atomic write.
+
+    raw body 를 secret scan — secret-like key/value 발견 시 400. 검증 오류가
+    있어도 유효 필드만 저장하고 errors carry. broker / 실거래 변경 0건.
+    """
+    try:
+        res = save_paper_capital_settings(dict(body or {}))
+    except SecretInSettingsError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "secret_in_settings_blocked",
+                "message": str(exc),
+                "is_live_authorization": False,
+                "contains_secret": False,   # 거부했으므로 저장된 secret 0건.
+                "notice": (
+                    "민감정보(API key / Secret / 계좌번호 등)는 Paper 자금 설정에 "
+                    "저장할 수 없습니다. 자금 기준 값만 입력하세요."
+                ),
+            },
+        )
+    return {**res.to_dict(), "ok": True, "notice": _P16_NOTICE}
+
+
+@_AP.post("/paper-capital-settings/reset")
+def reset_persistent_paper_capital_settings() -> dict:
+    """저장 파일 삭제 + 기본값 반환."""
+    res = reset_paper_capital_settings()
+    return {**res.to_dict(), "ok": True, "notice": _P16_NOTICE}
+
+
 def _build_price_diagnostics(freshness) -> dict:
     """OperatorDiagnosticsCard / PaperDiagnosticsCard 가 표시할 진단 payload.
 

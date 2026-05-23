@@ -310,6 +310,34 @@ export function toStartPayloadCapitalSettings(settings) {
 }
 
 
+/**
+ * P-16: backend 가 반환한 snake_case settings → camelCase 입력값.
+ *
+ * backend(`/api/auto-paper/paper-capital-settings`)는 snake_case 로 settings 를
+ * 돌려준다. normalizePaperCapitalSettings 가 소비할 수 있는 camelCase 로 매핑.
+ * 알 수 없는/누락 필드는 무시 (normalize 가 default 로 채움).
+ */
+export function fromBackendSettings(snake) {
+  if (!snake || typeof snake !== "object") return {};
+  const out = {};
+  if (snake.total_paper_capital !== undefined)
+    out.totalPaperCapital = snake.total_paper_capital;
+  if (snake.per_symbol_allocation !== undefined)
+    out.perSymbolAllocation = snake.per_symbol_allocation;
+  if (snake.max_positions !== undefined)
+    out.maxPositions = snake.max_positions;
+  if (snake.max_daily_buy_amount !== undefined)
+    out.maxDailyBuyAmount = snake.max_daily_buy_amount;
+  if (snake.max_symbol_weight_pct !== undefined)
+    out.maxSymbolWeightPct = snake.max_symbol_weight_pct;
+  if (snake.allow_additional_buy !== undefined)
+    out.allowAdditionalBuy = snake.allow_additional_buy;
+  if (snake.risk_profile !== undefined)
+    out.riskProfile = snake.risk_profile;
+  return out;
+}
+
+
 // ----- React hook -----
 
 
@@ -323,15 +351,54 @@ export function toStartPayloadCapitalSettings(settings) {
  *   잘못된 값이면 errors 에 사유 carry, 값은 *적용되지 않음*.
  * `setAll(newSettings)` — 여러 필드 한 번에 변경.
  * `reset()` — default 로 초기화 + localStorage 비움.
+ *
+ * P-16 backend 영속 (opt-in):
+ *   `api` (backend client) 를 넘기면 mount 시 backend 에서 저장된 설정을
+ *   로드(없으면 localStorage fallback), setAll/reset 시 backend + localStorage
+ *   *양쪽* 에 mirror 한다. backend 가 없는/실패한 환경에서는 localStorage 만으로
+ *   동작 (기존 P-15 behavior 그대로). `api` 미주입 시 backend 호출 0건.
+ *   - `source`: "PERSISTED" | "DEFAULT" | "DEFAULT_CORRUPTED" | "LOCAL" | "UNKNOWN"
+ *   - `saveStatus`: "idle" | "saving" | "saved" | "error"
+ *   - `configLabel`: 저장 폴더 라벨 (예: "%APPDATA%/Autotrade/config")
+ *   - `persisted`: backend 영속이 실제로 적용 중인지 (api 주입 + 로드 성공)
  */
-export function usePaperCapitalSettings({ storage } = {}) {
+export function usePaperCapitalSettings({ storage, api } = {}) {
   const [settings, setSettings] = useState(() => loadPaperCapitalSettings(storage));
   const [errors, setErrors] = useState([]);
+  const [source, setSource] = useState(api ? "UNKNOWN" : "LOCAL");
+  const [saveStatus, setSaveStatus] = useState("idle");
+  const [configLabel, setConfigLabel] = useState("");
+  const [persisted, setPersisted] = useState(false);
 
-  // mount 시 localStorage → state (storage 주입 케이스 보장).
+  // mount: localStorage → state. api 가 있으면 backend 로드로 덮어씀.
   useEffect(() => {
-    const loaded = loadPaperCapitalSettings(storage);
-    setSettings(loaded);
+    let cancelled = false;
+    const local = loadPaperCapitalSettings(storage);
+    setSettings(local);
+    if (!api || typeof api.paperCapitalSettingsGet !== "function") {
+      setSource("LOCAL");
+      return undefined;
+    }
+    (async () => {
+      try {
+        const res = await api.paperCapitalSettingsGet();
+        if (cancelled || !res) return;
+        const merged = normalizePaperCapitalSettings(
+          fromBackendSettings(res.settings),
+        ).settings;
+        setSettings(merged);
+        // backend 값을 localStorage 에도 mirror — AutoPaperLoopCard(localStorage
+        // 읽기) 와 동기화.
+        savePaperCapitalSettings(merged, storage);
+        setSource(res.source || "PERSISTED");
+        setConfigLabel(res.config_label || "");
+        setPersisted(true);
+      } catch {
+        // backend 미가용 — localStorage 값 유지 (이미 setSettings(local)).
+        setSource("LOCAL");
+      }
+    })();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -342,11 +409,27 @@ export function usePaperCapitalSettings({ storage } = {}) {
     if (nextErrors.length === 0) {
       setSettings(next);
       savePaperCapitalSettings(next, storage);
+      // backend mirror (opt-in) — 실패해도 localStorage 저장은 유효.
+      if (api && typeof api.paperCapitalSettingsSave === "function") {
+        setSaveStatus("saving");
+        api.paperCapitalSettingsSave(toStartPayloadCapitalSettings(next))
+          .then((res) => {
+            setSaveStatus("saved");
+            if (res) {
+              setSource(res.source || "PERSISTED");
+              setConfigLabel(res.config_label || "");
+              setPersisted(true);
+            }
+          })
+          .catch(() => setSaveStatus("error"));
+      } else {
+        setSaveStatus("saved");
+      }
       return { settings: next, errors: [], applied: true };
     }
     // 부분 적용은 *하지 않는다* — 잘못된 입력은 보류 (사용자 요청서 §6).
     return { settings, errors: nextErrors, applied: false };
-  }, [settings, storage]);
+  }, [settings, storage, api]);
 
   const setField = useCallback((name, value) => {
     return setAll({ [name]: value });
@@ -356,7 +439,21 @@ export function usePaperCapitalSettings({ storage } = {}) {
     resetPaperCapitalSettings(storage);
     setSettings({ ...DEFAULT_PAPER_CAPITAL_SETTINGS });
     setErrors([]);
-  }, [storage]);
+    setSaveStatus("idle");
+    if (api && typeof api.paperCapitalSettingsReset === "function") {
+      api.paperCapitalSettingsReset()
+        .then((res) => {
+          setSource(res?.source || "DEFAULT");
+          setConfigLabel(res?.config_label || "");
+        })
+        .catch(() => { /* backend 미가용 — localStorage reset 은 유효. */ });
+    } else {
+      setSource(api ? "DEFAULT" : "LOCAL");
+    }
+  }, [storage, api]);
 
-  return { settings, errors, setField, setAll, reset };
+  return {
+    settings, errors, setField, setAll, reset,
+    source, saveStatus, configLabel, persisted,
+  };
 }
