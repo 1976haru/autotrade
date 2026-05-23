@@ -82,6 +82,14 @@ export function DecisionEpisodeCard({
               const outcome = ep.outcome && ep.outcome.label ? ep.outcome.label : "미정";
               const ms = ep.market_summary || {};
               const dataStatus = ms.data_status || "—";
+              // P-23: 4전략 vote (ORB/MOMENTUM/GAP/VWAP) — canonical 순서로 정렬.
+              const _ORDER = ["ORB", "MOMENTUM", "GAP", "VWAP"];
+              const votes = Array.isArray(ep.votes) ? ep.votes : [];
+              const votesByStrat = {};
+              for (const v of votes) {
+                if (v && v.strategy) votesByStrat[v.strategy] = v;
+              }
+              const council = ep.council || {};
               return (
                 <div
                   key={ep.episode_id}
@@ -127,8 +135,29 @@ export function DecisionEpisodeCard({
                           </>
                         )}
                   </div>
+                  {/* P-23: 4전략 vote 요약 (ORB/MOMENTUM/GAP/VWAP) */}
+                  {votes.length > 0 && (
+                    <div data-testid={`episode-votes-${ep.episode_id}`}
+                         style={{ color: "var(--c-text-3)", marginTop: 1 }}>
+                      {_ORDER.map((s) => {
+                        const v = votesByStrat[s];
+                        if (!v) return null;
+                        return (
+                          <span key={s} data-testid={`episode-vote-${ep.episode_id}-${s}`}
+                                style={{ marginRight: 8 }}>
+                            {s}: {v.signal}/{v.score}
+                          </span>
+                        );
+                      })}
+                      {(council.buy_score != null) && (
+                        <span data-testid={`episode-scores-${ep.episode_id}`}>
+                          (buy {council.buy_score} / sell {council.sell_score} / hold {council.hold_score})
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <div style={{ color: "var(--c-text-3)", marginTop: 1 }}>
-                    {strategies && <span>전략: {strategies} · </span>}
+                    {strategies && <span>선택: {strategies} · </span>}
                     <span data-testid={`episode-order-${ep.episode_id}`}>
                       주문: {hasOrder ? `있음(${ep.broker_order_no})` : "없음"}
                     </span>

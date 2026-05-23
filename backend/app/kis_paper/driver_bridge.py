@@ -129,10 +129,13 @@ def _record_episode_best_effort(
             symbol=getattr(decision, "symbol", None),
             price=getattr(decision, "price", None),
         ).to_dict()
-        votes = (
-            [v.to_dict() for v in council.votes]
-            if council is not None and getattr(council, "votes", None) else []
-        )
+        # P-23: episode.votes 에 ORB/MOMENTUM/GAP/VWAP 4개가 *항상* 존재하도록 —
+        # council 이 있으면 그 vote(4개), 없으면 placeholder 4개.
+        if council is not None and getattr(council, "votes", None):
+            votes = [v.to_dict() for v in council.votes]
+        else:
+            from app.agents.agent_council import placeholder_strategy_votes
+            votes = placeholder_strategy_votes()
         council_dict = council.to_dict() if council is not None else None
         risk_result = {
             "reason_code":     rc,
