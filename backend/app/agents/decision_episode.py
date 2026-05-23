@@ -134,6 +134,25 @@ def attach_outcome(
     return row
 
 
+def attach_order_quality(
+    db: Session, episode_id: str, quality: dict | None,
+) -> AgentDecisionEpisode | None:
+    """P-24: 주문·체결 품질 로그를 episode.kis_order_result.order_quality 에 연결.
+
+    별도 컬럼 없이 기존 kis_order_result JSON 내부에 nest (마이그레이션 0건).
+    JSON 변경 추적을 위해 dict 를 *재할당*. best-effort — secret sanitize 적용.
+    """
+    row = _get_row(db, episode_id)
+    if row is None:
+        return None
+    base = dict(row.kis_order_result) if isinstance(row.kis_order_result, dict) else {}
+    base["order_quality"] = _scrub(quality, field="order_quality")
+    row.kis_order_result = base
+    row.updated_at = datetime.now(timezone.utc)
+    db.flush()
+    return row
+
+
 def _get_row(db: Session, episode_id: str) -> AgentDecisionEpisode | None:
     return db.execute(
         select(AgentDecisionEpisode).where(
@@ -174,9 +193,36 @@ def episode_to_dict(row: AgentDecisionEpisode) -> dict[str, Any]:
         "market_summary":  _market_summary(row.market_snapshot),
         # P-23: 4전략 vote 요약 (목록 표시용 — 전체는 votes 에).
         "vote_summary":    _vote_summary(row.votes),
+        # P-24: 주문·체결 품질 요약 (전체는 kis_order_result.order_quality 에).
+        "order_quality_summary": _order_quality_summary(row.kis_order_result),
+        # P-25: 사후 성과 요약 (전체는 outcome 에).
+        "outcome_summary": _outcome_summary_for(row.outcome),
         # invariant carry.
         "is_live_authorization": False,
         "is_order_signal":       False,
+    }
+
+
+def _outcome_summary_for(outcome: Any) -> dict[str, Any]:
+    """outcome dict → 목록 표시용 요약 (post_trade_outcome.outcome_summary 위임)."""
+    from app.agents.post_trade_outcome import outcome_summary
+    return outcome_summary(outcome if isinstance(outcome, dict) else None)
+
+
+def _order_quality_summary(kis_order_result: Any) -> dict[str, Any]:
+    """kis_order_result.order_quality → 목록 표시용 요약."""
+    if not isinstance(kis_order_result, dict):
+        return {}
+    q = kis_order_result.get("order_quality")
+    if not isinstance(q, dict):
+        return {}
+    return {
+        "broker_order_no": q.get("broker_order_no"),
+        "order_status":    q.get("order_status"),
+        "fill_status":     q.get("fill_status"),
+        "latency_ms":      q.get("latency_ms"),
+        "slippage_bps":    q.get("slippage_bps"),
+        "partial_fill":    q.get("partial_fill"),
     }
 
 
@@ -268,6 +314,14 @@ def summarize_episodes(db: Session, *, limit: int = 200) -> dict[str, Any]:
     by_data_status: dict[str, int] = {}
     by_strategy: dict[str, int] = {}     # P-23: 전략별 vote 출현 수
     by_signal: dict[str, int] = {}       # P-23: signal 별 vote 수
+    by_order_status: dict[str, int] = {}  # P-24
+    by_fill_status: dict[str, int] = {}   # P-24
+    by_outcome_label: dict[str, int] = {}   # P-25
+    by_outcome_status: dict[str, int] = {}  # P-25
+    latencies: list[int] = []
+    slippages: list[float] = []
+    rejected_count = 0
+    partial_fill_count = 0
     submitted = 0
     with_order_no = 0
     for r in rows:
@@ -293,6 +347,28 @@ def summarize_episodes(db: Session, *, limit: int = 200) -> dict[str, Any]:
                     by_strategy[strat] = by_strategy.get(strat, 0) + 1
                 sig = str(v.get("signal", "")).upper() or "UNKNOWN"
                 by_signal[sig] = by_signal.get(sig, 0) + 1
+        # P-24: order_quality 집계.
+        q = (r.kis_order_result or {}).get("order_quality") if isinstance(
+            r.kis_order_result, dict) else None
+        if isinstance(q, dict):
+            os_ = q.get("order_status") or "UNKNOWN"
+            by_order_status[os_] = by_order_status.get(os_, 0) + 1
+            fs_ = q.get("fill_status") or "NONE"
+            by_fill_status[fs_] = by_fill_status.get(fs_, 0) + 1
+            if isinstance(q.get("latency_ms"), (int, float)):
+                latencies.append(q["latency_ms"])
+            if isinstance(q.get("slippage_bps"), (int, float)):
+                slippages.append(q["slippage_bps"])
+            if os_ == "REJECTED":
+                rejected_count += 1
+            if q.get("partial_fill"):
+                partial_fill_count += 1
+        # P-25: outcome 집계.
+        if isinstance(r.outcome, dict):
+            ol = r.outcome.get("label") or "NONE"
+            by_outcome_label[ol] = by_outcome_label.get(ol, 0) + 1
+            ost = r.outcome.get("status") or "PENDING"
+            by_outcome_status[ost] = by_outcome_status.get(ost, 0) + 1
     return {
         "total":           len(rows),
         "by_action":       by_action,
@@ -300,6 +376,14 @@ def summarize_episodes(db: Session, *, limit: int = 200) -> dict[str, Any]:
         "by_data_status":  by_data_status,
         "by_strategy":     by_strategy,
         "by_signal":       by_signal,
+        "by_order_status": by_order_status,
+        "by_fill_status":  by_fill_status,
+        "by_outcome_label":  by_outcome_label,
+        "by_outcome_status": by_outcome_status,
+        "avg_latency_ms":  (round(sum(latencies) / len(latencies), 1) if latencies else None),
+        "avg_slippage_bps": (round(sum(slippages) / len(slippages), 2) if slippages else None),
+        "rejected_count":     rejected_count,
+        "partial_fill_count": partial_fill_count,
         "submitted_count": submitted,
         "with_broker_order_no": with_order_no,
         "is_live_authorization": False,

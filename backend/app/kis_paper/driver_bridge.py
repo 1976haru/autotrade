@@ -101,6 +101,7 @@ def build_decision_from_pipeline(
 
 def _record_episode_best_effort(
     db, *, episode_id, decision, council, result, market_input=None, now=None,
+    requested_at=None, responded_at=None,
 ) -> None:
     """P-21/P-22: 한 tick 의 판단→주문 결과 + 시장 스냅샷을 episode 행으로 기록.
 
@@ -146,6 +147,18 @@ def _record_episode_best_effort(
             "reason_code":    rc,
             "needs_approval": rc == "BLOCKED_BY_PERMISSION_GATE",
         }
+        # P-24: 주문·체결 품질 로그 — kis_order_result 에 nest.
+        kis_order_result = result.to_dict() if hasattr(result, "to_dict") else None
+        try:
+            from app.kis_paper.order_quality import build_order_quality_log
+            quality = build_order_quality_log(
+                result=result, decision=decision,
+                requested_at=requested_at, responded_at=responded_at,
+            ).to_dict()
+            if isinstance(kis_order_result, dict):
+                kis_order_result["order_quality"] = quality
+        except Exception:  # noqa: BLE001 — 품질 로그 실패는 episode 기록을 막지 않음.
+            pass
         record_episode(
             db,
             episode_id=episode_id,
@@ -160,7 +173,7 @@ def _record_episode_best_effort(
             council=council_dict,
             risk_result=risk_result,
             permission_result=permission_result,
-            kis_order_result=result.to_dict() if hasattr(result, "to_dict") else None,
+            kis_order_result=kis_order_result,
             broker_order_no=getattr(result, "broker_order_no", None),
             audit_id=getattr(result, "audit_id", None),
             decision_log_id=getattr(result, "decision_log_id", None),
@@ -225,20 +238,24 @@ async def kis_paper_auto_tick(
         # episode 행을 동일 키로 연결.
         from app.agents.decision_episode import new_episode_id
         episode_id = new_episode_id()
+        # P-24: 주문 요청/응답 시각 — latency 측정용.
+        requested_at = datetime.now(timezone.utc)
         result = await execute_kis_paper_auto_order(
             db, decision=dec, settings=settings, broker=broker, risk=risk,
             broker_is_kis_paper=_broker_is_kis_paper(broker),
             credentials_present=creds, route_order_fn=route_order_fn, now=now,
             chain_id=episode_id,
         )
+        responded_at = datetime.now(timezone.utc)
         try:
             db.commit()
         except Exception:  # noqa: BLE001
             db.rollback()
-        # P-21/P-22: episode 기록 + 시장 스냅샷 (best-effort — 실패해도 tick 유지).
+        # P-21/P-22/P-24: episode 기록 + 시장 스냅샷 + 주문 품질 (best-effort).
         _record_episode_best_effort(
             db, episode_id=episode_id, decision=dec, council=council,
             result=result, market_input=market_input, now=now,
+            requested_at=requested_at, responded_at=responded_at,
         )
         out = result.to_dict()
         out["decision_episode_id"] = episode_id
