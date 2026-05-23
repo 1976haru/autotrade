@@ -66,6 +66,14 @@ const _SAMPLE = {
       outcome_summary: { status: "UNAVAILABLE", label: "OUTCOME_UNAVAILABLE" },
       // P-27: 성과 부족 → 복기 보류.
       review_summary: { review_status: "DATA_INSUFFICIENT", grade: "DATA_INSUFFICIENT" },
+      // 2-08: RiskOfficer veto 적용 (위험 플래그 초과로 HOLD 강등).
+      council: {
+        risk_veto_result: {
+          veto_applied: true, pre_veto_action: "BUY", final_action: "HOLD",
+          risk_flag_count: 2, max_risk_flags: 1, risk_profile: "BALANCED",
+          reason_code: "RISK_OFFICER_VETO",
+        },
+      },
     },
     {
       // P-26: SELL episode — 매도 사유 표시.
@@ -334,5 +342,24 @@ describe("<DecisionEpisodeCard>", () => {
                      "지금 매도", "지금 매수"]) {
       expect(container.textContent).not.toContain(b);
     }
+  });
+
+  // ── 2-08: RiskOfficer veto 표시 ──
+
+  it("2-08: veto 적용 episode 에 RiskOfficer veto 줄 표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-risk-veto-ep-003")).toBeTruthy());
+    const t = screen.getByTestId("episode-risk-veto-ep-003").textContent;
+    expect(t).toMatch(/RiskOfficer veto/);
+    expect(t).toMatch(/위험 플래그 2개/);
+    expect(t).toMatch(/허용 1개/);
+    expect(t).toMatch(/BALANCED/);
+    expect(t).toMatch(/HOLD 강등/);
+  });
+
+  it("2-08: veto 없는 episode 는 veto 줄 미표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-row-ep-001")).toBeTruthy());
+    expect(screen.queryByTestId("episode-risk-veto-ep-001")).toBeNull();
   });
 });
