@@ -635,10 +635,18 @@ def get_capital_config_endpoint() -> dict:
     cfg = get_paper_capital_config()
     return {
         **cfg.to_dict(),
+        # P-20: Paper capital ↔ Live capital 분리 안전 flag (read-only).
+        "is_paper_capital":             True,
+        "is_live_capital":              False,
+        "is_live_authorization":        False,
+        "is_order_signal":              False,
+        "paper_capital_not_live_capital": True,
+        "warning_message":              "Paper 자금 설정은 실전 주문 한도가 아닙니다.",
         # 사용자 안내 — UI 가 그대로 표시 가능.
         "notice": (
             "Paper 시드머니는 *모의매매 전용* 이며 실전 계좌와 무관합니다. "
-            "어떤 broker / 실거래 API 와도 결합되지 않습니다."
+            "어떤 broker / 실거래 API 와도 결합되지 않습니다. 실전 주문에는 "
+            "별도 Live 자금 검토가 필요합니다."
         ),
     }
 
