@@ -21,10 +21,11 @@ SELL_STOP_LOSS         = "STOP_LOSS"
 SELL_TAKE_PROFIT       = "TAKE_PROFIT"
 SELL_MARKET_CLOSE_EXIT = "MARKET_CLOSE_EXIT"
 
-# 보유 없음 / 손절 미설정 차단 reason.
+# 보유 없음 / 손절·익절 미설정 차단 reason.
 NO_HELD_POSITION_FOR_SELL = "NO_HELD_POSITION_FOR_SELL"
 SELL_QUANTITY_EXCEEDS_POSITION = "SELL_QUANTITY_EXCEEDS_POSITION"
 STOP_LOSS_NOT_CONFIGURED = "STOP_LOSS_NOT_CONFIGURED"
+TAKE_PROFIT_NOT_CONFIGURED = "TAKE_PROFIT_NOT_CONFIGURED"
 
 
 def _f(v: Any) -> float | None:
@@ -175,6 +176,62 @@ def infer_position_sell_reason(
     return None
 
 
+def calculate_take_profit_price(
+    position: PositionContext | None, *, default_take_profit_pct: float | None = None,
+) -> tuple[float | None, str]:
+    """익절가(절대) 해소 + source 반환.
+
+    1) `take_profit`(절대) → ("absolute") 2) `take_profit_pct`(평단 기준) →
+    ("pct") 3) `default_take_profit_pct`(risk_profile) → ("default_pct")
+    4) 없음 → (None, "TAKE_PROFIT_NOT_CONFIGURED").
+    """
+    if position is None:
+        return None, TAKE_PROFIT_NOT_CONFIGURED
+    tp = _f(position.take_profit)
+    if tp is not None and tp > 0:
+        return tp, "absolute"
+    entry = _f(position.average_entry_price)
+    for pct, src in ((position.take_profit_pct, "pct"),
+                     (default_take_profit_pct, "default_pct")):
+        p = _norm_pct(pct)
+        if p is not None and entry is not None and entry > 0:
+            return round(entry * (1.0 + p / 100.0), 4), src
+    return None, TAKE_PROFIT_NOT_CONFIGURED
+
+
+def is_take_profit_triggered(
+    position: PositionContext | None, *, default_take_profit_pct: float | None = None,
+) -> dict[str, Any]:
+    """익절 트리거 평가 결과 dict (triggered / reason_code / 가격들). 보유 청산 기준.
+
+    **주의**: stop_loss 와 take_profit 이 동시에 걸리는 비정상 데이터에서는
+    STOP_LOSS 우선 — 종합 SELL 판단은 `infer_position_sell_reason`(stop_loss 먼저)
+    을 사용한다. 본 함수는 익절 단독 평가용.
+    """
+    out: dict[str, Any] = {
+        "triggered": False, "reason_code": None,
+        "entry_price": (_f(position.average_entry_price) if position else None),
+        "current_price": (_f(position.current_price) if position else None),
+        "take_profit_price": None, "take_profit_pct": None,
+    }
+    if position is None or not position.is_sellable:
+        out["reason_code"] = NO_HELD_POSITION_FOR_SELL if position is not None else None
+        return out
+    tp_price, src = calculate_take_profit_price(
+        position, default_take_profit_pct=default_take_profit_pct)
+    out["take_profit_price"] = tp_price
+    out["take_profit_pct"] = _norm_pct(position.take_profit_pct) \
+        or _norm_pct(default_take_profit_pct)
+    cur = _f(position.current_price)
+    if tp_price is None:
+        out["reason_code"] = TAKE_PROFIT_NOT_CONFIGURED
+        return out
+    if cur is not None and cur >= tp_price:
+        out["triggered"] = True
+        out["reason_code"] = SELL_TAKE_PROFIT
+    return out
+
+
 def cap_sell_quantity(requested: int, position: PositionContext | None) -> int:
     """SELL 수량을 보유(청산 가능) 수량 이하로 제한. position 없으면 requested 그대로."""
     req = int(requested or 0)
@@ -185,7 +242,8 @@ def cap_sell_quantity(requested: int, position: PositionContext | None) -> int:
 
 __all__ = [
     "PositionContext", "infer_position_sell_reason", "cap_sell_quantity",
+    "calculate_take_profit_price", "is_take_profit_triggered",
     "SELL_STOP_LOSS", "SELL_TAKE_PROFIT", "SELL_MARKET_CLOSE_EXIT",
     "NO_HELD_POSITION_FOR_SELL", "SELL_QUANTITY_EXCEEDS_POSITION",
-    "STOP_LOSS_NOT_CONFIGURED",
+    "STOP_LOSS_NOT_CONFIGURED", "TAKE_PROFIT_NOT_CONFIGURED",
 ]
