@@ -19,6 +19,7 @@ from typing import Any
 # 보유 포지션 기반 SELL 트리거 reason_code (sell_reason.py 와 일관).
 SELL_STOP_LOSS         = "STOP_LOSS"
 SELL_TAKE_PROFIT       = "TAKE_PROFIT"
+SELL_TRAILING_STOP     = "TRAILING_STOP"
 SELL_MARKET_CLOSE_EXIT = "MARKET_CLOSE_EXIT"
 
 # 보유 없음 / 손절·익절 미설정 차단 reason.
@@ -26,6 +27,8 @@ NO_HELD_POSITION_FOR_SELL = "NO_HELD_POSITION_FOR_SELL"
 SELL_QUANTITY_EXCEEDS_POSITION = "SELL_QUANTITY_EXCEEDS_POSITION"
 STOP_LOSS_NOT_CONFIGURED = "STOP_LOSS_NOT_CONFIGURED"
 TAKE_PROFIT_NOT_CONFIGURED = "TAKE_PROFIT_NOT_CONFIGURED"
+TRAILING_STOP_NOT_CONFIGURED = "TRAILING_STOP_NOT_CONFIGURED"
+TRAILING_STOP_NOT_IN_PROFIT = "TRAILING_STOP_NOT_IN_PROFIT"   # 최고가 ≤ 평단
 
 
 def _f(v: Any) -> float | None:
@@ -63,6 +66,9 @@ class PositionContext:
     #       *100 정규화(0.02 → 2.0%). 음수/0/None 은 미설정.
     stop_loss_pct:       float | None = None
     take_profit_pct:     float | None = None
+    # 3-05: 트레일링 스탑 — high_watermark(장중 최고가) 대비 trailing_stop_pct 하락.
+    high_watermark:      float | None = None
+    trailing_stop_pct:   float | None = None
     market_time_phase:   str | None = None       # PRE_MARKET/.../CLOSING/...
     market_close_exit_enabled: bool = False
 
@@ -127,6 +133,25 @@ class PositionContext:
                 return round(entry * (1.0 + p / 100.0), 4)
         return None
 
+    def resolve_trailing_stop_price(self, *, default_trailing_stop_pct: float | None = None
+                                    ) -> tuple[float | None, str]:
+        """트레일링 스탑가(절대) 해소 + source/사유 반환.
+
+        high_watermark(장중 최고가) × (1 − pct/100). 단, **수익 보호 구간** —
+        high_watermark > average_entry_price 일 때만 유효. 그 외:
+        - high_watermark 없음/≤ 평단 → (None, "TRAILING_STOP_NOT_IN_PROFIT")
+        - pct(자체 > default) 없음 → (None, "TRAILING_STOP_NOT_CONFIGURED").
+        high_watermark 는 *임의 추정하지 않는다* (없으면 미발동).
+        """
+        hwm = _f(self.high_watermark)
+        entry = _f(self.average_entry_price)
+        p = _norm_pct(self.trailing_stop_pct) or _norm_pct(default_trailing_stop_pct)
+        if p is None:
+            return None, TRAILING_STOP_NOT_CONFIGURED
+        if hwm is None or hwm <= 0 or (entry is not None and hwm <= entry):
+            return None, TRAILING_STOP_NOT_IN_PROFIT
+        return round(hwm * (1.0 - p / 100.0), 4), "pct"
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "held_position":       bool(self.held_position),
@@ -140,7 +165,10 @@ class PositionContext:
             "take_profit":         _f(self.take_profit),
             "stop_loss_pct":       _norm_pct(self.stop_loss_pct),
             "take_profit_pct":     _norm_pct(self.take_profit_pct),
+            "high_watermark":      _f(self.high_watermark),
+            "trailing_stop_pct":   _norm_pct(self.trailing_stop_pct),
             "resolved_stop_loss_price": self.resolve_stop_loss_price()[0],
+            "resolved_trailing_stop_price": self.resolve_trailing_stop_price()[0],
             "unrealized_return_pct": self.unrealized_return_pct,
             "market_time_phase":   self.market_time_phase,
             "is_short_entry":      False,
@@ -153,12 +181,14 @@ def infer_position_sell_reason(
     *,
     default_stop_loss_pct: float | None = None,
     default_take_profit_pct: float | None = None,
+    default_trailing_stop_pct: float | None = None,
 ) -> str | None:
     """보유 포지션 기반 *청산 트리거* reason_code (우선순위 적용). 없으면 None.
 
-    우선순위: STOP_LOSS > TAKE_PROFIT > MARKET_CLOSE_EXIT. 손절가는
-    `resolve_stop_loss_price`(절대 > pct > risk_profile default) 로 해소한다.
-    보유 없음/현재가 없음이면 None. 신규 숏 진입은 생성하지 않는다.
+    우선순위: **STOP_LOSS > TAKE_PROFIT > TRAILING_STOP > MARKET_CLOSE_EXIT**.
+    동시 성립(비정상)은 위 순서로 고정. 손절/익절/트레일링가는 각 resolver
+    (절대 > pct > risk_profile default) 로 해소. 보유 없음/현재가 없음이면 None.
+    트레일링은 high_watermark > 평단(수익 보호 구간)에서만 발동. 숏 진입 0건.
     """
     if position is None or not position.is_sellable:
         return None
@@ -170,6 +200,10 @@ def infer_position_sell_reason(
         tp = position.resolve_take_profit_price(default_take_profit_pct=default_take_profit_pct)
         if tp is not None and tp > 0 and cur >= tp:
             return SELL_TAKE_PROFIT
+        ts, _tsrc = position.resolve_trailing_stop_price(
+            default_trailing_stop_pct=default_trailing_stop_pct)
+        if ts is not None and ts > 0 and cur <= ts:
+            return SELL_TRAILING_STOP
     if position.market_close_exit_enabled \
             and str(position.market_time_phase or "").upper() == "CLOSING":
         return SELL_MARKET_CLOSE_EXIT
@@ -232,6 +266,40 @@ def is_take_profit_triggered(
     return out
 
 
+def is_trailing_stop_triggered(
+    position: PositionContext | None, *, default_trailing_stop_pct: float | None = None,
+) -> dict[str, Any]:
+    """트레일링 스탑 트리거 평가 dict (triggered / reason_code / 최고가/트레일가).
+
+    high_watermark > 평단(수익 보호 구간)에서만 발동. 보유 없음/미설정/수익 구간
+    아님이면 triggered=False + 사유 reason_code. STOP_LOSS/TAKE_PROFIT 동시 성립 시
+    종합 판단은 `infer_position_sell_reason`(우선순위)을 사용.
+    """
+    out: dict[str, Any] = {
+        "triggered": False, "reason_code": None,
+        "entry_price": (_f(position.average_entry_price) if position else None),
+        "current_price": (_f(position.current_price) if position else None),
+        "high_watermark": (_f(position.high_watermark) if position else None),
+        "trailing_stop_price": None,
+        "trailing_stop_pct": (_norm_pct(position.trailing_stop_pct)
+                              or _norm_pct(default_trailing_stop_pct)) if position else None,
+    }
+    if position is None or not position.is_sellable:
+        out["reason_code"] = NO_HELD_POSITION_FOR_SELL if position is not None else None
+        return out
+    ts_price, src = position.resolve_trailing_stop_price(
+        default_trailing_stop_pct=default_trailing_stop_pct)
+    out["trailing_stop_price"] = ts_price
+    if ts_price is None:
+        out["reason_code"] = src   # TRAILING_STOP_NOT_CONFIGURED / NOT_IN_PROFIT
+        return out
+    cur = _f(position.current_price)
+    if cur is not None and cur <= ts_price:
+        out["triggered"] = True
+        out["reason_code"] = SELL_TRAILING_STOP
+    return out
+
+
 def cap_sell_quantity(requested: int, position: PositionContext | None) -> int:
     """SELL 수량을 보유(청산 가능) 수량 이하로 제한. position 없으면 requested 그대로."""
     req = int(requested or 0)
@@ -243,7 +311,9 @@ def cap_sell_quantity(requested: int, position: PositionContext | None) -> int:
 __all__ = [
     "PositionContext", "infer_position_sell_reason", "cap_sell_quantity",
     "calculate_take_profit_price", "is_take_profit_triggered",
-    "SELL_STOP_LOSS", "SELL_TAKE_PROFIT", "SELL_MARKET_CLOSE_EXIT",
+    "is_trailing_stop_triggered",
+    "SELL_STOP_LOSS", "SELL_TAKE_PROFIT", "SELL_TRAILING_STOP", "SELL_MARKET_CLOSE_EXIT",
     "NO_HELD_POSITION_FOR_SELL", "SELL_QUANTITY_EXCEEDS_POSITION",
     "STOP_LOSS_NOT_CONFIGURED", "TAKE_PROFIT_NOT_CONFIGURED",
+    "TRAILING_STOP_NOT_CONFIGURED", "TRAILING_STOP_NOT_IN_PROFIT",
 ]
