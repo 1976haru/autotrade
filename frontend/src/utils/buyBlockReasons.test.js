@@ -40,6 +40,22 @@ describe("formatBuyBlockReason title 매핑", () => {
     expect(formatBuyBlockReason({ reason_code: "DUPLICATE_POSITION_BUY_BLOCKED" }).title)
       .toBe("이미 보유 중인 종목이라 추가 매수 차단");
   });
+  it("DAILY_ORDER_LIMIT_EXCEEDED (3-08)", () => {
+    expect(formatBuyBlockReason({ reason_code: "DAILY_ORDER_LIMIT_EXCEEDED" }).title)
+      .toBe("일일 최대 주문 횟수를 초과하여 매수 차단");
+  });
+  it("NOTIONAL_LIMIT_EXCEEDED (3-08)", () => {
+    expect(formatBuyBlockReason({ reason_code: "NOTIONAL_LIMIT_EXCEEDED" }).title)
+      .toBe("1회 주문금액 한도를 초과하여 매수 차단");
+  });
+  it("MAX_POSITIONS_REACHED (3-08)", () => {
+    expect(formatBuyBlockReason({ reason_code: "MAX_POSITIONS_REACHED" }).title)
+      .toBe("최대 보유 종목 수에 도달하여 매수 차단");
+  });
+  it("KIS_PAPER_ORDER_LIMIT_EXCEEDED alias → DAILY_ORDER_LIMIT_EXCEEDED (3-08)", () => {
+    expect(formatBuyBlockReason({ reason_code: "KIS_PAPER_ORDER_LIMIT_EXCEEDED" }).title)
+      .toBe("일일 최대 주문 횟수를 초과하여 매수 차단");
+  });
   it("PRICE_STALE", () => {
     expect(formatBuyBlockReason({ reason_code: "PRICE_STALE" }).title)
       .toBe("현재가가 오래되어 매수 차단");

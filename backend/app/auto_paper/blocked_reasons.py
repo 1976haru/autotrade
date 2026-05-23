@@ -35,6 +35,8 @@ BUY_BLOCK_REASON_TITLES_KO: dict[str, str] = {
     "MIN_LOT_NOT_AFFORDABLE":      "1주 가격이 투자한도 초과로 제외",
     "INSUFFICIENT_PAPER_CASH":     "남은 Paper 현금이 부족하여 매수 차단",
     "DAILY_BUY_LIMIT_EXCEEDED":    "일일 최대 매수금액을 초과하여 매수 차단",
+    "DAILY_ORDER_LIMIT_EXCEEDED":  "일일 최대 주문 횟수를 초과하여 매수 차단",
+    "NOTIONAL_LIMIT_EXCEEDED":     "1회 주문금액 한도를 초과하여 매수 차단",
     "SYMBOL_WEIGHT_LIMIT_EXCEEDED": "종목별 최대 비중을 초과하여 매수 차단",
     "MAX_POSITIONS_REACHED":       "최대 보유 종목 수에 도달하여 매수 차단",
     "DUPLICATE_POSITION_BUY_BLOCKED": "이미 보유 중인 종목이라 추가 매수 차단",
@@ -67,6 +69,8 @@ BUY_BLOCK_REASON_CATEGORY: dict[str, str] = {
     "MIN_LOT_NOT_AFFORDABLE":      "capital",
     "INSUFFICIENT_PAPER_CASH":     "capital",
     "DAILY_BUY_LIMIT_EXCEEDED":    "capital",
+    "DAILY_ORDER_LIMIT_EXCEEDED":  "capital",
+    "NOTIONAL_LIMIT_EXCEEDED":     "capital",
     "SYMBOL_WEIGHT_LIMIT_EXCEEDED": "capital",
     "MAX_POSITIONS_REACHED":       "capital",
     "DUPLICATE_POSITION_BUY_BLOCKED": "capital",
@@ -96,6 +100,8 @@ BUY_BLOCK_REASON_SEVERITY: dict[str, str] = {
     "MIN_LOT_NOT_AFFORDABLE":      "info",
     "INSUFFICIENT_PAPER_CASH":     "warning",
     "DAILY_BUY_LIMIT_EXCEEDED":    "warning",
+    "DAILY_ORDER_LIMIT_EXCEEDED":  "warning",
+    "NOTIONAL_LIMIT_EXCEEDED":     "warning",
     "SYMBOL_WEIGHT_LIMIT_EXCEEDED": "warning",
     "MAX_POSITIONS_REACHED":       "info",
     "DUPLICATE_POSITION_BUY_BLOCKED": "info",
@@ -136,6 +142,10 @@ _CODE_ALIASES: dict[str, str] = {
     "PAPER_GUARD_DAILY_LIMIT":   "DAILY_BUY_LIMIT_EXCEEDED",
     "PAPER_GUARD_SYMBOL_WEIGHT": "SYMBOL_WEIGHT_LIMIT_EXCEEDED",
     "PAPER_GUARD_RISK_MANAGER":  "BLOCKED_BY_RISK_MANAGER",
+    # KIS paper permission gate sentinels.
+    "KIS_PAPER_ORDER_LIMIT_EXCEEDED":    "DAILY_ORDER_LIMIT_EXCEEDED",
+    "KIS_PAPER_NOTIONAL_LIMIT_EXCEEDED": "NOTIONAL_LIMIT_EXCEEDED",
+    "KIS_PAPER_MAX_POSITIONS":           "MAX_POSITIONS_REACHED",
     # run-once misc.
     "UNKNOWN_ERROR":             "UNKNOWN",
 }
