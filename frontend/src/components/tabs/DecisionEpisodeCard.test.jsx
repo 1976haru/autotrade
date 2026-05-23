@@ -24,6 +24,13 @@ const _SAMPLE = {
         price: 75000, market_regime: "TREND_UP", data_status: "OK",
         vwap: 75200, rsi: 58.2, gap_pct: 0.68, price_age_seconds: 5,
       },
+      votes: [
+        { strategy: "ORB", signal: "HOLD", score: 40, confidence: 0.4 },
+        { strategy: "MOMENTUM", signal: "BUY", score: 82, confidence: 0.76 },
+        { strategy: "GAP", signal: "HOLD", score: 20, confidence: 0.3 },
+        { strategy: "VWAP", signal: "BUY", score: 76, confidence: 0.7 },
+      ],
+      council: { buy_score: 45.5, sell_score: 0, hold_score: 14 },
     },
     {
       episode_id: "ep-002", symbol: "000660", final_action: "HOLD",
@@ -139,5 +146,31 @@ describe("<DecisionEpisodeCard>", () => {
     await waitFor(() => expect(screen.getByTestId("episode-market-ep-003")).toBeTruthy());
     expect(screen.getByTestId("episode-market-ep-003").textContent)
       .toMatch(/현재가가 오래되어 PRICE_STALE/);
+  });
+
+  // ── P-23: 4전략 vote 표시 ──
+
+  it("P-23: ORB/Momentum/Gap/VWAP 4전략 signal+score 표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-votes-ep-001")).toBeTruthy());
+    expect(screen.getByTestId("episode-vote-ep-001-ORB").textContent).toMatch(/ORB: HOLD\/40/);
+    expect(screen.getByTestId("episode-vote-ep-001-MOMENTUM").textContent).toMatch(/MOMENTUM: BUY\/82/);
+    expect(screen.getByTestId("episode-vote-ep-001-GAP").textContent).toMatch(/GAP: HOLD\/20/);
+    expect(screen.getByTestId("episode-vote-ep-001-VWAP").textContent).toMatch(/VWAP: BUY\/76/);
+  });
+
+  it("P-23: buy/sell/hold score 표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-scores-ep-001")).toBeTruthy());
+    expect(screen.getByTestId("episode-scores-ep-001").textContent)
+      .toMatch(/buy 45\.5.*sell 0.*hold 14/);
+  });
+
+  it("P-23: final action + selected_strategies 표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-row-ep-001")).toBeTruthy());
+    const row = screen.getByTestId("episode-row-ep-001").textContent;
+    expect(row).toMatch(/BUY/);
+    expect(row).toMatch(/선택: MOMENTUM, VWAP/);
   });
 });

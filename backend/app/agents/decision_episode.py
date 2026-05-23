@@ -172,9 +172,47 @@ def episode_to_dict(row: AgentDecisionEpisode) -> dict[str, Any]:
         ),
         # P-22: market_snapshot 요약 (목록 표시용 — 전체는 market_snapshot 에).
         "market_summary":  _market_summary(row.market_snapshot),
+        # P-23: 4전략 vote 요약 (목록 표시용 — 전체는 votes 에).
+        "vote_summary":    _vote_summary(row.votes),
         # invariant carry.
         "is_live_authorization": False,
         "is_order_signal":       False,
+    }
+
+
+def _vote_summary(votes: Any) -> dict[str, Any]:
+    """4전략 vote 목록에서 요약 (strategies/signal 카운트/top)."""
+    if not isinstance(votes, list) or not votes:
+        return {"strategies": [], "buy_vote_count": 0, "sell_vote_count": 0,
+                "hold_vote_count": 0, "top_strategy": None, "top_score": 0}
+    buy = sell = hold = 0
+    top_strategy = None
+    top_score = -1
+    strategies: list[str] = []
+    for v in votes:
+        if not isinstance(v, dict):
+            continue
+        strat = v.get("strategy")
+        if strat:
+            strategies.append(strat)
+        sig = str(v.get("signal", "")).upper()
+        if sig == "BUY":
+            buy += 1
+        elif sig == "SELL":
+            sell += 1
+        else:
+            hold += 1
+        sc = v.get("score") or 0
+        if isinstance(sc, (int, float)) and sc > top_score:
+            top_score = sc
+            top_strategy = strat
+    return {
+        "strategies":      strategies,
+        "buy_vote_count":  buy,
+        "sell_vote_count": sell,
+        "hold_vote_count": hold,
+        "top_strategy":    top_strategy,
+        "top_score":       int(top_score) if top_score >= 0 else 0,
     }
 
 
@@ -228,6 +266,8 @@ def summarize_episodes(db: Session, *, limit: int = 200) -> dict[str, Any]:
     by_action: dict[str, int] = {}
     by_reason: dict[str, int] = {}
     by_data_status: dict[str, int] = {}
+    by_strategy: dict[str, int] = {}     # P-23: 전략별 vote 출현 수
+    by_signal: dict[str, int] = {}       # P-23: signal 별 vote 수
     submitted = 0
     with_order_no = 0
     for r in rows:
@@ -243,11 +283,23 @@ def summarize_episodes(db: Session, *, limit: int = 200) -> dict[str, Any]:
             r.market_snapshot, dict) else None
         ds = ds or "UNKNOWN"
         by_data_status[ds] = by_data_status.get(ds, 0) + 1
+        # P-23: 전략별 / signal 별 vote 집계.
+        if isinstance(r.votes, list):
+            for v in r.votes:
+                if not isinstance(v, dict):
+                    continue
+                strat = v.get("strategy")
+                if strat:
+                    by_strategy[strat] = by_strategy.get(strat, 0) + 1
+                sig = str(v.get("signal", "")).upper() or "UNKNOWN"
+                by_signal[sig] = by_signal.get(sig, 0) + 1
     return {
         "total":           len(rows),
         "by_action":       by_action,
         "by_reason_code":  by_reason,
         "by_data_status":  by_data_status,
+        "by_strategy":     by_strategy,
+        "by_signal":       by_signal,
         "submitted_count": submitted,
         "with_broker_order_no": with_order_no,
         "is_live_authorization": False,

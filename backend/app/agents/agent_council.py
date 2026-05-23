@@ -90,15 +90,46 @@ class StrategyVote:
     reason_code: str = ""
 
     def to_dict(self) -> dict[str, Any]:
+        # P-23: 전략별 가중치 + 가중점수 carry (전략 성과 분석용).
+        weight = STRATEGY_WEIGHTS.get(self.strategy, 0)
+        weighted_score = round(weight * (int(self.score) / 100.0), 4)
         return {
-            "strategy":    self.strategy,
-            "signal":      self.signal.value,
-            "confidence":  round(float(self.confidence), 4),
-            "score":       int(self.score),
-            "reason":      self.reason,
-            "risk_flags":  list(self.risk_flags),
-            "reason_code": self.reason_code,
+            "strategy":       self.strategy,
+            "signal":         self.signal.value,
+            "confidence":     round(float(self.confidence), 4),
+            "score":          int(self.score),
+            "reason":         self.reason,
+            "risk_flags":     list(self.risk_flags),
+            "reason_code":    self.reason_code,
+            "weight":         int(weight),
+            "weighted_score": weighted_score,
         }
+
+
+# P-23: 4 전략 canonical 순서 (episode votes 누락 0건 보장 기준).
+STRATEGY_ORDER: tuple[str, ...] = ("ORB", "MOMENTUM", "GAP", "VWAP")
+
+
+def placeholder_strategy_votes() -> list[dict[str, Any]]:
+    """전략 평가가 아예 불가능한 경우(후보/시세 없음) 4 전략 placeholder vote.
+
+    episode.votes 에 ORB/MOMENTUM/GAP/VWAP 4개가 *항상* 존재하도록 보장한다.
+    실제 평가가 수행되면 caller 가 council.votes 의 to_dict() 를 사용한다.
+    """
+    out: list[dict[str, Any]] = []
+    for strat in STRATEGY_ORDER:
+        out.append({
+            "strategy":       strat,
+            "signal":         CouncilAction.HOLD.value,
+            "confidence":     0.0,
+            "score":          0,
+            "reason":         "전략 평가에 필요한 데이터가 부족합니다.",
+            "risk_flags":     ["DATA_UNAVAILABLE"],
+            "reason_code":    "STRATEGY_DATA_UNAVAILABLE",
+            "weight":         int(STRATEGY_WEIGHTS.get(strat, 0)),
+            "weighted_score": 0.0,
+        })
+    return out
 
 
 @dataclass(frozen=True)
@@ -152,6 +183,8 @@ class AgentCouncilDecision:
             "has_exit_plan":  bool(self.has_exit_plan),
             "exit_plan":      dict(self.exit_plan),
             "metadata":       dict(self.metadata),
+            # P-23: 진입 임계 스냅샷 — "왜 BUY/왜 HOLD" 사후 분석용.
+            "threshold_snapshot": self._threshold_snapshot(),
             "is_order_signal":       False,
             "auto_apply_allowed":    False,
             "is_live_authorization": False,
@@ -160,6 +193,16 @@ class AgentCouncilDecision:
                 "아닙니다. 실제 주문은 RiskManager / PermissionGate / KIS Paper "
                 "Gate 를 모두 통과해야 합니다."
             ),
+        }
+
+    def _threshold_snapshot(self) -> dict[str, Any]:
+        """진입 게이트 임계 스냅샷 (metadata.thresholds 기반)."""
+        thr = self.metadata.get("thresholds", {}) if isinstance(self.metadata, dict) else {}
+        return {
+            "risk_profile":      self.risk_profile,
+            "min_confidence":    thr.get("min_confidence"),
+            "min_quality_score": thr.get("min_quality"),
+            "max_risk_flags":    thr.get("max_risk_flags"),
         }
 
     def to_kis_paper_decision(self, *, quantity: int, price: int):
