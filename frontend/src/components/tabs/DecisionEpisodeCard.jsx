@@ -92,6 +92,8 @@ export function DecisionEpisodeCard({
               const council = ep.council || {};
               const oq = ep.order_quality_summary || {};
               const hasOq = oq.order_status != null;
+              const os = ep.outcome_summary || {};
+              const _pct = (v) => (v != null ? `${v >= 0 ? "+" : ""}${v}%` : null);
               return (
                 <div
                   key={ep.episode_id}
@@ -170,12 +172,35 @@ export function DecisionEpisodeCard({
                       {oq.partial_fill ? <span> · 부분체결</span> : null}
                     </div>
                   )}
+                  {/* P-25: 사후 성과 요약 */}
+                  <div data-testid={`episode-outcome-${ep.episode_id}`}
+                       style={{ color: "var(--c-text-3)", marginTop: 1 }}>
+                    {os.status === "PENDING"
+                      ? "성과 라벨 대기 중"
+                      : os.status === "UNAVAILABLE"
+                        ? "시장 데이터 부족으로 성과 계산 불가"
+                        : (
+                          <>
+                            성과: {os.status || "—"}
+                            {os.label ? ` · ${os.label}` : ""}
+                            {os.return_5m != null && <span> · 5분 {_pct(os.return_5m)}</span>}
+                            {os.return_30m != null && <span> · 30분 {_pct(os.return_30m)}</span>}
+                            {os.return_close != null && <span> · 종가 {_pct(os.return_close)}</span>}
+                            {os.max_favorable_excursion != null && (
+                              <span> · MFE {_pct(os.max_favorable_excursion)}</span>
+                            )}
+                            {os.max_adverse_excursion != null && (
+                              <span> / MAE {_pct(os.max_adverse_excursion)}</span>
+                            )}
+                          </>
+                        )}
+                  </div>
                   <div style={{ color: "var(--c-text-3)", marginTop: 1 }}>
                     {strategies && <span>선택: {strategies} · </span>}
                     <span data-testid={`episode-order-${ep.episode_id}`}>
                       주문: {hasOrder ? `있음(${ep.broker_order_no})` : "없음"}
                     </span>
-                    {" · 성과: "}{outcome}
+                    {" · 라벨: "}{outcome}
                   </div>
                 </div>
               );

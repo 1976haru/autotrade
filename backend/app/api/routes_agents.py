@@ -1431,3 +1431,53 @@ def get_decision_episode(
     if ep is None:
         raise HTTPException(status_code=404, detail="episode not found")
     return {**ep, "advisory_disclaimer": "학습용 기록 — 주문 신호 아님."}
+
+
+# ============================================================================
+# P-25: 사후 성과 라벨링 (evaluate-outcome) — read/write episode outcome only
+# ============================================================================
+
+
+class _OutcomeMarketDataIn(BaseModel):
+    """사후 성과 평가용 시장 데이터 입력 (주문 권한 아님)."""
+    future_prices: dict[str, float] | None = None   # {"5": p, "10": p, ...}
+    close_price:   float | None = None
+    realized_pnl:  float | None = None
+    market_closed: bool = False
+
+
+@router.post("/decision-episodes/{episode_id}/evaluate-outcome")
+def evaluate_decision_outcome(
+    episode_id: str,
+    body: _OutcomeMarketDataIn | None = None,
+    db: _Session = Depends(get_db),
+) -> dict:
+    """단일 episode 사후 성과 평가 + 저장 (read episode → compute → attach).
+
+    broker / OrderExecutor / route_order 호출 0건. is_order_signal=False /
+    is_live_authorization=False. 시장 데이터 부족 시 PENDING/UNAVAILABLE 로
+    저장하며 episode 를 실패시키지 않는다.
+    """
+    from fastapi import HTTPException
+
+    from app.agents.decision_episode import attach_outcome, get_episode
+    from app.agents.post_trade_outcome import evaluate_outcome
+    ep = get_episode(db, episode_id)
+    if ep is None:
+        raise HTTPException(status_code=404, detail="episode not found")
+    body = body or _OutcomeMarketDataIn()
+    future_prices = {int(k): float(v) for k, v in (body.future_prices or {}).items()}
+    outcome = evaluate_outcome(
+        episode=ep, future_prices=future_prices, close_price=body.close_price,
+        realized_pnl=body.realized_pnl, market_closed=bool(body.market_closed),
+    ).to_dict()
+    attach_outcome(db, episode_id, outcome)
+    db.commit()
+    refreshed = get_episode(db, episode_id)
+    return {
+        "episode_id": episode_id,
+        "outcome":    outcome,
+        "episode":    refreshed,
+        "is_order_signal":       False,
+        "is_live_authorization": False,
+    }

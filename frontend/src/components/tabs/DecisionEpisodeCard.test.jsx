@@ -35,6 +35,10 @@ const _SAMPLE = {
         broker_order_no: "PAPER-1", order_status: "FILLED", fill_status: "FILLED",
         latency_ms: 333, slippage_bps: 13.33, partial_fill: false,
       },
+      outcome_summary: {
+        status: "COMPLETE", label: "PROFITABLE", return_5m: 0.32, return_30m: 1.25,
+        return_close: 0.95, max_favorable_excursion: 1.8, max_adverse_excursion: -0.4,
+      },
     },
     {
       episode_id: "ep-002", symbol: "000660", final_action: "HOLD",
@@ -42,6 +46,7 @@ const _SAMPLE = {
       selected_strategies: [], broker_order_no: null, outcome: null,
       is_live_authorization: false,
       market_summary: { data_status: "NO_MARKET_DATA" },
+      outcome_summary: { status: "PENDING", label: "OUTCOME_PENDING" },
     },
     {
       episode_id: "ep-003", symbol: "035720", final_action: "BUY",
@@ -49,6 +54,7 @@ const _SAMPLE = {
       selected_strategies: ["ORB"], broker_order_no: null, outcome: null,
       is_live_authorization: false,
       market_summary: { data_status: "PRICE_STALE", reason_code: "PRICE_STALE" },
+      outcome_summary: { status: "UNAVAILABLE", label: "OUTCOME_UNAVAILABLE" },
     },
   ],
   count: 3,
@@ -194,5 +200,43 @@ describe("<DecisionEpisodeCard>", () => {
     render(<DecisionEpisodeCard apiClient={_api()} />);
     await waitFor(() => expect(screen.getByTestId("episode-row-ep-002")).toBeTruthy());
     expect(screen.queryByTestId("episode-quality-ep-002")).toBeNull();
+  });
+
+  // ── P-25: 사후 성과 표시 ──
+
+  it("P-25: COMPLETE 성과 — 라벨/5분/30분/종가/MFE/MAE 표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-outcome-ep-001")).toBeTruthy());
+    const o = screen.getByTestId("episode-outcome-ep-001").textContent;
+    expect(o).toMatch(/COMPLETE/);
+    expect(o).toMatch(/PROFITABLE/);
+    expect(o).toMatch(/5분 \+0\.32%/);
+    expect(o).toMatch(/30분 \+1\.25%/);
+    expect(o).toMatch(/종가 \+0\.95%/);
+    expect(o).toMatch(/MFE \+1\.8%/);
+    expect(o).toMatch(/MAE -0\.4%/);
+  });
+
+  it("P-25: PENDING 표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-outcome-ep-002")).toBeTruthy());
+    expect(screen.getByTestId("episode-outcome-ep-002").textContent)
+      .toMatch(/성과 라벨 대기 중/);
+  });
+
+  it("P-25: UNAVAILABLE 표시", async () => {
+    render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-outcome-ep-003")).toBeTruthy());
+    expect(screen.getByTestId("episode-outcome-ep-003").textContent)
+      .toMatch(/시장 데이터 부족으로 성과 계산 불가/);
+  });
+
+  it("P-25: 성과 줄에 secret/실거래 버튼 없음", async () => {
+    const { container } = render(<DecisionEpisodeCard apiClient={_api()} />);
+    await waitFor(() => expect(screen.getByTestId("episode-outcome-ep-001")).toBeTruthy());
+    expect(container.querySelectorAll("button").length).toBe(0);
+    for (const b of ["app_secret", "account_no", "Place Order", "실거래 시작"]) {
+      expect(container.textContent).not.toContain(b);
+    }
   });
 });

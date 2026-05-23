@@ -195,10 +195,18 @@ def episode_to_dict(row: AgentDecisionEpisode) -> dict[str, Any]:
         "vote_summary":    _vote_summary(row.votes),
         # P-24: 주문·체결 품질 요약 (전체는 kis_order_result.order_quality 에).
         "order_quality_summary": _order_quality_summary(row.kis_order_result),
+        # P-25: 사후 성과 요약 (전체는 outcome 에).
+        "outcome_summary": _outcome_summary_for(row.outcome),
         # invariant carry.
         "is_live_authorization": False,
         "is_order_signal":       False,
     }
+
+
+def _outcome_summary_for(outcome: Any) -> dict[str, Any]:
+    """outcome dict → 목록 표시용 요약 (post_trade_outcome.outcome_summary 위임)."""
+    from app.agents.post_trade_outcome import outcome_summary
+    return outcome_summary(outcome if isinstance(outcome, dict) else None)
 
 
 def _order_quality_summary(kis_order_result: Any) -> dict[str, Any]:
@@ -308,6 +316,8 @@ def summarize_episodes(db: Session, *, limit: int = 200) -> dict[str, Any]:
     by_signal: dict[str, int] = {}       # P-23: signal 별 vote 수
     by_order_status: dict[str, int] = {}  # P-24
     by_fill_status: dict[str, int] = {}   # P-24
+    by_outcome_label: dict[str, int] = {}   # P-25
+    by_outcome_status: dict[str, int] = {}  # P-25
     latencies: list[int] = []
     slippages: list[float] = []
     rejected_count = 0
@@ -353,6 +363,12 @@ def summarize_episodes(db: Session, *, limit: int = 200) -> dict[str, Any]:
                 rejected_count += 1
             if q.get("partial_fill"):
                 partial_fill_count += 1
+        # P-25: outcome 집계.
+        if isinstance(r.outcome, dict):
+            ol = r.outcome.get("label") or "NONE"
+            by_outcome_label[ol] = by_outcome_label.get(ol, 0) + 1
+            ost = r.outcome.get("status") or "PENDING"
+            by_outcome_status[ost] = by_outcome_status.get(ost, 0) + 1
     return {
         "total":           len(rows),
         "by_action":       by_action,
@@ -362,6 +378,8 @@ def summarize_episodes(db: Session, *, limit: int = 200) -> dict[str, Any]:
         "by_signal":       by_signal,
         "by_order_status": by_order_status,
         "by_fill_status":  by_fill_status,
+        "by_outcome_label":  by_outcome_label,
+        "by_outcome_status": by_outcome_status,
         "avg_latency_ms":  (round(sum(latencies) / len(latencies), 1) if latencies else None),
         "avg_slippage_bps": (round(sum(slippages) / len(slippages), 2) if slippages else None),
         "rejected_count":     rejected_count,
