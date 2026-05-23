@@ -36,6 +36,7 @@ import { useStrategySelection } from "../../store/useStrategySelection";
 // 89: KIS Paper one-click AI auto-trade test — 한투 모의투자 전용. 실거래 0건.
 import { KisPaperOneClickTestCard } from "./KisPaperOneClickTestCard";
 import { AutoPaperLoopCard } from "./AutoPaperLoopCard";
+import { PortfolioCard } from "../common/PortfolioCard";
 import { UpdateBanner } from "../UpdateBanner";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
@@ -601,6 +602,12 @@ export function Dashboard({
           PAPER/SIMULATION 한정 — broker.place_order 호출 0건, 실거래 OFF 영구. */}
       <div className="dashboard-span-full">
         <AutoPaperLoopCard />
+      </div>
+
+      {/* Paper 가상 포트폴리오 — Paper 모의 체결 결과(현금/보유/평가/손익) 표시.
+          실거래 계좌와 무관, broker 호출 0건. */}
+      <div className="dashboard-span-full">
+        <PortfolioCard />
       </div>
 
       {/* 225: 현재 장세 배지 — 위험/상태 요약 위에 한 줄로 */}
