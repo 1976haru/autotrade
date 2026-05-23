@@ -21,6 +21,14 @@
 backend/.env
 frontend/.env
 *.local
+# 0-05: 추가 secret/인증서 파일 방어 (현재 추적 파일 0건 — 방어적 차단).
+*.secret
+secrets.json
+credentials.json
+*.p12
+*.pfx
+*.keystore
+*.jks
 
 
 # ---------- Python ----------
