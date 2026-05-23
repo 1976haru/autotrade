@@ -1765,4 +1765,185 @@ def _build_price_diagnostics(freshness) -> dict:
     }
 
 
+# ============================================================================
+# 자동매매 실행 점검: run-readiness + 강제 진단 run-once
+# (사용자 요청서 §5/§8 — "버튼 눌렀는데 아무 일도 안 일어나는 상태" 제거)
+# ============================================================================
+
+
+from datetime import datetime, timezone   # noqa: E402
+
+from app.scheduler.market_clock import (   # noqa: E402
+    current_market_phase,
+    to_kst,
+)
+from app.universe.default_universe import get_default_universe   # noqa: E402
+from app.auto_paper.run_once import (   # noqa: E402
+    RunOnceResultCode,
+    run_paper_pipeline_once,
+)
+
+
+def _loop_health_label(state: str, cycle_count: int) -> tuple[str, str]:
+    """loop 상태 + cycle 로 운영자 친화 health 라벨 산출.
+
+    - RUNNING + cycle>0  → RUNNING_OK ("정상 실행 중")
+    - RUNNING + cycle==0 → RUNNING_NO_TICKS ("실행 중이나 아직 tick 없음 —
+      run-once 진단으로 파이프라인을 검증하세요")
+    - WAITING_MARKET     → WAITING_MARKET ("장 시작 대기")
+    - MARKET_CLOSED      → MARKET_CLOSED ("장 종료 / 휴장")
+    - 그 외 (PAUSED/STOPPED/EMERGENCY_STOP) → NOT_RUNNING
+    """
+    if state == "RUNNING":
+        if cycle_count > 0:
+            return "RUNNING_OK", "자동 루프가 정상 실행 중입니다."
+        return (
+            "RUNNING_NO_TICKS",
+            "루프는 RUNNING 이지만 아직 tick 기록이 없습니다 — 진단 run-once 로 "
+            "파이프라인 연결을 검증하세요.",
+        )
+    if state == "WAITING_MARKET":
+        return "WAITING_MARKET", "장 시작(09:00 KST) 대기 중입니다."
+    if state == "MARKET_CLOSED":
+        return "MARKET_CLOSED", "한국장 종료 / 휴장 상태입니다."
+    if state == "EMERGENCY_STOP":
+        return "NOT_RUNNING", "긴급정지 상태 — reset 후 재시작이 필요합니다."
+    return "NOT_RUNNING", "자동 루프가 실행 중이 아닙니다 — 시작 버튼을 누르세요."
+
+
+@_AP.get("/run-readiness")
+def get_run_readiness() -> dict:
+    """자동매매 실행 *준비 상태* 한눈에 — read-only.
+
+    universe / 시장 세션 / market data provider / loop 상태 / 권한 / 현금 을
+    단일 payload 로 모아 운영자가 "지금 누르면 작동할 조건인가" 를 판단.
+    broker / route_order / OrderExecutor 호출 0건, DB write 0건.
+    """
+    settings = get_settings()
+    loop = get_auto_paper_loop()
+    snap = loop.status()
+    now = datetime.now(timezone.utc)
+    phase = current_market_phase(now)
+    kst = to_kst(now)
+
+    uni = get_default_universe(user_symbols=None)
+    cfg = get_paper_capital_config()
+    cash_snap = get_capital_state().snapshot()
+
+    health_code, health_msg = _loop_health_label(snap.state, snap.cycle_count)
+
+    return {
+        "loop": {
+            "state":          snap.state,
+            "cycle_count":    snap.cycle_count,
+            "last_tick_at":   snap.last_tick_at,
+            "last_error":     snap.last_error,
+            "health_code":    health_code,
+            "health_message": health_msg,
+        },
+        "market_session": {
+            "phase":       phase.value,
+            "kst_time":    kst.strftime("%Y-%m-%d %H:%M:%S"),
+            "kst_weekday": kst.weekday(),       # Mon=0 .. Sun=6
+            "is_open":     phase.value == "OPEN",
+        },
+        "universe": {
+            "source":        uni.source.value,
+            "count":         uni.count,
+            "fallback_used": uni.fallback_used,
+            "warning_ko":    uni.warning_ko,
+        },
+        "market_data": {
+            "provider": str(settings.market_data_provider),
+            "is_mock":  str(settings.market_data_provider).strip().lower() == "mock",
+        },
+        "permission": {
+            "paper_virtual_execution_allowed": True,
+            "live_execution_blocked":          True,
+        },
+        "paper_capital": {
+            "effective_per_symbol_cap_krw": int(cfg.effective_per_symbol_cap_krw),
+            "available_cash_krw":           int(cash_snap.available_cash_krw),
+            "initial_cash_krw":             int(cash_snap.initial_cash_krw),
+        },
+        "safety_flags": {
+            "enable_live_trading":         settings.enable_live_trading,
+            "enable_ai_execution":         settings.enable_ai_execution,
+            "enable_futures_live_trading": settings.enable_futures_live_trading,
+            "kis_is_paper":                settings.kis_is_paper,
+            "default_mode":                settings.default_mode.value,
+        },
+        "can_run_once_diagnostic": True,
+        "is_order_signal":         False,
+        "is_live_authorization":   False,
+        "auto_apply_allowed":      False,
+        "advisory_disclaimer": (
+            "본 응답은 PAPER 자동매매 실행 준비 상태 점검 — broker / route_order "
+            "/ OrderExecutor 호출 0건. 진단 run-once 로 파이프라인 전체를 검증할 "
+            "수 있습니다 (실거래 아님)."
+        ),
+    }
+
+
+class _RunOnceDiagnosticBody(BaseModel):
+    """`POST /auto-paper/run-once-diagnostic` 입력 — 모두 optional.
+
+    실거래 절대 불가 — 본 endpoint 는 PAPER 가상 후보까지만 생성한다.
+    """
+
+    symbol:                 Optional[str]   = Field(None, description="진단 대상 종목 (없으면 fallback universe 첫 종목)")
+    price:                  Optional[float] = Field(None, description="현재가 (없고 force_mock=True 면 mock 생성)")
+    quantity:               Optional[int]   = Field(None, description="수량 (없으면 종목당 한도 기준 자동 계산)")
+    force_mock_market_data: bool            = Field(True, description="현재가 없을 때 진단용 mock 생성 허용")
+    dry_run:                bool            = Field(True, description="True 면 ledger 에 체결처럼 반영하지 않음")
+    per_symbol_cap_krw:     Optional[int]   = Field(None, description="종목당 한도 override (없으면 현재 설정)")
+    available_cash_krw:     Optional[int]   = Field(None, description="남은 Paper 현금 override (없으면 현재 상태)")
+    reference_price:        Optional[float] = Field(None, description="급등락 검사 기준가")
+    # 전략 단계 시뮬레이션 — 운영자/테스트가 명시 제어.
+    strategy_engine_connected: bool         = Field(True)
+    signal_present:         bool            = Field(True)
+    paper_virtual_execution_enabled: bool   = Field(True)
+
+
+@_AP.post("/run-once-diagnostic")
+def post_run_once_diagnostic(body: _RunOnceDiagnosticBody | None = None) -> dict:
+    """강제 진단 run-once — 파이프라인 전체를 1회 실행하고 reason_code 반환.
+
+    실거래 / broker / OrderExecutor / route_order 호출 0건. dry_run=True 면
+    가상 후보를 *생성하지 않고* 통과 여부만 검증, dry_run=False 면 Paper 가상
+    주문 *후보* 까지 생성 (실거래 아님). 어느 단계에서 멈추든 정확한 사유를
+    ledger 에 기록한다 — "버튼 눌렀는데 아무 일도 안 일어나는 상태" 제거.
+    """
+    body = body or _RunOnceDiagnosticBody()
+    settings = get_settings()
+    try:
+        result = run_paper_pipeline_once(
+            symbol=body.symbol,
+            price=body.price,
+            quantity=body.quantity,
+            force_mock_market_data=bool(body.force_mock_market_data),
+            dry_run=bool(body.dry_run),
+            per_symbol_cap_krw=body.per_symbol_cap_krw,
+            available_cash_krw=body.available_cash_krw,
+            reference_price=body.reference_price,
+            market_data_provider=str(settings.market_data_provider),
+            strategy_engine_connected=bool(body.strategy_engine_connected),
+            signal_present=bool(body.signal_present),
+            paper_virtual_execution_enabled=bool(body.paper_virtual_execution_enabled),
+            record=True,
+        )
+    except Exception as exc:   # noqa: BLE001 — 진단은 절대 500 으로 죽지 않게.
+        return {
+            "result_code":     RunOnceResultCode.UNKNOWN_ERROR.value,
+            "ok":              False,
+            "reason_message":  f"{type(exc).__name__}: {exc}",
+            "stages":          [],
+            "is_order_signal":       False,
+            "is_live_authorization": False,
+            "auto_apply_allowed":    False,
+            "broker_order_sent":     False,
+        }
+    return result.to_dict()
+
+
 router.include_router(_AP)

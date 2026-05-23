@@ -168,6 +168,10 @@ export function AutoPaperLoopCard({
   // #4-RiskProfileUI: 사용자가 선택한 AI 운용 성향 — 기본값 BALANCED.
   // start 시점에 backend POST /api/auto-paper/start 요청 body 에 동봉.
   const [riskProfile, setRiskProfile] = useState(DEFAULT_RISK_PROFILE);
+  // 자동매매 실행 점검판: run-readiness + 강제 진단 run-once 결과.
+  const [readiness, setReadiness] = useState(null);
+  const [runOnceResult, setRunOnceResult] = useState(null);
+  const [runOnceBusy, setRunOnceBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -193,7 +197,35 @@ export function AutoPaperLoopCard({
         // ledger 가 없는 환경 (테스트 mock 등) — 조용히 무시.
       }
     }
+    // run-readiness 도 *별도* — universe / 시장 세션 / 권한 점검판용.
+    if (typeof apiClient.autoPaperRunReadiness === "function") {
+      try {
+        const rr = await apiClient.autoPaperRunReadiness();
+        if (rr) setReadiness(rr);
+      } catch {
+        // readiness 가 없는 환경 (구버전 backend / 테스트 mock) — 조용히 무시.
+      }
+    }
   }, [apiClient]);
+
+  // 강제 진단 run-once — 파이프라인 전체를 1회 실행하고 결과를 표시.
+  // 실거래 아님 — broker 호출 0건. dry_run 기본값으로 ledger 체결 미반영.
+  const onRunOnce = useCallback(async () => {
+    if (typeof apiClient.autoPaperRunOnceDiagnostic !== "function") return;
+    setRunOnceBusy(true);
+    try {
+      const r = await apiClient.autoPaperRunOnceDiagnostic({
+        force_mock_market_data: true,
+        dry_run: true,
+      });
+      setRunOnceResult(r);
+      await refresh();
+    } catch (err) {
+      setError(err?.message || String(err));
+    } finally {
+      setRunOnceBusy(false);
+    }
+  }, [apiClient, refresh]);
 
   useEffect(() => {
     refresh();
@@ -632,6 +664,172 @@ export function AutoPaperLoopCard({
           {error}
         </div>
       )}
+
+      {/* 자동매매 실행 점검판 — loop / universe / 시장 / 권한 + 강제 진단 run-once.
+          "버튼 눌렀는데 아무 일도 안 일어나는 상태" 를 없애기 위한 단일 점검 영역. */}
+      <div
+        data-testid="auto-paper-exec-diagnostics"
+        style={{
+          marginTop: 12,
+          padding: 10,
+          background: "#f8fafc",
+          border: "1px solid #e2e8f0",
+          borderRadius: "var(--r-md)",
+        }}
+      >
+        <div
+          style={{
+            fontSize: "var(--fs-xs)",
+            fontWeight: "var(--fw-bold)",
+            color: "var(--c-text-2)",
+            marginBottom: 6,
+          }}
+        >
+          자동매매 실행 점검판 (advisory — 실거래 아님)
+        </div>
+
+        {/* loop health 한 줄 요약 — RUNNING+cycle0 / NOT_RUNNING 등 명확 메시지. */}
+        <div
+          data-testid="exec-loop-health"
+          data-health-code={readiness?.loop?.health_code || ""}
+          style={{
+            marginBottom: 8,
+            fontSize: "var(--fs-xs)",
+            color: "var(--c-text)",
+          }}
+        >
+          {state === "RUNNING" && (status?.cycle_count ?? 0) === 0
+            ? "거래는 아직 없지만 루프가 실행 중입니다 — 진단 run-once 로 파이프라인 연결을 확인하세요."
+            : (readiness?.loop?.health_message
+                || "루프 상태를 확인하려면 진단 run-once 를 실행하세요.")}
+        </div>
+
+        {/* 항목 그리드 — universe / 시장 세션 / 시세 provider / 권한 / 현금. */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+            gap: 6,
+            fontSize: "var(--fs-xs)",
+            color: "var(--c-text-2)",
+          }}
+        >
+          <div data-testid="exec-universe">
+            Universe:{" "}
+            <strong>
+              {readiness?.universe?.source || "—"}
+              {readiness?.universe?.count != null
+                ? ` · ${readiness.universe.count}개`
+                : ""}
+            </strong>
+          </div>
+          <div data-testid="exec-market-session">
+            시장 세션: <strong>{readiness?.market_session?.phase || "—"}</strong>
+          </div>
+          <div data-testid="exec-market-data">
+            시세 provider:{" "}
+            <strong>{readiness?.market_data?.provider || "—"}</strong>
+          </div>
+          <div data-testid="exec-permission">
+            권한:{" "}
+            <strong>
+              {readiness?.permission?.live_execution_blocked === false
+                ? "⚠ LIVE 열림"
+                : "실거래 차단 · Paper 허용"}
+            </strong>
+          </div>
+          <div data-testid="exec-paper-cash">
+            Paper 현금:{" "}
+            <strong>
+              {readiness?.paper_capital?.available_cash_krw != null
+                ? `${readiness.paper_capital.available_cash_krw.toLocaleString()}원`
+                : "—"}
+            </strong>
+          </div>
+          <div data-testid="exec-cycle">
+            cycle: <strong>{status?.cycle_count ?? 0}</strong>
+          </div>
+        </div>
+
+        <button
+          data-testid="btn-run-once-diagnostic"
+          onClick={onRunOnce}
+          disabled={runOnceBusy}
+          style={{
+            marginTop: 10,
+            padding: "7px 14px",
+            borderRadius: "var(--r-md)",
+            background: runOnceBusy ? "#94a3b8" : "#0ea5e9",
+            color: "#fff",
+            border: "none",
+            cursor: runOnceBusy ? "not-allowed" : "pointer",
+            fontWeight: "var(--fw-bold)",
+          }}
+        >
+          {runOnceBusy ? "진단 실행 중…" : "🔍 진단 실행 (run-once)"}
+        </button>
+
+        {/* run-once 결과 — 성공/차단 모두 reason_code + 사유 표시. */}
+        {runOnceResult && (
+          <div
+            data-testid="run-once-result"
+            data-result-code={runOnceResult.result_code}
+            data-ok={String(!!runOnceResult.ok)}
+            style={{
+              marginTop: 8,
+              padding: "8px 10px",
+              background: "#ffffff",
+              border: `1px solid ${runOnceResult.ok ? "#86efac" : "#fca5a5"}`,
+              borderRadius: "var(--r-sm)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <span
+                data-testid="run-once-result-code"
+                style={{
+                  display: "inline-block",
+                  padding: "1px 8px",
+                  borderRadius: 4,
+                  fontWeight: "var(--fw-bold)",
+                  fontSize: "var(--fs-xs)",
+                  background: runOnceResult.ok ? "#16a34a" : "#dc2626",
+                  color: "#fff",
+                }}
+              >
+                {runOnceResult.result_code}
+              </span>
+              {runOnceResult.quantity != null && runOnceResult.quantity > 0 && (
+                <span data-testid="run-once-qty" style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-2)" }}>
+                  {runOnceResult.quantity}주 · {Number(runOnceResult.notional_krw || 0).toLocaleString()}원
+                </span>
+              )}
+            </div>
+            <div
+              data-testid="run-once-reason"
+              style={{ marginTop: 4, fontSize: "var(--fs-xs)", color: "var(--c-text)" }}
+            >
+              {runOnceResult.reason_message || ""}
+            </div>
+            {Array.isArray(runOnceResult.stages) && runOnceResult.stages.length > 0 && (
+              <div
+                data-testid="run-once-stages"
+                style={{ marginTop: 4, fontSize: "var(--fs-xs)", color: "var(--c-text-3)" }}
+              >
+                {runOnceResult.stages.map((s, i) => (
+                  <span key={i} data-stage={s.stage} data-ok={String(!!s.ok)}>
+                    {s.ok ? "✓" : "✕"} {s.stage}
+                    {i < runOnceResult.stages.length - 1 ? " → " : ""}
+                  </span>
+                ))}
+              </div>
+            )}
+            <div style={{ marginTop: 4, fontSize: "var(--fs-xs)", color: "var(--c-text-3)" }}>
+              본 진단은 broker 호출 0건 · 실거래 아님 (broker_order_sent=
+              {String(runOnceResult.broker_order_sent === true)}).
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* #2-09 + #2-10: 최근 AI 판단 / Paper 가상 체결 ledger — read-only advisory */}
       {ledgerEvents.length > 0 && (

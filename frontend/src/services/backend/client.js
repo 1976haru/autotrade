@@ -297,6 +297,15 @@ export const backendApi = {
   // #2-10: AI Paper 자동매수/매도 skeleton — read-only latest decision.
   autoPaperLatestDecision: () =>
     backendFetch("/api/auto-paper/decision/latest"),
+  // 자동매매 실행 점검: run-readiness (준비 상태 한눈에) — read-only.
+  autoPaperRunReadiness: () =>
+    backendFetch("/api/auto-paper/run-readiness"),
+  // 강제 진단 run-once — 파이프라인 전체 1회 실행 + reason_code. 실거래 아님.
+  autoPaperRunOnceDiagnostic: (body = {}) =>
+    backendFetch("/api/auto-paper/run-once-diagnostic", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
   // #PaperCandidateWire: Paper 후보 ↔ Auto Paper Loop 승인 endpoints.
   autoPaperCandidates: () =>
     backendFetch("/api/auto-paper/candidates"),
