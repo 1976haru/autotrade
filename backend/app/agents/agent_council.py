@@ -156,6 +156,9 @@ class AgentCouncilDecision:
     sell_reason:    dict[str, Any] = field(default_factory=dict)
     # 2-08: RiskOfficer veto 결과 (risk_flags 허용치 초과 시 HOLD 강등 정보).
     risk_veto_result: dict[str, Any] = field(default_factory=dict)
+    # 2-09: exit_plan 검증 결과 + 강등 전 action (BUY 는 valid exit_plan 필수).
+    exit_plan_validation: dict[str, Any] = field(default_factory=dict)
+    pre_exit_plan_action: str | None = None
 
     is_order_signal:       bool = False
     auto_apply_allowed:    bool = False
@@ -191,6 +194,10 @@ class AgentCouncilDecision:
             "sell_reason":    dict(self.sell_reason),
             # 2-08: RiskOfficer veto 결과 (위험 플래그 초과 → HOLD 강등).
             "risk_veto_result": dict(self.risk_veto_result),
+            # 2-09: exit_plan 검증 결과 + 강등 전 action.
+            "exit_plan_validation": dict(self.exit_plan_validation),
+            "pre_exit_plan_action": self.pre_exit_plan_action,
+            "exit_plan_required":   True,
             # P-23: 진입 임계 스냅샷 — "왜 BUY/왜 HOLD" 사후 분석용.
             "threshold_snapshot": self._threshold_snapshot(),
             "is_order_signal":       False,
@@ -430,7 +437,6 @@ def run_agent_council(
     quality = max(0, int(round(avg_score)) - risk_penalty)
     confidence = _clamp01(avg_conf)
 
-    exit_plan = _exit_plan_for(profile)
     reasons: list[str] = []
 
     # 5. ChiefTrading — 게이트 적용.
@@ -445,9 +451,6 @@ def run_agent_council(
         elif quality < thr["min_quality"]:
             final = CouncilAction.HOLD
             reasons.append(f"quality_score {quality} < 임계 {int(thr['min_quality'])}")
-        elif not exit_plan:
-            final = CouncilAction.HOLD
-            reasons.append("exit_plan 없음 — BUY 금지")
         else:
             reasons.append(
                 f"BUY 채택 (buy_score={buy_score:.1f}, conf={confidence:.2f}, "
@@ -472,6 +475,29 @@ def run_agent_council(
     if veto.veto_applied:
         final = CouncilAction.HOLD
         reasons.append(veto.reason)
+
+    # 7. 2-09: ExitPlan 필수 — BUY 는 valid exit_plan(stop_loss/take_profit/strategy)
+    #    이 있어야 진입 허용. 없거나 비정상이면 안전하지 않은 진입 → HOLD 강등.
+    from app.agents.exit_plan import build_default_exit_plan, validate_exit_plan
+    pre_exit_plan_action = final.value
+    exit_plan: dict[str, Any] = {}
+    exit_plan_validation: dict[str, Any] = {}
+    if final == CouncilAction.BUY:
+        pol = policy_for(profile)
+        sl_pct = round(pol.default_stop_loss_pct * 100, 2)
+        plan_obj = build_default_exit_plan(
+            entry_price=inp.current_price, risk_profile=profile.value,
+            stop_loss_pct=sl_pct, take_profit_pct=round(sl_pct * 2, 2),
+        )
+        vres = validate_exit_plan(
+            plan_obj.to_dict() if plan_obj is not None else None,
+            current_price=inp.current_price, side="BUY")
+        exit_plan_validation = vres.to_dict()
+        if vres.valid and plan_obj is not None:
+            exit_plan = plan_obj.to_dict()
+        else:
+            final = CouncilAction.HOLD
+            reasons.append(f"ExitPlan 검증 실패({vres.reason_code}) — BUY → HOLD 강등")
 
     selected = [v.strategy for v in votes if v.signal == final and v.score > 0] \
         if final != CouncilAction.HOLD else []
@@ -498,6 +524,8 @@ def run_agent_council(
         exit_plan=(exit_plan if final == CouncilAction.BUY else {}),
         sell_reason=sell_reason,
         risk_veto_result=veto.to_dict(),
+        exit_plan_validation=exit_plan_validation,
+        pre_exit_plan_action=pre_exit_plan_action,
         metadata={"weights": dict(STRATEGY_WEIGHTS),
                   "thresholds": dict(thr),
                   "risk_penalty": risk_penalty,
