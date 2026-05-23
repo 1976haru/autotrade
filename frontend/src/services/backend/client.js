@@ -240,6 +240,11 @@ export const backendApi = {
       }),
     }),
   paperCashState:      () => backendFetch("/api/auto-paper/cash-state"),
+  // P-18: 가상 포트폴리오 상태 요약 (read-only 표시 전용).
+  autoPaperPortfolio:  ({ lastPrices = null } = {}) => {
+    const qs = lastPrices ? `?last_prices=${encodeURIComponent(lastPrices)}` : "";
+    return backendFetch(`/api/auto-paper/portfolio${qs}`);
+  },
   paperCashStateReset: () =>
     backendFetch("/api/auto-paper/cash-state/reset", { method: "POST" }),
   // 운영 진단 + 이벤트 로그 — *advisory* read-only. broker / DB write 0건.

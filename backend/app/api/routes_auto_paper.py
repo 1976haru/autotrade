@@ -2038,6 +2038,52 @@ from app.api.deps import get_risk_manager   # noqa: E402
 from app.db.session import get_db   # noqa: E402
 from app.auto_paper.paper_trade_flow import execute_paper_trade_flow   # noqa: E402
 from app.auto_paper.paper_risk_check import build_paper_risk_check   # noqa: E402
+from app.auto_paper.portfolio_state import build_portfolio_state   # noqa: E402
+
+
+def _parse_last_prices(raw: str | None) -> dict[str, int]:
+    """'005930:75000,000660:200000' → {symbol: price}. 잘못된 토큰 skip."""
+    out: dict[str, int] = {}
+    if not raw:
+        return out
+    for tok in raw.split(","):
+        tok = tok.strip()
+        if not tok or ":" not in tok:
+            continue
+        sym, price = tok.split(":", 1)
+        sym = sym.strip()
+        try:
+            out[sym] = int(price.strip())
+        except ValueError:
+            continue
+    return out
+
+
+@_AP.get("/portfolio")
+def get_portfolio_state(
+    last_prices: str | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    """P-18: 가상 포트폴리오 상태 — 현금 / 보유 / 평가 / 한도 사용현황 요약.
+
+    Paper / 가상 포트폴리오이며 *실제 계좌 잔고가 아니다*. broker /
+    OrderExecutor / route_order 호출 0건, DB SELECT only. 응답 invariant:
+    `is_live_authorization=False` / `is_order_signal=False` /
+    `contains_secret=False`. API key / secret / 계좌번호 필드 0건.
+
+    `last_prices` (선택): 'symbol:price' 콤마 목록. 미지정 시 평균단가를 mark 로
+    사용 (unrealized=0). position_engine 규약과 동일.
+    """
+    prices = _parse_last_prices(last_prices)
+    snap = build_portfolio_state(db, last_prices=prices or None)
+    return {
+        **snap.to_dict(),
+        "ok": True,
+        "advisory_disclaimer": (
+            "본 화면은 Paper / 가상 포트폴리오이며 실제 계좌 잔고가 아닙니다. "
+            "broker 호출 0건 · 실거래 권한 아님."
+        ),
+    }
 
 
 class _RunOnceTradeBody(BaseModel):
