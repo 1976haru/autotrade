@@ -1686,3 +1686,65 @@ def weight_recommendation(
             "contains_secret":            False,
         },
     }
+
+
+# ============================================================================
+# P-30: Paper Gate 성과 리포트 (read-only preview + 파일 export) — 실전 자동 전환 금지
+# ============================================================================
+
+
+@router.get("/paper-gate-report")
+def paper_gate_report(
+    limit: int = Query(1000, ge=1, le=5000),
+    db:    _Session = Depends(get_db),
+) -> dict:
+    """Paper 모의매매 100건 성과 리포트 (read-only preview, 파일 미작성).
+
+    decision episode 추정 성과만 사용 — **실제 계좌 잔고 미사용**. 등급이 좋아도
+    자동 실전 전환 0건, 100건 미만이면 INSUFFICIENT_SAMPLE. broker /
+    OrderExecutor / route_order 호출 0건, secret 0건, is_live_authorization=False.
+    """
+    from app.agents.decision_episode import list_episodes
+    from app.reports.paper_performance_report import generate_paper_gate_report
+    episodes = list_episodes(db, limit=limit)
+    report = generate_paper_gate_report(episodes)
+    return report.to_dict()
+
+
+class _PaperReportExportIn(BaseModel):
+    """리포트 export 입력 (파일 형식 선택). 주문 권한 아님."""
+    limit:          int = 1000
+    write_markdown: bool = True
+    write_json:     bool = True
+
+
+@router.post("/paper-gate-report/export")
+def paper_gate_report_export(
+    body: _PaperReportExportIn | None = None,
+    db:   _Session = Depends(get_db),
+) -> dict:
+    """Paper Gate 리포트를 reports/paper_gate/ 에 md/json 으로 저장 (broker 호출 0건).
+
+    파일에 secret/계좌 0건. 실전 전환 자동 수행 0건 — 리포트 파일만 작성.
+    """
+    from app.agents.decision_episode import list_episodes
+    from app.reports.paper_performance_report import generate_paper_gate_report
+    from app.reports.paper_report_export import export_report
+    body = body or _PaperReportExportIn()
+    episodes = list_episodes(db, limit=max(1, min(5000, int(body.limit))))
+    report = generate_paper_gate_report(episodes).to_dict()
+    written = export_report(
+        report, write_markdown=bool(body.write_markdown),
+        write_json=bool(body.write_json),
+    )
+    return {
+        "written":  written,
+        "report_id": report.get("report_id"),
+        "readiness": report.get("readiness"),
+        "is_order_signal":       False,
+        "is_live_authorization": False,
+        "advisory_disclaimer": (
+            "Paper 모의매매 성과 리포트 — 실제 계좌 성과가 아니며 수익을 보장하지 "
+            "않습니다. 실전 전환은 별도 수동 승인이 필요합니다."
+        ),
+    }
