@@ -24,6 +24,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { normalizeRiskProfile } from "../components/AgentRiskProfileSelector";
+
 
 // ----- 상수 -----
 
@@ -38,6 +40,7 @@ export const DEFAULT_PAPER_CAPITAL_SETTINGS = Object.freeze({
   maxDailyBuyAmount:    3_000_000,   // 300만원
   maxSymbolWeightPct:   0.2,         // 20%
   allowAdditionalBuy:   false,
+  riskProfile:          "BALANCED",  // AI 운용 성향 (CONSERVATIVE/BALANCED/AGGRESSIVE)
 });
 
 
@@ -177,6 +180,12 @@ export function normalizePaperCapitalSettings(input) {
     }
   }
 
+  // 7. riskProfile — 소문자/한국어/별칭 모두 표준 enum 으로 정규화 (실패값
+  //    없이 항상 유효 enum). 명시 입력 없으면 default(BALANCED) 유지.
+  if (input.riskProfile !== undefined && input.riskProfile !== null) {
+    out.riskProfile = normalizeRiskProfile(input.riskProfile);
+  }
+
   return { settings: out, errors };
 }
 
@@ -296,6 +305,7 @@ export function toStartPayloadCapitalSettings(settings) {
     max_daily_buy_amount:   s.maxDailyBuyAmount,
     max_symbol_weight_pct:  s.maxSymbolWeightPct,
     allow_additional_buy:   s.allowAdditionalBuy,
+    risk_profile:           s.riskProfile,
   };
 }
 

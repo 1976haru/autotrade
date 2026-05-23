@@ -64,6 +64,75 @@ export const RISK_PROFILES = [
 
 export const DEFAULT_RISK_PROFILE = "BALANCED";
 
+export const RISK_PROFILE_VALUES = ["CONSERVATIVE", "BALANCED", "AGGRESSIVE"];
+
+
+// 한국어 / 소문자 / 별칭 입력도 표준 enum 으로 정규화. 알 수 없으면 BALANCED.
+const _RISK_PROFILE_ALIASES = {
+  CONSERVATIVE: "CONSERVATIVE", BALANCED: "BALANCED", AGGRESSIVE: "AGGRESSIVE",
+  "보수적": "CONSERVATIVE", "안정적": "BALANCED", "공격적": "AGGRESSIVE",
+  CONSERVATIVE_PROFILE: "CONSERVATIVE", DEFENSIVE: "CONSERVATIVE",
+  NORMAL: "BALANCED", MODERATE: "BALANCED", DEFAULT: "BALANCED",
+  AGGRESSIVE_PROFILE: "AGGRESSIVE", HIGH: "AGGRESSIVE",
+};
+
+
+/**
+ * 임의 입력값(소문자/한국어/별칭/null)을 표준 risk_profile enum 으로 정규화.
+ * @returns {"CONSERVATIVE"|"BALANCED"|"AGGRESSIVE"}
+ */
+export function normalizeRiskProfile(value) {
+  if (value == null) return DEFAULT_RISK_PROFILE;
+  const key = String(value).trim().toUpperCase();
+  if (!key) return DEFAULT_RISK_PROFILE;
+  return _RISK_PROFILE_ALIASES[key] || DEFAULT_RISK_PROFILE;
+}
+
+
+const _PROFILE_BY_VALUE = Object.fromEntries(RISK_PROFILES.map((p) => [p.value, p]));
+
+
+/** risk_profile → 한국어 라벨 (보수적 / 안정적 (기본값) / 공격적). */
+export function getRiskProfileLabel(value) {
+  return _PROFILE_BY_VALUE[normalizeRiskProfile(value)].label;
+}
+
+
+/** risk_profile → 상세 설명 (진입 기준 요약). */
+export function getRiskProfileDescription(value) {
+  const p = _PROFILE_BY_VALUE[normalizeRiskProfile(value)];
+  return `${p.summary} — ${p.detail}`;
+}
+
+
+/**
+ * risk_profile → Paper 자금/진입 정책 (advisory). 실거래 권한과 무관 —
+ * is_live_authorization=false 영구. allow_additional_buy 는 항상 false 기본.
+ */
+export function getRiskProfileCapitalPolicy(value) {
+  const v = normalizeRiskProfile(value);
+  const table = {
+    CONSERVATIVE: {
+      min_confidence: 0.6, min_quality_score: 75, max_risk_flags: 0,
+      max_symbol_weight_pct: 0.10, max_concurrent_candidates: 2,
+    },
+    BALANCED: {
+      min_confidence: 0.4, min_quality_score: 60, max_risk_flags: 1,
+      max_symbol_weight_pct: 0.20, max_concurrent_candidates: 3,
+    },
+    AGGRESSIVE: {
+      min_confidence: 0.3, min_quality_score: 50, max_risk_flags: 2,
+      max_symbol_weight_pct: 0.30, max_concurrent_candidates: 5,
+    },
+  };
+  return {
+    risk_profile: v,
+    ...table[v],
+    allow_additional_buy: false,        // 성향 무관 — 항상 기본 false.
+    is_live_authorization: false,       // 영구.
+  };
+}
+
 
 function _ProfileCard({ profile, selected, onSelect, disabled }) {
   const active = selected === profile.value;

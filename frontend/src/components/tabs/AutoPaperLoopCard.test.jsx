@@ -6,7 +6,7 @@
  * - 시작 / 정지 / 긴급정지 버튼이 정확한 API 를 호출
  */
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import {
@@ -15,6 +15,13 @@ import {
   canStopAutoPaper,
   normalizeAutoPaperState,
 } from "./AutoPaperLoopCard";
+
+// risk_profile 가 이제 localStorage(Paper 자금 설정)에 영속되므로, 테스트 간
+// 격리를 위해 매 테스트 전 localStorage 를 비운다 (한 테스트의 AGGRESSIVE 저장이
+// 다음 테스트로 누출되어 default BALANCED 검증을 깨지 않도록).
+beforeEach(() => {
+  try { window.localStorage.clear(); } catch { /* jsdom */ }
+});
 
 
 function _mockApi(
@@ -1300,6 +1307,7 @@ describe("<AutoPaperLoopCard> — P-15 capital settings", () => {
       max_daily_buy_amount:   5_000_000,
       max_symbol_weight_pct:  0.10,
       allow_additional_buy:   true,
+      risk_profile:           "BALANCED",
     });
   });
 
@@ -1748,5 +1756,58 @@ describe("<AutoPaperLoopCard> — 실행 점검판 + run-once 진단", () => {
     expect(t).not.toContain("buy");
     expect(t).not.toContain("sell");
     expect(t).not.toContain("place order");
+  });
+});
+
+
+// ────────────────────────────────────────────────────────────────────────────
+// AI 운용 성향 선택 영속 (localStorage) + 표시 + 장 시작 전 선택 가능
+// ────────────────────────────────────────────────────────────────────────────
+
+
+describe("<AutoPaperLoopCard> — risk_profile 영속/표시", () => {
+  afterEach(cleanup);
+
+  it("AGGRESSIVE 선택 → 재마운트 후에도 유지 (localStorage 영속)", async () => {
+    const api1 = _mockApi({ state: "PAUSED", cycle_count: 0 });
+    const { unmount } = render(<AutoPaperLoopCard apiClient={api1} pollIntervalMs={0} />);
+    await waitFor(() => expect(api1.autoPaperStatus).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId("risk-profile-card-AGGRESSIVE"));
+    expect(screen.getByTestId("current-risk-profile").getAttribute("data-risk-profile")).toBe("AGGRESSIVE");
+    unmount();
+    // 재마운트 — localStorage 에서 AGGRESSIVE 로드.
+    const api2 = _mockApi({ state: "PAUSED", cycle_count: 0 });
+    render(<AutoPaperLoopCard apiClient={api2} pollIntervalMs={0} />);
+    await waitFor(() => expect(api2.autoPaperStatus).toHaveBeenCalled());
+    expect(screen.getByTestId("current-risk-profile").getAttribute("data-risk-profile")).toBe("AGGRESSIVE");
+    expect(screen.getByTestId("risk-profile-radiogroup").getAttribute("data-selected")).toBe("AGGRESSIVE");
+  });
+
+  it("CONSERVATIVE 선택 → current-risk-profile 보수적 표시 + start payload", async () => {
+    const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId("risk-profile-card-CONSERVATIVE"));
+    expect(screen.getByTestId("current-risk-profile").textContent).toMatch(/보수적/);
+    fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
+    await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
+    expect(api.autoPaperStart.mock.calls[0][0]).toMatchObject({ risk_profile: "CONSERVATIVE" });
+    // capital_settings 에도 risk_profile carry.
+    expect(api.autoPaperStart.mock.calls[0][0].capital_settings.risk_profile).toBe("CONSERVATIVE");
+  });
+
+  it("장 시작 전(WAITING_MARKET)에도 성향 선택 가능", async () => {
+    const api = _mockApi({ state: "WAITING_MARKET", cycle_count: 0 });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId("risk-profile-card-AGGRESSIVE"));
+    expect(screen.getByTestId("risk-profile-radiogroup").getAttribute("data-selected")).toBe("AGGRESSIVE");
+  });
+
+  it("기본값 BALANCED 표시 (localStorage 비어있을 때)", async () => {
+    const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    expect(screen.getByTestId("current-risk-profile").getAttribute("data-risk-profile")).toBe("BALANCED");
   });
 });

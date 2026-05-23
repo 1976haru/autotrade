@@ -96,6 +96,45 @@ class TestValidateEndpoint:
         assert "권한" in b["notice"]
         assert "변경" in b["notice"]
 
+    def test_risk_profile_default_balanced_when_omitted(self, api_client):
+        r = api_client.post(
+            "/api/auto-paper/paper-capital-settings/validate", json={},
+        )
+        assert r.status_code == 200
+        assert r.json()["risk_profile"] == "BALANCED"
+
+    def test_risk_profile_aggressive_round_trip(self, api_client):
+        r = api_client.post(
+            "/api/auto-paper/paper-capital-settings/validate",
+            json={"risk_profile": "AGGRESSIVE"},
+        )
+        assert r.status_code == 200
+        b = r.json()
+        assert b["risk_profile"] == "AGGRESSIVE"
+        # AGGRESSIVE 여도 실거래 권한 / allow_additional_buy 기본값 불변.
+        assert b["is_live_authorization"] is False
+        assert b["allow_additional_buy"] is False
+
+    def test_risk_profile_conservative_round_trip(self, api_client):
+        r = api_client.post(
+            "/api/auto-paper/paper-capital-settings/validate",
+            json={"risk_profile": "CONSERVATIVE"},
+        )
+        assert r.status_code == 200
+        assert r.json()["risk_profile"] == "CONSERVATIVE"
+
+    def test_risk_profile_normalizes_lowercase_and_korean(self, api_client):
+        for raw, expected in [("aggressive", "AGGRESSIVE"),
+                              ("conservative", "CONSERVATIVE"),
+                              ("balanced", "BALANCED"),
+                              ("nonsense-value", "BALANCED")]:
+            r = api_client.post(
+                "/api/auto-paper/paper-capital-settings/validate",
+                json={"risk_profile": raw},
+            )
+            assert r.status_code == 200
+            assert r.json()["risk_profile"] == expected
+
     def test_partial_body_echoes_none(self, api_client):
         r = api_client.post(
             "/api/auto-paper/paper-capital-settings/validate",

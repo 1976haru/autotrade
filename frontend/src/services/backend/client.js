@@ -313,6 +313,12 @@ export const backendApi = {
       method: "POST",
       body: JSON.stringify(body || {}),
     }),
+  // Agent Council — 4전략 투표 → BUY/SELL/HOLD 판단 (advisory, read-only).
+  agentCouncilEvaluate: (body = {}) =>
+    backendFetch("/api/agents/council/evaluate", {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
   // #PaperCandidateWire: Paper 후보 ↔ Auto Paper Loop 승인 endpoints.
   autoPaperCandidates: () =>
     backendFetch("/api/auto-paper/candidates"),

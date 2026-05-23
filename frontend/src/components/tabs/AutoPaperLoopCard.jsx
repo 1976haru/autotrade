@@ -2,12 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Card, SectionLabel } from "../common";
 import AgentRiskProfileSelector, {
-  DEFAULT_RISK_PROFILE,
+  getRiskProfileLabel,
+  normalizeRiskProfile,
 } from "../AgentRiskProfileSelector";
 import { backendApi } from "../../services/backend/client";
 import {
   buildPaperCapitalSummary,
   loadPaperCapitalSettings,
+  savePaperCapitalSettings,
   toStartPayloadCapitalSettings,
 } from "../../store/usePaperCapitalSettings";
 
@@ -167,7 +169,24 @@ export function AutoPaperLoopCard({
   const [ledgerEvents, setLedgerEvents] = useState([]);
   // #4-RiskProfileUI: 사용자가 선택한 AI 운용 성향 — 기본값 BALANCED.
   // start 시점에 backend POST /api/auto-paper/start 요청 body 에 동봉.
-  const [riskProfile, setRiskProfile] = useState(DEFAULT_RISK_PROFILE);
+  // 영속: 선택한 성향을 localStorage(Paper 자금 설정) 에 저장 → 재마운트/poll
+  // 후에도 유지(이전엔 컴포넌트 state 라 BALANCED 로 되돌아가던 버그).
+  const [riskProfile, setRiskProfileState] = useState(() =>
+    normalizeRiskProfile(
+      (paperCapitalSettings || loadPaperCapitalSettings()).riskProfile,
+    ),
+  );
+  const setRiskProfile = useCallback((next) => {
+    const v = normalizeRiskProfile(next);
+    setRiskProfileState(v);
+    // 동일 source(Paper 자금 설정)에 persist — PaperCapitalSettingsCard 와 공유.
+    try {
+      const cur = paperCapitalSettings || loadPaperCapitalSettings();
+      savePaperCapitalSettings({ ...cur, riskProfile: v });
+    } catch {
+      // localStorage 미가용 — 메모리 상태만 유지.
+    }
+  }, [paperCapitalSettings]);
   // 자동매매 실행 점검판: run-readiness + 강제 진단 run-once 결과.
   const [readiness, setReadiness] = useState(null);
   const [runOnceResult, setRunOnceResult] = useState(null);
@@ -543,17 +562,21 @@ export function AutoPaperLoopCard({
         </div>
       )}
 
-      {/* #4-RiskProfileUI: 시작 *전* 운용 성향 선택. RUNNING 중에는 비활성. */}
+      {/* #4-RiskProfileUI: 운용 성향 선택. RUNNING(주문 진행) 중에만 비활성 —
+          장 시작 전(PAUSED/STOPPED/WAITING_MARKET/MARKET_CLOSED)에는 선택 가능. */}
       <div style={{ marginBottom: 12 }}>
         <AgentRiskProfileSelector
           value={riskProfile}
           onChange={setRiskProfile}
-          disabled={
-            busy
-            || state === "RUNNING"
-            || state === "WAITING_MARKET"
-          }
+          disabled={busy || state === "RUNNING"}
         />
+        <div
+          data-testid="current-risk-profile"
+          data-risk-profile={riskProfile}
+          style={{ marginTop: 4, fontSize: "var(--fs-xs)", color: "var(--c-text-2)" }}
+        >
+          현재 성향: <strong>{getRiskProfileLabel(riskProfile)}</strong>
+        </div>
       </div>
 
       {/* P-15: 적용 자금 기준 요약 — 시작 *전* 사용자에게 노출. */}

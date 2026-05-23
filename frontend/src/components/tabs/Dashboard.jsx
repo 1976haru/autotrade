@@ -36,6 +36,7 @@ import { useStrategySelection } from "../../store/useStrategySelection";
 // 89: KIS Paper one-click AI auto-trade test — 한투 모의투자 전용. 실거래 0건.
 import { KisPaperOneClickTestCard } from "./KisPaperOneClickTestCard";
 import { AutoPaperLoopCard } from "./AutoPaperLoopCard";
+import { AgentCouncilVoteCard } from "./AgentCouncilVoteCard";
 import { PortfolioCard } from "../common/PortfolioCard";
 import { UpdateBanner } from "../UpdateBanner";
 
@@ -602,6 +603,12 @@ export function Dashboard({
           PAPER/SIMULATION 한정 — broker.place_order 호출 0건, 실거래 OFF 영구. */}
       <div className="dashboard-span-full">
         <AutoPaperLoopCard />
+      </div>
+
+      {/* Agent Council — 4전략(ORB/Momentum/Gap/VWAP) 투표 + 최종 판단 (advisory).
+          decision 미주입 시 안내 문구만 — 자동 tick / 평가 결과가 채워지면 표시. */}
+      <div className="dashboard-span-full">
+        <AgentCouncilVoteCard />
       </div>
 
       {/* Paper 가상 포트폴리오 — Paper 모의 체결 결과(현금/보유/평가/손익) 표시.

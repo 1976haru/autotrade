@@ -1332,3 +1332,53 @@ def post_strategy_selection(req: StrategySelectionIn) -> StrategySelectionOut:
     )
     report = select_strategies(inp)
     return StrategySelectionOut(**report.to_dict())
+
+
+# ============================================================================
+# Agent Council — 4전략 투표 → BUY/SELL/HOLD 결정 (advisory, read-only)
+# ============================================================================
+
+
+from app.agents import agent_council as _council   # noqa: E402
+
+
+class _CouncilEvalBody(BaseModel):
+    """Agent Council 평가 입력 — 시세/전략 데이터 라벨. broker 호출 0건."""
+
+    symbol:             str
+    current_price:      float | None = None
+    prev_close:         float | None = None
+    open_price:         float | None = None
+    vwap:               float | None = None
+    opening_range_high: float | None = None
+    opening_range_low:  float | None = None
+    recent_closes:      list[float] | None = None
+    current_volume:     float | None = None
+    avg_volume:         float | None = None
+    market_regime:      str = "UNKNOWN"
+    regime_decision:    str = "ALLOW"
+    risk_profile:       str | None = None
+    held_position:      bool = False
+
+
+@router.post("/council/evaluate")
+def post_council_evaluate(body: _CouncilEvalBody) -> dict:
+    """4 전략(ORB/Momentum/Gap/VWAP) 투표 → Agent Council 최종 판단.
+
+    *advisory* — 주문 신호가 아니며 broker / route_order 호출 0건. UI
+    (AgentCouncilCard) 가 전략별 vote + 최종 판단을 표시. 실제 주문은 KIS Paper
+    Auto Executor 가 sanctioned 경로로 별도 수행.
+    """
+    inp = _council.StrategyMarketInput(
+        symbol=body.symbol, current_price=body.current_price,
+        prev_close=body.prev_close, open_price=body.open_price, vwap=body.vwap,
+        opening_range_high=body.opening_range_high,
+        opening_range_low=body.opening_range_low,
+        recent_closes=tuple(body.recent_closes or ()),
+        current_volume=body.current_volume, avg_volume=body.avg_volume,
+        market_regime=body.market_regime, regime_decision=body.regime_decision,
+    )
+    decision = _council.run_agent_council(
+        inp, risk_profile=body.risk_profile, held_position=bool(body.held_position),
+    )
+    return decision.to_dict()
