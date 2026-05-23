@@ -354,3 +354,139 @@ def test_safety_flags_unchanged():
     assert s.enable_ai_execution is False
     assert s.enable_futures_live_trading is False
     assert s.kis_is_paper is True
+
+
+def test_simulated_fills_flag_default_false():
+    s = Settings()
+    assert s.ai_paper_allow_simulated_fills is False
+    assert s.ai_paper_fill_slippage_bps == 0.0
+
+
+# ── tick mode 분리 (diagnostic vs simulated trade) ────────────────────────────
+
+
+def _sim_settings(**kw):
+    base = dict(
+        enable_ai_paper_background_tick=True, enable_live_trading=False,
+        default_mode=OperationMode.PAPER, kis_is_paper=True,
+        ai_paper_tick_dry_run=False, ai_paper_allow_simulated_fills=True,
+        ai_paper_tick_max_per_day=0, ai_paper_tick_interval_seconds=30,
+        market_data_provider="mock", ai_paper_fill_slippage_bps=0.0,
+    )
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+def _db_engine():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.db.base import Base
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                        poolclass=StaticPool)
+    Base.metadata.create_all(eng)
+    return sessionmaker(bind=eng)
+
+
+def _sim_driver(settings, Sess, **extra):
+    from app.risk.risk_manager import RiskManager, RiskPolicy
+    return BackgroundTickDriver(
+        settings_provider=lambda: settings, loop_provider=lambda: _FakeLoop("RUNNING"),
+        event_sink=lambda **kw: None, now_provider=lambda: OPEN_TIME,
+        session_factory=lambda: Sess(),
+        risk_manager_provider=lambda: RiskManager(RiskPolicy()),
+        **extra,
+    )
+
+
+def test_diagnostic_mode_when_dry_run_true():
+    # dry_run=True → 항상 DIAGNOSTIC, allow_fills 무관.
+    d = _driver(_settings(ai_paper_tick_dry_run=True), _FakeLoop("RUNNING"))
+    r = d.tick_once(OPEN_TIME)
+    assert r.tick_mode == "DIAGNOSTIC_DRY_RUN"
+    assert r.order_created is False
+
+
+def test_diagnostic_mode_when_allow_fills_false():
+    d = _driver(_sim_settings(ai_paper_tick_dry_run=False,
+                              ai_paper_allow_simulated_fills=False),
+                _FakeLoop("RUNNING"))
+    r = d.tick_once(OPEN_TIME)
+    assert r.tick_mode == "DIAGNOSTIC_DRY_RUN"
+    assert r.order_created is False
+
+
+def test_simulated_trade_mode_creates_filled_order():
+    from app.auto_paper.capital_state import (
+        reset_capital_state_for_tests,
+    )
+    from app.auto_paper.ledger import reset_ledger_for_tests
+    from app.db.models import AgentDecisionLog, VirtualOrder
+    reset_capital_state_for_tests(10_000_000)
+    reset_ledger_for_tests()
+    Sess = _db_engine()
+    d = _sim_driver(_sim_settings(), Sess)
+    r = d.tick_once(OPEN_TIME)
+    assert r.tick_mode == "SIMULATED_TRADE"
+    assert r.reason_code == "VIRTUAL_ORDER_CANDIDATE_CREATED"
+    assert r.order_created is True
+    assert r.fill_status == "FILLED"
+    assert r.quantity >= 1
+    assert r.cash_before == 10_000_000
+    assert r.cash_after is not None and r.cash_after < 10_000_000
+    assert r.position_quantity >= 1
+    assert r.broker_order_sent is False
+    assert r.is_live_authorization is False
+    db = Sess()
+    assert db.query(VirtualOrder).filter_by(status="FILLED").count() >= 1
+    assert db.query(AgentDecisionLog).count() >= 1
+    db.close()
+    reset_capital_state_for_tests(10_000_000)
+
+
+def test_simulated_trade_error_records_background_tick_error_and_survives():
+    # trade_flow_runner 가 예외 → BACKGROUND_TICK_ERROR, task 죽지 않음.
+    Sess = _db_engine()
+    events: list[str] = []
+
+    def boom(*a, **k):
+        raise RuntimeError("boom secret sk-abcdefghij1234567890")
+
+    d = _sim_driver(_sim_settings(), Sess, trade_flow_runner=boom)
+    d._event_sink = lambda **kw: events.append((kw["code"], kw["message"]))
+    r = d.tick_once(OPEN_TIME)
+    assert r.reason_code == "BACKGROUND_TICK_ERROR"
+    # reason_message 는 일반 안내(secret 없음).
+    assert "sk-" not in r.reason_message
+    # emit 된 상세 메시지는 redaction 적용.
+    err_events = [m for c, m in events if "BACKGROUND_TICK_ERROR" in c]
+    assert err_events and "sk-abcdefghij" not in err_events[0]
+    assert "[REDACTED]" in err_events[0]
+
+
+def test_status_carries_tick_mode_and_order_fields():
+    from app.auto_paper.capital_state import reset_capital_state_for_tests
+    from app.auto_paper.ledger import reset_ledger_for_tests
+    reset_capital_state_for_tests(10_000_000)
+    reset_ledger_for_tests()
+    Sess = _db_engine()
+    d = _sim_driver(_sim_settings(), Sess)
+    d.tick_once(OPEN_TIME)
+    st = d.status()
+    assert st["tick_mode"] == "SIMULATED_TRADE"
+    assert st["simulated_fills_enabled"] is True
+    assert st["last_order_id"] is not None
+    assert st["last_fill_status"] == "FILLED"
+    assert st["last_quantity"] >= 1
+    assert st["last_cash_after"] is not None
+    assert st["is_live_authorization"] is False
+    assert st["broker_order_sent"] is False
+    reset_capital_state_for_tests(10_000_000)
+
+
+def test_run_readiness_background_tick_has_tick_mode_field(client):
+    bt = client.get("/api/auto-paper/run-readiness").json()["background_tick"]
+    assert "tick_mode" in bt
+    assert "last_order_id" in bt
+    assert "last_fill_status" in bt
+    assert "simulated_fills_enabled" in bt

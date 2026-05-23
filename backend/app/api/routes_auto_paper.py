@@ -1962,6 +1962,7 @@ from sqlalchemy.orm import Session   # noqa: E402
 from app.api.deps import get_risk_manager   # noqa: E402
 from app.db.session import get_db   # noqa: E402
 from app.auto_paper.paper_trade_flow import execute_paper_trade_flow   # noqa: E402
+from app.auto_paper.paper_risk_check import build_paper_risk_check   # noqa: E402
 
 
 class _RunOnceTradeBody(BaseModel):
@@ -1982,56 +1983,6 @@ class _RunOnceTradeBody(BaseModel):
     reference_price:       Optional[float] = Field(None)
     signal_present:        bool            = Field(True)
     strategy_engine_connected: bool        = Field(True)
-
-
-def _build_paper_risk_check(risk, *, available_cash_krw: int, db: Session):
-    """주입된 RiskManager 로 *read-only* paper risk_check 콜러블 생성.
-
-    broker / OrderExecutor / route_order 를 호출하지 *않는다* — RiskManager.
-    check_order 는 평가만 수행(주문 발신 0건). RiskContext 는 capital_state
-    현금 + VirtualOrder FIFO 포지션으로 구성.
-    """
-    from app.brokers.base import Balance, OrderRequest, OrderSide, OrderType, Position
-    from app.core.modes import OperationMode
-    from app.risk.risk_manager import RiskContext, RiskDecision
-    from app.virtual.position_engine import compute_open_positions
-
-    def _risk_check(symbol: str, side: str, quantity: int, price: float):
-        try:
-            # 표준 risk 한도(notional/cash/exposure/positions) 평가용 order.
-            # requested_by_ai 는 RiskManager 의 *LIVE AI 실행 권한* 게이트를
-            # 트리거하므로 paper 시뮬레이션에서는 False — AI 판단 성격은 별도
-            # AgentDecisionLog / ledger 에 기록되며, 본 단계는 표준 위험 한도만
-            # 검사한다 (실거래 AI 실행 권한 부여 0건).
-            order = OrderRequest(
-                symbol=symbol, side=OrderSide.BUY, quantity=int(quantity),
-                order_type=OrderType.MARKET, trade_reason="ai_paper_trade_flow",
-                strategy="ai_paper",
-            )
-            pos_objs: list[Position] = []
-            try:
-                for p in compute_open_positions(db):
-                    pos_objs.append(Position(
-                        symbol=p.symbol, quantity=int(p.quantity),
-                        avg_price=int(p.avg_price), market_price=int(p.avg_price),
-                    ))
-            except Exception:  # noqa: BLE001
-                pos_objs = []
-            bal = Balance(cash=int(available_cash_krw), equity=int(available_cash_krw),
-                          buying_power=int(available_cash_krw))
-            ctx = RiskContext(
-                mode=OperationMode.PAPER, balance=bal, positions=pos_objs,
-                latest_price=int(price), requested_by_ai=False,
-                latest_price_timestamp=datetime.now(timezone.utc),
-            )
-            res = risk.check_order(order, ctx)
-            allowed = res.decision in (RiskDecision.APPROVED, RiskDecision.NEEDS_APPROVAL)
-            reason = None if allowed else "; ".join(res.reasons) or res.decision.value
-            return allowed, reason
-        except Exception as exc:  # noqa: BLE001 — 평가 실패는 보수적으로 차단.
-            return False, f"risk_check_error: {type(exc).__name__}: {exc}"
-
-    return _risk_check
 
 
 @_AP.post("/run-once-trade")
@@ -2060,7 +2011,7 @@ def post_run_once_trade(
         int(body.available_cash_krw) if body.available_cash_krw is not None
         else int(get_capital_state().snapshot().available_cash_krw)
     )
-    risk_check = _build_paper_risk_check(risk, available_cash_krw=avail, db=db)
+    risk_check = build_paper_risk_check(risk, db, avail)
     try:
         result = execute_paper_trade_flow(
             db,

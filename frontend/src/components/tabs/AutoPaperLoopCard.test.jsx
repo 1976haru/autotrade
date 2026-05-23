@@ -1589,8 +1589,75 @@ describe("<AutoPaperLoopCard> — 실행 점검판 + run-once 진단", () => {
     await waitFor(() => expect(screen.getByTestId("background-tick-status")).toBeTruthy());
     const btStatus = screen.getByTestId("background-tick-status");
     expect(btStatus.querySelectorAll("button").length).toBe(0);
-    expect(btStatus.textContent).toMatch(/Paper 전용/);
+    expect(btStatus.textContent).toMatch(/broker_order_sent=false/);
     const banned = ["ENABLE_LIVE_TRADING", "ENABLE_AI_EXECUTION", "실거래 시작", "AI 자동매매 켜기", "Place Order"];
+    for (const b of banned) expect(container.textContent).not.toContain(b);
+  });
+
+  it("tick_mode=DIAGNOSTIC_DRY_RUN → '진단 dry-run' + '판단만 기록' 표시", async () => {
+    const api = _mockApiWithDiag(
+      { state: "RUNNING", cycle_count: 1 },
+      _readinessFixture({
+        background_tick: {
+          enabled: true, running: true, tick_mode: "DIAGNOSTIC_DRY_RUN",
+          simulated_fills_enabled: false,
+        },
+      }),
+      null,
+    );
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("bg-tick-mode").getAttribute("data-tick-mode")).toBe("DIAGNOSTIC_DRY_RUN"),
+    );
+    expect(screen.getByTestId("bg-tick-mode").textContent).toMatch(/진단 dry-run/);
+    expect(screen.getByTestId("bg-tick-simulated-fills").textContent).toMatch(/판단만 기록/);
+  });
+
+  it("tick_mode=SIMULATED_TRADE → 'Paper 모의 체결' + '체결 시뮬레이션 반영' + 주문 결과", async () => {
+    const api = _mockApiWithDiag(
+      { state: "RUNNING", cycle_count: 3 },
+      _readinessFixture({
+        loop: { state: "RUNNING", cycle_count: 3 },
+        background_tick: {
+          enabled: true, running: true, tick_mode: "SIMULATED_TRADE",
+          simulated_fills_enabled: true,
+          last_order_id: 1, last_fill_status: "FILLED", last_quantity: 13,
+          last_notional_krw: 975_000, last_cash_before: 10_000_000,
+          last_cash_after: 9_025_000, last_reason_code: "VIRTUAL_ORDER_CANDIDATE_CREATED",
+        },
+      }),
+      null,
+    );
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("bg-tick-mode").getAttribute("data-tick-mode")).toBe("SIMULATED_TRADE"),
+    );
+    expect(screen.getByTestId("bg-tick-mode").textContent).toMatch(/Paper 모의 체결/);
+    expect(screen.getByTestId("bg-tick-simulated-fills").textContent).toMatch(/체결 시뮬레이션 반영/);
+    expect(screen.getByTestId("bg-tick-order-id").textContent).toMatch(/#1/);
+    expect(screen.getByTestId("bg-tick-fill-status").textContent).toMatch(/FILLED/);
+    expect(screen.getByTestId("bg-tick-quantity").textContent).toMatch(/13주/);
+    expect(screen.getByTestId("bg-tick-notional").textContent).toMatch(/975,000/);
+    expect(screen.getByTestId("bg-tick-cash-change").textContent).toMatch(/10,000,000원 → 9,025,000원/);
+    expect(screen.getByTestId("bg-tick-safety").textContent).toMatch(/broker_order_sent=false/);
+    expect(screen.getByTestId("bg-tick-safety").textContent).toMatch(/is_live_authorization=false/);
+  });
+
+  it("SIMULATED_TRADE 표시에 실거래/ENABLE_* 버튼·문구 0건", async () => {
+    const api = _mockApiWithDiag(
+      { state: "RUNNING", cycle_count: 3 },
+      _readinessFixture({
+        background_tick: {
+          enabled: true, running: true, tick_mode: "SIMULATED_TRADE",
+          simulated_fills_enabled: true, last_order_id: 1, last_fill_status: "FILLED",
+          last_quantity: 13, last_notional_krw: 975_000,
+        },
+      }),
+      null,
+    );
+    const { container } = render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(screen.getByTestId("bg-tick-mode")).toBeTruthy());
+    const banned = ["Place Order", "지금 매수", "지금 매도", "실거래 시작", "실거래 활성화", "ENABLE_LIVE_TRADING", "AI 자동매매 켜기"];
     for (const b of banned) expect(container.textContent).not.toContain(b);
   });
 
