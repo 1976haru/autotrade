@@ -10,6 +10,7 @@ import { DecisionEpisodeCard } from "./DecisionEpisodeCard";
 import { PerformanceDashboard } from "./PerformanceDashboard";
 import { WeightRecommendationCard } from "./WeightRecommendationCard";
 import { PaperGateReportCard } from "./PaperGateReportCard";
+import { DecisionEpisodeExportButton } from "../common/DecisionEpisodeExportButton";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
@@ -69,6 +70,8 @@ export function AISignal({ activeStratIds }) {
       <WeightRecommendationCard />
       {/* P-30: Paper Gate 성과 리포트 — 100건 미만 실전 전환 검토 불가, 자동 전환 없음. */}
       <PaperGateReportCard />
+      {/* P-31: 분석용 데이터 내보내기 (CSV/JSONL) — secret 미포함, 주문 신호 아님. */}
+      <DecisionEpisodeExportButton />
       <AgentDecisionSummaryCard />
       <AgentStatsCard />
       {/* 44: AI Assist 제안 카드 — AI는 제안만, 사람 승인 후 주문. */}
