@@ -921,4 +921,6 @@ export const backendApi = {
   exeStatus: () => backendFetch("/api/system/exe-status"),
   // #57 / 7-05: backend sidecar build metadata (read-only). secret 값 0건.
   buildInfo: () => backendFetch("/api/system/build-info"),
+  // #63 / 8-01: EXE preflight smoke (read-only). 주문 발생 0건, secret 값 0건.
+  preflight: () => backendFetch("/api/system/preflight"),
 };
