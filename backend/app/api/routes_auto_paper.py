@@ -2252,4 +2252,45 @@ def post_run_once_trade(
     return result.to_dict()
 
 
+# ── #54 / 7-02 기본 Universe 50개 상태 (read-only) ──────────────────────────
+# 사용자 관심종목이 없으면 기본 Universe 50개 fallback. universe_source /
+# count / symbols_preview / fallback_used / reason_code 를 표시한다. broker /
+# OrderExecutor / route_order / KIS endpoint 호출 0건, DB SELECT only,
+# Secret/계좌 0건. 매수/매도/실전 기능 아님.
+
+
+def _user_watchlist_symbols(db: Session) -> list[str]:
+    """사용자 관심종목 코드 — active watchlist 우선, 없으면 전체 union. 실패 시 []."""
+    try:
+        from app.watchlist.service import list_items, list_watchlists
+        wls = list_watchlists(db)
+        if not wls:
+            return []
+        active = [w for w in wls if getattr(w, "is_active", False)] or wls
+        out: list[str] = []
+        seen: set[str] = set()
+        for w in active:
+            for it in list_items(db, w.id):
+                code = str(getattr(it, "symbol", "") or "").strip().upper()
+                if code and code not in seen:
+                    seen.add(code)
+                    out.append(code)
+        return out
+    except Exception:  # noqa: BLE001
+        return []
+
+
+@_AP.get("/universe-status")
+def get_universe_status(db: Session = Depends(get_db)) -> dict:
+    """기본 Universe 50개 상태 — read-only. 후보군이 비지 않도록 fallback + 사유 표시."""
+    from app.universe.universe_status import build_universe_status
+    user_symbols = _user_watchlist_symbols(db)
+    status = build_universe_status(user_symbols=user_symbols)
+    return {
+        **status.to_dict(),
+        "is_live_authorization": False,
+        "advisory_note": "기본 Universe 는 자동매매 후보군 확보용이며 투자 추천이 아닙니다.",
+    }
+
+
 router.include_router(_AP)
