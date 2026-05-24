@@ -21,6 +21,7 @@ import { AppVersionCard } from "../common/AppVersionCard";
 import { PreflightSmokeCard } from "../common/PreflightSmokeCard";
 import { RuntimeEventLogViewer } from "../common/RuntimeEventLogViewer";
 import { UniverseStatusCard } from "../common/UniverseStatusCard";
+import { LiveSafetyStatusCard } from "../common/LiveSafetyStatusCard";
 import { backendApi } from "../../services/backend/client";
 import { APP_INFO, appVersionLine } from "../../config/appInfo";
 import { latestReleaseNote } from "../../config/releaseNotes";
@@ -272,6 +273,10 @@ export function Settings({ settings }) {
           설정. localStorage 저장. broker 호출 0건, 실거래 활성화 아님. */}
       <PaperCapitalSettingsCard api={backendApi} />
       <KisPaperEnvStatusCard />
+
+      {/* #70/#71/#72: 실매매 기본 OFF + KIS Paper/Live 분리 + Live Capital Review
+          상태 (read-only). 실전 켜기 버튼 0개, 주문/승인 버튼 0개. */}
+      <LiveSafetyStatusCard />
 
       {/* #86 데스크톱 업데이트 확인 카드 — mock 단계, 후속 PR 에서 Tauri
           updater 와 실 연결. broker 호출 0건, 안전 flag 변경 0건. */}
