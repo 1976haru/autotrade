@@ -167,6 +167,50 @@ def insufficient_records(symbol: str = "TEST") -> list[dict]:
             for i in range(4)]
 
 
+# ── #47 / 6-02 walk-forward 용 multi-day fixture ─────────────────────────────
+
+_WF_DATES = [
+    "2026-05-11", "2026-05-12", "2026-05-13", "2026-05-14",
+    "2026-05-15", "2026-05-18", "2026-05-19", "2026-05-20",
+]
+
+
+def _day_by_kind(symbol: str, date_str: str, kind: str, start_price: int) -> list[dict]:
+    if kind == "choppy":
+        return make_choppy_day(symbol, date_str, base=start_price)
+    return make_trend_day(symbol, date_str, direction=kind, start_price=start_price)
+
+
+def multi_day_records(symbol: str, kinds: list[str], *, start_price: int = 70_000,
+                      dates: list[str] | None = None) -> list[dict]:
+    """여러 거래일을 kind(up/down/flat/choppy) 순서대로 이어 붙인다 (가격 연속)."""
+    dts = dates or _WF_DATES
+    recs: list[dict] = []
+    price = start_price
+    for i, kind in enumerate(kinds):
+        date_str = dts[i % len(dts)]
+        day = _day_by_kind(symbol, date_str, kind, price)
+        recs += day
+        price = day[-1]["close"]
+    return recs
+
+
+def walk_forward_stable_records(symbol: str = "TEST") -> list[dict]:
+    """8 거래일 모두 상승추세 — train/validation/test 성과 유지(안정)."""
+    return multi_day_records(symbol, ["up"] * 8)
+
+
+def walk_forward_overfit_records(symbol: str = "TEST") -> list[dict]:
+    """train 구간(앞)은 상승, validation/test 구간(뒤)은 급등락 → 과최적화 의심."""
+    return multi_day_records(symbol, ["up", "up", "up", "up", "up",
+                                      "choppy", "choppy", "choppy"])
+
+
+def walk_forward_insufficient_records(symbol: str = "TEST") -> list[dict]:
+    """walk-forward split 불가 — 2 거래일만."""
+    return multi_day_records(symbol, ["up", "up"], dates=_WF_DATES[:2])
+
+
 def duplicate_timestamp_records(symbol: str = "TEST") -> list[dict]:
     """중복 timestamp 포함 — 로더가 dedup 하는지 검증용."""
     base = make_trend_day(symbol, "2026-05-11", direction="up", bars=10)
