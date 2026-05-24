@@ -9,4 +9,4 @@ yfinance>=0.2.40
 anthropic>=0.40
 pytest>=8.0
 pytest-timeout>=2.3
-ruff>=0.6
+ruff==0.15.12

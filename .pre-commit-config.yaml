@@ -21,7 +21,9 @@ repos:
       # converts back to CRLF.
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.7.0
+    # CI(backend/requirements.txt: ruff==0.15.12) 와 동일 버전으로 고정 —
+    # 로컬 pre-commit 과 GitHub Actions Backend CI 의 ruff 결과 일치 보장.
+    rev: v0.15.12
     hooks:
       - id: ruff
         files: ^backend/.*\.py$
