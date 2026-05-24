@@ -18,6 +18,7 @@ import { DecisionQualityScoreCard } from "../common/DecisionQualityScoreCard";
 import { PostTradeFeedbackCard } from "../common/PostTradeFeedbackCard";
 import { StrategyPotentialReportCard } from "../common/StrategyPotentialReportCard";
 import { RealDataStrategyValidationCard } from "../common/RealDataStrategyValidationCard";
+import { IntradayStrategyValidationCard } from "../common/IntradayStrategyValidationCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
@@ -95,6 +96,9 @@ export function AISignal({ activeStratIds }) {
       {/* REAL-DATA-STRATEGY-01: 실제/준실제 데이터 기반 전략 검증 — CSV/yfinance,
           KIS historical 미구현, 자동 적용/실전 전환/주문 0건, sample fixture 경고. */}
       <RealDataStrategyValidationCard />
+      {/* INTRADAY-DATA-01: 분봉 단타 전략 검증 — ORB/VWAP 등은 분봉 필요(일봉 0 trade),
+          자동 적용/실전 전환/주문 0건. */}
+      <IntradayStrategyValidationCard />
       {/* P-31: 분석용 데이터 내보내기 (CSV/JSONL) — secret 미포함, 주문 신호 아님. */}
       <DecisionEpisodeExportButton />
       {/* P-32: 이벤트 로그 품질 점검 — 진단 전용, 자동 주문 중단 아님. */}

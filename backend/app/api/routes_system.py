@@ -526,6 +526,49 @@ def get_strategy_potential() -> dict:
     return to_dict(report)
 
 
+@router.get("/system/intraday-strategy-validation/latest")
+def get_intraday_strategy_validation_latest() -> dict:
+    """INTRADAY-DATA-01 — 분봉 단타 전략 검증 (latest, read-only, 무거운 실행 금지).
+
+    `reports/strategy_validation/intraday_strategy_latest.json` 가 있으면 그 요약을
+    반환하고, **없으면 empty fallback** 을 반환한다(분봉 backtest 는 무거우므로 API 에서
+    실행하지 않음 — CLI `run_intraday_strategy_validation.py --write-latest` 전용).
+    broker / OrderExecutor / route_order / KIS 주문 API 호출 0건, secret/계좌 원문 0건.
+    """
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/strategy_validation/intraday_strategy_latest.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            return data
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "_source": "empty",
+        "available": False,
+        "intraday_data_used": False,
+        "overall_verdict": "RESEARCH_ONLY",
+        "total_trades": 0,
+        "symbols_count": 0,
+        "pass_symbols": [],
+        "blocked_symbols": [],
+        "agent_value_summary": "AGENT_VALUE_INSUFFICIENT_SAMPLE",
+        "do_not_auto_apply": True,
+        "auto_apply_allowed": False,
+        "is_live_authorization": False,
+        "is_order_signal": False,
+        "contains_secret": False,
+        "disclaimer": (
+            "분봉 검증 리포트가 아직 없습니다. CLI "
+            "`run_intraday_strategy_validation.py --write-latest` 실행 후 갱신됩니다. "
+            "자동 적용 / 실전 전환 / 주문 0건, 수익 보장 아님."
+        ),
+    }
+
+
 @router.get("/system/real-data-strategy-validation/latest")
 def get_real_data_strategy_validation_latest() -> dict:
     """REAL-DATA-STRATEGY-01 — 실제/준실제 데이터 전략 가능성 검증 (latest, read-only).
