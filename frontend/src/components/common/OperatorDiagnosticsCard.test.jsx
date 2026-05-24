@@ -353,8 +353,8 @@ describe("<OperatorDiagnosticsCard> — event log + filters", () => {
     const api = _mkApiClient();
     render(<OperatorDiagnosticsCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => screen.getByTestId("operator-diagnostics-card-event-filter-ERROR"));
-    // 초기 호출 (ALL).
-    expect(api.systemEventsRecent).toHaveBeenCalled();
+    // 초기 호출 (ALL) — CI 부하 시 마운트 로드 미완료 race 방지 (waitFor).
+    await waitFor(() => expect(api.systemEventsRecent).toHaveBeenCalled());
     fireEvent.click(screen.getByTestId("operator-diagnostics-card-event-filter-ERROR"));
     await waitFor(() => {
       const lastCall = api.systemEventsRecent.mock.calls.at(-1);
@@ -595,8 +595,13 @@ describe("<OperatorDiagnosticsCard> — invariants", () => {
   it("refresh button triggers re-fetch", async () => {
     const api = _mkApiClient();
     render(<OperatorDiagnosticsCard apiClient={api} pollIntervalMs={0} />);
+    // 초기 mount 로드가 끝나 refresh 버튼이 *활성화* 될 때까지 기다린다.
+    // (버튼은 disabled={loading} — 로딩 중 클릭은 무시되므로, CI 부하 시
+    // 로드 미완료 상태에서 클릭하면 re-fetch 가 발생하지 않아 flaky 했다.)
     await waitFor(() =>
-      screen.getByTestId("operator-diagnostics-card-refresh-btn"),
+      expect(
+        screen.getByTestId("operator-diagnostics-card-refresh-btn").disabled,
+      ).toBe(false),
     );
     api.systemDiagnostics.mockClear();
     fireEvent.click(screen.getByTestId("operator-diagnostics-card-refresh-btn"));

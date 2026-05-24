@@ -919,4 +919,6 @@ export const backendApi = {
   kisPaperAutoStatus: () => backendFetch("/api/kis-paper/auto/status"),
   // #53 / 7-01: EXE 운영 상태 표준 enum (read-only). secret 값 0건.
   exeStatus: () => backendFetch("/api/system/exe-status"),
+  // #57 / 7-05: backend sidecar build metadata (read-only). secret 값 0건.
+  buildInfo: () => backendFetch("/api/system/build-info"),
 };
