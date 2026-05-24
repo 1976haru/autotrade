@@ -24,6 +24,7 @@ import { UniverseStatusCard } from "../common/UniverseStatusCard";
 import { LiveSafetyStatusCard } from "../common/LiveSafetyStatusCard";
 import { ProgramIntegrityGateCard } from "../common/ProgramIntegrityGateCard";
 import { PremarketReadinessGateCard } from "../common/PremarketReadinessGateCard";
+import { KisPaperAiAutotradeAuditCard } from "../common/KisPaperAiAutotradeAuditCard";
 import { backendApi } from "../../services/backend/client";
 import { APP_INFO, appVersionLine } from "../../config/appInfo";
 import { latestReleaseNote } from "../../config/releaseNotes";
@@ -287,6 +288,11 @@ export function Settings({ settings }) {
       {/* BUILD-02A: 장 열리기 전 사전 검증 (read-only, fast). 실제 KIS API 0건.
           premarket_ready / ready_for_market_open_rehearsal. 주문/실전/승인 버튼 0개. */}
       <PremarketReadinessGateCard />
+
+      {/* BUILD-02B-0: KIS 모의 AI 자동매매 전체 코드 감사 (read-only, offline/fake).
+          AI 판단→KIS Paper 주문→결과→포트폴리오→복기 전 흐름 감사. 실제 KIS API 0건.
+          매수/매도/실전/승인 버튼 0개. */}
+      <KisPaperAiAutotradeAuditCard />
 
       {/* #86 데스크톱 업데이트 확인 카드 — mock 단계, 후속 PR 에서 Tauri
           updater 와 실 연결. broker 호출 0건, 안전 flag 변경 0건. */}

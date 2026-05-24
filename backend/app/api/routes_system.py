@@ -441,6 +441,44 @@ def get_program_integrity(request: Request) -> dict:
     return report.to_dict()
 
 
+@router.get("/system/kis-paper-autotrade-audit")
+def get_kis_paper_autotrade_audit(request: Request) -> dict:
+    """BUILD-02B-0 — KIS 모의 AI 자동매매 전체 코드 감사 (read-only, offline/fake).
+
+    AI 판단 → KIS Paper 주문 결정 → fake 주문 결과 → order_quality → portfolio →
+    outcome/review/feedback 전 흐름 + 권한 게이트/Live safety 를 fake 로 감사한다.
+    **실제 KIS API 호출 0건, 주문 0건, 실전 승인 아님.** KIS 자격은 present 여부만.
+    """
+    from app.kis_paper.readiness import evaluate_readiness
+    from app.system.kis_paper_ai_autotrade_audit import (
+        KisPaperAuditInputs,
+        run_kis_paper_ai_autotrade_audit,
+    )
+    s = get_settings()
+    try:
+        rd = evaluate_readiness(s)
+        creds = bool(getattr(rd, "credentials_present", False))
+    except Exception:  # noqa: BLE001
+        creds = None
+    routes: set[str] = set()
+    for r in getattr(request.app, "routes", []):
+        p = getattr(r, "path", None)
+        if isinstance(p, str):
+            routes.add(p)
+    report = run_kis_paper_ai_autotrade_audit(
+        KisPaperAuditInputs(
+            enable_kis_paper_auto_trading=bool(getattr(s, "enable_kis_paper_auto_trading", True)),
+            kis_paper_auto_order_dry_run=bool(getattr(s, "kis_paper_auto_order_dry_run", True)),
+            kis_is_paper=bool(s.kis_is_paper),
+            enable_live_trading=bool(s.enable_live_trading),
+            enable_ai_execution=bool(s.enable_ai_execution),
+            kis_credentials_present=creds,
+        ),
+        available_api_routes=frozenset(routes),
+    )
+    return report.to_dict()
+
+
 @router.get("/system/premarket-readiness")
 def get_premarket_readiness() -> dict:
     """BUILD-02A — 장 열리기 전 사전 검증 (fast mode, read-only, offline).
