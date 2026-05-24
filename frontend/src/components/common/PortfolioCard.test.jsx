@@ -48,7 +48,7 @@ describe("<PortfolioCard>", () => {
     const api = _mockApi(_CASH_AFTER_BUY, []);
     render(<PortfolioCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.paperCashState).toHaveBeenCalled());
-    expect(screen.getByTestId("portfolio-badge-paper").textContent).toMatch(/실제 주문 아님/);
+    expect((await screen.findByTestId("portfolio-badge-paper")).textContent).toMatch(/실제 주문 아님/);
     expect(screen.getByTestId("portfolio-badge-no-broker").textContent).toMatch(/broker_order_sent=false/);
     expect(screen.getByTestId("portfolio-disclaimer").textContent).toMatch(/broker 호출 0건/);
   });
@@ -84,7 +84,7 @@ describe("<PortfolioCard>", () => {
     const api = _mockApi(_CASH_AFTER_BUY, []);
     render(<PortfolioCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.paperCashState).toHaveBeenCalled());
-    expect(screen.getByTestId("portfolio-empty")).toBeTruthy();
+    expect(await screen.findByTestId("portfolio-empty")).toBeTruthy();
   });
 
   it("shows positive unrealized pnl when last_price > avg_price", async () => {
@@ -111,7 +111,7 @@ describe("<PortfolioCard>", () => {
     const api = { paperCashState: vi.fn(async () => _CASH_AFTER_BUY) };
     render(<PortfolioCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.paperCashState).toHaveBeenCalled());
-    expect(screen.getByTestId("portfolio-empty")).toBeTruthy();
+    expect(await screen.findByTestId("portfolio-empty")).toBeTruthy();
   });
 
   it("shows error when cash fetch fails", async () => {
@@ -129,7 +129,7 @@ describe("<PortfolioCard>", () => {
     const api = _mockApi(_CASH_AFTER_BUY, []);
     render(<PortfolioCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.paperCashState).toHaveBeenCalled());
-    expect(screen.getByTestId("portfolio-intro").textContent)
+    expect((await screen.findByTestId("portfolio-intro")).textContent)
       .toMatch(/실제 계좌 잔고가 아닙니다/);
     expect(screen.getByTestId("portfolio-disclaimer").textContent)
       .toMatch(/실제 계좌 잔고가 아닙니다/);
@@ -265,6 +265,6 @@ describe("<PortfolioCard> P-18 요약 모드", () => {
     };
     render(<PortfolioCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.paperCashState).toHaveBeenCalled());
-    expect(screen.getByTestId("portfolio-cash").textContent).toMatch(/9,025,000/);
+    expect((await screen.findByTestId("portfolio-cash")).textContent).toMatch(/9,025,000/);
   });
 });

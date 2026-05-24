@@ -63,7 +63,7 @@ describe("<AutoPaperLoopCard>", () => {
     const api = _mockApi();
     render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-    expect(screen.getByTestId("badge-not-order-signal").textContent).toMatch(/모의 전용/);
+    expect((await screen.findByTestId("badge-not-order-signal")).textContent).toMatch(/모의 전용/);
     expect(screen.getByTestId("badge-paper-mode").textContent).toMatch(/KIS Paper ON/);
     expect(screen.getByTestId("badge-no-auto-apply").textContent).toMatch(/주문 신호 아님/);
   });
@@ -695,7 +695,7 @@ describe("<AutoPaperLoopCard>", () => {
       const api = _mockApi(_CONSUMER_STATUS);
       render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
       await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-      expect(screen.getByTestId("auto-paper-consumer-strip")).toBeTruthy();
+      expect(await screen.findByTestId("auto-paper-consumer-strip")).toBeTruthy();
       expect(screen.getByTestId("consumer-last-tick").textContent)
         .toContain("14:30:25");
       expect(screen.getByTestId("consumer-last-decision-action").textContent)
@@ -713,7 +713,7 @@ describe("<AutoPaperLoopCard>", () => {
       const api = _mockApi(_CONSUMER_STATUS);
       render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
       await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-      const badge = screen.getByTestId("consumer-paper-only-badge");
+      const badge = await screen.findByTestId("consumer-paper-only-badge");
       expect(badge.textContent).toContain("Paper 전용");
       expect(badge.textContent).toContain("실제 주문 아님");
     });
@@ -725,7 +725,7 @@ describe("<AutoPaperLoopCard>", () => {
       });
       render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
       await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-      const strip = screen.getByTestId("auto-paper-consumer-strip");
+      const strip = await screen.findByTestId("auto-paper-consumer-strip");
       expect(strip).toBeTruthy();
       // last_tick_at not set → "—".
       expect(screen.getByTestId("consumer-last-tick").textContent)
@@ -751,7 +751,7 @@ describe("<AutoPaperLoopCard>", () => {
         <AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />,
       );
       await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-      const strip = screen.getByTestId("auto-paper-consumer-strip");
+      const strip = await screen.findByTestId("auto-paper-consumer-strip");
       const banned = [
         "Place Order", "지금 매수", "지금 매도",
         "실거래 시작", "ENABLE_LIVE_TRADING", "AI 자동매매 켜기",
@@ -916,7 +916,7 @@ describe("<AutoPaperLoopCard>", () => {
       const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
       render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
       await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-      const selector = screen.getByTestId("agent-risk-profile-selector");
+      const selector = await screen.findByTestId("agent-risk-profile-selector");
       expect(selector).toBeTruthy();
       const group = screen.getByTestId("risk-profile-radiogroup");
       expect(group.getAttribute("data-selected")).toBe("BALANCED");
@@ -926,7 +926,7 @@ describe("<AutoPaperLoopCard>", () => {
       const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
       render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
       await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-      fireEvent.click(screen.getByTestId("risk-profile-card-CONSERVATIVE"));
+      fireEvent.click(await screen.findByTestId("risk-profile-card-CONSERVATIVE"));
       expect(screen.getByTestId("risk-profile-radiogroup")
         .getAttribute("data-selected")).toBe("CONSERVATIVE");
     });
@@ -935,7 +935,7 @@ describe("<AutoPaperLoopCard>", () => {
       const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
       render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
       await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-      fireEvent.click(screen.getByTestId("risk-profile-card-AGGRESSIVE"));
+      fireEvent.click(await screen.findByTestId("risk-profile-card-AGGRESSIVE"));
       expect(screen.getByTestId("risk-profile-radiogroup")
         .getAttribute("data-selected")).toBe("AGGRESSIVE");
       const warn = screen.getByTestId("risk-profile-aggressive-warning");
@@ -946,7 +946,7 @@ describe("<AutoPaperLoopCard>", () => {
       const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
       render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
       await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-      fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
+      fireEvent.click(await screen.findByTestId("btn-start-auto-paper"));
       await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
       expect(api.autoPaperStart.mock.calls[0][0])
         .toMatchObject({ risk_profile: "BALANCED" });
@@ -956,7 +956,7 @@ describe("<AutoPaperLoopCard>", () => {
       const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
       render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
       await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-      fireEvent.click(screen.getByTestId("risk-profile-card-CONSERVATIVE"));
+      fireEvent.click(await screen.findByTestId("risk-profile-card-CONSERVATIVE"));
       fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
       await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
       expect(api.autoPaperStart.mock.calls[0][0])
@@ -967,7 +967,7 @@ describe("<AutoPaperLoopCard>", () => {
       const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
       render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
       await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-      fireEvent.click(screen.getByTestId("risk-profile-card-AGGRESSIVE"));
+      fireEvent.click(await screen.findByTestId("risk-profile-card-AGGRESSIVE"));
       fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
       await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
       expect(api.autoPaperStart.mock.calls[0][0])
@@ -989,7 +989,7 @@ describe("<AutoPaperLoopCard>", () => {
         />,
       );
       await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-      fireEvent.click(screen.getByTestId("risk-profile-card-AGGRESSIVE"));
+      fireEvent.click(await screen.findByTestId("risk-profile-card-AGGRESSIVE"));
       fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
       await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
       const payload = api.autoPaperStart.mock.calls[0][0];
@@ -1019,7 +1019,7 @@ describe("<AutoPaperLoopCard>", () => {
       const api = _mockApi({ state: "RUNNING", cycle_count: 3 });
       render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
       await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-      fireEvent.click(screen.getByTestId("risk-profile-card-CONSERVATIVE"));
+      fireEvent.click(await screen.findByTestId("risk-profile-card-CONSERVATIVE"));
       // localStorage(Paper 자금 설정)에 선택값이 영속된다.
       const raw = window.localStorage.getItem("agent_trader_paper_capital_settings");
       expect(raw).toBeTruthy();
@@ -1030,7 +1030,7 @@ describe("<AutoPaperLoopCard>", () => {
       const api = _mockApi({ state: "RUNNING", cycle_count: 3 });
       const { container } = render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
       await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-      fireEvent.click(screen.getByTestId("risk-profile-card-AGGRESSIVE"));
+      fireEvent.click(await screen.findByTestId("risk-profile-card-AGGRESSIVE"));
       expect(screen.getByTestId("risk-profile-radiogroup")
         .getAttribute("data-selected")).toBe("AGGRESSIVE");
       const labels = Array.from(container.querySelectorAll("button"))
@@ -1050,7 +1050,7 @@ describe("<AutoPaperLoopCard>", () => {
         <AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />,
       );
       await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-      fireEvent.click(screen.getByTestId("risk-profile-card-AGGRESSIVE"));
+      fireEvent.click(await screen.findByTestId("risk-profile-card-AGGRESSIVE"));
       const text = container.textContent || "";
       const forbidden = [
         "지금 매수", "지금 매도", "Place Order",
@@ -1259,7 +1259,7 @@ describe("<AutoPaperLoopCard> — P-15 capital settings", () => {
     const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
     render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-    const summary = screen.getByTestId("auto-paper-capital-summary");
+    const summary = await screen.findByTestId("auto-paper-capital-summary");
     expect(summary.textContent).toMatch(/적용 자금 기준/);
     const text = screen.getByTestId("auto-paper-capital-summary-text").textContent;
     expect(text).toMatch(/시드머니/);
@@ -1286,7 +1286,7 @@ describe("<AutoPaperLoopCard> — P-15 capital settings", () => {
       />,
     );
     await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-    expect(screen.getByTestId("auto-paper-allow-additional-buy-label").textContent)
+    expect((await screen.findByTestId("auto-paper-allow-additional-buy-label")).textContent)
       .toMatch(/비허용/);
   });
 
@@ -1307,7 +1307,7 @@ describe("<AutoPaperLoopCard> — P-15 capital settings", () => {
       />,
     );
     await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-    const label = screen.getByTestId("auto-paper-allow-additional-buy-label");
+    const label = await screen.findByTestId("auto-paper-allow-additional-buy-label");
     expect(label.textContent).toMatch(/허용/);
     expect(label.textContent).toMatch(/Paper 검증 전용/);
   });
@@ -1463,7 +1463,7 @@ describe("<AutoPaperLoopCard> — 실행 점검판 + run-once 진단", () => {
     const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
     render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-    expect(screen.getByTestId("auto-paper-exec-diagnostics")).toBeTruthy();
+    expect(await screen.findByTestId("auto-paper-exec-diagnostics")).toBeTruthy();
     expect(screen.getByTestId("btn-run-once-diagnostic")).toBeTruthy();
   });
 
@@ -1547,7 +1547,7 @@ describe("<AutoPaperLoopCard> — 실행 점검판 + run-once 진단", () => {
     expect(api.autoPaperRunReadiness).toBeUndefined();
     render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-    expect(screen.getByTestId("auto-paper-exec-diagnostics")).toBeTruthy();
+    expect(await screen.findByTestId("auto-paper-exec-diagnostics")).toBeTruthy();
     // 함수 없으면 클릭해도 throw 없이 무시.
     fireEvent.click(screen.getByTestId("btn-run-once-diagnostic"));
     expect(screen.queryByTestId("run-once-result")).toBeNull();
@@ -1806,14 +1806,14 @@ describe("<AutoPaperLoopCard> — risk_profile 영속/표시", () => {
     const api1 = _mockApi({ state: "PAUSED", cycle_count: 0 });
     const { unmount } = render(<AutoPaperLoopCard apiClient={api1} pollIntervalMs={0} />);
     await waitFor(() => expect(api1.autoPaperStatus).toHaveBeenCalled());
-    fireEvent.click(screen.getByTestId("risk-profile-card-AGGRESSIVE"));
+    fireEvent.click(await screen.findByTestId("risk-profile-card-AGGRESSIVE"));
     expect(screen.getByTestId("current-risk-profile").getAttribute("data-risk-profile")).toBe("AGGRESSIVE");
     unmount();
     // 재마운트 — localStorage 에서 AGGRESSIVE 로드.
     const api2 = _mockApi({ state: "PAUSED", cycle_count: 0 });
     render(<AutoPaperLoopCard apiClient={api2} pollIntervalMs={0} />);
     await waitFor(() => expect(api2.autoPaperStatus).toHaveBeenCalled());
-    expect(screen.getByTestId("current-risk-profile").getAttribute("data-risk-profile")).toBe("AGGRESSIVE");
+    expect((await screen.findByTestId("current-risk-profile")).getAttribute("data-risk-profile")).toBe("AGGRESSIVE");
     expect(screen.getByTestId("risk-profile-radiogroup").getAttribute("data-selected")).toBe("AGGRESSIVE");
   });
 
@@ -1821,7 +1821,7 @@ describe("<AutoPaperLoopCard> — risk_profile 영속/표시", () => {
     const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
     render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-    fireEvent.click(screen.getByTestId("risk-profile-card-CONSERVATIVE"));
+    fireEvent.click(await screen.findByTestId("risk-profile-card-CONSERVATIVE"));
     expect(screen.getByTestId("current-risk-profile").textContent).toMatch(/보수적/);
     fireEvent.click(screen.getByTestId("btn-start-auto-paper"));
     await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
@@ -1834,7 +1834,7 @@ describe("<AutoPaperLoopCard> — risk_profile 영속/표시", () => {
     const api = _mockApi({ state: "WAITING_MARKET", cycle_count: 0 });
     render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-    fireEvent.click(screen.getByTestId("risk-profile-card-AGGRESSIVE"));
+    fireEvent.click(await screen.findByTestId("risk-profile-card-AGGRESSIVE"));
     expect(screen.getByTestId("risk-profile-radiogroup").getAttribute("data-selected")).toBe("AGGRESSIVE");
   });
 
@@ -1842,7 +1842,7 @@ describe("<AutoPaperLoopCard> — risk_profile 영속/표시", () => {
     const api = _mockApi({ state: "PAUSED", cycle_count: 0 });
     render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
-    expect(screen.getByTestId("current-risk-profile").getAttribute("data-risk-profile")).toBe("BALANCED");
+    expect((await screen.findByTestId("current-risk-profile")).getAttribute("data-risk-profile")).toBe("BALANCED");
   });
 });
 
