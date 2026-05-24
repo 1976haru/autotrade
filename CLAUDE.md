@@ -97,6 +97,8 @@
 
 **#68 / 8-06 초보자 운영자 매뉴얼**: 코딩을 모르는 사용자가 문서만 보고 EXE 실행 · KIS 모의 설정 · 안전 점검 · 오류 확인 · 장중 테스트 준비를 할 수 있는 [`docs/user_manual.md`](docs/user_manual.md) (28개 섹션). 안전 flag(LIVE/AI/FUTURES=false, KIS_IS_PAPER=true) · 장 닫힌 날/열린 날 분리 · 자주 나오는 메시지 표 · 문제 보고 양식 · 실전 전환 전 조건 포함. **문서 작업만 — 코드/로직 변경 0건.** 자격은 `<YOUR_...>` placeholder 만(실제 secret/계좌 예시 0건), "수익 보장"/"자동 실전 전환" 류 문구 0건, "실전 전환은 별도 승인 필요" 명시. `backend/tests/test_user_manual_safety.py`(11개) 가 금지 문구/secret-like/account-like 부재 + 필수 문구 존재를 정적 검증(금지 리터럴은 테스트 소스에 남기지 않도록 동적 조립). README docs index 에 링크 추가.
 
+**#69 / 8-07 장애 대응 Runbook**: 장중 오류 발생 시 사용자가 빠르게 원인·조치를 찾는 [`docs/runbook.md`](docs/runbook.md) (18개 섹션, "먼저 볼 화면 → 의미 → 즉시 조치 → 전달할 정보" 구조). 16종 오류 코드(NO_MARKET_DATA / MARKET_CLOSED / CREDENTIALS_MISSING / BLOCKED_BY_KIS_READINESS / ORDER_REJECTED / FILL_POLLING_FAIL / PORTFOLIO_DRIFT / BACKEND_FAIL / SIDECAR_STOPPED / DB_FAIL / PRICE_STALE / UPDATE_FAILED / VERSION_MISMATCH / SECRET_EXPOSURE_SUSPECTED / RISK_FLAGS_EXCEEDED / EXIT_PLAN_INVALID) 대응 표 + 가장 먼저 할 5단계 + 장중 즉시 중단 기준 + 문제 보고 양식 + Claude Code 전달 금지 정보 + 복구 후 체크리스트. **문서 작업만 — 코드/로직 변경 0건.** 실제 secret/계좌 예시 0건, "수익 보장"/"자동 실전 전환" 류 문구 0건, 실거래 OFF·KIS_IS_PAPER true 안전값 안내. `backend/tests/test_runbook_safety.py`(12개) 가 금지 문구/secret-like/account-like 부재 + 필수 오류코드·양식 존재를 정적 검증(금지 리터럴 동적 조립). README docs index 에 링크 추가.
+
 ## 작업 방식
 
 - 큰 기능은 작은 PR 단위로 쪼갠다.
