@@ -370,6 +370,18 @@ def get_exe_status() -> dict:
     }
 
 
+@router.get("/system/build-info")
+def get_build_info_endpoint() -> dict:
+    """#57 / 7-05 — backend sidecar build metadata (read-only).
+
+    app version / channel / git commit / branch / build time / dirty 여부만
+    반환 — Secret / API key / 계좌번호 0건. broker / OrderExecutor / route_order
+    호출 0건, DB write 0건.
+    """
+    from app.system.build_info import get_build_info
+    return get_build_info()
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Event log endpoints
 # ──────────────────────────────────────────────────────────────────────────────

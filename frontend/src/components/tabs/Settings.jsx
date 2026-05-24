@@ -17,6 +17,7 @@ import { DisplaySettingsCard } from "../common/DisplaySettingsCard";
 import { PaperCapitalSettingsCard } from "../common/PaperCapitalSettingsCard";
 import { KisPaperEnvStatusCard } from "../common/KisPaperEnvStatusCard";
 import { BackendSidecarStatusCard } from "../common/BackendSidecarStatusCard";
+import { AppVersionCard } from "../common/AppVersionCard";
 import { backendApi } from "../../services/backend/client";
 import { APP_INFO, appVersionLine } from "../../config/appInfo";
 import { latestReleaseNote } from "../../config/releaseNotes";
@@ -233,6 +234,11 @@ export function Settings({ settings }) {
 
       {/* 버전 / 공지 — VersionBadge 클릭으로 release notes 재오픈 */}
       <VersionInfoCard />
+
+      {/* #57 / 7-05: 앱 버전 / 빌드 commit / build time — 사용자가 실행 중인
+          EXE 가 최신 main 기준인지 확인. frontend(Vite 주입) + backend sidecar
+          build-info 비교. read-only, 자격정보 미포함, broker 호출 0건. */}
+      <AppVersionCard />
 
       {/* #53 / 7-01: EXE 연결 상태 (Backend / Sidecar / 진단) — 연결됨/실패를
           분리 표시하고, 연결 실패 시 진단·DB·KIS 를 "확인 불가" 로 강등해

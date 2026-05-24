@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
+import { execSync } from 'node:child_process'
 
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -28,6 +29,38 @@ try {
   // package.json read 실패 — fallback 유지. 정상 빌드라면 절대 도달 X.
 }
 
+// #57 / 7-05: build metadata 주입. 사용자가 실행 중인 EXE 가 어느 commit /
+// 빌드 시각인지 확인할 수 있도록 git 정보를 build-time 에 baking 한다.
+// 우선순위: 명시 env(CI 가 주입) → git 명령 → 'unknown' fallback.
+//   - git 명령 실패(checkout 에 .git 없음 등)해도 빌드는 절대 실패하지 않는다.
+//   - secret / env dump 0건 — git short/long hash, branch, dirty 여부만.
+function _git(args, fallback = 'unknown') {
+  try {
+    const out = execSync(`git ${args}`, {
+      cwd: _here,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).toString().trim()
+    return out || fallback
+  } catch {
+    return fallback
+  }
+}
+
+const _env = process.env
+const _commitFull = _env.VITE_GIT_COMMIT_FULL || _git('rev-parse HEAD')
+const _commit =
+  _env.VITE_GIT_COMMIT ||
+  (_commitFull !== 'unknown' ? _commitFull.slice(0, 7) : _git('rev-parse --short HEAD'))
+const _branch = _env.VITE_GIT_BRANCH || _git('rev-parse --abbrev-ref HEAD')
+const _buildTime = _env.VITE_BUILD_TIME || new Date().toISOString()
+const _buildSource =
+  _env.VITE_BUILD_SOURCE || (_env.GITHUB_ACTIONS ? 'github-actions' : 'local-build')
+const _buildChannel = _env.VITE_BUILD_CHANNEL || 'paper-beta'
+const _gitDirty =
+  _env.VITE_GIT_DIRTY != null
+    ? (_env.VITE_GIT_DIRTY === 'true' || _env.VITE_GIT_DIRTY === '1')
+    : (_git('status --porcelain', '') !== '')
+
 // https://vite.dev/config/
 export default defineConfig({
   base: _basePath,
@@ -35,6 +68,14 @@ export default defineConfig({
   // build-time inject — runtime fetch 없이 항상 사용 가능.
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(_pkgVersion),
+    // #57 / 7-05 build metadata (secret 0건 — git hash / branch / time 만).
+    'import.meta.env.VITE_GIT_COMMIT': JSON.stringify(_commit),
+    'import.meta.env.VITE_GIT_COMMIT_FULL': JSON.stringify(_commitFull),
+    'import.meta.env.VITE_GIT_BRANCH': JSON.stringify(_branch),
+    'import.meta.env.VITE_BUILD_TIME': JSON.stringify(_buildTime),
+    'import.meta.env.VITE_BUILD_SOURCE': JSON.stringify(_buildSource),
+    'import.meta.env.VITE_BUILD_CHANNEL': JSON.stringify(_buildChannel),
+    'import.meta.env.VITE_GIT_DIRTY': JSON.stringify(String(_gitDirty)),
   },
   test: {
     environment: 'jsdom',

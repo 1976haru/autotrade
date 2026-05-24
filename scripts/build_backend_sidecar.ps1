@@ -81,6 +81,18 @@ try {
     exit 2
 }
 
+# 4.5 build stamp 생성 (#57 / 7-05) — git commit / 빌드 시각을 backend 에 baking.
+#     --collect-submodules app 로 PyInstaller 가 build_stamp.py 를 bundle 하므로
+#     packaged EXE 의 /api/system/build-info 가 정확한 commit 을 보고한다.
+#     생성 파일은 gitignore. Secret 0건 — git hash / branch / time 만.
+Write-Host "[2.5/5] generate build stamp..." -ForegroundColor Cyan
+try {
+    & python "$repoRoot\scripts\generate_build_stamp.py"
+    if ($LASTEXITCODE -ne 0) { Write-Host "[warn] build stamp 생성 실패 — unknown fallback 으로 진행" -ForegroundColor Yellow }
+} catch {
+    Write-Host "[warn] build stamp 생성 예외 — unknown fallback 으로 진행: $_" -ForegroundColor Yellow
+}
+
 # 5. PyInstaller 빌드.
 Write-Host "[3/5] pyinstaller build (--onefile)..." -ForegroundColor Cyan
 

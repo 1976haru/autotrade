@@ -219,6 +219,35 @@ jobs:
         run: python scripts/security_scan.py
         # exit code 0 = clean, 1 = HIGH/MEDIUM finding → 빌드 차단
 
+      # ----- 4.9 Build metadata (#57 / 7-05) -----
+      # frontend(Vite) + backend(build stamp) 가 동일한 commit / 빌드 시각 /
+      # 채널을 baking 하도록 env 를 GITHUB_ENV 로 export. Secret 0건 —
+      # git hash / branch / build time / channel 만. CI 는 clean checkout 이므로
+      # dirty=false. branch 는 detached HEAD 회피용으로 github.ref_name 사용.
+      - name: Compute build metadata
+        shell: pwsh
+        run: |
+          $full = (git rev-parse HEAD).Trim()
+          $short = $full.Substring(0, 7)
+          $branch = "${{ github.ref_name }}"
+          $now = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          $channel = "paper-beta"
+          "VITE_GIT_COMMIT=$short"        | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VITE_GIT_COMMIT_FULL=$full"    | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VITE_GIT_BRANCH=$branch"       | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VITE_BUILD_TIME=$now"          | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VITE_BUILD_SOURCE=github-actions" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VITE_BUILD_CHANNEL=$channel"   | Out-File -FilePath $env:GITHUB_ENV -Append
+          "VITE_GIT_DIRTY=false"          | Out-File -FilePath $env:GITHUB_ENV -Append
+          "AUTOTRADE_GIT_COMMIT=$short"        | Out-File -FilePath $env:GITHUB_ENV -Append
+          "AUTOTRADE_GIT_COMMIT_FULL=$full"    | Out-File -FilePath $env:GITHUB_ENV -Append
+          "AUTOTRADE_GIT_BRANCH=$branch"       | Out-File -FilePath $env:GITHUB_ENV -Append
+          "AUTOTRADE_BUILD_TIME=$now"          | Out-File -FilePath $env:GITHUB_ENV -Append
+          "AUTOTRADE_BUILD_SOURCE=github-actions" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "AUTOTRADE_BUILD_CHANNEL=$channel"   | Out-File -FilePath $env:GITHUB_ENV -Append
+          "AUTOTRADE_GIT_DIRTY=false"          | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "[build-metadata] commit=$short branch=$branch channel=$channel"
+
       # ----- 5. Frontend build -----
       - name: Install frontend deps
         working-directory: frontend
