@@ -536,6 +536,15 @@ export const backendApi = {
   // P-28: 전략별 성과 대시보드 (read-only, 실 계좌 미사용).
   agentStrategyPerformance: ({ limit = 500 } = {}) =>
     backendFetch(`/api/agents/strategy-performance?limit=${limit}`),
+  // #49 / 6-04: 주문 품질 + 차단 사유 집계 (read-only — 실패율/거절률/부분체결률).
+  agentOrderQualityMetrics: ({ limit = 500 } = {}) =>
+    backendFetch(`/api/agents/order-quality-metrics?limit=${limit}`),
+  // #52 / 6-07: AI 판단 설명 (read-only — council dict → entry/counter/exit/risk 설명).
+  agentDecisionExplanation: ({ council = null, marketRegime = null, timePhase = null } = {}) =>
+    backendFetch("/api/agents/decision-explanation", {
+      method: "POST",
+      body: JSON.stringify({ council, market_regime: marketRegime, time_phase: timePhase }),
+    }),
   // P-29: 전략 가중치 개선 후보 추천 (read-only, 자동 적용 금지).
   agentWeightRecommendation: ({ lookbackCount = 100, riskProfile = null,
                                 marketRegime = null } = {}) => {

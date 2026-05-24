@@ -12,6 +12,8 @@ import { WeightRecommendationCard } from "./WeightRecommendationCard";
 import { PaperGateReportCard } from "./PaperGateReportCard";
 import { DecisionEpisodeExportButton } from "../common/DecisionEpisodeExportButton";
 import { EventIntegrityDiagnosticsCard } from "../common/EventIntegrityDiagnosticsCard";
+import { AgentDecisionExplanationCard } from "../common/AgentDecisionExplanationCard";
+import { PerformanceMetricsSummary } from "../common/PerformanceMetricsSummary";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
@@ -65,8 +67,14 @@ export function AISignal({ activeStratIds }) {
       <BuyBlockReasonsCard />
       {/* P-21: Decision Episode — 판단→주문→체결→성과 추적 (학습용 기록). */}
       <DecisionEpisodeCard />
+      {/* #52 / 6-07: AI 판단 설명 — entry/counter/exit/risk/veto/sell 근거 표시
+          (read-only, 주문 버튼 아님). */}
+      <AgentDecisionExplanationCard />
       {/* P-28: 전략별 성과 대시보드 — episode 추정 수익률 기반 (실 계좌 미사용). */}
       <PerformanceDashboard />
+      {/* #49 / 6-04: 성과 지표 요약 — expectancy + 체결 실패율/거절률/부분체결률 +
+          차단 사유 TOP + Council vs best single (read-only, 표시 전용). */}
+      <PerformanceMetricsSummary />
       {/* P-29: 전략 가중치 개선 후보 — 자동 적용 금지, 운영자 승인 전 변경 없음. */}
       <WeightRecommendationCard />
       {/* P-30: Paper Gate 성과 리포트 — 100건 미만 실전 전환 검토 불가, 자동 전환 없음. */}

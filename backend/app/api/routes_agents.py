@@ -1638,6 +1638,72 @@ def strategy_performance(
 
 
 # ============================================================================
+# #49 / 6-04: 주문 품질 + 차단 사유 집계 (read-only 성과 대시보드 보강)
+# ============================================================================
+
+
+@router.get("/order-quality-metrics")
+def order_quality_metrics(
+    limit: int = Query(500, ge=1, le=2000),
+    db:    _Session = Depends(get_db),
+) -> dict:
+    """체결 실패율 / 거절률 / 부분체결률 / 차단 사유 TOP (read-only).
+
+    decision episode 의 order_quality_summary + council 만 사용 — broker /
+    OrderExecutor / route_order 호출 0건, DB write 0건, secret 0건,
+    is_live_authorization=False.
+    """
+    from app.agents.decision_episode import list_episodes
+    from app.agents.order_quality_metrics import aggregate_order_quality
+    episodes = list_episodes(db, limit=limit)
+    return aggregate_order_quality(episodes).to_dict()
+
+
+# ============================================================================
+# #52 / 6-07: AI 판단 설명 가능성 (read-only 설명 표시)
+# ============================================================================
+
+
+class _DecisionExplanationIn(BaseModel):
+    """설명 생성 입력 — council dict(또는 episode.council). 주문 권한 아님."""
+    council:       dict | None = None
+    market_regime: str | None = None
+    time_phase:    str | None = None
+
+
+@router.post("/decision-explanation")
+def decision_explanation(body: _DecisionExplanationIn | None = None) -> dict:
+    """council dict → 사람이 읽는 판단 설명 (read-only).
+
+    누락 필드는 fallback 문구로 대체(구버전 episode 호환). broker /
+    OrderExecutor / route_order 호출 0건, DB write 0건, secret 0건.
+    """
+    from app.agents.decision_explanation import build_decision_explanation
+    body = body or _DecisionExplanationIn()
+    exp = build_decision_explanation(
+        body.council, market_regime=body.market_regime, time_phase=body.time_phase)
+    return exp.to_dict()
+
+
+@router.get("/decision-explanation/{episode_id}")
+def decision_explanation_for_episode(
+    episode_id: str,
+    db:         _Session = Depends(get_db),
+) -> dict:
+    """단일 episode 의 council → 판단 설명 (read-only)."""
+    from fastapi import HTTPException
+
+    from app.agents.decision_episode import get_episode
+    from app.agents.decision_explanation import build_decision_explanation
+    ep = get_episode(db, episode_id)
+    if ep is None:
+        raise HTTPException(status_code=404, detail="episode not found")
+    council = ep.get("council") if isinstance(ep.get("council"), dict) else {}
+    return build_decision_explanation(
+        council, time_phase=(ep.get("market_summary") or {}).get("time_phase")).to_dict()
+
+
+# ============================================================================
 # P-29: Agent 전략 가중치 개선 *후보* 추천 (read-only, 자동 적용 금지)
 # ============================================================================
 
