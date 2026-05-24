@@ -112,7 +112,7 @@ def _council_metrics(bt: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-def _run_symbol(path: Path) -> dict[str, Any]:
+def _run_symbol(path: Path, *, min_bars: int = MIN_BARS, min_days: int = MIN_DAYS) -> dict[str, Any]:
     from app.backtest.strategy_council_backtest import (
         BacktestInput,
         run_strategy_council_backtest,
@@ -126,7 +126,7 @@ def _run_symbol(path: Path) -> dict[str, Any]:
 
     bars, meta = load_intraday_csv(str(path))
     symbol = (meta["symbols"][0] if meta.get("symbols") else path.stem)
-    q = check_intraday_quality(bars, min_bars=MIN_BARS, min_days=MIN_DAYS)
+    q = check_intraday_quality(bars, min_bars=min_bars, min_days=min_days)
     status = "PASS" if q.status == "OK" else q.status
     base = {
         "symbol": symbol, "quality_status": status, "bar_count": q.bar_count,
@@ -167,6 +167,8 @@ def evaluate_intraday_strategy(
     *,
     symbols: list[str] | None = None,
     strict: bool = False,
+    min_bars: int = MIN_BARS,
+    min_days: int = MIN_DAYS,
     generated_at: str | None = None,
 ) -> IntradayStrategyReport:
     gen = generated_at or datetime.now(timezone.utc).isoformat()
@@ -176,7 +178,7 @@ def evaluate_intraday_strategy(
         wanted = {s.lower() for s in symbols}
         files = [f for f in files if f.stem.lower() in wanted]
 
-    per = [_run_symbol(f) for f in files]
+    per = [_run_symbol(f, min_bars=min_bars, min_days=min_days) for f in files]
     included = [p for p in per if p["included"]]
     pass_syms = tuple(p["symbol"] for p in per if p["included"] and p["quality_status"] == "PASS")
     warn_syms = tuple(p["symbol"] for p in per if p["included"] and p["quality_status"] == "WARN")

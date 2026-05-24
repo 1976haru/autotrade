@@ -34,6 +34,7 @@ export function IntradayStrategyValidationCard({
   testId = "intraday-strategy-validation-card",
 } = {}) {
   const [report, setReport] = useState(null);
+  const [dataSource, setDataSource] = useState(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
@@ -44,6 +45,11 @@ export function IntradayStrategyValidationCard({
       setError("");
     } catch (e) {
       setError(e?.message || String(e));
+    }
+    if (typeof apiClient.intradayDataSourceStatus === "function") {
+      try {
+        setDataSource((await apiClient.intradayDataSourceStatus()) || null);
+      } catch { /* data-source 상태 실패는 치명 아님 */ }
     }
   }, [apiClient]);
 
@@ -89,6 +95,26 @@ export function IntradayStrategyValidationCard({
                            border: "1px solid var(--c-border)", background: "var(--c-bg-2)",
                            cursor: "pointer" }}>{copied ? "복사됨" : "리포트 복사"}</button>
         </div>
+
+        {dataSource ? (
+          <div data-testid="intraday-data-source" style={{
+            fontSize: "var(--fs-xs)", color: "var(--c-text-2)", marginBottom: 6,
+            padding: "4px 8px", borderRadius: 4, background: "var(--c-bg-2)",
+          }}>
+            데이터 경로: <code>{dataSource.standard_input_dir}</code> · 입력 모드:{" "}
+            <span data-testid="intraday-input-mode">{dataSource.input_mode}</span>
+            {" · "}CSV {dataSource.csv_file_count ?? 0}개 · KIS collector:{" "}
+            <span data-testid="intraday-kis-status">
+              {dataSource.kis_collector?.status || "?"}
+            </span>
+            {dataSource.kis_collector?.status === "NEEDS_OFFICIAL_ENDPOINT_CONFIRMATION" ? (
+              <div data-testid="intraday-kis-note" style={{ color: "#a16207", marginTop: 2 }}>
+                ⚠️ KIS 분봉 collector 는 공식 endpoint 확인 전까지 실제 호출하지 않습니다.
+                실제 분봉 CSV 를 <code>data/market/intraday_ohlcv</code> 에 넣어 검증하세요.
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {error ? (
           <div data-testid="intraday-error" style={{

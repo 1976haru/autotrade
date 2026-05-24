@@ -526,6 +526,53 @@ def get_strategy_potential() -> dict:
     return to_dict(report)
 
 
+@router.get("/system/intraday-data-source/status")
+def get_intraday_data_source_status() -> dict:
+    """INTRADAY-DATA-02 — 분봉 데이터 소스 상태 (read-only, 실제 호출 없음).
+
+    표준 입력 경로(data/market/intraday_ohlcv) 파일 현황 + KIS 분봉 collector placeholder
+    상태(기본 NEEDS_OFFICIAL_ENDPOINT_CONFIRMATION)를 반환한다. KIS 실제 요청 0건, secret/
+    계좌 원문 0건(present 여부 bool 만). broker / 주문 API 호출 0건.
+    """
+    import os
+    from pathlib import Path
+
+    from app.market_data.kis_intraday_collector import (
+        evaluate_kis_intraday_collector,
+        to_dict as kis_status_to_dict,
+    )
+
+    std_dir = Path("data/market/intraday_ohlcv")
+    csv_files = sorted(p.name for p in std_dir.glob("*.csv")) if std_dir.is_dir() else []
+    latest = Path("reports/strategy_validation/intraday_strategy_latest.json")
+
+    kis_env = {
+        k: os.environ.get(k)
+        for k in ("KIS_INTRADAY_ENABLED", "KIS_INTRADAY_ENDPOINT",
+                  "KIS_INTRADAY_TR_ID", "KIS_INTRADAY_READ_ONLY")
+    }
+    kis_status = evaluate_kis_intraday_collector(kis_env)
+
+    return {
+        "standard_input_dir": "data/market/intraday_ohlcv",
+        "csv_file_count": len(csv_files),
+        "csv_files": csv_files[:50],          # 파일명만 (계좌/secret 아님)
+        "csv_input_available": bool(csv_files),
+        "input_mode": "CSV" if csv_files else "KIS_PLACEHOLDER",
+        "latest_report_present": latest.exists(),
+        "kis_collector": kis_status_to_dict(kis_status),
+        "do_not_auto_apply": True,
+        "is_live_authorization": False,
+        "is_order_signal": False,
+        "contains_secret": False,
+        "disclaimer": (
+            "분봉 데이터 소스 상태(read-only). KIS 분봉 collector 는 공식 endpoint 확인 전까지 "
+            "실제 호출하지 않습니다. 운영자는 실제 분봉 CSV 를 data/market/intraday_ohlcv 에 넣고 "
+            "검증할 수 있습니다. 자동 적용 / 실전 전환 / 주문 0건, 수익 보장 아님."
+        ),
+    }
+
+
 @router.get("/system/intraday-strategy-validation/latest")
 def get_intraday_strategy_validation_latest() -> dict:
     """INTRADAY-DATA-01 — 분봉 단타 전략 검증 (latest, read-only, 무거운 실행 금지).

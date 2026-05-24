@@ -179,14 +179,36 @@ def check_intraday_quality(
 
 
 def load_intraday_csv(path: str) -> tuple[list[Any], dict[str, Any]]:
-    """분봉 CSV 적재 → (bars, meta). 기존 OHLCV 로더 재사용."""
-    from app.market_data.real_ohlcv_loader import load_from_csv
-    lo = load_from_csv(path)
-    return list(lo.bars), {
-        "data_source": lo.data_source,
-        "real_data_used": lo.real_data_used,
-        "sample_fixture_only": lo.sample_fixture_only,
-        "symbols": list(lo.symbols),
+    """분봉 CSV 적재 → (bars, meta).
+
+    한글 HTS 컬럼 / 쉼표 숫자도 `intraday_csv_normalizer` 로 표준화 후 OHLCVBar 로 변환한다.
+    표준 영문 헤더면 normalizer 가 그대로 통과시킨다.
+    """
+    from app.backtest.strategy_council_backtest import load_ohlcv_from_records
+    from app.market_data.intraday_csv_normalizer import bar_size_from_filename, normalize_intraday_csv
+    from app.market_data.real_ohlcv_loader import _classify_source
+
+    from pathlib import Path as _P
+    records, norm = normalize_intraday_csv(path)
+    data_source, real_used, sample_only = _classify_source(_P(path))
+    if not records:
+        return [], {
+            "data_source": data_source, "real_data_used": real_used,
+            "sample_fixture_only": sample_only, "symbols": [],
+            "normalize": {"valid_rows": 0, "dropped_rows": norm.dropped_rows,
+                          "missing_required": list(norm.missing_required)},
+            "bar_size_hint": bar_size_from_filename(path),
+        }
+    sym = records[0].get("symbol") or _P(path).stem
+    bars = load_ohlcv_from_records(records, default_symbol=str(sym))
+    return list(bars), {
+        "data_source": data_source, "real_data_used": real_used,
+        "sample_fixture_only": sample_only,
+        "symbols": sorted({getattr(b, "symbol", "") for b in bars}),
+        "normalize": {"valid_rows": norm.valid_rows, "dropped_rows": norm.dropped_rows,
+                      "dropped_ratio": norm.dropped_ratio,
+                      "column_mapping": norm.column_mapping},
+        "bar_size_hint": bar_size_from_filename(path),
     }
 
 

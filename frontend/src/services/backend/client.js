@@ -972,6 +972,9 @@ export const backendApi = {
   // 자동 적용/실전 전환/주문 0건. KIS 분봉 미구현(분봉 CSV 입력).
   intradayStrategyValidationLatest: () =>
     backendFetch("/api/system/intraday-strategy-validation/latest"),
+  // INTRADAY-DATA-02: 분봉 데이터 소스 상태 (read-only). KIS 실제 호출 0건, secret 0건.
+  intradayDataSourceStatus: () =>
+    backendFetch("/api/system/intraday-data-source/status"),
   // #54 / 7-02: 기본 Universe 50개 상태 (read-only). secret 값 0건.
   universeStatus: () => backendFetch("/api/auto-paper/universe-status"),
   // #56 / 7-04: 통합 오류/이벤트 로그 뷰어 (read-only, 최근 100건). secret 0건.

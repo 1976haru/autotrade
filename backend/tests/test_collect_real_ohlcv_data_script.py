@@ -6,14 +6,12 @@ import json
 import re
 import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 
 from app.market_data.ohlcv_collector import (
     CollectManifest,
     collect_ohlcv,
     manifest_to_dict,
-    render_manifest_markdown,
 )
 
 _REPO = Path(__file__).resolve().parents[2]

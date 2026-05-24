@@ -139,3 +139,46 @@ describe("<IntradayStrategyValidationCard>", () => {
     expect((await screen.findByTestId("intraday-verdict")).textContent).toContain("BLOCKED");
   });
 });
+
+// INTRADAY-DATA-02: 데이터 소스 상태(경로/입력모드/KIS placeholder) 표시.
+function _apiWithSource(report = _report(), source = {
+  standard_input_dir: "data/market/intraday_ohlcv",
+  csv_file_count: 0,
+  input_mode: "KIS_PLACEHOLDER",
+  kis_collector: { status: "NEEDS_OFFICIAL_ENDPOINT_CONFIRMATION", can_collect: false },
+}) {
+  return {
+    intradayStrategyValidationLatest: vi.fn(async () => report),
+    intradayDataSourceStatus: vi.fn(async () => source),
+  };
+}
+
+describe("<IntradayStrategyValidationCard> data source (INTRADAY-DATA-02)", () => {
+  it("데이터 경로 + 입력 모드 표시", async () => {
+    render(<IntradayStrategyValidationCard apiClient={_apiWithSource()} />);
+    const ds = await screen.findByTestId("intraday-data-source");
+    expect(ds.textContent).toContain("data/market/intraday_ohlcv");
+    expect(screen.getByTestId("intraday-input-mode").textContent).toContain("KIS_PLACEHOLDER");
+  });
+
+  it("KIS NEEDS_OFFICIAL_ENDPOINT_CONFIRMATION 안내 표시", async () => {
+    render(<IntradayStrategyValidationCard apiClient={_apiWithSource()} />);
+    await screen.findByTestId("intraday-data-source");
+    expect(screen.getByTestId("intraday-kis-status").textContent)
+      .toContain("NEEDS_OFFICIAL_ENDPOINT_CONFIRMATION");
+    expect(screen.getByTestId("intraday-kis-note")).toBeTruthy();
+  });
+
+  it("data-source 상태 있어도 주문/실전/승인 버튼 0개", async () => {
+    const { container } = render(<IntradayStrategyValidationCard apiClient={_apiWithSource()} />);
+    await screen.findByTestId("intraday-data-source");
+    const labels = [...container.querySelectorAll("button")].map((b) => b.textContent);
+    expect(labels).toEqual(["결과 새로고침", "리포트 복사"]);
+  });
+
+  it("data-source 상태 없을 때(legacy api) 블록 미표시", async () => {
+    render(<IntradayStrategyValidationCard apiClient={_api()} />);
+    await screen.findByTestId("intraday-verdict");
+    expect(screen.queryByTestId("intraday-data-source")).toBeNull();
+  });
+});

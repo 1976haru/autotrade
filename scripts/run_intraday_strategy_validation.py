@@ -29,16 +29,21 @@ if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
 DEFAULT_OUTPUT_DIR = "reports/strategy_validation"
-DEFAULT_INTRADAY_DIR = str(_REPO_ROOT / "backend" / "tests" / "fixtures" / "intraday_clean")
+# 표준 분봉 입력 경로 (INTRADAY-DATA-02). 비어 있으면 BLOCKED — 운영자가 실제 분봉 CSV 투입.
+DEFAULT_INTRADAY_DIR = "data/market/intraday_ohlcv"
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="분봉 데이터 단타 전략 검증 (실전 아님, 주문 0건).")
     p.add_argument("--input-dir", default=DEFAULT_INTRADAY_DIR,
-                   help="분봉 {symbol}.csv 디렉토리 (기본: intraday clean fixture; "
-                        "실데이터는 data/market/intraday)")
+                   help="분봉 {symbol}.csv 디렉토리 (기본: data/market/intraday_ohlcv; "
+                        "테스트는 backend/tests/fixtures/intraday_clean)")
     p.add_argument("--symbols", default=None)
+    p.add_argument("--bar-size", default=None,
+                   help="분봉 크기 라벨 (예: 1m/3m/5m). 미지정 시 파일명에서 추론.")
+    p.add_argument("--min-bars", type=int, default=100)
+    p.add_argument("--min-days", type=int, default=5)
     p.add_argument("--strict", action="store_true")
     p.add_argument("--output", "--json", dest="output", default=None,
                    help="JSON 리포트 경로 (--json 별칭)")
@@ -65,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         syms = [s.strip() for s in args.symbols.split(",") if s.strip()] if args.symbols else None
         report = evaluate_intraday_strategy(
             args.input_dir, symbols=syms, strict=bool(args.strict),
+            min_bars=int(args.min_bars), min_days=int(args.min_days),
             generated_at=datetime.now(timezone.utc).isoformat())
         data = to_dict(report)
         md = render_markdown(report)
