@@ -139,3 +139,27 @@ def test_endpoint_latest(client, safe_default_flags):
 def test_endpoint_is_get_only(client, safe_default_flags):
     assert client.post(
         "/api/system/intraday-strategy-validation/latest", json={}).status_code in (404, 405)
+
+
+# --------------------------- data-source endpoint (INTRADAY-DATA-02) -------
+
+def test_data_source_status_endpoint(client, safe_default_flags):
+    r = client.get("/api/system/intraday-data-source/status")
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["standard_input_dir"] == "data/market/intraday_ohlcv"
+    assert d["input_mode"] in ("CSV", "KIS_PLACEHOLDER")
+    # KIS collector 기본: 공식 endpoint 미확인.
+    assert d["kis_collector"]["status"] == "NEEDS_OFFICIAL_ENDPOINT_CONFIRMATION"
+    assert d["kis_collector"]["can_collect"] is False
+    assert d["kis_collector"]["is_order_endpoint"] is False
+    assert d["is_live_authorization"] is False
+    assert d["do_not_auto_apply"] is True
+    assert d["contains_secret"] is False
+    # 원문 endpoint/tr_id/secret 미노출.
+    assert not re.search(r"sk-[A-Za-z0-9]{20,}", r.text)
+
+
+def test_data_source_status_get_only(client, safe_default_flags):
+    assert client.post(
+        "/api/system/intraday-data-source/status", json={}).status_code in (404, 405)
