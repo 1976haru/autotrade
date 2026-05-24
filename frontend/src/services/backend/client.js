@@ -961,6 +961,9 @@ export const backendApi = {
   buildInfo: () => backendFetch("/api/system/build-info"),
   // #63 / 8-01: EXE preflight smoke (read-only). 주문 발생 0건, secret 값 0건.
   preflight: () => backendFetch("/api/system/preflight"),
+  // STRATEGY-VALIDATION-01: 전략 가능성 종합 평가 (advisory, read-only).
+  // 자동 적용/실전 전환/주문 0건. sample fixture 결과는 기능 확인용.
+  strategyPotential: () => backendFetch("/api/system/strategy-potential"),
   // #54 / 7-02: 기본 Universe 50개 상태 (read-only). secret 값 0건.
   universeStatus: () => backendFetch("/api/auto-paper/universe-status"),
   // #56 / 7-04: 통합 오류/이벤트 로그 뷰어 (read-only, 최근 100건). secret 0건.
