@@ -35,6 +35,7 @@ export function IntradayStrategyValidationCard({
 } = {}) {
   const [report, setReport] = useState(null);
   const [dataSource, setDataSource] = useState(null);
+  const [finalResult, setFinalResult] = useState(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
 
@@ -50,6 +51,11 @@ export function IntradayStrategyValidationCard({
       try {
         setDataSource((await apiClient.intradayDataSourceStatus()) || null);
       } catch { /* data-source 상태 실패는 치명 아님 */ }
+    }
+    if (typeof apiClient.realIntradayFinalResult === "function") {
+      try {
+        setFinalResult((await apiClient.realIntradayFinalResult()) || null);
+      } catch { /* 최종 판정 실패는 치명 아님 */ }
     }
   }, [apiClient]);
 
@@ -84,6 +90,34 @@ export function IntradayStrategyValidationCard({
           (일봉으로는 진입이 거의 발생하지 않음). <b> 자동 적용 아님 · 실전 승인 아님 ·
           수익 보장 아님.</b> KIS 분봉 시세 API 는 미구현이라 분봉 CSV 입력을 사용합니다.
         </div>
+
+        {finalResult && finalResult.user_final_judgement ? (
+          <div data-testid="intraday-final-judgement" style={{
+            padding: "8px 10px", borderRadius: 6, marginBottom: 8,
+            background: "var(--c-bg-2)", border: "1px solid var(--c-border)",
+          }}>
+            <div style={{ fontSize: "var(--fs-sm)", fontWeight: "var(--fw-bold)" }}>
+              내 전략 최종 판단:{" "}
+              <span data-testid="intraday-user-judgement">{finalResult.user_final_judgement}</span>
+            </div>
+            <div data-testid="intraday-one-liner" style={{
+              fontSize: "var(--fs-xs)", color: "var(--c-text-2)", marginTop: 2,
+            }}>
+              현재 실제 분봉 데이터 기준으로, 내 매매기법 + Agent 전략은{" "}
+              <b>{finalResult.one_line_conclusion}</b>
+            </div>
+            <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)", marginTop: 2 }}>
+              실제 데이터:{" "}
+              <span data-testid="intraday-actual-data">{finalResult.actual_data_used ? "예" : "아니오"}</span>
+              {" · "}total_trades {finalResult.total_trades ?? 0}
+              {" · "}Paper 리허설 권고:{" "}
+              <span data-testid="intraday-paper-rec">
+                {finalResult.paper_rehearsal_recommended ? "예" : "아니오(아직)"}
+              </span>
+              {" · 실전 승인 아님 · 수익 보장 아님"}
+            </div>
+          </div>
+        ) : null}
 
         <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
           <button type="button" data-testid="intraday-refresh" onClick={refresh}

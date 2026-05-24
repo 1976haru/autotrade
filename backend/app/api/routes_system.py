@@ -526,6 +526,47 @@ def get_strategy_potential() -> dict:
     return to_dict(report)
 
 
+@router.get("/system/real-intraday-final-result/latest")
+def get_real_intraday_final_result_latest() -> dict:
+    """REAL-INTRADAY-TEST-01 — 실제 분봉 전략 가능성 최종 판정 (latest, read-only).
+
+    `reports/strategy_validation/intraday_final_latest.json` 가 있으면 그 요약(사용자
+    최종 판단 포함)을 반환하고, **없으면 empty fallback**. 무거운 backtest 는 API 에서
+    실행하지 않음(CLI `run_real_intraday_final_test.py` 전용). 주문/KIS 호출 0건, secret 0건.
+    """
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/strategy_validation/intraday_final_latest.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            return data
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "_source": "empty",
+        "available": False,
+        "actual_data_used": False,
+        "user_final_judgement": "BLOCKED_BY_DATA",
+        "one_line_conclusion": "데이터 문제로 판단할 수 없습니다.",
+        "developer_verdict": "BLOCKED",
+        "total_trades": 0,
+        "paper_rehearsal_recommended": False,
+        "do_not_auto_apply": True,
+        "is_live_authorization": False,
+        "is_order_signal": False,
+        "contains_secret": False,
+        "no_profit_guarantee": True,
+        "disclaimer": (
+            "실제 분봉 최종 판정 리포트가 아직 없습니다. CLI "
+            "`run_real_intraday_final_test.py` 실행 후 갱신됩니다. 자동 적용 / 실전 전환 / "
+            "주문 0건, 수익 보장 아님."
+        ),
+    }
+
+
 @router.get("/system/intraday-data-source/status")
 def get_intraday_data_source_status() -> dict:
     """INTRADAY-DATA-02 — 분봉 데이터 소스 상태 (read-only, 실제 호출 없음).

@@ -182,3 +182,58 @@ describe("<IntradayStrategyValidationCard> data source (INTRADAY-DATA-02)", () =
     expect(screen.queryByTestId("intraday-data-source")).toBeNull();
   });
 });
+
+// REAL-INTRADAY-TEST-01: 사용자 최종 판단(user_final_judgement) headline 표시.
+function _apiWithFinal(report = _report(), final = {
+  user_final_judgement: "WORTH_MORE_RESEARCH",
+  one_line_conclusion: "연구를 계속할 가치는 있지만 튜닝이 필요합니다.",
+  actual_data_used: true,
+  total_trades: 4719,
+  paper_rehearsal_recommended: false,
+  developer_verdict: "RESEARCH_ONLY",
+}) {
+  return {
+    intradayStrategyValidationLatest: vi.fn(async () => report),
+    realIntradayFinalResult: vi.fn(async () => final),
+  };
+}
+
+describe("<IntradayStrategyValidationCard> final judgement (REAL-INTRADAY-TEST-01)", () => {
+  it("user_final_judgement + 한 줄 결론 표시", async () => {
+    render(<IntradayStrategyValidationCard apiClient={_apiWithFinal()} />);
+    const j = await screen.findByTestId("intraday-final-judgement");
+    expect(screen.getByTestId("intraday-user-judgement").textContent).toContain("WORTH_MORE_RESEARCH");
+    expect(screen.getByTestId("intraday-one-liner").textContent).toContain("튜닝이 필요");
+    expect(j.textContent).toContain("실전 승인 아님");
+  });
+
+  it("actual_data_used + paper 권고 표시", async () => {
+    render(<IntradayStrategyValidationCard apiClient={_apiWithFinal()} />);
+    await screen.findByTestId("intraday-final-judgement");
+    expect(screen.getByTestId("intraday-actual-data").textContent).toContain("예");
+    expect(screen.getByTestId("intraday-paper-rec").textContent).toContain("아니오");
+  });
+
+  it("PROMISING 이면 paper 권고 예", async () => {
+    render(<IntradayStrategyValidationCard apiClient={_apiWithFinal(_report(), {
+      user_final_judgement: "PROMISING_FOR_PAPER_TEST",
+      one_line_conclusion: "Paper 모의 리허설을 진행해볼 만한 가능성이 있습니다.",
+      actual_data_used: true, total_trades: 500, paper_rehearsal_recommended: true,
+      developer_verdict: "CAUTIOUS_CANDIDATE" })} />);
+    await screen.findByTestId("intraday-final-judgement");
+    expect(screen.getByTestId("intraday-paper-rec").textContent).toContain("예");
+  });
+
+  it("최종 판정 있어도 주문/실전/승인 버튼 0개", async () => {
+    const { container } = render(<IntradayStrategyValidationCard apiClient={_apiWithFinal()} />);
+    await screen.findByTestId("intraday-final-judgement");
+    const labels = [...container.querySelectorAll("button")].map((b) => b.textContent);
+    expect(labels).toEqual(["결과 새로고침", "리포트 복사"]);
+  });
+
+  it("final 없으면(legacy) headline 미표시", async () => {
+    render(<IntradayStrategyValidationCard apiClient={_api()} />);
+    await screen.findByTestId("intraday-verdict");
+    expect(screen.queryByTestId("intraday-final-judgement")).toBeNull();
+  });
+});
