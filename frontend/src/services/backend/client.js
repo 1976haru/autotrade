@@ -917,4 +917,6 @@ export const backendApi = {
   kisPaperReport: () => backendFetch("/api/kis-paper/report"),
   // 0-04: KIS 모의 자동매매 env/설정 상태 (read-only). secret 값 0건.
   kisPaperAutoStatus: () => backendFetch("/api/kis-paper/auto/status"),
+  // #53 / 7-01: EXE 운영 상태 표준 enum (read-only). secret 값 0건.
+  exeStatus: () => backendFetch("/api/system/exe-status"),
 };

@@ -14,6 +14,8 @@ fail-closed 로 차단).
 
 from __future__ import annotations
 
+import os
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter
@@ -285,6 +287,86 @@ def get_paper_diagnostics_summary(
         "zero_order_primary_message": full["zero_order_primary_message"],
         "next_actions_ko":            full["next_actions_ko"],
         **_common_notice(),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# #53 / 7-01 — EXE backend / sidecar / diagnostics status consistency
+#
+# 단일 read-only endpoint 가 EXE 운영 상태를 *분리된* 표준 enum 으로 emit 한다.
+# 목적: 사용자가 "Backend 연결됨" 과 "연결 실패" 를 *동시에* 보지 않도록,
+# backend_api_reachable / sidecar_status / diagnostics_status / db_status /
+# kis_paper_readiness 를 명시 분리. 모든 값은 boolean / enum / timestamp 만 —
+# Secret / API key / 계좌번호 원문 0건. broker / OrderExecutor / route_order
+# 호출 0건. DB write 0건 (settings 읽기 + db_is_ready() + readiness 평가만).
+#
+# *주의*: 본 endpoint 가 응답한다는 사실 자체가 backend 가 reachable 함을
+# 뜻한다. 따라서 body 의 backend_api_reachable 는 항상 True 이며, 연결 실패
+# (false) 판정은 frontend 가 fetch 실패로부터 단일 진실로 결정한다 (frontend
+# helper normalizeExeStatus 가 unreachable 시 의존 상태를 UNKNOWN 으로 강등).
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _db_and_diagnostics_status() -> tuple[str, str, Optional[str]]:
+    """(db_status, diagnostics_status, last_error_message) — read-only.
+
+    db_is_ready() / migration state 만 본다. 무거운 진단 쿼리는 실행하지 않음
+    (별도 `/system/diagnostics` 가 담당). 어떤 경우에도 예외를 밖으로 던지지
+    않는다 — 상태 표시용이므로 실패 시 UNKNOWN 으로 안전 강등.
+    """
+    try:
+        from app.db.migration_runner import db_is_ready, get_migration_status
+        mig_state = str(get_migration_status().state.value).upper()
+        if mig_state == "FAILED":
+            return "FAIL", "FAIL", "DB 마이그레이션이 실패했습니다. 로그를 확인하세요."
+        if db_is_ready():
+            return "OK", "OK", None
+        # PENDING / RUNNING 등 — DB 준비 중. 아직 실패는 아님.
+        return "UNKNOWN", "DEGRADED", "DB 준비 중입니다 (마이그레이션 진행 중일 수 있음)."
+    except Exception:  # noqa: BLE001
+        return "UNKNOWN", "UNKNOWN", "DB 상태를 확인할 수 없습니다."
+
+
+def _kis_paper_readiness_status() -> str:
+    """READY / BLOCKED / UNKNOWN — readiness 평가 (broker 호출 0건)."""
+    try:
+        from app.kis_paper.readiness import evaluate_readiness
+        rd = evaluate_readiness(get_settings())
+        return "READY" if bool(rd.ready) else "BLOCKED"
+    except Exception:  # noqa: BLE001
+        return "UNKNOWN"
+
+
+def _sidecar_status() -> str:
+    """RUNNING / UNKNOWN — backend 가 Tauri sidecar 로 기동되었는지 env 마커로 판정.
+
+    backend 는 자신이 sidecar wrapper 의 자식 프로세스인지 직접 알 수 없으므로,
+    launcher 가 주입하는 `AUTOTRADE_DESKTOP_SIDECAR` 마커가 truthy 일 때만
+    RUNNING 으로 보고한다. 그 외(웹 / dev / 마커 없음)는 UNKNOWN — frontend 가
+    desktop 감지 + reachable 로 추가 refine.
+    """
+    marker = str(os.getenv("AUTOTRADE_DESKTOP_SIDECAR", "") or "").strip().lower()
+    return "RUNNING" if marker in ("1", "true", "yes", "on") else "UNKNOWN"
+
+
+@router.get("/system/exe-status")
+def get_exe_status() -> dict:
+    """EXE 운영 상태 표준 enum — read-only. broker / DB write 0건.
+
+    응답에는 boolean / enum / timestamp 만 포함되며 Secret / API key / 계좌번호
+    원문은 0건 (모든 하위 평가가 boolean 만 산출).
+    """
+    db_status, diagnostics_status, last_error = _db_and_diagnostics_status()
+    return {
+        "backend_api_reachable": True,
+        "sidecar_status":        _sidecar_status(),
+        "diagnostics_status":    diagnostics_status,
+        "db_status":             db_status,
+        "kis_paper_readiness":   _kis_paper_readiness_status(),
+        "checked_at":            datetime.now(timezone.utc).isoformat(),
+        "last_error_message":    last_error,
+        "is_live_authorization": False,
+        "contains_secret":       False,
     }
 
 

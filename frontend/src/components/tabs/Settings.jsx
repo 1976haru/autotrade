@@ -16,6 +16,7 @@ import { DeploymentInfoCard } from "../common/DeploymentInfoCard";
 import { DisplaySettingsCard } from "../common/DisplaySettingsCard";
 import { PaperCapitalSettingsCard } from "../common/PaperCapitalSettingsCard";
 import { KisPaperEnvStatusCard } from "../common/KisPaperEnvStatusCard";
+import { BackendSidecarStatusCard } from "../common/BackendSidecarStatusCard";
 import { backendApi } from "../../services/backend/client";
 import { APP_INFO, appVersionLine } from "../../config/appInfo";
 import { latestReleaseNote } from "../../config/releaseNotes";
@@ -232,6 +233,11 @@ export function Settings({ settings }) {
 
       {/* 버전 / 공지 — VersionBadge 클릭으로 release notes 재오픈 */}
       <VersionInfoCard />
+
+      {/* #53 / 7-01: EXE 연결 상태 (Backend / Sidecar / 진단) — 연결됨/실패를
+          분리 표시하고, 연결 실패 시 진단·DB·KIS 를 "확인 불가" 로 강등해
+          모순(연결됨+실패 동시) 표시를 차단. read-only, broker 호출 0건. */}
+      <BackendSidecarStatusCard />
 
       {/* feature/display-settings-and-ui-readability: 사용자가 EXE 화면
           가독성 (글자 크기 / 화면 폭 / 테마) 을 즉시 조정할 수 있는 카드.
