@@ -381,6 +381,43 @@ def get_blocked_reasons_today(
     }
 
 
+@_AP.get("/no-trade-reasons/today")
+def get_no_trade_reasons_today(
+    limit: int = 10,
+    all_events: bool = False,
+) -> dict:
+    """오늘 *거래 없음* 사유 집계 — 기존 ledger event 를 read-only 로 분석 (3-09).
+
+    "왜 거래가 없었는지" 를 사용자에게 설명하는 *표시 전용* endpoint — 정상
+    HOLD / 신호 없음 / 데이터 없음 / 장 시간 외 / 차단까지 모두 포함해
+    "시스템이 멈춘 것인지, 조건이 없어서 쉰 것인지" 를 구분 가능하게 한다.
+    실제 매수/매도 로직을 열지 않으며 broker / OrderExecutor 호출 0건,
+    audit row 0건, DB write 0건. 응답 invariant: `is_order_signal=False` /
+    `auto_apply_allowed=False` / `is_live_authorization=False` /
+    `contains_secret=False`. Secret / API key / 계좌번호 필드 0건.
+
+    `all_events=true` 면 ledger 전체(capacity 내), 아니면 오늘(UTC) event 만.
+    """
+    from app.auto_paper.no_trade_reasons import summarize_no_trade_reasons
+
+    events = [e.to_dict() for e in get_ledger().all_events()]
+    if not all_events:
+        today = _today_utc_iso_date()
+        events = [
+            e for e in events
+            if str(e.get("timestamp") or "").startswith(today)
+        ]
+    summary = summarize_no_trade_reasons(events, limit=max(1, int(limit)))
+    return {
+        **summary.to_dict(),
+        "advisory_disclaimer": (
+            "AutoPaperLoop 가 *거래하지 않은* cycle 의 사유 요약 — 표시 전용. "
+            "거래 없음은 오류가 아닐 수 있습니다. broker 호출 0건, 실거래 아님."
+        ),
+        "scope": "today" if not all_events else "all",
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # #2-10: AI Paper 자동매수/매도 skeleton — tick + decision/latest
 # ─────────────────────────────────────────────────────────────────────────────

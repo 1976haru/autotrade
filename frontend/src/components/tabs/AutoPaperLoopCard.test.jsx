@@ -1904,3 +1904,113 @@ describe("P-17: 매수 불가 사유 요약", () => {
     expect(screen.queryByTestId("auto-paper-blocked-summary")).toBeNull();
   });
 });
+
+
+describe("<AutoPaperLoopCard> 거래 없음(no-trade) 사유 (3-09)", () => {
+  afterEach(cleanup);
+
+  function _withNoTrade(api, summary) {
+    return { ...api, autoPaperNoTradeReasonsToday: vi.fn(async () => summary) };
+  }
+
+  const _NT = {
+    cycle_count: 120,
+    order_count: 2,
+    no_trade_count: 118,
+    by_reason: { NO_SIGNAL: 100, MARKET_CLOSED: 15, BLOCKED_BY_RISK_MANAGER: 3 },
+    by_no_trade_reason: { NO_SIGNAL: 100, MARKET_CLOSED: 15, BLOCKED_BY_RISK_MANAGER: 3 },
+    recent: [],
+    last_no_trade: { reason_code: "NO_SIGNAL", symbol: "005930" },
+    last_no_trade_reason: "NO_SIGNAL",
+    last_no_trade_symbol: "005930",
+    contains_secret: false,
+    is_order_signal: false,
+    is_live_authorization: false,
+    auto_apply_allowed: false,
+  };
+
+  it("no_trade_count 헤더 표시", async () => {
+    const api = _withNoTrade(_mockApi({ state: "RUNNING", cycle_count: 120 }), _NT);
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("no-trade-count").textContent).toMatch(/118/));
+  });
+
+  it("거래 없음 요약 + 최근 사유 + cycle/order 카운트 표시", async () => {
+    const api = _withNoTrade(_mockApi({ state: "RUNNING", cycle_count: 120 }), _NT);
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("auto-paper-no-trade-summary")).toBeTruthy());
+    const panel = screen.getByTestId("auto-paper-no-trade-summary");
+    expect(panel.textContent).toMatch(/오늘 거래 없음 118건/);
+    expect(panel.textContent).toMatch(/cycle 120/);
+    expect(panel.textContent).toMatch(/주문 2건/);
+    expect(screen.getByTestId("auto-paper-last-no-trade").textContent)
+      .toMatch(/조건에 맞는 매수\/매도 신호가 없어 거래하지 않음/);
+    expect(screen.getByTestId("auto-paper-last-no-trade").textContent)
+      .toMatch(/005930/);
+    expect(screen.getByTestId("auto-paper-last-no-trade-code").textContent)
+      .toMatch(/NO_SIGNAL/);
+  });
+
+  it("reason 별 count 요약 표시", async () => {
+    const api = _withNoTrade(_mockApi({ state: "RUNNING", cycle_count: 120 }), _NT);
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("auto-paper-no-trade-by-reason")).toBeTruthy());
+    expect(screen.getByTestId("no-trade-reason-NO_SIGNAL").textContent)
+      .toMatch(/100건/);
+    expect(screen.getByTestId("no-trade-reason-MARKET_CLOSED").textContent)
+      .toMatch(/15건/);
+  });
+
+  it("거래 없음 disclaimer — 오류가 아닐 수 있음 + 실거래 아님", async () => {
+    const api = _withNoTrade(_mockApi({ state: "RUNNING", cycle_count: 120 }), _NT);
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("auto-paper-no-trade-disclaimer")).toBeTruthy());
+    const d = screen.getByTestId("auto-paper-no-trade-disclaimer").textContent;
+    expect(d).toMatch(/오류가 아닐 수 있습니다/);
+    expect(d).toMatch(/broker_order_sent=false/);
+    expect(d).toMatch(/is_live_authorization=false/);
+  });
+
+  it("no_trade_count=0 이면 요약 패널 미표시", async () => {
+    const api = _withNoTrade(_mockApi({ state: "RUNNING", cycle_count: 1 }), {
+      ..._NT, no_trade_count: 0, by_reason: {}, last_no_trade: null,
+    });
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    expect(screen.queryByTestId("auto-paper-no-trade-summary")).toBeNull();
+  });
+
+  it("no-trade API 미지원이어도 크래시 없음", async () => {
+    const api = _mockApi({ state: "RUNNING", cycle_count: 1 });   // 메서드 없음.
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.autoPaperStatus).toHaveBeenCalled());
+    expect(screen.queryByTestId("auto-paper-no-trade-summary")).toBeNull();
+  });
+
+  it("실전/매수/매도/Place Order/자동 재주문 라벨 버튼 0개", async () => {
+    const api = _withNoTrade(_mockApi({ state: "RUNNING", cycle_count: 120 }), _NT);
+    const { container } = render(
+      <AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("auto-paper-no-trade-summary")).toBeTruthy());
+    const buttons = [...container.querySelectorAll("button")];
+    for (const b of buttons) {
+      const t = b.textContent || "";
+      expect(t).not.toMatch(/Place Order/i);
+      expect(t).not.toMatch(/지금 매수/);
+      expect(t).not.toMatch(/지금 매도/);
+      expect(t).not.toMatch(/실거래 시작/);
+      expect(t).not.toMatch(/자동 재주문/);
+      expect(t).not.toMatch(/ENABLE_/);
+    }
+    // secret/account 미표시.
+    const text = container.textContent.toLowerCase();
+    for (const bad of ["app_secret", "api_key", "account_no", "access_token"]) {
+      expect(text).not.toContain(bad);
+    }
+  });
+});
