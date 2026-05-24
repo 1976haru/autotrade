@@ -20,6 +20,7 @@ import { BackendSidecarStatusCard } from "../common/BackendSidecarStatusCard";
 import { AppVersionCard } from "../common/AppVersionCard";
 import { PreflightSmokeCard } from "../common/PreflightSmokeCard";
 import { RuntimeEventLogViewer } from "../common/RuntimeEventLogViewer";
+import { UniverseStatusCard } from "../common/UniverseStatusCard";
 import { backendApi } from "../../services/backend/client";
 import { APP_INFO, appVersionLine } from "../../config/appInfo";
 import { latestReleaseNote } from "../../config/releaseNotes";
@@ -251,6 +252,10 @@ export function Settings({ settings }) {
           Agent Council/Decision Episode/build 를 한 번에 점검 PASS/WARN/FAIL.
           read-only, 주문 발생 0건, 자격정보 미포함. */}
       <PreflightSmokeCard />
+
+      {/* #54 / 7-02: 기본 Universe 50개 상태 — 사용자 관심종목 없으면 기본 50개
+          fallback, source/count/preview/사유 표시. read-only, 주문 기능 아님. */}
+      <UniverseStatusCard />
 
       {/* #56 / 7-04: 통합 오류/이벤트 로그 뷰어 — RuntimeEvent / AI 판단 /
           KIS 주문 이벤트를 최근 100건 한 화면에서 확인. source/severity/검색
