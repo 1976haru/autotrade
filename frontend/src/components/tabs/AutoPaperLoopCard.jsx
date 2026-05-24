@@ -842,12 +842,27 @@ export function AutoPaperLoopCard({
             <strong>
               {readiness?.paper_capital?.available_cash_krw != null
                 ? `${readiness.paper_capital.available_cash_krw.toLocaleString()}원`
-                : "—"}
+                : "아직 기록 없음 (PAPER_SIMULATED)"}
             </strong>
           </div>
           <div data-testid="exec-cycle">
             cycle: <strong>{status?.cycle_count ?? 0}</strong>
+            {(!status || (status?.cycle_count ?? 0) === 0) && (
+              <span data-testid="exec-no-runtime" style={{ marginLeft: 6, color: "var(--c-text-3)" }}>
+                · 아직 Bot 실행 기록 없음 (자산 0원 아님 — 실행 시 기록)
+              </span>
+            )}
           </div>
+        </div>
+
+        {/* INSTALL-UX-FIX-01: KIS Paper Auto / dry-run / Fill Polling OFF 의미 설명 (설치본 혼란 방지). */}
+        <div data-testid="exec-status-explain" style={{
+          marginTop: 4, fontSize: "var(--fs-xs)", color: "var(--c-text-3)", lineHeight: 1.5,
+        }}>
+          KIS Paper Auto <strong>OFF</strong> = 자동 반복 매매 OFF(수동 점검 가능) ·
+          dry-run <strong>ON</strong> = 실제 모의 주문 전송 없음 ·
+          Fill Polling <strong>OFF</strong> = 체결 조회 OFF(장중 리허설 전 확인 필요).
+          <span> 설치 오류가 아니라 안전 기본값입니다.</span>
         </div>
 
         {/* 자동 tick driver 상태 — opt-in, Paper 전용. 실거래 토글 없음. */}

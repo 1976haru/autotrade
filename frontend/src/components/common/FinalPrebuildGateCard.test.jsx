@@ -125,3 +125,26 @@ describe("<FinalPrebuildGateCard>", () => {
     expect(container.textContent).not.toMatch(/\b\d{8}-\d{2}\b/);
   });
 });
+
+// INSTALL-UX-FIX-01: 설치본에서 소스 전용 점검(SKIP)은 참고용 안내.
+describe("<FinalPrebuildGateCard> install-ux source note", () => {
+  it("EXE_BUILD_INPUTS SKIP 이면 '참고용' 안내 표시", async () => {
+    const rep = _report({
+      sections: [
+        { name: "CONFIG_ENV", status: "PASS", detail: "" },
+        { name: "EXE_BUILD_INPUTS", status: "SKIP", detail: "소스 미포함 — 참고용" },
+        { name: "DOCS_RUNBOOK", status: "SKIP", detail: "문서 미번들" },
+      ],
+    });
+    render(<FinalPrebuildGateCard apiClient={_api(rep)} />);
+    const note = await screen.findByTestId("final-prebuild-source-note");
+    expect(note.textContent).toContain("참고용");
+    expect(note.textContent).toContain("빌드 실패가 아닙니다");
+  });
+
+  it("소스 전용 SKIP 없으면 안내 미표시", async () => {
+    render(<FinalPrebuildGateCard apiClient={_api()} />);
+    await screen.findByTestId("final-prebuild-status");
+    expect(screen.queryByTestId("final-prebuild-source-note")).toBeNull();
+  });
+});

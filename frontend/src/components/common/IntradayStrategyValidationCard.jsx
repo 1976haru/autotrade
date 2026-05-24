@@ -15,6 +15,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Card, SectionLabel } from "./index";
 import { backendApi } from "../../services/backend/client";
+import { MarketClosedNotice } from "./MarketClosedNotice";
+import { currentMarketPhase } from "../../utils/marketHours";
 
 const _V_COLOR = {
   STRONG_CANDIDATE: "#166534", CAUTIOUS_CANDIDATE: "#a16207",
@@ -90,6 +92,21 @@ export function IntradayStrategyValidationCard({
           (일봉으로는 진입이 거의 발생하지 않음). <b> 자동 적용 아님 · 실전 승인 아님 ·
           수익 보장 아님.</b> KIS 분봉 시세 API 는 미구현이라 분봉 CSV 입력을 사용합니다.
         </div>
+
+        {/* INSTALL-UX-FIX-01: 장 닫힘 안내 (설치본 혼란 방지). */}
+        <MarketClosedNotice phase={currentMarketPhase()} />
+
+        {finalResult && finalResult.user_final_judgement === "BLOCKED_BY_DATA" ? (
+          <div data-testid="intraday-no-data-notice" style={{
+            padding: "6px 10px", borderRadius: 6, marginBottom: 8,
+            background: "#eff6ff", border: "1px solid #bfdbfe", color: "#1e3a8a",
+            fontSize: "var(--fs-xs)", lineHeight: 1.5,
+          }}>
+            ℹ️ <b>실제 분봉 데이터 없음 — 전략 검증 미실행.</b> 설치 오류가 아닙니다.
+            분봉 CSV 를 <code>data/market/intraday_ohlcv</code> 에 넣거나 yfinance 수집 후
+            다시 실행하면 전략 검증이 수행됩니다.
+          </div>
+        ) : null}
 
         {finalResult && finalResult.user_final_judgement ? (
           <div data-testid="intraday-final-judgement" style={{
