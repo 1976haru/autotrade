@@ -27,6 +27,9 @@ const _SAFE = {
   kis_product_code_present: true,
   product_code_present: true,
   missing_credentials: [],
+  // 4-02: env 조합 + READY/BLOCKED.
+  enable_ai_paper_background_tick: true,
+  kis_paper_auto_ready: true,
   is_live_authorization: false,
   broker_order_type: "KIS_PAPER",
   default_mode: "PAPER",
@@ -61,6 +64,28 @@ describe("<KisPaperEnvStatusCard>", () => {
     render(<KisPaperEnvStatusCard apiClient={_api()} pollIntervalMs={0} />);
     await waitFor(() =>
       expect(screen.getByTestId("kis-env-credentials").textContent).toMatch(/구성됨/));
+  });
+
+  it("4-02: Background Tick ON + KIS 모의 자동주문 READY 표시", async () => {
+    render(<KisPaperEnvStatusCard apiClient={_api()} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("kis-env-bg-tick").textContent).toMatch(/ON/));
+    const ready = screen.getByTestId("kis-env-auto-ready");
+    expect(ready.getAttribute("data-ready")).toBe("true");
+    expect(ready.textContent).toMatch(/READY/);
+  });
+
+  it("4-02: 자격 미구성 시 BLOCKED 헤드라인", async () => {
+    render(<KisPaperEnvStatusCard apiClient={_api({
+      ..._SAFE, credentials_present: false, kis_paper_auto_ready: false,
+      kis_app_key_present: false,
+      missing_credentials: ["KIS_APP_KEY"],
+    })} pollIntervalMs={0} />);
+    await waitFor(() => {
+      const ready = screen.getByTestId("kis-env-auto-ready");
+      expect(ready.getAttribute("data-ready")).toBe("false");
+    });
+    expect(screen.getByTestId("kis-env-auto-ready").textContent).toMatch(/BLOCKED/);
   });
 
   it("미구성 시 미구성 표시", async () => {

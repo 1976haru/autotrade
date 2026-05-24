@@ -2014,3 +2014,50 @@ describe("<AutoPaperLoopCard> 거래 없음(no-trade) 사유 (3-09)", () => {
     }
   });
 });
+
+
+describe("<AutoPaperLoopCard> KIS 모의 자동주문 ON 표시 (4-02)", () => {
+  afterEach(cleanup);
+
+  function _withKisAuto(api) {
+    return {
+      ...api,
+      autoPaperRunReadiness: vi.fn(async () => ({
+        loop: { health_code: "RUNNING_OK", health_message: "정상" },
+        background_tick: {
+          enabled: true, running: true, interval_seconds: 30,
+          tick_mode: "KIS_PAPER_AUTO",
+          kis_paper_auto_enabled: true, kis_paper_auto_dry_run: false,
+          is_live_authorization: false, broker_order_sent: false,
+        },
+      })),
+    };
+  }
+
+  it("background_tick KIS_PAPER_AUTO 면 KIS 모의 자동주문 ON 표시", async () => {
+    const api = _withKisAuto(_mockApi({ state: "RUNNING", cycle_count: 3 }));
+    render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("bg-tick-kis-auto")).toBeTruthy());
+    expect(screen.getByTestId("bg-tick-kis-state").textContent).toMatch(/ON/);
+    expect(screen.getByTestId("bg-tick-kis-safety").textContent)
+      .toMatch(/is_live_authorization=false/);
+    expect(screen.getByTestId("bg-tick-kis-safety").textContent)
+      .toMatch(/broker_order_type=KIS_PAPER/);
+  });
+
+  it("KIS 자동주문 패널에 실전/매수/매도/Place Order 버튼 없음", async () => {
+    const api = _withKisAuto(_mockApi({ state: "RUNNING", cycle_count: 3 }));
+    const { container } = render(
+      <AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("bg-tick-kis-auto")).toBeTruthy());
+    for (const b of [...container.querySelectorAll("button")]) {
+      const t = b.textContent || "";
+      expect(t).not.toMatch(/Place Order/i);
+      expect(t).not.toMatch(/지금 매수/);
+      expect(t).not.toMatch(/지금 매도/);
+      expect(t).not.toMatch(/실거래 시작/);
+    }
+  });
+});
