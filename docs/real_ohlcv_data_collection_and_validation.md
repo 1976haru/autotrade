@@ -4,6 +4,23 @@
 > 의 1순위(깨끗한 실제 OHLCV 확보) + 2순위(실데이터 Backtest/Walk-forward)를 수행한다.
 > **자동 적용 / 실전 전환 승인 / 주문 신호가 아니다. 수익을 보장하지 않는다.**
 
+## 0. 실제 데이터 1차 실행 결과 (중요 — 2026-05-24, 일봉 기준)
+
+yfinance 로 KOSPI 10종목 2024년 **일봉(daily)** 244거래일을 실제 수집해 검증한 결과:
+
+- 데이터 수집: 10/10 성공(품질 PASS 2 + WARN 8). WARN 은 yfinance 의 구조적 오류 row
+  (`close < low` 등) 1~2건을 *드롭*(값 보정 아님)한 데이터 hygiene 결과 — §5 참조.
+- 백테스트/Walk-forward: **10종목 모두 total_trades = 0** → `overall_verdict = RESEARCH_ONLY`,
+  `agent_value_summary = AGENT_VALUE_INSUFFICIENT_SAMPLE`.
+- **원인: 시간프레임 불일치.** 현재 4전략(ORB/Momentum/Gap/VWAP)은 *장중 단타(intraday)*
+  전략으로 **분(minute) 단위 데이터** 가 필요하다. *일봉* 으로는 진입 조건이 사실상
+  트리거되지 않아 0 trade 가 정상이다. 즉 **"전략이 나쁘다"가 아니라 "일봉은 단타 전략의
+  올바른 입력이 아니다"** 이다.
+- **결론: 단타 전략의 실데이터 가능성 판정에는 *분봉 intraday OHLCV* 가 필요하다.** Yahoo
+  무료 intraday 는 한국 종목 커버리지/기간이 제한적이라, KIS 실시간/분봉 수집(read-only)
+  또는 운영자 보유 분봉 CSV 가 후속 과제다(주문 API 미사용). 본 PR 은 일봉 파이프라인을
+  완성했고, 분봉 수집은 별도 작업으로 둔다.
+
 ## 1. 깨끗한 OHLCV 데이터가 필요한 이유
 
 백테스트/Walk-forward 의 신뢰도는 *입력 데이터 품질* 에 좌우된다. 깨진 OHLC(예:

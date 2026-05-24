@@ -176,3 +176,53 @@ def test_loader_module_no_forbidden_imports():
                 assert mod not in ln, f"forbidden import: {ln.strip()}"
     for call in ("route_order(", ".place_order(", "OrderExecutor("):
         assert call not in src, f"forbidden call: {call}"
+
+
+# --------------------------- sanitize (REAL-DATA-INPUT-01) -----------------
+
+def test_sanitize_drops_invalid_rows_keeps_valid():
+    from app.market_data.ohlcv_quality import sanitize_ohlcv_bars
+    bars = _mkbars(120) + _mkbars(1, bad=True)  # 1 invalid appended
+    clean, dropped, too_many = sanitize_ohlcv_bars(bars)
+    assert dropped == 1
+    assert too_many is False
+    assert len(clean) == 120
+    # 값 보정 아님 — 남은 row 는 원본 그대로(개수만 줄어듦).
+    for b in clean:
+        from app.market_data.ohlcv_quality import _is_invalid_ohlc
+        assert not _is_invalid_ohlc(b)
+
+
+def test_sanitize_too_many_bad_flags_true():
+    from datetime import datetime, timedelta
+    from app.market_data.ohlcv_quality import sanitize_ohlcv_bars
+    base = datetime(2025, 1, 1, 9, 0, 0)
+    valid = [_Bar("X", base + timedelta(days=i), 100.0, 105.0, 98.0, 102.0, 1000.0)
+             for i in range(20)]
+    invalid = [_Bar("X", base + timedelta(days=100 + i), 100.0, 90.0, 98.0, 102.0, 1000.0)
+               for i in range(20)]  # high<open → invalid
+    clean, dropped, too_many = sanitize_ohlcv_bars(valid + invalid)
+    assert dropped == 20
+    assert too_many is True
+
+
+def test_collector_drop_marks_warn_not_silent_pass(tmp_path):
+    """1개 잘못된 row 드롭 → PASS 가 아니라 WARN(투명성)."""
+    from app.market_data.ohlcv_collector import collect_ohlcv
+    # demo_quasi_real(무결) 에 잘못된 row 를 섞은 임시 CSV 작성.
+    import csv
+    src = tmp_path / "src"
+    src.mkdir()
+    rows = [["2024-01-%02dT00:00:00" % (d + 1), 100, 105, 98, 102, 1000]
+            for d in range(120)]
+    rows.append(["2024-06-01T00:00:00", 100, 90, 98, 102, 1000])  # high<open → invalid
+    with (src / "TESTSYM.csv").open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["timestamp", "open", "high", "low", "close", "volume"])
+        w.writerows(rows)
+    m = collect_ohlcv(["TESTSYM"], source="existing", source_dir=src,
+                      output_dir=tmp_path / "out", min_days=1, recommended_days=1)
+    r = m.results[0]
+    assert r.status == "WARN"
+    assert "드롭" in r.reason
+    assert (tmp_path / "out" / "TESTSYM.csv").exists()  # 정제 후 기록

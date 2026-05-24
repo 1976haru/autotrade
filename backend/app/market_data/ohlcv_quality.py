@@ -40,6 +40,43 @@ class OhlcvQualityReport:
             raise ValueError("OhlcvQualityReport.contains_secret must be False")
 
 
+def _is_invalid_ohlc(b: Any) -> bool:
+    o = float(getattr(b, "open", 0) or 0)
+    h = float(getattr(b, "high", 0) or 0)
+    lo = float(getattr(b, "low", 0) or 0)
+    c = float(getattr(b, "close", 0) or 0)
+    if o <= 0 or h <= 0 or lo <= 0 or c <= 0:
+        return True
+    return h < lo or h < o or h < c or lo > o or lo > c
+
+
+def sanitize_ohlcv_bars(
+    bars: list[Any], *, max_drop_ratio: float = 0.05,
+) -> tuple[list[Any], int, bool]:
+    """구조적으로 잘못된(OHLC 무결성 위반) row 를 *제거* 한다 (데이터 hygiene).
+
+    **값을 보정/조작하지 않는다** — 잘못된 row 를 *드롭* 만 한다 (task §5 "일부 결측 row
+    제거" → WARN 정책과 일치). 드롭 비율이 `max_drop_ratio` 초과 시 데이터가 구조적으로
+    손상된 것으로 보고 `too_many_bad=True` 반환(호출자가 FAIL 유지) — 억지 통과 방지.
+
+    비거래일(주말) 필터는 적용하지 않는다 — yfinance timestamp 가 UTC 라 KST 거래일이
+    UTC 주말로 보일 수 있어(예: 월요일 09:00 KST = 일요일 15:00 UTC) 오탐 위험.
+
+    Returns: (clean_bars, dropped_count, too_many_bad).
+    """
+    if not bars:
+        return [], 0, False
+    clean: list[Any] = []
+    dropped = 0
+    for b in bars:
+        if _is_invalid_ohlc(b):
+            dropped += 1
+            continue
+        clean.append(b)
+    too_many = (dropped / max(1, len(bars))) > max_drop_ratio
+    return clean, dropped, too_many
+
+
 def _to_date(ts: Any) -> Any:
     """OHLCVBar.timestamp(datetime) 또는 ISO str 에서 날짜 부분 추출."""
     if hasattr(ts, "date"):

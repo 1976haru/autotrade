@@ -14,7 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.market_data.ohlcv_quality import check_ohlcv_quality, to_dict as quality_to_dict
+from app.market_data.ohlcv_quality import (
+    check_ohlcv_quality,
+    sanitize_ohlcv_bars,
+    to_dict as quality_to_dict,
+)
 
 SRC_EXISTING = "existing"
 SRC_YFINANCE = "yfinance"
@@ -67,13 +71,17 @@ def _load_existing(symbol: str, source_dir: Path) -> tuple[list[Any], str]:
 
 
 def _load_yfinance(symbol: str, start: datetime, end: datetime) -> tuple[list[Any], str]:
-    """yfinance(준실제). 미설치/네트워크 실패 시 ([], reason) — *fake 대체 없음*."""
+    """yfinance(준실제) *직접* 수집. 미설치/네트워크 실패 시 ([], reason) — *fake 대체 없음*.
+
+    `load_real_ohlcv` 는 CSV-first 라 로컬 fixture 가 yfinance 를 가린다. `--source
+    yfinance` 는 *실제 yfinance 데이터* 를 의도하므로 yfinance fetch 를 직접 호출한다.
+    """
     if not _yfinance_available():
         return [], "yfinance 미설치 — 준실제 데이터 수집 불가 (네트워크 환경에서 설치/재시도)"
     try:
-        from app.backtest.real_data.loader import load_real_ohlcv
+        from app.backtest.real_data.loader import _try_load_yfinance
         from app.market_data.real_ohlcv_loader import _records_to_ohlcv
-        res = load_real_ohlcv(symbol, start=start, end=end, enable_yfinance=True)
+        res = _try_load_yfinance(symbol, start, end)
         bars = getattr(res, "bars", None) or []
         if not bars:
             return [], f"yfinance 데이터 없음: {getattr(res, 'reason', '') or 'no data'}"
@@ -118,17 +126,31 @@ def collect_ohlcv(
             results.append(SymbolCollectResult(
                 sym, "none", "FAIL", 0, 0, {}, None, reason or "데이터 없음"))
             continue
-        q = check_ohlcv_quality(bars, min_bars=recommended_days, min_days=min_days)
-        # 품질 OK → PASS, WARN/FAIL 유지.
+        # 데이터 hygiene: 구조적으로 잘못된 row(OHLC 위반 / 비거래일 phantom) 제거.
+        # 값 보정은 하지 않고 *드롭* 만 — 드롭 과다(>5%)면 FAIL 유지(억지 통과 방지).
+        clean, dropped, too_many = sanitize_ohlcv_bars(bars)
+        if too_many:
+            q = check_ohlcv_quality(bars, min_bars=recommended_days, min_days=min_days)
+            results.append(SymbolCollectResult(
+                sym, src_label, "FAIL", q.bar_count, q.day_count, quality_to_dict(q), None,
+                f"구조적 손상 과다(드롭 {dropped}/{len(bars)}) — " + "; ".join(q.reasons[:1])))
+            continue
+        q = check_ohlcv_quality(clean, min_bars=recommended_days, min_days=min_days)
+        # 품질 OK → PASS, WARN/FAIL 유지. row 를 드롭했으면 최소 WARN(투명성).
         status = "PASS" if q.status == "OK" else q.status
+        if dropped > 0 and status == "PASS":
+            status = "WARN"
+        reason = "" if status != "FAIL" else "; ".join(q.reasons)
+        if dropped > 0 and status != "FAIL":
+            reason = f"hygiene: 잘못된/비거래일 row {dropped}건 드롭(값 보정 아님)"
         written = None
         # FAIL 데이터는 절대 기록/통과시키지 않는다.
         if write and odir and q.sufficient_for_backtest and status != "FAIL":
             written = str(odir / f"{sym}.csv")
-            _write_csv(bars, Path(written))
+            _write_csv(clean, Path(written))
         results.append(SymbolCollectResult(
             sym, src_label, status, q.bar_count, q.day_count,
-            quality_to_dict(q), written, "" if status != "FAIL" else "; ".join(q.reasons)))
+            quality_to_dict(q), written, reason))
 
     return CollectManifest(
         generated_at=gen,
