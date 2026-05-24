@@ -526,6 +526,41 @@ def get_strategy_potential() -> dict:
     return to_dict(report)
 
 
+@router.get("/system/real-data-strategy-validation/latest")
+def get_real_data_strategy_validation_latest() -> dict:
+    """REAL-DATA-STRATEGY-01 — 실제/준실제 데이터 전략 가능성 검증 (latest, read-only).
+
+    `reports/strategy_validation/real_data_strategy_latest.json` 가 있으면 그 요약을
+    반환하고, 없으면 *기능 시연용* 으로 quasi-real 데모 CSV 에 대해 경량 평가를 즉석
+    계산해 반환한다(무거운 다종목 실행은 CLI 전용). **자동 적용/실전 전환/주문 0건.**
+    broker / OrderExecutor / route_order / KIS 주문 API 호출 0건, secret/계좌 원문 0건.
+    """
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/strategy_validation/real_data_strategy_latest.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            return data
+        except Exception:  # noqa: BLE001 — 손상 시 즉석 계산으로 fallback.
+            pass
+
+    from app.market_data.real_ohlcv_loader import load_from_csv
+    from app.system.real_data_strategy import evaluate_real_data_strategy, to_dict
+
+    demo = (
+        Path(__file__).resolve().parents[2]
+        / "tests" / "fixtures" / "real_data" / "demo_quasi_real.csv"
+    )
+    loaded = load_from_csv(str(demo))
+    report = evaluate_real_data_strategy(loaded)
+    out = to_dict(report)
+    out["_source"] = "on_demand_demo_fixture"
+    return out
+
+
 @router.get("/system/premarket-readiness")
 def get_premarket_readiness() -> dict:
     """BUILD-02A — 장 열리기 전 사전 검증 (fast mode, read-only, offline).
