@@ -118,10 +118,20 @@ class TestAutoStatusApi:
             client.get("/api/kis-paper/auto/status").json()["credentials_present"], bool)
 
     def test_no_secret_or_account_in_response(self, client):
-        raw = client.get("/api/kis-paper/auto/status").text.lower()
-        for banned in ("kis_app_key", "kis_app_secret", "app_secret",
-                       "account_no", "kis_account_no", "access_token"):
-            assert banned not in raw
+        # 4-01: credentials 는 *_present boolean 필드명으로만 노출된다.
+        # secret/account 류 키는 반드시 "_present" 로 끝나야 하며(값 0건),
+        # access_token 류 키는 아예 없어야 한다.
+        b = client.get("/api/kis-paper/auto/status").json()
+        for key in b:
+            kl = key.lower()
+            if any(t in kl for t in ("app_key", "app_secret", "account_no")):
+                assert kl.endswith("_present"), f"non-present credential key: {key}"
+                assert isinstance(b[key], bool), f"{key} must be boolean"
+            assert "access_token" not in kl
+        # 실제 secret / 계좌번호 값 패턴 0건.
+        raw = client.get("/api/kis-paper/auto/status").text
+        for pat in (r"sk-[A-Za-z0-9]{20,}", r"\b\d{6,}-\d{2,}\b"):
+            assert not re.search(pat, raw), f"secret/account 노출 의심: /{pat}/"
 
     def test_readiness_credentials_present_only_no_secret(self, client):
         raw = client.get("/api/kis-paper/readiness").text

@@ -20,6 +20,13 @@ const _SAFE = {
   kis_is_paper: true,
   enable_live_trading: false,
   credentials_present: true,
+  // 4-01: per-credential present (값 원문 0건 — boolean 만).
+  kis_app_key_present: true,
+  kis_app_secret_present: true,
+  kis_account_no_present: true,
+  kis_product_code_present: true,
+  product_code_present: true,
+  missing_credentials: [],
   is_live_authorization: false,
   broker_order_type: "KIS_PAPER",
   default_mode: "PAPER",
@@ -63,6 +70,29 @@ describe("<KisPaperEnvStatusCard>", () => {
       expect(screen.getByTestId("kis-env-credentials").textContent).toMatch(/미구성/));
   });
 
+  it("4종 per-credential 구성됨 표시 (APP KEY/SECRET/ACCOUNT/PRODUCT)", async () => {
+    render(<KisPaperEnvStatusCard apiClient={_api()} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("kis-env-app-key").textContent).toMatch(/구성됨/));
+    expect(screen.getByTestId("kis-env-app-secret").textContent).toMatch(/구성됨/);
+    expect(screen.getByTestId("kis-env-account-no").textContent).toMatch(/구성됨/);
+    expect(screen.getByTestId("kis-env-product-code").textContent).toMatch(/구성됨/);
+  });
+
+  it("자격 미구성 시 missing_credentials 표시", async () => {
+    render(<KisPaperEnvStatusCard apiClient={_api({
+      ..._SAFE, credentials_present: false,
+      kis_app_secret_present: false, kis_account_no_present: false,
+      missing_credentials: ["KIS_APP_SECRET", "KIS_ACCOUNT_NO"],
+    })} pollIntervalMs={0} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("kis-env-missing-credentials")).toBeTruthy());
+    const txt = screen.getByTestId("kis-env-missing-credentials").textContent;
+    expect(txt).toMatch(/KIS_APP_SECRET/);
+    expect(txt).toMatch(/KIS_ACCOUNT_NO/);
+    expect(screen.getByTestId("kis-env-app-secret").textContent).toMatch(/미구성/);
+  });
+
   it("broker_order_type=KIS_PAPER / is_live_authorization=false 표시", async () => {
     render(<KisPaperEnvStatusCard apiClient={_api()} pollIntervalMs={0} />);
     await waitFor(() =>
@@ -75,8 +105,11 @@ describe("<KisPaperEnvStatusCard>", () => {
     render(<KisPaperEnvStatusCard apiClient={_api()} pollIntervalMs={0} />);
     await waitFor(() => expect(screen.getByTestId("kis-env-footer")).toBeTruthy());
     const txt = screen.getByTestId("kis-env-footer").textContent;
-    expect(txt).toMatch(/backend\/\.env에만 저장/);
-    expect(txt).toMatch(/API key \/ Secret \/ 계좌번호가 표시되지 않습니다/);
+    expect(txt).toMatch(/자격정보 원문은 표시하지 않습니다/);
+    expect(txt).toMatch(/backend\/\.env에만 입력하세요/);
+    expect(txt).toMatch(/\.env\.example에는 실제 값을 넣지 마세요/);
+    expect(txt).toMatch(/KIS 모의투자 설정\s*확인용/);
+    expect(txt).toMatch(/API key \/ Secret \/ 계좌번호가 표시되지 않/);
     expect(txt).toMatch(/Paper \/ KIS 모의투자 전용/);
   });
 

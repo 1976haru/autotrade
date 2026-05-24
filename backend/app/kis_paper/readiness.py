@@ -28,6 +28,7 @@ class BlockedReason(StrEnum):
     KIS_KEY_MISSING               = "KIS_KEY_MISSING"
     KIS_SECRET_MISSING            = "KIS_SECRET_MISSING"
     KIS_ACCOUNT_MISSING           = "KIS_ACCOUNT_MISSING"
+    KIS_PRODUCT_CODE_MISSING      = "KIS_PRODUCT_CODE_MISSING"
     DEFAULT_MODE_LIVE             = "DEFAULT_MODE_LIVE"
 
 
@@ -44,6 +45,10 @@ class KisPaperReadiness:
     kis_key_present:     bool = False
     kis_secret_present:  bool = False
     kis_account_present: bool = False
+    # 4-01: KIS 계좌상품코드 존재 여부 + 4종 자격 종합 + 누락 키 이름 목록.
+    kis_product_code_present: bool = False
+    credentials_present: bool = False
+    missing_credentials: tuple[str, ...] = ()
     # fix/desktop-kis-env-readiness-load: AppData .env 로드 상태 진단.
     # *secret 원문 0건* — 경로 + boolean 만.
     env_file_found:      bool = False
@@ -52,12 +57,18 @@ class KisPaperReadiness:
     # 응답 안전 — invariant
     is_order_intent:     bool = False
     is_order_signal:     bool = False
+    is_live_authorization: bool = False
+    contains_secret:     bool = False
 
     def __post_init__(self) -> None:
         if self.is_order_intent is not False:
             raise ValueError("KisPaperReadiness.is_order_intent must be False")
         if self.is_order_signal is not False:
             raise ValueError("KisPaperReadiness.is_order_signal must be False")
+        if self.is_live_authorization is not False:
+            raise ValueError("KisPaperReadiness.is_live_authorization must be False")
+        if self.contains_secret is not False:
+            raise ValueError("KisPaperReadiness.contains_secret must be False")
 
     def to_dict(self) -> dict:
         return {
@@ -71,8 +82,23 @@ class KisPaperReadiness:
             "kis_app_key_present":     self.kis_key_present,
             "kis_app_secret_present":  self.kis_secret_present,
             "kis_account_no_present":  self.kis_account_present,
+            "kis_product_code_present": self.kis_product_code_present,
+            "product_code_present":     self.kis_product_code_present,
+            "credentials_present":      self.credentials_present,
+            "missing_credentials":      list(self.missing_credentials),
             "kis_is_paper":            bool(self.safety_flags.get("kis_is_paper", True)),
             "can_use_kis_paper":       self.can_run_kis_paper,
+            # 4-01: 안전/모드 flag 를 top-level 로도 노출 (Settings 카드 표시용).
+            "default_mode":      self.safety_flags.get("default_mode"),
+            "paper_broker_kind": self.safety_flags.get("paper_broker_kind"),
+            "enable_kis_paper_auto_trading":
+                self.safety_flags.get("enable_kis_paper_auto_trading"),
+            "dry_run":           self.safety_flags.get("kis_paper_auto_order_dry_run"),
+            "fill_polling":      self.safety_flags.get("kis_paper_fill_polling"),
+            "enable_live_trading":
+                self.safety_flags.get("enable_live_trading"),
+            "enable_ai_execution":
+                self.safety_flags.get("enable_ai_execution"),
             # 기존 키도 유지 (backwards compat).
             "kis_key_present":      self.kis_key_present,
             "kis_secret_present":   self.kis_secret_present,
@@ -83,6 +109,8 @@ class KisPaperReadiness:
             "env_loaded_path":      self.env_loaded_path,
             "is_order_intent":      False,
             "is_order_signal":      False,
+            "is_live_authorization": False,
+            "contains_secret":      False,
         }
 
 
@@ -107,9 +135,25 @@ def evaluate_readiness(settings) -> KisPaperReadiness:
     enable_futures_live   = bool(_get("enable_futures_live_trading", False))
     default_mode          = str(_get("default_mode", "SIMULATION") or "SIMULATION")
 
-    kis_key     = str(_get("kis_app_key", "") or "")
-    kis_secret  = str(_get("kis_app_secret", "") or "")
-    kis_account = str(_get("kis_account_no", "") or "")
+    kis_key      = str(_get("kis_app_key", "") or "")
+    kis_secret   = str(_get("kis_app_secret", "") or "")
+    kis_account  = str(_get("kis_account_no", "") or "")
+    # KIS_PRODUCT_CODE 는 config default "01" (국내주식 현금) — 미설정이어도
+    # 안전 default 로 채워지므로 readiness 는 동일하게 "01" 로 본다.
+    kis_product  = str(_get("kis_product_code", "01") or "")
+
+    enable_kis_paper_auto = bool(_get("enable_kis_paper_auto_trading", False))
+    dry_run               = bool(_get("kis_paper_auto_order_dry_run", True))
+    fill_polling          = bool(_get("kis_paper_fill_polling", False))
+    # paper_broker_kind 미설정 시 default 추론 (paper_trader 와 동일 규칙) —
+    # broker 모듈을 import 하지 않도록 inline. PAPER + KIS_IS_PAPER → KIS_PAPER.
+    paper_broker_kind = str(_get("paper_broker_kind", "") or "")
+    if not paper_broker_kind:
+        paper_broker_kind = (
+            "KIS_PAPER"
+            if (default_mode.upper() == "PAPER" and kis_is_paper)
+            else "MOCK"
+        )
 
     blockers: list[BlockedReason] = []
     details: list[str] = []
@@ -152,18 +196,28 @@ def evaluate_readiness(settings) -> KisPaperReadiness:
             "SIMULATION / PAPER / LIVE_SHADOW 에서만 진행 권장."
         )
 
-    # 4. KIS key 존재 여부 (KIS 모드 가능 판정용 — blocker 아님, 단순 capability).
-    kis_key_present     = bool(kis_key.strip())
-    kis_secret_present  = bool(kis_secret.strip())
-    kis_account_present = bool(kis_account.strip())
+    # 4. KIS 자격 존재 여부 (KIS 모드 가능 판정용 — blocker 아님, capability).
+    #    *원문은 carry 하지 않고 boolean 만* 산출.
+    kis_key_present          = bool(kis_key.strip())
+    kis_secret_present       = bool(kis_secret.strip())
+    kis_account_present      = bool(kis_account.strip())
+    kis_product_code_present = bool(kis_product.strip())
+
+    # 4-01: 4종 자격 종합 + 누락 키 *이름만* 목록 (값 원문 0건).
+    _cred_checks = [
+        ("KIS_APP_KEY",      kis_key_present),
+        ("KIS_APP_SECRET",   kis_secret_present),
+        ("KIS_ACCOUNT_NO",   kis_account_present),
+        ("KIS_PRODUCT_CODE", kis_product_code_present),
+    ]
+    missing_credentials = tuple(name for name, present in _cred_checks if not present)
+    credentials_present = not missing_credentials
 
     can_run_kis_paper = (
         not enable_live
         and not enable_ai_exec
         and kis_is_paper
-        and kis_key_present
-        and kis_secret_present
-        and kis_account_present
+        and credentials_present
     )
 
     # 5. mock 모드 — live flag 만 검사. KIS key 없어도 가능.
@@ -178,6 +232,8 @@ def evaluate_readiness(settings) -> KisPaperReadiness:
         details.append("KIS_APP_SECRET 미설정 — KIS paper 모드 비활성.")
     if not kis_account_present:
         details.append("KIS_ACCOUNT_NO 미설정 — KIS paper 모드 비활성.")
+    if not kis_product_code_present:
+        details.append("KIS_PRODUCT_CODE 미설정 — KIS paper 모드 비활성.")
 
     ready = (
         not enable_live
@@ -194,6 +250,10 @@ def evaluate_readiness(settings) -> KisPaperReadiness:
         "enable_ai_execution":           enable_ai_exec,
         "enable_futures_live_trading":   enable_futures_live,
         "kis_is_paper":                  kis_is_paper,
+        "paper_broker_kind":             paper_broker_kind,
+        "enable_kis_paper_auto_trading": enable_kis_paper_auto,
+        "kis_paper_auto_order_dry_run":  dry_run,
+        "kis_paper_fill_polling":        fill_polling,
     }
 
     # fix/desktop-kis-env-readiness-load: launcher 가 publish 한 진단 변수
@@ -216,6 +276,9 @@ def evaluate_readiness(settings) -> KisPaperReadiness:
         kis_key_present=kis_key_present,
         kis_secret_present=kis_secret_present,
         kis_account_present=kis_account_present,
+        kis_product_code_present=kis_product_code_present,
+        credentials_present=credentials_present,
+        missing_credentials=missing_credentials,
         env_file_found=env_file_found,
         env_file_loaded=env_file_loaded,
         env_loaded_path=env_loaded_path,
