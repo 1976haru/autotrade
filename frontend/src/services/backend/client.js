@@ -115,6 +115,8 @@ export const backendApi = {
   liveSafetyStatus: () => backendFetch("/api/status/live-safety"),
   // BUILD-01: 최종 빌드 전 전체 프로그램 정합성 점검 (read-only, offline/fake).
   programIntegrity: () => backendFetch("/api/system/program-integrity"),
+  // BUILD-02A: 장 열리기 전 사전 검증 (read-only, fast mode — 실제 KIS API 0건).
+  premarketReadiness: () => backendFetch("/api/system/premarket-readiness"),
   // AI Paper Auto Loop + Desktop health.
   // 모든 경로는 PAPER/SIMULATION 한정 — broker.place_order 호출 0건.
   desktopHealth:          () => backendFetch("/api/desktop/health"),

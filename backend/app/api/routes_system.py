@@ -441,6 +441,49 @@ def get_program_integrity(request: Request) -> dict:
     return report.to_dict()
 
 
+@router.get("/system/premarket-readiness")
+def get_premarket_readiness() -> dict:
+    """BUILD-02A — 장 열리기 전 사전 검증 (fast mode, read-only, offline).
+
+    환경변수 / KIS 자격 present / Paper·Live 분리 / Universe / Portfolio / Agent
+    카드 / BUILD-01 정합성 / preflight / 문서·Runbook / 리포트 스크립트 가용성을
+    한 번에 점검. **실제 KIS API 호출 0건, 주문 0건, 실전 승인 아님.** KIS 자격은
+    present 여부만 — 원문 0건. full mode(테스트/빌드 명령)는 CLI 전용.
+    """
+    from app.db.session import SessionLocal
+    from app.kis_paper.readiness import evaluate_readiness
+    from app.system.premarket_readiness_gate import (
+        PremarketInputs,
+        run_premarket_readiness_gate,
+    )
+    from app.system.preflight import evaluate_preflight
+    s = get_settings()
+    try:
+        rd = evaluate_readiness(s)
+        creds = bool(getattr(rd, "credentials_present", False))
+    except Exception:  # noqa: BLE001
+        creds = None
+    preflight_result = None
+    db = SessionLocal()
+    try:
+        preflight_result = evaluate_preflight(db=db)
+    except Exception:  # noqa: BLE001 — preflight 실패해도 사전 검증은 계속.
+        preflight_result = None
+    finally:
+        db.close()
+    report = run_premarket_readiness_gate(PremarketInputs(
+        enable_live_trading=bool(s.enable_live_trading),
+        enable_ai_execution=bool(s.enable_ai_execution),
+        enable_futures_live_trading=bool(s.enable_futures_live_trading),
+        kis_is_paper=bool(s.kis_is_paper),
+        default_mode=str(s.default_mode.value),
+        kis_credentials_present=creds,
+        market_data_provider=str(s.market_data_provider),
+        preflight_result=preflight_result,
+    ), mode="fast")
+    return report.to_dict()
+
+
 @router.get("/system/logs")
 def get_system_logs(
     source:   str = "ALL",
