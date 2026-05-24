@@ -18,6 +18,7 @@ import { PaperCapitalSettingsCard } from "../common/PaperCapitalSettingsCard";
 import { KisPaperEnvStatusCard } from "../common/KisPaperEnvStatusCard";
 import { BackendSidecarStatusCard } from "../common/BackendSidecarStatusCard";
 import { AppVersionCard } from "../common/AppVersionCard";
+import { PreflightSmokeCard } from "../common/PreflightSmokeCard";
 import { backendApi } from "../../services/backend/client";
 import { APP_INFO, appVersionLine } from "../../config/appInfo";
 import { latestReleaseNote } from "../../config/releaseNotes";
@@ -244,6 +245,11 @@ export function Settings({ settings }) {
           분리 표시하고, 연결 실패 시 진단·DB·KIS 를 "확인 불가" 로 강등해
           모순(연결됨+실패 동시) 표시를 차단. read-only, broker 호출 0건. */}
       <BackendSidecarStatusCard />
+
+      {/* #63 / 8-01: EXE Preflight Smoke Test — health/config/KIS/DB/auto loop/
+          Agent Council/Decision Episode/build 를 한 번에 점검 PASS/WARN/FAIL.
+          read-only, 주문 발생 0건, 자격정보 미포함. */}
+      <PreflightSmokeCard />
 
       {/* feature/display-settings-and-ui-readability: 사용자가 EXE 화면
           가독성 (글자 크기 / 화면 폭 / 테마) 을 즉시 조정할 수 있는 카드.

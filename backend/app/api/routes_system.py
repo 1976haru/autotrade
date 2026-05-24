@@ -382,6 +382,24 @@ def get_build_info_endpoint() -> dict:
     return get_build_info()
 
 
+@router.get("/system/preflight")
+def get_preflight() -> dict:
+    """#63 / 8-01 — EXE Preflight Smoke 결과 (read-only).
+
+    health / 안전 flag / KIS readiness / DB / auto loop / Agent Council /
+    Decision Episode / build·version / update status 를 점검해 PASS/WARN/FAIL.
+    broker / OrderExecutor / route_order 호출 0건, DB read-only SELECT 만,
+    Secret / API key / 계좌번호 원문 0건.
+    """
+    from app.db.session import SessionLocal
+    from app.system.preflight import evaluate_preflight
+    db = SessionLocal()
+    try:
+        return evaluate_preflight(db=db)
+    finally:
+        db.close()
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Event log endpoints
 # ──────────────────────────────────────────────────────────────────────────────
