@@ -62,6 +62,10 @@ export function RealDataStrategyValidationCard({
   }, [report]);
 
   const verdict = report?.overall_verdict || null;
+  const passSymbols = Array.isArray(report?.pass_symbols) ? report.pass_symbols : [];
+  const blockedSymbols = Array.isArray(report?.blocked_symbols) ? report.blocked_symbols : [];
+  const isDataset = passSymbols.length > 0 || blockedSymbols.length > 0
+    || Array.isArray(report?.per_symbol);
   const favorable = Array.isArray(report?.favorable_conditions) ? report.favorable_conditions : [];
   const dangerous = Array.isArray(report?.dangerous_conditions) ? report.dangerous_conditions : [];
   const helped = Array.isArray(report?.agent_helped_where) ? report.agent_helped_where : [];
@@ -138,6 +142,23 @@ export function RealDataStrategyValidationCard({
               stress {_fmt(report.stress_score)} · agent {_fmt(report.agent_value_score)}
               {" "}({report.agent_value_verdict})
             </div>
+
+            {isDataset ? (
+              <>
+                <div data-testid="real-data-pass-symbols" style={{
+                  fontSize: "var(--fs-xs)", color: "#166534", marginBottom: 4,
+                }}>PASS 종목 ({passSymbols.length}): {passSymbols.join(", ") || "없음"}</div>
+                <div data-testid="real-data-blocked-symbols" style={{
+                  fontSize: "var(--fs-xs)", color: "#b91c1c", marginBottom: 4,
+                }}>품질 BLOCKED 종목 ({blockedSymbols.length}): {blockedSymbols.join(", ") || "없음"}</div>
+                <div data-testid="real-data-aggregate" style={{
+                  fontSize: "var(--fs-xs)", color: "var(--c-text-2)", marginBottom: 4,
+                }}>
+                  total_trades {report.total_trades ?? 0} · median PF {_fmt(report.median_profit_factor)} ·
+                  median WF {_fmt(report.median_walk_forward_score)} · Agent {report.agent_value_summary}
+                </div>
+              </>
+            ) : null}
 
             {favorable.length > 0 ? (
               <div data-testid="real-data-favorable" style={{

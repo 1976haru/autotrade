@@ -154,3 +154,54 @@ describe("<RealDataStrategyValidationCard>", () => {
     expect((await screen.findByTestId("real-data-verdict")).textContent).toContain("BLOCKED");
   });
 });
+
+// REAL-DATA-INPUT-01: 다종목 dataset 리포트(pass/blocked symbols + aggregate) 표시.
+function _datasetReport(overrides = {}) {
+  return {
+    ..._report(),
+    pass_symbols: ["005930", "000660", "035420"],
+    blocked_symbols: ["005490"],
+    warn_symbols: [],
+    per_symbol: [{ symbol: "005930", quality_status: "PASS", trades: 4, included: true }],
+    total_trades: 12,
+    median_profit_factor: 1.4,
+    median_walk_forward_score: 55.0,
+    agent_value_summary: "AGENT_MIXED",
+    ...overrides,
+  };
+}
+
+describe("<RealDataStrategyValidationCard> dataset (REAL-DATA-INPUT-01)", () => {
+  it("pass_symbols 표시", async () => {
+    render(<RealDataStrategyValidationCard apiClient={_api(_datasetReport())} />);
+    const el = await screen.findByTestId("real-data-pass-symbols");
+    expect(el.textContent).toContain("005930");
+    expect(el.textContent).toContain("3");
+  });
+
+  it("blocked_symbols (품질 FAIL) 표시", async () => {
+    render(<RealDataStrategyValidationCard apiClient={_api(_datasetReport())} />);
+    expect((await screen.findByTestId("real-data-blocked-symbols")).textContent).toContain("005490");
+  });
+
+  it("aggregate (total_trades / median PF / agent summary) 표시", async () => {
+    render(<RealDataStrategyValidationCard apiClient={_api(_datasetReport())} />);
+    const agg = await screen.findByTestId("real-data-aggregate");
+    expect(agg.textContent).toContain("12");
+    expect(agg.textContent).toContain("1.4");
+    expect(agg.textContent).toContain("AGENT_MIXED");
+  });
+
+  it("단일 리포트(non-dataset)면 pass/blocked 블록 미표시", async () => {
+    render(<RealDataStrategyValidationCard apiClient={_api()} />);
+    await screen.findByTestId("real-data-verdict");
+    expect(screen.queryByTestId("real-data-pass-symbols")).toBeNull();
+  });
+
+  it("dataset 에서도 주문/실전/승인 버튼 0개", async () => {
+    const { container } = render(<RealDataStrategyValidationCard apiClient={_api(_datasetReport())} />);
+    await screen.findByTestId("real-data-verdict");
+    const labels = [...container.querySelectorAll("button")].map((b) => b.textContent);
+    expect(labels).toEqual(["결과 새로고침", "리포트 복사"]);
+  });
+});
