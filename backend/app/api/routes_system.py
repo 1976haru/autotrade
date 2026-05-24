@@ -18,7 +18,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -400,6 +400,45 @@ def get_preflight() -> dict:
         return evaluate_preflight(db=db)
     finally:
         db.close()
+
+
+@router.get("/system/program-integrity")
+def get_program_integrity(request: Request) -> dict:
+    """BUILD-01 — 최종 빌드 전 전체 프로그램 정합성 점검 (read-only, offline/fake).
+
+    Universe → KIS readiness → 4전략 vote → Agent Council → RiskOfficer →
+    exit_plan → quality → BUY/SELL/HOLD → KIS Paper decision → fake 주문 결과 →
+    order_quality → portfolio → outcome/review → feedback/quality → UI/API →
+    Live safety 를 한 번에 점검. broker / OrderExecutor / route_order / KIS 실제
+    API 호출 0건, DB write 0건, secret 0건. is_live_authorization=False.
+    """
+    from app.kis_paper.readiness import evaluate_readiness
+    from app.system.program_integrity_gate import (
+        GateInputs,
+        run_program_integrity_gate,
+    )
+    s = get_settings()
+    try:
+        rd = evaluate_readiness(s)
+        creds = bool(getattr(rd, "credentials_present", False))
+    except Exception:  # noqa: BLE001 — readiness 실패해도 점검은 계속.
+        creds = None
+    # 등록된 read-only route path 수집 (UI/API 섹션 검증용).
+    routes: set[str] = set()
+    for r in getattr(request.app, "routes", []):
+        p = getattr(r, "path", None)
+        if isinstance(p, str):
+            routes.add(p)
+    report = run_program_integrity_gate(GateInputs(
+        enable_live_trading=bool(s.enable_live_trading),
+        enable_ai_execution=bool(s.enable_ai_execution),
+        enable_futures_live_trading=bool(s.enable_futures_live_trading),
+        kis_is_paper=bool(s.kis_is_paper),
+        default_mode=str(s.default_mode.value),
+        kis_credentials_present=creds,
+        available_api_routes=frozenset(routes),
+    ))
+    return report.to_dict()
 
 
 @router.get("/system/logs")
