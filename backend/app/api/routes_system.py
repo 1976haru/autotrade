@@ -18,10 +18,12 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
+from app.db.session import get_db
 from app.system.event_log import (
     EventCategory,
     EventLevel,
@@ -398,6 +400,27 @@ def get_preflight() -> dict:
         return evaluate_preflight(db=db)
     finally:
         db.close()
+
+
+@router.get("/system/logs")
+def get_system_logs(
+    source:   str = "ALL",
+    severity: str = "ALL",
+    q:        Optional[str] = None,
+    limit:    int = 100,
+    db:       Session = Depends(get_db),
+) -> dict:
+    """#56 / 7-04 — 통합 오류/이벤트 로그 뷰어 (read-only, 최근 100건).
+
+    RuntimeEvent / AgentDecision(AI 판단) / KIS 주문(OrderAuditLog)을 단일
+    모양으로 병합. source / severity / keyword 필터. free-text 는 마스킹되어
+    Secret / API key / 계좌번호 원문 0건. broker / OrderExecutor / route_order
+    호출 0건, DB read-only SELECT 만.
+    """
+    from app.system.log_viewer import collect_recent_logs
+    return collect_recent_logs(
+        db=db, source=source, severity=severity, q=q, limit=limit,
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
