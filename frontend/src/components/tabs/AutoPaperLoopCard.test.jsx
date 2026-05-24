@@ -1564,7 +1564,9 @@ describe("<AutoPaperLoopCard> — 실행 점검판 + run-once 진단", () => {
       expect(screen.getByTestId("background-tick-status").getAttribute("data-enabled")).toBe("false"),
     );
     expect(screen.getByTestId("bg-tick-state-label").textContent).toMatch(/비활성/);
-    expect(screen.getByTestId("bg-tick-message").textContent).toMatch(/run-once 진단만 수동 실행/);
+    // FRONTEND-CI-FIX-01: 비활성("...진단만 수동 실행됩니다") / 미확인("...진단은 수동
+    // 실행 가능합니다") 두 문구 모두 수용 — run-once 진단이 수동 실행 가능하다는 의미는 동일.
+    expect(screen.getByTestId("bg-tick-message").textContent).toMatch(/run-once 진단.*수동 실행/);
     expect(screen.getByTestId("bg-tick-interval").textContent).toMatch(/30초/);
     expect(screen.getByTestId("bg-tick-dry-run").textContent).toMatch(/dry-run/);
   });
