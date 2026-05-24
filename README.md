@@ -40,6 +40,7 @@ npm run dev -- --host 0.0.0.0
 - 🚑 **[`docs/runbook.md`](docs/runbook.md)** — **장애 대응 Runbook** — 장중 오류별(NO_MARKET_DATA / CREDENTIALS_MISSING / ORDER_REJECTED / BACKEND_FAIL / DB_FAIL / FILL_POLLING_FAIL / PORTFOLIO_DRIFT / SECRET_EXPOSURE_SUSPECTED 등) 원인·확인 위치·즉시 조치·전달 정보 + 즉시 중단 기준 + 문제 보고 양식 (#8-07)
 - 🩺 [`docs/exe_preflight_smoke_test.md`](docs/exe_preflight_smoke_test.md) — EXE Preflight Smoke Test (health/config/KIS/DB/auto loop 일괄 점검, 주문 발생 0건) (#8-01)
 - 📋 [`docs/default_universe_50_check.md`](docs/default_universe_50_check.md) — **기본 Universe 50개 상태** — 관심종목 없으면 기본 50 fallback, source/count/preview/사유 표시, 투자 추천 아님 (#7-02)
+- 💰 [`docs/portfolio_source_consistency.md`](docs/portfolio_source_consistency.md) — **포트폴리오 데이터 소스 통일** — 현금/총자산/포지션을 source/status/last_updated 와 함께 표시, **API 실패 시 0원 fallback 금지**(조회 실패=확인 불가≠0원), Paper 모의 ↔ KIS 모의 계좌 분리, 실전 계좌 아님 (#7-03)
 - 📋 **[`docs/deployment_checklist.md`](docs/deployment_checklist.md)** — 0단계(목표 확정) ~ 12단계(실거래 전 최종 점검) 연번 체크리스트
 - 🚦🔒 **[`docs/live_readiness_policy.md`](docs/live_readiness_policy.md)** — **AI Paper 자동매매 vs AI Live 실전 단계 분리 (최상위 안전 경계)** — 4 단계 (AI Paper Auto Trading / AI Live Manual Approval / AI Live Canary / AI Live Auto Execution) + 단계별 진입 조건 + 금지 문구 4종 + 영구 안전 default (#0-01)
 - 🧩📚 **[`docs/strategy_portfolio.md`](docs/strategy_portfolio.md)** — **6 전략 모듈 → 4 매매기법군 매핑** (추세추종/Momentum · 평균회귀/Reversion · VWAP/장중 기준가 · 장초반 돌파/Pullback-Rebreak) + 10 컬럼 매트릭스 + Paper/Live 단계별 가용성 + 안전 문구 4종 (#0-02)

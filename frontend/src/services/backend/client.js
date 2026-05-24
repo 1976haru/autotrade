@@ -247,6 +247,13 @@ export const backendApi = {
   },
   paperCashStateReset: () =>
     backendFetch("/api/auto-paper/cash-state/reset", { method: "POST" }),
+  // #55 / 7-03: Paper + KIS Paper 포트폴리오 source 통일 상태 (read-only).
+  // 현금/총자산/포지션을 source/status/reason_code/last_updated 와 함께 반환.
+  // 조회 실패 시 0원 fallback 금지 — cash/total_asset=null → "확인 불가".
+  portfolioSource: ({ lastPrices = null } = {}) => {
+    const qs = lastPrices ? `?last_prices=${encodeURIComponent(lastPrices)}` : "";
+    return backendFetch(`/api/auto-paper/portfolio-source${qs}`);
+  },
   // 운영 진단 + 이벤트 로그 — *advisory* read-only. broker / DB write 0건.
   // 본 응답은 *민감정보 0건* (backend event_log 가 fail-closed 로 차단).
   systemDiagnostics: ({

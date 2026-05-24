@@ -2293,4 +2293,50 @@ def get_universe_status(db: Session = Depends(get_db)) -> dict:
     }
 
 
+# ── #55 / 7-03 Paper / KIS Paper 포트폴리오 source 통일 (read-only) ──────────
+# 현금 / 총자산 / 포지션 값을 *어떤 source* 에서 왔는지 + 조회 상태와 함께 표시.
+# API 실패 시 0원 fallback 금지 — cash/total_asset=None → UI "확인 불가".
+# Paper 모의 포트폴리오와 KIS 모의 계좌를 *섞지 않고* 별도 snapshot 으로 반환.
+# broker / OrderExecutor / route_order / KIS live endpoint 호출 0건. secret 0건.
+
+
+@_AP.get("/portfolio-source")
+def get_portfolio_source(
+    last_prices: str | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Paper + KIS Paper 포트폴리오 source 통일 상태 — read-only.
+
+    - 한 카드의 현금/총자산/포지션은 같은 source 에서만 표시.
+    - 조회 실패 시 0원으로 채우지 않고 source=UNAVAILABLE + cash=None.
+    - KIS 모의 계좌는 자격 존재 여부만 보고(원문 0건), 잔고 조회 미연결 시
+      NOT_CONFIGURED 로 표시(실제 잔고 0원과 구분).
+    """
+    from app.portfolio.portfolio_snapshot import build_portfolio_source_report
+
+    prices = _parse_last_prices(last_prices)
+
+    # KIS 모의 계좌 자격 *존재 여부* 만 readiness 로 판정 — secret 원문 carry 0건.
+    kis_credentials_present = False
+    try:
+        from app.kis_paper.readiness import evaluate_readiness
+        readiness = evaluate_readiness(get_settings())
+        kis_credentials_present = bool(getattr(readiness, "credentials_present", False))
+    except Exception:  # noqa: BLE001 — readiness 실패해도 portfolio 표시는 계속.
+        kis_credentials_present = False
+
+    # 잔고 fetcher 는 *주입하지 않는다* — 본 PR 은 KIS 모의 잔고 조회를 추가하지
+    # 않으므로(broker 호출 금지) KIS snapshot 은 NOT_CONFIGURED 로 표시된다.
+    report = build_portfolio_source_report(
+        db,
+        kis_credentials_present=kis_credentials_present,
+        kis_balance_fetcher=None,
+        last_prices=prices or None,
+    )
+    return {
+        **report.to_dict(),
+        "ok": True,
+    }
+
+
 router.include_router(_AP)

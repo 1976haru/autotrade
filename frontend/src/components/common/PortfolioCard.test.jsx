@@ -98,6 +98,20 @@ describe("<PortfolioCard>", () => {
     expect(screen.getByTestId("portfolio-unrealized-pnl").textContent).toMatch(/65,000/);
   });
 
+  it("#55: cash 조회 실패 시 0원이 아니라 '확인 불가' 표시", async () => {
+    const api = {
+      paperCashState: vi.fn(async () => { throw new Error("network"); }),
+      virtualPositions: vi.fn(async () => []),
+    };
+    render(<PortfolioCard apiClient={api} pollIntervalMs={0} />);
+    await waitFor(() => expect(api.paperCashState).toHaveBeenCalled());
+    const cashText = screen.getByTestId("portfolio-cash").textContent;
+    expect(cashText).toContain("확인 불가");
+    expect(cashText).not.toMatch(/0원/);
+    // 총 자산도 0원이 아니라 확인 불가.
+    expect(screen.getByTestId("portfolio-total-equity").textContent).toContain("확인 불가");
+  });
+
   it("no buy/sell/place-order/live buttons anywhere", async () => {
     const api = _mockApi(_CASH_AFTER_BUY, [_POSITION_005930]);
     const { container } = render(<PortfolioCard apiClient={api} pollIntervalMs={0} />);

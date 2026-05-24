@@ -19,6 +19,13 @@ function _krw(n) {
   return `${Number(n || 0).toLocaleString("ko-KR")}원`;
 }
 
+// #55 / 7-03: 조회 실패(null/undefined)를 0원으로 표시하지 않는다 — "확인 불가".
+// 실제 0원(숫자 0)은 그대로 0원 표시.
+function _krwOrUnknown(n) {
+  if (n == null || !Number.isFinite(Number(n))) return "확인 불가";
+  return _krw(n);
+}
+
 function _pct(ratio) {
   if (ratio == null || !Number.isFinite(Number(ratio))) return "—";
   const v = Number(ratio) * 100;
@@ -128,9 +135,10 @@ export function PortfolioCard({
   // ── 통일 view ──
   const summaryMode = summary != null;
   const startingCash = summaryMode ? summary.starting_cash : null;
+  // #55 / 7-03: legacy cash 조회 실패 시 0원 fallback 금지 — null 로 두고 "확인 불가".
   const currentCash = summaryMode
     ? summary.current_cash
-    : (cash?.available_cash_krw ?? 0);
+    : (cash?.available_cash_krw ?? null);
   const viewPositions = summaryMode
     ? (Array.isArray(summary.positions) ? summary.positions : [])
     : positions.map(_normLegacyPosition);
@@ -139,7 +147,7 @@ export function PortfolioCard({
     : viewPositions.reduce((a, p) => a + Number(p.market_value || 0), 0);
   const totalEquity = summaryMode
     ? summary.total_equity
-    : currentCash + positionValue;
+    : (currentCash == null ? null : currentCash + positionValue);
   const unrealized = summaryMode
     ? summary.total_unrealized_pnl
     : viewPositions.reduce((a, p) => a + Number(p.unrealized_pnl || 0), 0);
@@ -195,7 +203,7 @@ export function PortfolioCard({
         <div data-testid="portfolio-cash"
              style={{ padding: "8px 10px", background: "#f1f5f9", borderRadius: "var(--r-sm)" }}>
           <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)" }}>Paper 현금</div>
-          <div style={{ fontWeight: "var(--fw-bold)" }}>{_krw(currentCash)}</div>
+          <div style={{ fontWeight: "var(--fw-bold)" }}>{_krwOrUnknown(currentCash)}</div>
         </div>
         <div data-testid="portfolio-position-value"
              style={{ padding: "8px 10px", background: "#f1f5f9", borderRadius: "var(--r-sm)" }}>
@@ -205,7 +213,7 @@ export function PortfolioCard({
         <div data-testid="portfolio-total-equity"
              style={{ padding: "8px 10px", background: "#ecfeff", borderRadius: "var(--r-sm)" }}>
           <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)" }}>총 Paper 자산</div>
-          <div style={{ fontWeight: "var(--fw-bold)" }}>{_krw(totalEquity)}</div>
+          <div style={{ fontWeight: "var(--fw-bold)" }}>{_krwOrUnknown(totalEquity)}</div>
         </div>
         <div data-testid="portfolio-unrealized-pnl"
              style={{ padding: "8px 10px", background: "#f1f5f9", borderRadius: "var(--r-sm)" }}>
