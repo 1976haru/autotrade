@@ -88,6 +88,7 @@ npm run dev -- --host 0.0.0.0
 - 🔐 [`docs/live_manual_approval_gate.md`](docs/live_manual_approval_gate.md) — **실전 주문 = Manual Approval 전용 Gate** — ENABLE_LIVE_TRADING 만으로 주문 불가, Live Capital Review + 운영자 승인 + Symbol Whitelist + Max Notional + Daily limit 모두 필요, 통과해도 주문 0건 (#5-02)
 - 🐤🔒 [`docs/live_canary_gate.md`](docs/live_canary_gate.md) — **실전 Canary Gate** — Paper Gate + Manual Approval + 1일 1건 + 최소/최대 주문금액(상한) + 보수적 profile + 기간 제한, LIVE_AI_EXECUTION 불가, 통과해도 주문 0건 (#5-03)
 - 📈🔒 [`docs/paper_gate_performance_criteria.md`](docs/paper_gate_performance_criteria.md) — **Paper Gate 성과 기준 (28일/100건)** — 승률/손익비/PF/MDD/연속손실/주문실패율/drift/event integrity 기준 미달 시 live promotion 차단, 충족해도 자동 전환 0건 (#5-04)
+- 🧾🔒 [`docs/live_transition_audit_log.md`](docs/live_transition_audit_log.md) — **Live 전환 감사 로그 (append-only)** — operator/reason/timestamp + 게이트 snapshot 기록, 수정/삭제 금지(정정은 새 이벤트), secret 저장 fail-closed, 기록해도 주문/실전 승인 0건 (#5-05)
 - 📦 [`docs/beta_distribution_plan.md`](docs/beta_distribution_plan.md) — 베타테스터 배포 + Tauri / Electron
 - 🔄 [`docs/auto_update_plan.md`](docs/auto_update_plan.md) — Phase 1-2-3 단계별 업데이트
 - 🔒 [`docs/local_security_policy.md`](docs/local_security_policy.md) — Secret hygiene + Tailscale + 사고 대응
