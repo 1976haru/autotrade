@@ -162,6 +162,9 @@ class AgentCouncilDecision:
     # 2-09: exit_plan 검증 결과 + 강등 전 action (BUY 는 valid exit_plan 필수).
     exit_plan_validation: dict[str, Any] = field(default_factory=dict)
     pre_exit_plan_action: str | None = None
+    # #51 / 6-06: 고도화된 quality gate 결과 + quality 강등 전 action (별도 단계).
+    quality_gate_result:  dict[str, Any] = field(default_factory=dict)
+    pre_quality_action:   str | None = None
     # 3-02: 보유 포지션 청산(SELL) context — SELL 은 보유 청산만, 숏 진입 아님.
     held_position:    bool = False
     position_quantity: int = 0
@@ -210,6 +213,9 @@ class AgentCouncilDecision:
             "exit_plan_validation": dict(self.exit_plan_validation),
             "pre_exit_plan_action": self.pre_exit_plan_action,
             "exit_plan_required":   True,
+            # #51 / 6-06: 고도화된 quality gate 결과 + quality 강등 전 action.
+            "quality_gate_result":  dict(self.quality_gate_result),
+            "pre_quality_action":   self.pre_quality_action,
             # 3-02: 보유 포지션 청산 context (SELL 은 보유 청산만, 숏 진입 아님).
             "held_position":     bool(self.held_position),
             "position_quantity": int(self.position_quantity),
@@ -562,6 +568,36 @@ def run_agent_council(
         final = CouncilAction.HOLD
         reasons.append("NO_HELD_POSITION_FOR_SELL — 보유 포지션 없음, SELL 금지")
 
+    # #51 / 6-06: 고도화된 quality gate — RiskOfficer / exit_plan 게이트 *뒤* 에서
+    #   별도 단계로 동작(그 정책을 우회하지 않음). 신호 일관성 / 데이터 신뢰도 /
+    #   리스크 / 장세 적합도 / exit_plan 품질을 종합한 enhanced quality 가 임계
+    #   미만이면 BUY 를 HOLD 로 강등(무조건 매수 방지). pre_quality_action 으로 강등
+    #   전 action 을 보존. broker 호출 0건.
+    from app.agents.decision_quality import compute_decision_quality
+    pre_quality_action = final.value
+    _volume_ok: bool | None = None
+    if inp.current_volume is not None and inp.avg_volume:
+        _volume_ok = inp.current_volume >= inp.avg_volume * 0.5
+    quality_gate = compute_decision_quality(
+        votes=[v.to_dict() for v in votes],
+        final_action=final.value,
+        risk_flags=uniq_flags,
+        veto_applied=bool(veto.veto_applied),
+        market_regime=inp.market_regime,
+        regime_decision=inp.regime_decision,
+        has_exit_plan=bool(exit_plan) and final == CouncilAction.BUY,
+        exit_plan_valid=(exit_plan_validation.get("valid") if exit_plan_validation else None),
+        min_quality=int(thr["min_quality"]),
+        volume_ok=_volume_ok,
+        regime_known=(str(inp.market_regime).upper() != "UNKNOWN"),
+    )
+    quality_gate_result = quality_gate.to_dict()
+    if quality_gate.should_hold and final == CouncilAction.BUY:
+        final = CouncilAction.HOLD
+        reasons.append(
+            f"고도화 quality {quality_gate.enhanced_quality_score} < 임계 "
+            f"{int(thr['min_quality'])} → BUY 보류(QUALITY_SCORE_LOW_HOLD)")
+
     selected = [v.strategy for v in votes if v.signal == final and v.score > 0] \
         if final != CouncilAction.HOLD else []
 
@@ -592,6 +628,8 @@ def run_agent_council(
         risk_veto_result=veto.to_dict(),
         exit_plan_validation=exit_plan_validation,
         pre_exit_plan_action=pre_exit_plan_action,
+        quality_gate_result=quality_gate_result,
+        pre_quality_action=pre_quality_action,
         held_position=bool(held_position),
         position_quantity=(position.sellable_quantity if position is not None else 0),
         metadata={"weights": dict(STRATEGY_WEIGHTS),
