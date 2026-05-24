@@ -965,3 +965,69 @@ def release_readiness_markdown(
         markdown=render_release_readiness_markdown(result),
         verdict=result.verdict.value,
     )
+
+
+# ---------- #45 / 5-05 Live 전환 감사 로그 (append-only) ----------
+# POST(추가) + GET(조회)만. PUT/PATCH/DELETE 없음 — 기존 record 수정/삭제 금지.
+# 감사 *기록* 만: broker / route_order / 실전 endpoint 호출 0건, 주문 생성 0건,
+# DB write 0건 (append-only 메모리 로그), Secret 저장 0건(sanitize fail-closed).
+
+
+class LiveTransitionAuditPostPayload(BaseModel):
+    operator:                 str
+    action:                   str
+    reason:                   str
+    risk_profile:             str | None = None
+    symbol_whitelist:         list[str]  = Field(default_factory=list)
+    max_order_notional:       int | None = None
+    daily_live_limit:         int | None = None
+    capital_review_snapshot:  dict       = Field(default_factory=dict)
+    paper_gate_verdict:       dict       = Field(default_factory=dict)
+    canary_gate_verdict:      dict       = Field(default_factory=dict)
+    manual_approval_snapshot: dict       = Field(default_factory=dict)
+    notes:                    str        = ""
+
+
+@router.post("/live-transition-audit")
+def post_live_transition_audit(payload: LiveTransitionAuditPostPayload) -> dict:
+    """Live 전환 감사 이벤트 *추가* (append-only). 주문/실전 승인 아님."""
+    from app.governance.live_transition_audit import (
+        LiveAuditError,
+        get_live_transition_audit_log,
+    )
+    log = get_live_transition_audit_log()
+    try:
+        entry = log.record(
+            operator=payload.operator,
+            action=payload.action,
+            reason=payload.reason,
+            risk_profile=payload.risk_profile,
+            symbol_whitelist=payload.symbol_whitelist,
+            max_order_notional=payload.max_order_notional,
+            daily_live_limit=payload.daily_live_limit,
+            capital_review_snapshot=payload.capital_review_snapshot,
+            paper_gate_verdict=payload.paper_gate_verdict,
+            canary_gate_verdict=payload.canary_gate_verdict,
+            manual_approval_snapshot=payload.manual_approval_snapshot,
+            notes=payload.notes,
+        )
+    except LiveAuditError as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"reason_code": e.reason_code, "message": str(e)},
+        )
+    return entry.to_dict()
+
+
+@router.get("/live-transition-audit")
+def get_live_transition_audit(limit: int = Query(100, ge=1, le=500)) -> dict:
+    """Live 전환 감사 로그 최근 N건 조회 (read-only)."""
+    from app.governance.live_transition_audit import get_live_transition_audit_log
+    log = get_live_transition_audit_log()
+    return {
+        "entries": [e.to_dict() for e in log.recent(limit=limit)],
+        "count": log.count(),
+        "is_live_authorization": False,
+        "is_order_signal": False,
+        "contains_secret": False,
+    }
