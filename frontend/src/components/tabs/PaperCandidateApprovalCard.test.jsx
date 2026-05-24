@@ -75,7 +75,7 @@ describe("PaperCandidateApprovalCard — empty / readiness", () => {
     const api = _mockApi();
     render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
-    expect(screen.getByTestId("candidate-approval-empty")).toBeTruthy();
+    expect(await screen.findByTestId("candidate-approval-empty")).toBeTruthy();
     expect(screen.getByTestId("candidate-approval-readiness").textContent)
       .toContain("Paper 후보 없음");
   });
@@ -84,7 +84,7 @@ describe("PaperCandidateApprovalCard — empty / readiness", () => {
     const api = _mockApi();
     render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
-    expect(screen.getByTestId("candidate-approval-paper-only-badge").textContent)
+    expect((await screen.findByTestId("candidate-approval-paper-only-badge")).textContent)
       .toContain("승인 후 Paper에서만 사용");
     expect(screen.getByTestId("candidate-approval-no-live-badge").textContent)
       .toContain("실거래 활성화 아님");
@@ -96,8 +96,8 @@ describe("PaperCandidateApprovalCard — empty / readiness", () => {
       candidates: [_candidate()],
     });
     render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
-    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
-    expect(screen.getByTestId("candidate-approval-waiting-banner")).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.getByTestId("candidate-approval-waiting-banner")).toBeTruthy());
     expect(screen.getByTestId("candidate-approval-readiness").textContent)
       .toContain("승인 대기");
   });
@@ -123,7 +123,7 @@ describe("PaperCandidateApprovalCard — empty / readiness", () => {
     };
     render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.autoPaperActiveCandidate).toHaveBeenCalled());
-    const banner = screen.getByTestId("candidate-approval-active-banner");
+    const banner = await screen.findByTestId("candidate-approval-active-banner");
     expect(banner.textContent).toContain("MOMENTUM::005930::rank1");
   });
 });
@@ -136,8 +136,7 @@ describe("PaperCandidateApprovalCard — candidate row + actions", () => {
       candidates: [_candidate()],
     });
     render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
-    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
-    const row = screen.getByTestId("candidate-row-MOMENTUM::005930::rank1");
+    const row = await screen.findByTestId("candidate-row-MOMENTUM::005930::rank1");
     expect(row.textContent).toContain("MOMENTUM");
     expect(row.textContent).toContain("005930");
     expect(row.textContent).toContain("TREND_UP");
@@ -155,8 +154,7 @@ describe("PaperCandidateApprovalCard — candidate row + actions", () => {
     render(<PaperCandidateApprovalCard
       apiClient={api} pollIntervalMs={0} defaultOperatorId="op-A"
     />);
-    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
-    fireEvent.click(screen.getByTestId(
+    fireEvent.click(await screen.findByTestId(
       "candidate-approve-btn-MOMENTUM::005930::rank1",
     ));
     await waitFor(() =>
@@ -174,8 +172,7 @@ describe("PaperCandidateApprovalCard — candidate row + actions", () => {
       candidates: [_candidate()],
     });
     render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
-    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
-    fireEvent.click(screen.getByTestId(
+    fireEvent.click(await screen.findByTestId(
       "candidate-reject-btn-MOMENTUM::005930::rank1",
     ));
     await waitFor(() =>
@@ -194,7 +191,7 @@ describe("PaperCandidateApprovalCard — candidate row + actions", () => {
       candidates: [c],
     });
     render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
-    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
+    await screen.findByTestId("candidate-row-MOMENTUM::005930::rank1");
     expect(screen.queryByTestId(
       "candidate-approve-btn-MOMENTUM::005930::rank1",
     )).toBeNull();
@@ -212,8 +209,7 @@ describe("PaperCandidateApprovalCard — candidate row + actions", () => {
       throw new Error("approval_blocked_risk");
     });
     render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
-    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
-    fireEvent.click(screen.getByTestId(
+    fireEvent.click(await screen.findByTestId(
       "candidate-approve-btn-MOMENTUM::005930::rank1",
     ));
     await waitFor(() => expect(
@@ -335,9 +331,8 @@ describe("normalizeCandidatesResponse — response shape coverage", () => {
       autoPaperRejectCandidate: vi.fn(),
     };
     render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
-    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
     expect(
-      screen.getByTestId("candidate-row-MOMENTUM::005930::rank1"),
+      await screen.findByTestId("candidate-row-MOMENTUM::005930::rank1"),
     ).toBeTruthy();
     expect(screen.queryByTestId("candidate-approval-empty")).toBeNull();
   });
@@ -352,9 +347,8 @@ describe("normalizeCandidatesResponse — response shape coverage", () => {
       autoPaperRejectCandidate: vi.fn(),
     };
     render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
-    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
     expect(
-      screen.getByTestId("candidate-row-MOMENTUM::005930::rank1"),
+      await screen.findByTestId("candidate-row-MOMENTUM::005930::rank1"),
     ).toBeTruthy();
   });
 
@@ -370,9 +364,8 @@ describe("normalizeCandidatesResponse — response shape coverage", () => {
       autoPaperRejectCandidate: vi.fn(),
     };
     render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
-    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
     expect(
-      screen.getByTestId("candidate-row-MOMENTUM::005930::rank1"),
+      await screen.findByTestId("candidate-row-MOMENTUM::005930::rank1"),
     ).toBeTruthy();
   });
 
@@ -387,7 +380,7 @@ describe("normalizeCandidatesResponse — response shape coverage", () => {
     };
     render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
-    expect(screen.getByTestId("candidate-approval-empty")).toBeTruthy();
+    expect(await screen.findByTestId("candidate-approval-empty")).toBeTruthy();
     // 어떤 candidate-row 도 없어야 함.
     expect(
       document.querySelector('[data-testid^="candidate-row-"]'),
@@ -408,9 +401,8 @@ describe("normalizeCandidatesResponse — response shape coverage", () => {
       autoPaperRejectCandidate: vi.fn(),
     };
     render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
-    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
     expect(
-      screen.getByTestId("candidate-row-MOMENTUM::005930::rank1"),
+      await screen.findByTestId("candidate-row-MOMENTUM::005930::rank1"),
     ).toBeTruthy();
     expect(screen.queryByTestId("candidate-approval-empty")).toBeNull();
   });
@@ -427,8 +419,7 @@ describe("normalizeCandidatesResponse — response shape coverage", () => {
     render(<PaperCandidateApprovalCard
       apiClient={api} pollIntervalMs={0} defaultOperatorId="op-B"
     />);
-    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
-    fireEvent.click(screen.getByTestId(
+    fireEvent.click(await screen.findByTestId(
       "candidate-approve-btn-MOMENTUM::005930::rank1",
     ));
     await waitFor(() =>
@@ -451,7 +442,7 @@ describe("PaperCandidateApprovalCard — invariants", () => {
     const { container } = render(
       <PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />,
     );
-    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
+    await screen.findByTestId("candidate-row-MOMENTUM::005930::rank1");
     const text = container.textContent || "";
     const forbidden = [
       "지금 매수", "지금 매도", "Place Order",
@@ -479,8 +470,7 @@ describe("PaperCandidateApprovalCard — invariants", () => {
       candidates: [_candidate()],
     });
     render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
-    await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
-    const approveBtn = screen.getByTestId(
+    const approveBtn = await screen.findByTestId(
       "candidate-approve-btn-MOMENTUM::005930::rank1",
     );
     expect(approveBtn.textContent).toBe("Paper 승인");
@@ -492,7 +482,7 @@ describe("PaperCandidateApprovalCard — invariants", () => {
     const api = _mockApi();
     render(<PaperCandidateApprovalCard apiClient={api} pollIntervalMs={0} />);
     await waitFor(() => expect(api.autoPaperCandidates).toHaveBeenCalled());
-    const note = screen.getByTestId("candidate-approval-footer-note");
+    const note = await screen.findByTestId("candidate-approval-footer-note");
     expect(note.textContent).toContain("is_order_signal=false");
     expect(note.textContent).toContain("is_live_authorization=false");
     expect(note.textContent).toContain("실거래는 어떤 경로로도 진행되지 않습니다");

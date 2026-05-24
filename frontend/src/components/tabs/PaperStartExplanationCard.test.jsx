@@ -66,7 +66,7 @@ describe("<PaperStartExplanationCard>", () => {
     const api = _mockApi(_ready_response());
     render(<PaperStartExplanationCard apiClient={api} />);
     await waitFor(() => expect(api.paperStartExplanation).toHaveBeenCalled());
-    expect(screen.getByTestId("badge-paper-only").textContent).toContain("Paper 전용");
+    expect((await screen.findByTestId("badge-paper-only")).textContent).toContain("Paper 전용");
     expect(screen.getByTestId("badge-not-real-order").textContent).toContain("실거래 주문 아님");
     expect(screen.getByTestId("badge-not-auto-start").textContent).toContain("자동 시작 아님");
   });
