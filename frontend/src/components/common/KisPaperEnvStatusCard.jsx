@@ -85,6 +85,9 @@ export function KisPaperEnvStatusCard({
     || s?.product_code_present === true;
   const missingCreds = Array.isArray(s?.missing_credentials)
     ? s.missing_credentials : [];
+  // 4-02: Background Tick + KIS 모의 자동주문 READY/BLOCKED 판정.
+  const bgTick = s?.enable_ai_paper_background_tick === true;
+  const autoReady = s?.kis_paper_auto_ready === true;
 
   return (
     <Card data-testid={testId}>
@@ -95,6 +98,22 @@ export function KisPaperEnvStatusCard({
         style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)", marginBottom: 8 }}
       >
         현재 설정은 Paper / KIS 모의투자 전용입니다. 실거래는 OFF입니다.
+      </div>
+
+      {/* 4-02: KIS 모의 자동주문 READY/BLOCKED 헤드라인. */}
+      <div
+        data-testid="kis-env-auto-ready"
+        data-ready={String(autoReady)}
+        style={{
+          padding: "6px 10px", borderRadius: 6, marginBottom: 8,
+          fontSize: "var(--fs-xs)", fontWeight: "var(--fw-bold)",
+          background: autoReady ? "#dcfce7" : "#fef3c7",
+          color: autoReady ? "#166534" : "#92400e",
+        }}
+      >
+        {autoReady
+          ? "KIS 모의투자 자동주문 READY — 자격 구성 + 안전 flag 정상 (실거래 OFF)"
+          : "KIS 모의투자 자동주문 BLOCKED — 자격 미구성 시 자동주문은 차단됩니다."}
       </div>
 
       {error && (
@@ -120,6 +139,11 @@ export function KisPaperEnvStatusCard({
                   testid="kis-env-broker-kind" />
       <_StatusRow label="KIS Paper Auto" value={_onOff(autoOn)}
                   ok={autoOn} testid="kis-env-auto" />
+      {s?.enable_ai_paper_background_tick !== undefined && (
+        <_StatusRow label="Background Tick (ENABLE_AI_PAPER_BACKGROUND_TICK)"
+                    value={_onOff(bgTick)} ok={bgTick}
+                    testid="kis-env-bg-tick" />
+      )}
       <_StatusRow label="dry-run (KIS_PAPER_AUTO_ORDER_DRY_RUN)"
                   value={_onOff(dryRun)} ok={!dryRun} testid="kis-env-dry-run" />
       <_StatusRow label="Fill Polling (KIS_PAPER_FILL_POLLING)"

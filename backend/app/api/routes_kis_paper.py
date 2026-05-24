@@ -299,6 +299,18 @@ def get_kis_paper_auto_status() -> dict:
         "product_code_present":     rd.kis_product_code_present,
         "missing_credentials":      list(rd.missing_credentials),
         "enable_ai_execution":      bool(settings.enable_ai_execution),
+        "enable_futures_live_trading": bool(settings.enable_futures_live_trading),
+        # 4-02: EXE 기본 .env 조합 확인 — background tick + KIS auto READY 판정.
+        "enable_ai_paper_background_tick":
+            bool(settings.enable_ai_paper_background_tick),
+        # KIS 모의 자동주문 READY: 자격 4종 + 안전 flag + auto ON + KIS paper.
+        # 자격 미설정이면 False (= BLOCKED). 실거래 권한과 무관.
+        "kis_paper_auto_ready": bool(
+            rd.can_run_kis_paper
+            and settings.enable_kis_paper_auto_trading
+            and not settings.enable_live_trading
+            and not settings.enable_ai_execution
+        ),
         "is_live_authorization": False,
         "contains_secret":       False,
         "broker_order_type":     "KIS_PAPER",
