@@ -12,6 +12,10 @@
 import { configure } from "@testing-library/react";
 
 configure({
-  // waitFor / findBy* 의 기본 1000ms → 5000ms. CI 부하 headroom.
-  asyncUtilTimeout: 5000,
+  // waitFor / findBy* 의 기본 1000ms → 15000ms. ubuntu 2-core CI runner 가
+  // 대형 jsdom 스위트(2600+ tests)를 병렬 실행할 때 event loop 가 starve 되어
+  // 정상 테스트의 비동기 단언(예: PaperCapitalCard P-16 의 localStorage mirror
+  // waitFor)이 5s 를 *간헐적* 으로 초과해 spurious 실패하던 회귀를 막는다.
+  // skip/삭제 0건 — 실제로 깨진 테스트는 시간과 무관하게 여전히 실패한다.
+  asyncUtilTimeout: 15000,
 });

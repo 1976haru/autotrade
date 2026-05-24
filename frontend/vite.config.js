@@ -44,8 +44,10 @@ export default defineConfig({
     // setupFiles 가 testing-library asyncUtilTimeout 을 5s 로 올려 느린 CI
     // runner 의 간헐적 waitFor 타임아웃(가짜 실패)을 방지한다 (skip/삭제 0건).
     setupFiles: ['./vitest.setup.js'],
-    // 개별 테스트 본문 타임아웃도 부하 headroom 확보 (기본 5s → 20s).
-    testTimeout: 20000,
-    hookTimeout: 20000,
+    // 개별 테스트 본문 타임아웃도 부하 headroom 확보 (기본 5s → 30s).
+    // asyncUtilTimeout(15s) 보다 충분히 커야 waitFor 가 timeout 되기 전에
+    // 테스트 본문이 먼저 죽지 않는다.
+    testTimeout: 30000,
+    hookTimeout: 30000,
   },
 })
