@@ -16,6 +16,7 @@ import { AgentDecisionExplanationCard } from "../common/AgentDecisionExplanation
 import { PerformanceMetricsSummary } from "../common/PerformanceMetricsSummary";
 import { DecisionQualityScoreCard } from "../common/DecisionQualityScoreCard";
 import { PostTradeFeedbackCard } from "../common/PostTradeFeedbackCard";
+import { StrategyPotentialReportCard } from "../common/StrategyPotentialReportCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
@@ -87,6 +88,9 @@ export function AISignal({ activeStratIds }) {
       <WeightRecommendationCard />
       {/* P-30: Paper Gate 성과 리포트 — 100건 미만 실전 전환 검토 불가, 자동 전환 없음. */}
       <PaperGateReportCard />
+      {/* STRATEGY-VALIDATION-01: 전략 가능성 종합 평가 — backtest/WF/stress/paper 종합,
+          자동 적용/실전 전환/주문 0건, sample fixture 는 STRONG 불가. */}
+      <StrategyPotentialReportCard />
       {/* P-31: 분석용 데이터 내보내기 (CSV/JSONL) — secret 미포함, 주문 신호 아님. */}
       <DecisionEpisodeExportButton />
       {/* P-32: 이벤트 로그 품질 점검 — 진단 전용, 자동 주문 중단 아님. */}

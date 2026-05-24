@@ -479,6 +479,53 @@ def get_kis_paper_autotrade_audit(request: Request) -> dict:
     return report.to_dict()
 
 
+@router.get("/system/strategy-potential")
+def get_strategy_potential() -> dict:
+    """STRATEGY-VALIDATION-01 — 전략 가능성 종합 평가 (advisory, read-only).
+
+    sample fixture 로 backtest + walk-forward + stress 를 in-process 실행 후 종합 평가
+    한다. **자동 적용 / 실전 전환 / 주문 0건, 수익 보장 아님.** sample fixture 결과는
+    기능 확인용이라 `sample_fixture_only=True` → STRONG_CANDIDATE 판정 불가.
+    broker / OrderExecutor / route_order / KIS 실제 API 호출 0건, DB write 0건.
+    """
+    from app.backtest.strategy_council_backtest import (
+        BacktestInput,
+        load_ohlcv_from_csv,
+        run_strategy_council_backtest,
+        summarize_backtest_report,
+    )
+    from app.stress_test.agent_stress_test import (
+        run_agent_stress_test,
+        summarize_stress_report,
+    )
+    from pathlib import Path
+    from app.system.strategy_potential import (
+        StrategyPotentialInputs,
+        evaluate_strategy_potential,
+        to_dict,
+    )
+
+    csv_path = (
+        Path(__file__).resolve().parents[2]
+        / "tests" / "fixtures" / "backtest" / "sample_ohlcv.csv"
+    )
+    bt = None
+    st = None
+    try:
+        bars = load_ohlcv_from_csv(str(csv_path))
+        bt = summarize_backtest_report(
+            run_strategy_council_backtest(BacktestInput(bars=tuple(bars))))
+    except Exception:  # noqa: BLE001 — fixture 부재/형식 문제여도 평가는 계속.
+        bt = None
+    try:
+        st = summarize_stress_report(run_agent_stress_test())
+    except Exception:  # noqa: BLE001
+        st = None
+    report = evaluate_strategy_potential(StrategyPotentialInputs(
+        backtest=bt, stress=st, has_real_data=False))
+    return to_dict(report)
+
+
 @router.get("/system/premarket-readiness")
 def get_premarket_readiness() -> dict:
     """BUILD-02A — 장 열리기 전 사전 검증 (fast mode, read-only, offline).
