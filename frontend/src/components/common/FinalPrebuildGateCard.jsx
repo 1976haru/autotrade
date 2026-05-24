@@ -138,6 +138,17 @@ export function FinalPrebuildGateCard({
               ))}
             </div>
 
+            {sections.some((s) => s.status === "SKIP"
+              && ["EXE_BUILD_INPUTS", "DOCS_RUNBOOK"].includes(s.name)) ? (
+              <div data-testid="final-prebuild-source-note" style={{
+                fontSize: "var(--fs-xs)", color: "var(--c-text-3)", marginBottom: 6,
+                padding: "4px 8px", borderRadius: 4, background: "var(--c-bg-2)",
+              }}>
+                ℹ️ SKIP 으로 표시된 일부 항목(빌드 입력/문서)은 <b>빌드 전 소스 환경 점검
+                항목입니다. 설치본에서는 참고용</b>이며 빌드 실패가 아닙니다.
+              </div>
+            ) : null}
+
             {nextActions.length > 0 ? (
               <div data-testid="final-prebuild-next" style={{
                 fontSize: "var(--fs-xs)", color: "var(--c-text-2)", marginBottom: 4,

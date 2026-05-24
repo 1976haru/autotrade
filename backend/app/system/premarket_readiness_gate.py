@@ -192,6 +192,8 @@ class PremarketInputs:
     kis_credentials_present: Optional[bool] = None    # None → 미상 → WARN
     market_data_provider: str = "mock"
     preflight_result: Optional[dict[str, Any]] = None  # 런타임(DB) 주입 시만.
+    # INSTALL-UX-FIX-01: 설치본/CI 런타임은 docs/scripts 미번들이 정상 → 누락 시 SKIP(참고용).
+    app_runtime: str = "SOURCE_DEV"
 
 
 def _item(name, verdict: PVerdict, code, detail) -> PremarketCheckItem:
@@ -351,12 +353,17 @@ def _sec_preflight(inp: PremarketInputs) -> PremarketCheckSection:
                                  note="EXE preflight smoke (read-only).")
 
 
-def _sec_docs() -> PremarketCheckSection:
+def _sec_docs(inp: PremarketInputs | None = None) -> PremarketCheckSection:
+    # 설치본/CI 런타임은 docs 미번들이 정상 → 누락 시 FAIL 대신 SKIP(참고용).
+    source_dev = (inp is None) or (inp.app_runtime == "SOURCE_DEV")
+    missing_verdict = PVerdict.FAIL if source_dev else PVerdict.SKIP
     items: list[PremarketCheckItem] = []
     for rel in REQUIRED_DOCS:
         p = _REPO_ROOT / rel
-        items.append(_item(rel, PVerdict.PASS if p.exists() else PVerdict.FAIL,
-                           "DOC_EXISTS", "존재" if p.exists() else "누락"))
+        items.append(_item(rel, PVerdict.PASS if p.exists() else missing_verdict,
+                           "DOC_EXISTS",
+                           "존재" if p.exists() else ("누락" if source_dev
+                                                    else "설치본 미번들(참고용)")))
     # runbook 의 문제 보고 양식 / Claude Code 전달 금지 문구.
     runbook = _REPO_ROOT / "docs" / "runbook.md"
     rb = runbook.read_text(encoding="utf-8") if runbook.exists() else ""
@@ -381,12 +388,17 @@ def _sec_docs() -> PremarketCheckSection:
                                  tuple(items), note="문서/Runbook 존재 + 안전 문구.")
 
 
-def _sec_report_scripts() -> PremarketCheckSection:
+def _sec_report_scripts(inp: PremarketInputs | None = None) -> PremarketCheckSection:
+    # 설치본/CI 런타임은 report 스크립트 미번들이 정상 → 누락 시 FAIL 대신 SKIP(참고용).
+    source_dev = (inp is None) or (inp.app_runtime == "SOURCE_DEV")
+    missing_verdict = PVerdict.FAIL if source_dev else PVerdict.SKIP
     items: list[PremarketCheckItem] = []
     for rel in REQUIRED_SCRIPTS:
         p = _REPO_ROOT / rel
-        items.append(_item(rel, PVerdict.PASS if p.exists() else PVerdict.FAIL,
-                           "SCRIPT_EXISTS", "존재" if p.exists() else "누락"))
+        items.append(_item(rel, PVerdict.PASS if p.exists() else missing_verdict,
+                           "SCRIPT_EXISTS",
+                           "존재" if p.exists() else ("누락" if source_dev
+                                                    else "설치본 미번들(참고용)")))
     return PremarketCheckSection(PSection.REPORT_SCRIPTS.value, _section_verdict(tuple(items)),
                                  tuple(items),
                                  note="백테스트/Walk-forward/스트레스/정합성 스크립트 가용 (full mode 실행).")
@@ -432,8 +444,8 @@ def run_premarket_readiness_gate(
     sections = [
         _sec_env(inp), _sec_kis_credentials(inp), _sec_paper_live_separation(inp),
         _sec_universe(), _sec_portfolio(), _sec_agent_cards(),
-        _sec_program_integrity(inp), _sec_preflight(inp), _sec_docs(),
-        _sec_report_scripts(),
+        _sec_program_integrity(inp), _sec_preflight(inp), _sec_docs(inp),
+        _sec_report_scripts(inp),
     ]
     # full mode 에서는 backend/frontend quality 섹션을 PENDING(SKIP)으로 추가 —
     # 실제 verdict 는 CLI 가 명령 실행 후 merge_full_mode_results 로 채운다.

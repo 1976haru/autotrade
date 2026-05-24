@@ -539,6 +539,7 @@ def get_final_prebuild_gate() -> dict:
     import os
     from pathlib import Path
 
+    from app.core.runtime_context import detect_app_runtime
     from app.system.final_prebuild_gate import (
         GateInputs,
         run_final_prebuild_gate,
@@ -583,7 +584,8 @@ def get_final_prebuild_gate() -> dict:
             intraday_final.get("user_final_judgement") if intraday_final else None),
         live_safety_ok=True,
         docs_runbook_ok=(root / "docs" / "runbook.md").exists(),
-        exe_build_inputs_ok=(root / "src-tauri" / "tauri.conf.json").exists())
+        exe_build_inputs_ok=(root / "src-tauri" / "tauri.conf.json").exists(),
+        app_runtime=detect_app_runtime())   # 설치본/CI 는 소스 전용 점검 SKIP
     return to_dict(run_final_prebuild_gate(inp))
 
 
@@ -768,6 +770,7 @@ def get_premarket_readiness() -> dict:
         PremarketInputs,
         run_premarket_readiness_gate,
     )
+    from app.core.runtime_context import detect_app_runtime as _detect_runtime
     from app.system.preflight import evaluate_preflight
     s = get_settings()
     try:
@@ -792,6 +795,7 @@ def get_premarket_readiness() -> dict:
         kis_credentials_present=creds,
         market_data_provider=str(s.market_data_provider),
         preflight_result=preflight_result,
+        app_runtime=_detect_runtime(),   # 설치본/CI 는 docs/scripts 누락 SKIP
     ), mode="fast")
     return report.to_dict()
 

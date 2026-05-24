@@ -237,3 +237,27 @@ describe("<IntradayStrategyValidationCard> final judgement (REAL-INTRADAY-TEST-0
     expect(screen.queryByTestId("intraday-final-judgement")).toBeNull();
   });
 });
+
+// INSTALL-UX-FIX-01: BLOCKED_BY_DATA 를 설치 오류가 아니라 INFO 로 안내.
+describe("<IntradayStrategyValidationCard> install-ux no-data notice", () => {
+  function _apiFinal(j) {
+    return {
+      intradayStrategyValidationLatest: vi.fn(async () => _report()),
+      realIntradayFinalResult: vi.fn(async () => ({
+        user_final_judgement: j, one_line_conclusion: "데이터 문제로 판단할 수 없습니다.",
+        actual_data_used: false, total_trades: 0, paper_rehearsal_recommended: false,
+        developer_verdict: "BLOCKED" })),
+    };
+  }
+  it("BLOCKED_BY_DATA → '실제 분봉 데이터 없음 — 전략 검증 미실행' INFO 안내", async () => {
+    render(<IntradayStrategyValidationCard apiClient={_apiFinal("BLOCKED_BY_DATA")} />);
+    const n = await screen.findByTestId("intraday-no-data-notice");
+    expect(n.textContent).toContain("실제 분봉 데이터 없음");
+    expect(n.textContent).toContain("설치 오류가 아닙니다");
+  });
+  it("BLOCKED_BY_DATA 아니면 no-data 안내 미표시", async () => {
+    render(<IntradayStrategyValidationCard apiClient={_apiFinal("WORTH_MORE_RESEARCH")} />);
+    await screen.findByTestId("intraday-final-judgement");
+    expect(screen.queryByTestId("intraday-no-data-notice")).toBeNull();
+  });
+});

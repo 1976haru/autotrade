@@ -90,6 +90,10 @@ class GateInputs:
     main_up_to_date: bool | None = None
     open_pr_blocking: bool = False
     untracked_release_risk: bool = False
+    # ---- 실행 컨텍스트 (INSTALL-UX-FIX-01) ----
+    # SOURCE_DEV: 소스 전용 점검(빌드 입력/문서) 누락 시 FAIL/WARN.
+    # PACKAGED_RUNTIME / CI_BUILD: 소스 전용 점검은 SKIP(참고용) — 설치본 오탐 방지.
+    app_runtime: str = "SOURCE_DEV"
 
 
 @dataclass(frozen=True)
@@ -304,13 +308,25 @@ def run_final_prebuild_gate(inp: GateInputs, *, generated_at: str | None = None)
     else:
         add("UI_API", WARN, "manifest 미확인")
 
-    # U. DOCS_RUNBOOK
-    add("DOCS_RUNBOOK", PASS if inp.docs_runbook_ok else WARN,
-        "문서/Runbook OK" if inp.docs_runbook_ok else "문서 일부 누락")
+    # 설치본(PACKAGED)/CI 에서는 소스 전용 점검 누락을 FAIL/WARN 이 아니라 SKIP(참고용)으로.
+    _source_dev = inp.app_runtime == "SOURCE_DEV"
+    _src_note = "빌드 전 소스 환경 점검 항목입니다. 설치본에서는 참고용입니다."
 
-    # V. EXE_BUILD_INPUTS
-    add("EXE_BUILD_INPUTS", PASS if inp.exe_build_inputs_ok else FAIL,
-        "빌드 필수 파일 present" if inp.exe_build_inputs_ok else "빌드 필수 파일 누락")
+    # U. DOCS_RUNBOOK (소스 전용 — 설치본은 docs 미번들 정상)
+    if inp.docs_runbook_ok:
+        add("DOCS_RUNBOOK", PASS, "문서/Runbook OK")
+    elif _source_dev:
+        add("DOCS_RUNBOOK", WARN, "문서 일부 누락")
+    else:
+        add("DOCS_RUNBOOK", SKIP, f"문서 미번들 — {_src_note}")
+
+    # V. EXE_BUILD_INPUTS (소스 전용 — 설치본/CI 런타임은 src-tauri 소스 부재 정상)
+    if inp.exe_build_inputs_ok:
+        add("EXE_BUILD_INPUTS", PASS, "빌드 필수 파일 present")
+    elif _source_dev:
+        add("EXE_BUILD_INPUTS", FAIL, "빌드 필수 파일 누락")
+    else:
+        add("EXE_BUILD_INPUTS", SKIP, f"소스(src-tauri) 미포함 — {_src_note}")
 
     # Paper sample (WARN if 0)
     if inp.paper_sample_count <= 0:
