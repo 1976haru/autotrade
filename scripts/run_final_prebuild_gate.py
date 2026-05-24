@@ -149,19 +149,24 @@ def main(argv: list[str] | None = None) -> int:
     try:
         p = argparse.ArgumentParser(
             description="EXE 빌드 전 통합 검증 Gate (read-only, 주문 0건).")
-        p.add_argument("--full", action="store_true", help="frontend build 등 추가 실행")
+        p.add_argument("--mode", choices=["fast", "full"], default="fast",
+                       help="fast(기본): 무거운 pytest/build 제외 / full: frontend build 등 추가")
+        p.add_argument("--full", action="store_true",
+                       help="--mode full 별칭 (frontend build 등 추가 실행)")
         p.add_argument("--require-kis-credentials", action="store_true")
-        p.add_argument("--output", default=None)
+        p.add_argument("--output", "--json", dest="output", default=None,
+                       help="JSON 리포트 경로 (--json 별칭)")
         p.add_argument("--markdown", default=None)
         p.add_argument("--quiet", action="store_true")
         args = p.parse_args(argv)
+        full = bool(args.full) or args.mode == "full"
 
         from app.system.final_prebuild_gate import (
             render_markdown,
             run_final_prebuild_gate,
             to_dict,
         )
-        inp = _gather(bool(args.full), bool(args.require_kis_credentials))
+        inp = _gather(full, bool(args.require_kis_credentials))
         report = run_final_prebuild_gate(inp, generated_at=datetime.now(timezone.utc).isoformat())
         data = to_dict(report)
 
