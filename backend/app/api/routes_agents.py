@@ -1660,6 +1660,59 @@ def order_quality_metrics(
 
 
 # ============================================================================
+# #50 / 6-05: PostTradeReview 피드백 루프 (read-only, 자동 적용 금지)
+# ============================================================================
+
+
+@router.get("/feedback-loop")
+def feedback_loop(
+    limit: int = Query(200, ge=1, le=2000),
+    db:    _Session = Depends(get_db),
+) -> dict:
+    """복기/outcome 집계 → 피드백 태그 + threshold 추천 (read-only, advisory).
+
+    threshold 추천은 운영자 승인 없이 자동 적용되지 않는다 — broker /
+    OrderExecutor / route_order 호출 0건, DB write 0건, secret 0건,
+    auto_apply_allowed=False / requires_operator_approval=True.
+    """
+    from app.agents.decision_episode import summarize_episodes
+    from app.agents.post_trade_feedback import build_feedback_loop
+    summary = summarize_episodes(db, limit=limit)
+    return build_feedback_loop(summary, strategy_errors=summary.get("by_strategy")).to_dict()
+
+
+# ============================================================================
+# #51 / 6-06: Agent decision quality_score 고도화 (read-only, HOLD 권고)
+# ============================================================================
+
+
+class _DecisionQualityIn(BaseModel):
+    """quality 평가 입력 — council dict + 선택 data 신호. 주문 권한 아님."""
+    council:          dict | None = None
+    min_quality:      int = 60
+    data_status:      str | None = None
+    price_stale:      bool | None = None
+    volume_ok:        bool | None = None
+    feedback_penalty: int = 0
+
+
+@router.post("/decision-quality")
+def decision_quality(body: _DecisionQualityIn | None = None) -> dict:
+    """council dict → 고도화된 quality breakdown + HOLD 권고 (read-only).
+
+    quality_score 만으로 실전 전환을 허가하지 않으며 주문을 생성하지 않는다 —
+    broker / OrderExecutor / route_order 호출 0건, DB write 0건, secret 0건.
+    """
+    from app.agents.decision_quality import compute_decision_quality_from_council
+    body = body or _DecisionQualityIn()
+    q = compute_decision_quality_from_council(
+        body.council, min_quality=int(body.min_quality), data_status=body.data_status,
+        price_stale=body.price_stale, volume_ok=body.volume_ok,
+        feedback_penalty=int(body.feedback_penalty))
+    return q.to_dict()
+
+
+# ============================================================================
 # #52 / 6-07: AI 판단 설명 가능성 (read-only 설명 표시)
 # ============================================================================
 

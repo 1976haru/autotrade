@@ -545,6 +545,19 @@ export const backendApi = {
       method: "POST",
       body: JSON.stringify({ council, market_regime: marketRegime, time_phase: timePhase }),
     }),
+  // #50 / 6-05: PostTradeReview 피드백 루프 (read-only — 자동 적용 금지).
+  agentFeedbackLoop: ({ limit = 200 } = {}) =>
+    backendFetch(`/api/agents/feedback-loop?limit=${limit}`),
+  // #51 / 6-06: 고도화 quality_score (read-only — council dict → breakdown + HOLD 권고).
+  agentDecisionQuality: ({ council = null, minQuality = 60, dataStatus = null,
+                          priceStale = null, volumeOk = null, feedbackPenalty = 0 } = {}) =>
+    backendFetch("/api/agents/decision-quality", {
+      method: "POST",
+      body: JSON.stringify({
+        council, min_quality: minQuality, data_status: dataStatus,
+        price_stale: priceStale, volume_ok: volumeOk, feedback_penalty: feedbackPenalty,
+      }),
+    }),
   // P-29: 전략 가중치 개선 후보 추천 (read-only, 자동 적용 금지).
   agentWeightRecommendation: ({ lookbackCount = 100, riskProfile = null,
                                 marketRegime = null } = {}) => {

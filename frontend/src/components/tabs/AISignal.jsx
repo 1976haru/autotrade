@@ -14,6 +14,8 @@ import { DecisionEpisodeExportButton } from "../common/DecisionEpisodeExportButt
 import { EventIntegrityDiagnosticsCard } from "../common/EventIntegrityDiagnosticsCard";
 import { AgentDecisionExplanationCard } from "../common/AgentDecisionExplanationCard";
 import { PerformanceMetricsSummary } from "../common/PerformanceMetricsSummary";
+import { DecisionQualityScoreCard } from "../common/DecisionQualityScoreCard";
+import { PostTradeFeedbackCard } from "../common/PostTradeFeedbackCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
@@ -70,6 +72,12 @@ export function AISignal({ activeStratIds }) {
       {/* #52 / 6-07: AI 판단 설명 — entry/counter/exit/risk/veto/sell 근거 표시
           (read-only, 주문 버튼 아님). */}
       <AgentDecisionExplanationCard />
+      {/* #51 / 6-06: 판단 품질 점수 — 신호 일관성/데이터/리스크/장세/exit_plan +
+          quality 낮으면 HOLD (read-only, 자동 적용 안 됨). */}
+      <DecisionQualityScoreCard />
+      {/* #50 / 6-05: 복기 피드백 루프 — 승패 요인/과잉진입/늦은 청산 + threshold
+          추천 (read-only, 운영자 승인 필요, 자동 적용 안 됨). */}
+      <PostTradeFeedbackCard />
       {/* P-28: 전략별 성과 대시보드 — episode 추정 수익률 기반 (실 계좌 미사용). */}
       <PerformanceDashboard />
       {/* #49 / 6-04: 성과 지표 요약 — expectancy + 체결 실패율/거절률/부분체결률 +
