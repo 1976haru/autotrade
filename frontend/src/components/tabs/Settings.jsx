@@ -25,6 +25,7 @@ import { LiveSafetyStatusCard } from "../common/LiveSafetyStatusCard";
 import { ProgramIntegrityGateCard } from "../common/ProgramIntegrityGateCard";
 import { PremarketReadinessGateCard } from "../common/PremarketReadinessGateCard";
 import { KisPaperAiAutotradeAuditCard } from "../common/KisPaperAiAutotradeAuditCard";
+import { FinalPrebuildGateCard } from "../common/FinalPrebuildGateCard";
 import { backendApi } from "../../services/backend/client";
 import { APP_INFO, appVersionLine } from "../../config/appInfo";
 import { latestReleaseNote } from "../../config/releaseNotes";
@@ -293,6 +294,10 @@ export function Settings({ settings }) {
           AI 판단→KIS Paper 주문→결과→포트폴리오→복기 전 흐름 감사. 실제 KIS API 0건.
           매수/매도/실전/승인 버튼 0개. */}
       <KisPaperAiAutotradeAuditCard />
+
+      {/* 11-00: EXE 빌드 전 통합 검증 Gate — 전체를 한 번에 점검해 빌드 가능 여부 판정
+          (read-only, 주문/실전/승인 버튼 0개). */}
+      <FinalPrebuildGateCard />
 
       {/* #86 데스크톱 업데이트 확인 카드 — mock 단계, 후속 PR 에서 Tauri
           updater 와 실 연결. broker 호출 0건, 안전 flag 변경 0건. */}

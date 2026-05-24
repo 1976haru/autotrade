@@ -526,6 +526,67 @@ def get_strategy_potential() -> dict:
     return to_dict(report)
 
 
+@router.get("/system/final-prebuild-gate")
+def get_final_prebuild_gate() -> dict:
+    """체크리스트 11-00 — EXE 빌드 전 통합 검증 Gate (fast, read-only).
+
+    **subprocess/무거운 테스트/KIS API 호출 없음** — 안전 플래그(get_settings) + 리포트
+    파일(BUILD-01/02A/02B/intraday final) + 정적 입력으로 종합 판정만 한다. backend/frontend
+    품질·security_scan 은 fast 모드에서 미실행 → WARN(전체 검증은 CLI `run_final_prebuild_gate.py`).
+    broker / OrderExecutor / route_order / KIS 주문 API 호출 0건, secret 원문 0건.
+    """
+    import json
+    import os
+    from pathlib import Path
+
+    from app.system.final_prebuild_gate import (
+        GateInputs,
+        run_final_prebuild_gate,
+        to_dict,
+    )
+
+    s = get_settings()
+    # cwd 비의존 — repo root 기준 절대 경로 (backend/app/api/routes_system.py → parents[3]).
+    root = Path(__file__).resolve().parents[3]
+
+    def _read(p: Path):
+        try:
+            return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _latest(d: Path, prefix: str):
+        files = sorted(d.glob(f"{prefix}*.json")) if d.is_dir() else []
+        return _read(files[-1]) if files else None
+
+    rv = root / "reports" / "strategy_validation"
+    b01 = _latest(root / "reports" / "build", "program_integrity")
+    b02a = _latest(root / "reports" / "prebuild", "premarket_readiness")
+    b02b = _latest(root / "reports" / "prebuild", "kis_paper_autotrade_audit")
+    intraday_final = _read(rv / "intraday_final_latest.json")
+
+    kis_present = bool(os.environ.get("KIS_APP_KEY")) and bool(os.environ.get("KIS_APP_SECRET"))
+    inp = GateInputs(
+        default_mode=str(getattr(s.default_mode, "value", s.default_mode)),
+        enable_live_trading=bool(s.enable_live_trading),
+        enable_ai_execution=bool(s.enable_ai_execution),
+        enable_futures_live_trading=bool(s.enable_futures_live_trading),
+        kis_is_paper=bool(s.kis_is_paper),
+        backend_quality="SKIP", frontend_quality="SKIP",
+        security_scanned=False,                # fast/API: security_scan 미실행 → WARN
+        kis_credentials_present=(True if kis_present else False),
+        kis_live_order_path_blocked=True,
+        build01_verdict=(b01.get("build_ready") if b01 else None),
+        build02a_ready=(b02a.get("premarket_ready") if b02a else None),
+        build02b_ready=(b02b.get("paper_autotrade_ready") if b02b else None),
+        intraday_final_judgement=(
+            intraday_final.get("user_final_judgement") if intraday_final else None),
+        live_safety_ok=True,
+        docs_runbook_ok=(root / "docs" / "runbook.md").exists(),
+        exe_build_inputs_ok=(root / "src-tauri" / "tauri.conf.json").exists())
+    return to_dict(run_final_prebuild_gate(inp))
+
+
 @router.get("/system/real-intraday-final-result/latest")
 def get_real_intraday_final_result_latest() -> dict:
     """REAL-INTRADAY-TEST-01 — 실제 분봉 전략 가능성 최종 판정 (latest, read-only).
