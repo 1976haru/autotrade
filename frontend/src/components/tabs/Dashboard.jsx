@@ -38,6 +38,7 @@ import { KisPaperOneClickTestCard } from "./KisPaperOneClickTestCard";
 import { AutoPaperLoopCard } from "./AutoPaperLoopCard";
 import { AgentCouncilVoteCard } from "./AgentCouncilVoteCard";
 import { PortfolioCard } from "../common/PortfolioCard";
+import { PortfolioSourceCard } from "../common/PortfolioSourceCard";
 import { UpdateBanner } from "../UpdateBanner";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
@@ -609,6 +610,13 @@ export function Dashboard({
           decision 미주입 시 안내 문구만 — 자동 tick / 평가 결과가 채워지면 표시. */}
       <div className="dashboard-span-full">
         <AgentCouncilVoteCard />
+      </div>
+
+      {/* #55 / 7-03: 포트폴리오 데이터 소스 통일 — 현금/총자산/포지션을 source/
+          status/last_updated 와 함께 표시. 조회 실패는 0원이 아니라 "확인 불가".
+          Paper 모의 포트폴리오와 KIS 모의 계좌를 섞지 않고 분리. read-only. */}
+      <div className="dashboard-span-full">
+        <PortfolioSourceCard />
       </div>
 
       {/* Paper 가상 포트폴리오 — Paper 모의 체결 결과(현금/보유/평가/손익) 표시.
