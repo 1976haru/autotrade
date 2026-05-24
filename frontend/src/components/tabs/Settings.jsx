@@ -19,6 +19,7 @@ import { KisPaperEnvStatusCard } from "../common/KisPaperEnvStatusCard";
 import { BackendSidecarStatusCard } from "../common/BackendSidecarStatusCard";
 import { AppVersionCard } from "../common/AppVersionCard";
 import { PreflightSmokeCard } from "../common/PreflightSmokeCard";
+import { RuntimeEventLogViewer } from "../common/RuntimeEventLogViewer";
 import { backendApi } from "../../services/backend/client";
 import { APP_INFO, appVersionLine } from "../../config/appInfo";
 import { latestReleaseNote } from "../../config/releaseNotes";
@@ -250,6 +251,11 @@ export function Settings({ settings }) {
           Agent Council/Decision Episode/build 를 한 번에 점검 PASS/WARN/FAIL.
           read-only, 주문 발생 0건, 자격정보 미포함. */}
       <PreflightSmokeCard />
+
+      {/* #56 / 7-04: 통합 오류/이벤트 로그 뷰어 — RuntimeEvent / AI 판단 /
+          KIS 주문 이벤트를 최근 100건 한 화면에서 확인. source/severity/검색
+          필터 + 복사. read-only, 주문 버튼 0개, 민감정보 자동 마스킹. */}
+      <RuntimeEventLogViewer />
 
       {/* feature/display-settings-and-ui-readability: 사용자가 EXE 화면
           가독성 (글자 크기 / 화면 폭 / 테마) 을 즉시 조정할 수 있는 카드.
