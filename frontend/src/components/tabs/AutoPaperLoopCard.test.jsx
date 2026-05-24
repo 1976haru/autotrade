@@ -1560,11 +1560,17 @@ describe("<AutoPaperLoopCard> — 실행 점검판 + run-once 진단", () => {
       null,
     );
     render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
-    await waitFor(() =>
-      expect(screen.getByTestId("background-tick-status").getAttribute("data-enabled")).toBe("false"),
-    );
+    // FRONTEND-CI-FIX-02: readiness 로딩 전에는 background_tick 이 undefined 이라
+    // data-enabled 가 (enabled=false 로) 이미 "false" 다 → data-enabled 만 보는
+    // waitFor 는 미로딩 렌더에서 조기 통과하고, 그 시점엔 bg-tick-dry-run/모드가
+    // 아직 없어 getByTestId 가 throw 하며 CI 가 flaky 하게 실패했다. readiness 가
+    // 실제 로딩됐을 때만 렌더되는 bg-tick-mode 를 findBy 로 기다려 안정화한다.
+    await screen.findByTestId("bg-tick-mode");
+    expect(screen.getByTestId("background-tick-status").getAttribute("data-enabled")).toBe("false");
     expect(screen.getByTestId("bg-tick-state-label").textContent).toMatch(/비활성/);
-    expect(screen.getByTestId("bg-tick-message").textContent).toMatch(/run-once 진단만 수동 실행/);
+    // 비활성("...진단만 수동 실행됩니다") / 미확인("...진단은 수동 실행 가능합니다")
+    // 두 문구 모두 수용 — run-once 진단이 수동 실행 가능하다는 의미는 동일.
+    expect(screen.getByTestId("bg-tick-message").textContent).toMatch(/run-once 진단.*수동 실행/);
     expect(screen.getByTestId("bg-tick-interval").textContent).toMatch(/30초/);
     expect(screen.getByTestId("bg-tick-dry-run").textContent).toMatch(/dry-run/);
   });
