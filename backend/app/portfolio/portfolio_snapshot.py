@@ -26,7 +26,7 @@ CLAUDE.md 가드 (정적 grep 으로 lock):
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Callable, Iterable, Optional, Sequence
