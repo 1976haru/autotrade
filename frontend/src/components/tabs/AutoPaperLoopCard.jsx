@@ -7,6 +7,7 @@ import AgentRiskProfileSelector, {
 } from "../AgentRiskProfileSelector";
 import { backendApi } from "../../services/backend/client";
 import { formatBuyBlockReason } from "../../utils/buyBlockReasons";
+import { formatNoTradeReason } from "../../utils/noTradeReasons";
 import {
   buildPaperCapitalSummary,
   fromBackendSettings,
@@ -176,6 +177,8 @@ export function AutoPaperLoopCard({
   const [ledgerEvents, setLedgerEvents] = useState([]);
   // P-17: 오늘 매수 불가 사유 요약 (표시 전용 — 실제 매수 로직 0건).
   const [blockedSummary, setBlockedSummary] = useState(null);
+  // 3-09: 오늘 거래 없음(no-trade) 사유 요약 (표시 전용 — 실제 매매 로직 0건).
+  const [noTradeSummary, setNoTradeSummary] = useState(null);
   // #4-RiskProfileUI: 사용자가 선택한 AI 운용 성향 — 기본값 BALANCED.
   // start 시점에 backend POST /api/auto-paper/start 요청 body 에 동봉.
   // 영속: 선택한 성향을 localStorage(Paper 자금 설정) 에 저장 → 재마운트/poll
@@ -239,6 +242,15 @@ export function AutoPaperLoopCard({
       try {
         const bs = await apiClient.autoPaperBlockedReasonsToday({ limit: 5 });
         if (bs) setBlockedSummary(bs);
+      } catch {
+        // 구버전 backend / 테스트 mock — 조용히 무시.
+      }
+    }
+    // 3-09: 오늘 거래 없음 사유 요약 — *별도*, 실패해도 main 표시 유지.
+    if (typeof apiClient.autoPaperNoTradeReasonsToday === "function") {
+      try {
+        const nt = await apiClient.autoPaperNoTradeReasonsToday({ limit: 5 });
+        if (nt) setNoTradeSummary(nt);
       } catch {
         // 구버전 backend / 테스트 mock — 조용히 무시.
       }
@@ -431,6 +443,13 @@ export function AutoPaperLoopCard({
         </div>
         <span data-testid="cycle-count" style={{ fontSize: "var(--fs-sm)", color: "var(--c-text-2)" }}>
           cycle {status?.cycle_count ?? 0}
+        </span>
+        {/* 3-09: 거래 없음 cycle 수 — 주문 없어도 누적. */}
+        <span
+          data-testid="no-trade-count"
+          style={{ fontSize: "var(--fs-sm)", color: "var(--c-text-3)" }}
+        >
+          거래없음 {noTradeSummary?.no_trade_count ?? 0}
         </span>
       </div>
 
@@ -1060,6 +1079,75 @@ export function AutoPaperLoopCard({
           </div>
         )}
       </div>
+
+      {/* 3-09: 오늘 거래 없음(no-trade) 사유 요약 — 표시 전용 (실제 매매 로직 0건).
+          "시스템이 멈춘 것인지, 조건이 없어서 쉰 것인지" 를 구분 가능하게 한다. */}
+      {noTradeSummary && (noTradeSummary.no_trade_count ?? 0) > 0 && (
+        <div
+          data-testid="auto-paper-no-trade-summary"
+          style={{
+            marginTop: 12,
+            padding: 10,
+            background: "#f8fafc",
+            border: "1px solid #e2e8f0",
+            borderRadius: "var(--r-md)",
+            fontSize: "var(--fs-xs)",
+            lineHeight: 1.7,
+            color: "var(--c-text)",
+          }}
+        >
+          <div style={{ fontWeight: "var(--fw-bold)", marginBottom: 2 }}>
+            💤 오늘 거래 없음 {noTradeSummary.no_trade_count}건
+            {" · "}cycle {noTradeSummary.cycle_count ?? 0}
+            {" · "}주문 {noTradeSummary.order_count ?? 0}건
+          </div>
+          {noTradeSummary.last_no_trade && (
+            <>
+              <div data-testid="auto-paper-last-no-trade">
+                최근 거래 없음:{" "}
+                {formatNoTradeReason(noTradeSummary.last_no_trade).title}
+                {noTradeSummary.last_no_trade_symbol
+                  ? ` (${noTradeSummary.last_no_trade_symbol})` : ""}
+              </div>
+              <div
+                data-testid="auto-paper-last-no-trade-code"
+                style={{ color: "var(--c-text-2)" }}
+              >
+                최근 사유 코드:{" "}
+                {noTradeSummary.last_no_trade_reason
+                  || formatNoTradeReason(noTradeSummary.last_no_trade).code}
+              </div>
+            </>
+          )}
+          {noTradeSummary.by_reason
+            && Object.keys(noTradeSummary.by_reason).length > 0 && (
+            <div
+              data-testid="auto-paper-no-trade-by-reason"
+              style={{ marginTop: 4, color: "var(--c-text-2)" }}
+            >
+              {Object.entries(noTradeSummary.by_reason)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 5)
+                .map(([code, n]) => (
+                  <span
+                    key={code}
+                    data-testid={`no-trade-reason-${code}`}
+                    style={{ marginRight: 8 }}
+                  >
+                    {formatNoTradeReason(code).title}: {n}건
+                  </span>
+                ))}
+            </div>
+          )}
+          <div
+            data-testid="auto-paper-no-trade-disclaimer"
+            style={{ marginTop: 4, color: "var(--c-text-3)" }}
+          >
+            거래 없음은 오류가 아닐 수 있습니다 — 사유를 확인하세요. 실제 주문
+            아님 · broker_order_sent=false · is_live_authorization=false.
+          </div>
+        </div>
+      )}
 
       {/* P-17: 오늘 매수 불가 사유 요약 — 표시 전용 (실제 매수 로직 0건). */}
       {blockedSummary && (blockedSummary.total_blocked ?? 0) > 0 && (
