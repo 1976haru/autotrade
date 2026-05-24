@@ -110,6 +110,9 @@ export async function backendFetch(path, options = {}) {
 
 export const backendApi = {
   getStatus: () => backendFetch("/api/status"),
+  // #70/#71/#72: 실매매 기본 OFF + KIS Paper/Live 분리 + Live Capital Review 상태
+  //   (read-only — 실전 활성화/주문 0건).
+  liveSafetyStatus: () => backendFetch("/api/status/live-safety"),
   // AI Paper Auto Loop + Desktop health.
   // 모든 경로는 PAPER/SIMULATION 한정 — broker.place_order 호출 0건.
   desktopHealth:          () => backendFetch("/api/desktop/health"),
