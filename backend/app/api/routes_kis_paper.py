@@ -64,8 +64,22 @@ class KisPaperReadinessOut(BaseModel):
     env_file_found:         bool = False
     env_file_loaded:        bool = False
     env_loaded_path:        str  = ""
+    # 4-01: KIS 모의 자격 종합 검증 (값 원문 0건 — boolean / 키 이름만).
+    kis_product_code_present: bool = False
+    product_code_present:     bool = False
+    credentials_present:      bool = False
+    missing_credentials:      list[str] = []
+    default_mode:             str | None = None
+    paper_broker_kind:        str | None = None
+    enable_kis_paper_auto_trading: bool | None = None
+    dry_run:                  bool | None = None
+    fill_polling:             bool | None = None
+    enable_live_trading:      bool | None = None
+    enable_ai_execution:      bool | None = None
     is_order_intent:      bool
     is_order_signal:      bool
+    is_live_authorization: bool = False
+    contains_secret:      bool = False
 
 
 class KisPaperStartIn(BaseModel):
@@ -275,10 +289,18 @@ def get_kis_paper_auto_status() -> dict:
     rd = evaluate_readiness(settings)
     return {
         **_kis_auto_config(settings),
-        "credentials_present": bool(
-            rd.kis_key_present and rd.kis_secret_present and rd.kis_account_present
-        ),
+        # 4-01: 자격 종합 + 4종 per-credential present + 누락 키 이름 목록.
+        # *값 원문 0건* — boolean / 키 이름만.
+        "credentials_present":      rd.credentials_present,
+        "kis_app_key_present":      rd.kis_key_present,
+        "kis_app_secret_present":   rd.kis_secret_present,
+        "kis_account_no_present":   rd.kis_account_present,
+        "kis_product_code_present": rd.kis_product_code_present,
+        "product_code_present":     rd.kis_product_code_present,
+        "missing_credentials":      list(rd.missing_credentials),
+        "enable_ai_execution":      bool(settings.enable_ai_execution),
         "is_live_authorization": False,
+        "contains_secret":       False,
         "broker_order_type":     "KIS_PAPER",
         "notice": (
             "KIS Paper Auto Trading은 한투 모의투자 API 전용이며 실거래 권한이 "

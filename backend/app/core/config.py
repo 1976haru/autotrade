@@ -146,6 +146,10 @@ class Settings(BaseSettings):
     kis_app_key: str = ""
     kis_app_secret: str = ""
     kis_account_no: str = ""
+    # KIS 계좌상품코드 (모의/실 공통). 국내주식 현금은 통상 "01".
+    # default "01" — 운영자가 backend/.env 에서 override 가능. *Secret 아님*
+    # (계좌 *번호* 가 아니라 상품 구분 코드) 이므로 readiness 응답에 노출 가능.
+    kis_product_code: str = "01"
     kis_is_paper: bool = True
 
     # #42: Paper Trading 사용할 broker 종류. "MOCK" 또는 "KIS_PAPER".

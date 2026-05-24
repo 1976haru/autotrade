@@ -77,6 +77,14 @@ export function KisPaperEnvStatusCard({
   const credsPresent = s?.credentials_present === true;
   const brokerOrderType = s?.broker_order_type ?? "—";
   const liveAuth = s?.is_live_authorization === true;
+  // 4-01: 4종 per-credential 존재 여부 (값 원문 0건 — boolean 만).
+  const appKeyPresent = s?.kis_app_key_present === true;
+  const appSecretPresent = s?.kis_app_secret_present === true;
+  const accountPresent = s?.kis_account_no_present === true;
+  const productCodePresent = s?.kis_product_code_present === true
+    || s?.product_code_present === true;
+  const missingCreds = Array.isArray(s?.missing_credentials)
+    ? s.missing_credentials : [];
 
   return (
     <Card data-testid={testId}>
@@ -120,6 +128,31 @@ export function KisPaperEnvStatusCard({
       <_StatusRow label="KIS 자격 구성"
                   value={credsPresent ? "구성됨" : "미구성"}
                   ok={credsPresent} testid="kis-env-credentials" />
+      {/* 4-01: 4종 자격 per-credential 구성 여부 (값 원문 0건 — 구성됨/미구성만). */}
+      <_StatusRow label="APP KEY (KIS_APP_KEY)"
+                  value={appKeyPresent ? "구성됨" : "미구성"}
+                  ok={appKeyPresent} testid="kis-env-app-key" />
+      <_StatusRow label="APP SECRET (KIS_APP_SECRET)"
+                  value={appSecretPresent ? "구성됨" : "미구성"}
+                  ok={appSecretPresent} testid="kis-env-app-secret" />
+      <_StatusRow label="ACCOUNT NO (KIS_ACCOUNT_NO)"
+                  value={accountPresent ? "구성됨" : "미구성"}
+                  ok={accountPresent} testid="kis-env-account-no" />
+      <_StatusRow label="PRODUCT CODE (KIS_PRODUCT_CODE)"
+                  value={productCodePresent ? "구성됨" : "미구성"}
+                  ok={productCodePresent} testid="kis-env-product-code" />
+      {missingCreds.length > 0 && (
+        <div
+          data-testid="kis-env-missing-credentials"
+          style={{
+            padding: "5px 8px", borderRadius: 4, background: "#fef2f2",
+            marginBottom: 4, fontSize: "var(--fs-xs)", color: "#b91c1c",
+          }}
+        >
+          미구성 자격: {missingCreds.join(", ")} — backend/.env 에 입력 후
+          EXE 재시작하세요.
+        </div>
+      )}
       <_StatusRow label="broker_order_type" value={brokerOrderType}
                   ok={brokerOrderType === "KIS_PAPER"}
                   testid="kis-env-broker-order-type" />
@@ -133,9 +166,10 @@ export function KisPaperEnvStatusCard({
           lineHeight: 1.6,
         }}
       >
-        KIS 자격정보는 backend/.env에만 저장됩니다. 화면에는 API key / Secret /
-        계좌번호가 표시되지 않습니다. 현재 설정은 Paper / KIS 모의투자 전용이며
-        실거래는 OFF입니다.
+        자격정보 원문은 표시하지 않습니다. backend/.env에만 입력하세요.
+        .env.example에는 실제 값을 넣지 마세요. 현재 화면은 KIS 모의투자 설정
+        확인용입니다. 화면에는 API key / Secret / 계좌번호가 표시되지 않으며,
+        현재 설정은 Paper / KIS 모의투자 전용이고 실거래는 OFF입니다.
       </div>
     </Card>
   );
