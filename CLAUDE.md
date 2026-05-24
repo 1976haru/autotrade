@@ -95,6 +95,8 @@
 
 **#56 / 7-04 오류/이벤트 로그 뷰어**: EXE 장중 문제 원인을 한 화면에서 파악하는 read-only 로그 뷰어 — RuntimeEvent / AgentDecisionEpisode(AI 판단) / OrderAuditLog(KIS 주문)을 단일 모양 `{timestamp,source,severity,reason_code,message,symbol,action,broker_order_no,episode_id}` 으로 병합해 최근 100건 반환. **endpoint** `GET /api/system/logs?source=&severity=&q=&limit=`(`app/system/log_viewer.py::collect_recent_logs`, `Depends(get_db)` read-only SELECT) + **UI** `RuntimeEventLogViewer`(Settings 탭). source(ALL/RUNTIME_EVENT/AGENT_DECISION/KIS_ORDER)·severity·keyword 필터 + 복사. **민감정보 마스킹**: `redact_text()` 가 message/reason_code free-text 의 sk-/sk-ant-/ghp_/xox/Bearer/JWT/KIS app key/access_token=/계좌번호(8-2)/신용카드/주민번호 패턴을 `[REDACTED]` 로 치환(*드롭이 아니라 마스킹*) — 구조화 식별자(broker_order_no/episode_id/symbol/action)는 그대로. UI 복사 직전 `containsSecretDeep` 2차 스캔 → 적중 시 클립보드 미기록. broker/OrderExecutor/route_order 호출 0건, DB write 0건, Secret/API key/계좌번호/access_token 원문 0건, **매수/매도/실거래/Place Order/주문 재시도·재전송 버튼 0개**(입력은 검색 1개뿐), `is_live_authorization=false`/`contains_secret=false` 불변 (테스트로 lock). 16개 backend 테스트 + frontend(RuntimeEventLogViewer). 자세한 절차: [`docs/exe_runtime_event_log_viewer.md`](docs/exe_runtime_event_log_viewer.md).
 
+**#68 / 8-06 초보자 운영자 매뉴얼**: 코딩을 모르는 사용자가 문서만 보고 EXE 실행 · KIS 모의 설정 · 안전 점검 · 오류 확인 · 장중 테스트 준비를 할 수 있는 [`docs/user_manual.md`](docs/user_manual.md) (28개 섹션). 안전 flag(LIVE/AI/FUTURES=false, KIS_IS_PAPER=true) · 장 닫힌 날/열린 날 분리 · 자주 나오는 메시지 표 · 문제 보고 양식 · 실전 전환 전 조건 포함. **문서 작업만 — 코드/로직 변경 0건.** 자격은 `<YOUR_...>` placeholder 만(실제 secret/계좌 예시 0건), "수익 보장"/"자동 실전 전환" 류 문구 0건, "실전 전환은 별도 승인 필요" 명시. `backend/tests/test_user_manual_safety.py`(11개) 가 금지 문구/secret-like/account-like 부재 + 필수 문구 존재를 정적 검증(금지 리터럴은 테스트 소스에 남기지 않도록 동적 조립). README docs index 에 링크 추가.
+
 ## 작업 방식
 
 - 큰 기능은 작은 PR 단위로 쪼갠다.
