@@ -40,7 +40,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--min-trades", type=int, default=100)
     p.add_argument("--min-days", type=int, default=28)
     p.add_argument("--strict", action="store_true")
-    p.add_argument("--output", default=None)
+    p.add_argument("--output", "--json", dest="output", default=None,
+                   help="JSON 리포트 경로 (--json 별칭)")
     p.add_argument("--markdown", default=None)
     p.add_argument("--write-latest", action="store_true",
                    help="reports/strategy_validation/real_data_strategy_latest.json 갱신(카드 표시)")
