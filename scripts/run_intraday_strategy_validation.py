@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""REAL-DATA-INPUT-01 — 다종목 실제/준실제 OHLCV Backtest + Walk-forward CLI (read-only).
+"""INTRADAY-DATA-01 — 분봉 데이터 단타 전략 검증 CLI (read-only).
 
-input-dir 의 PASS 종목만 backtest + walk-forward + stress + Agent 비교 후 종목별/전체
-aggregate verdict 를 산출한다. **품질 FAIL 종목은 제외(자동 보정/통과 금지).**
+분봉 OHLCV 디렉토리의 PASS 종목만 backtest + walk-forward + Agent 비교 후 단타 전용
+verdict 를 산출한다. **품질/시간프레임 FAIL(일봉 포함) 종목은 제외.**
 
 CLAUDE.md 절대 원칙:
 - read-only. broker / OrderExecutor / route_order / KIS 주문 API 호출 0건. 주문 0건.
 - 결과가 좋아도 자동 적용 / 실전 전환 / live authorization 0건. secret/계좌 원문 0건.
+- KIS 분봉 시세 API 미구현 → 분봉 CSV 입력 사용.
 
 exit code:
-    0: 평가 완료 (STRONG/CAUTIOUS/RESEARCH_ONLY/NOT_READY)
-    1: BLOCKED (사용 가능한 PASS 데이터 없음 / 품질 과반 FAIL)
+    0: 평가 완료 (CAUTIOUS/RESEARCH_ONLY/NOT_READY)
+    1: BLOCKED (사용 가능한 PASS 분봉 데이터 없음)
     2: 실행 오류
 """
 
@@ -28,23 +29,22 @@ if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
 DEFAULT_OUTPUT_DIR = "reports/strategy_validation"
-DEFAULT_CLEAN_DIR = str(_REPO_ROOT / "backend" / "tests" / "fixtures" / "real_data_clean")
+DEFAULT_INTRADAY_DIR = str(_REPO_ROOT / "backend" / "tests" / "fixtures" / "intraday_clean")
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="다종목 실제/준실제 OHLCV Backtest+Walk-forward 집계 (실전 아님, 주문 0건).")
-    p.add_argument("--input-dir", default=DEFAULT_CLEAN_DIR,
-                   help="{symbol}.csv 디렉토리 (기본: clean fixture; 실데이터는 data/market/real_ohlcv)")
-    p.add_argument("--symbols", default=None, help="콤마구분 (미지정 시 dir 전체)")
-    p.add_argument("--min-trades", type=int, default=100)
-    p.add_argument("--min-days", type=int, default=28)
+        description="분봉 데이터 단타 전략 검증 (실전 아님, 주문 0건).")
+    p.add_argument("--input-dir", default=DEFAULT_INTRADAY_DIR,
+                   help="분봉 {symbol}.csv 디렉토리 (기본: intraday clean fixture; "
+                        "실데이터는 data/market/intraday)")
+    p.add_argument("--symbols", default=None)
     p.add_argument("--strict", action="store_true")
     p.add_argument("--output", "--json", dest="output", default=None,
                    help="JSON 리포트 경로 (--json 별칭)")
     p.add_argument("--markdown", default=None)
     p.add_argument("--write-latest", action="store_true",
-                   help="reports/strategy_validation/real_data_strategy_latest.json 갱신(카드 표시)")
+                   help="reports/strategy_validation/intraday_strategy_latest.json 갱신(카드)")
     p.add_argument("--quiet", action="store_true")
     return p.parse_args(argv)
 
@@ -57,21 +57,20 @@ def main(argv: list[str] | None = None) -> int:
             pass
     try:
         args = _parse_args(argv)
-        from app.system.real_ohlcv_dataset import (
-            evaluate_real_ohlcv_dataset,
+        from app.system.intraday_strategy_validation import (
+            evaluate_intraday_strategy,
             render_markdown,
             to_dict,
         )
         syms = [s.strip() for s in args.symbols.split(",") if s.strip()] if args.symbols else None
-        report = evaluate_real_ohlcv_dataset(
-            args.input_dir, symbols=syms, min_trades=int(args.min_trades),
-            min_days=int(args.min_days), strict=bool(args.strict),
+        report = evaluate_intraday_strategy(
+            args.input_dir, symbols=syms, strict=bool(args.strict),
             generated_at=datetime.now(timezone.utc).isoformat())
         data = to_dict(report)
         md = render_markdown(report)
 
         out = Path(args.output) if args.output else (
-            Path(DEFAULT_OUTPUT_DIR) / "real_ohlcv_backtest_walkforward.json")
+            Path(DEFAULT_OUTPUT_DIR) / "intraday_strategy.json")
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"[OK] JSON: {out}")
@@ -81,18 +80,18 @@ def main(argv: list[str] | None = None) -> int:
             mp.write_text(md, encoding="utf-8")
             print(f"[OK] Markdown: {mp}")
         if args.write_latest:
-            latest = Path(DEFAULT_OUTPUT_DIR) / "real_data_strategy_latest.json"
+            latest = Path(DEFAULT_OUTPUT_DIR) / "intraday_strategy_latest.json"
             latest.parent.mkdir(parents=True, exist_ok=True)
             latest.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
             print(f"[OK] latest 갱신: {latest}")
 
         if not args.quiet:
-            print(f"overall_verdict={report.overall_verdict} score={report.overall_score} "
-                  f"PASS={len(report.pass_symbols)} BLOCKED={len(report.blocked_symbols)} "
+            print(f"overall_verdict={report.overall_verdict} intraday_used={report.intraday_data_used} "
+                  f"bar_size={report.bar_size_minutes} PASS={len(report.pass_symbols)} "
                   f"total_trades={report.total_trades}")
-            print(f"agent_value_summary={report.agent_value_summary} "
-                  f"real_data_used={report.real_data_used}")
-            print("NOTE: 다종목 실데이터 검증 전용 — 자동 적용/실전 전환/주문 0건. 수익 보장 아님.")
+            print(f"win_rate={report.win_rate} PF={report.profit_factor} WF={report.walk_forward_score} "
+                  f"agent={report.agent_value_summary}")
+            print("NOTE: 분봉 단타 검증 전용 — 자동 적용/실전 전환/주문 0건. 수익 보장 아님.")
 
         return 1 if report.overall_verdict == "BLOCKED" else 0
     except Exception as e:  # noqa: BLE001
