@@ -117,6 +117,8 @@ export const backendApi = {
   programIntegrity: () => backendFetch("/api/system/program-integrity"),
   // BUILD-02A: 장 열리기 전 사전 검증 (read-only, fast mode — 실제 KIS API 0건).
   premarketReadiness: () => backendFetch("/api/system/premarket-readiness"),
+  // BUILD-02B-0: KIS 모의 AI 자동매매 전체 코드 감사 (read-only, offline/fake).
+  kisPaperAutotradeAudit: () => backendFetch("/api/system/kis-paper-autotrade-audit"),
   // AI Paper Auto Loop + Desktop health.
   // 모든 경로는 PAPER/SIMULATION 한정 — broker.place_order 호출 0건.
   desktopHealth:          () => backendFetch("/api/desktop/health"),
