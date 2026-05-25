@@ -744,6 +744,38 @@ def get_wf_6m_50symbols_latest() -> dict:
     }
 
 
+@router.get("/system/strategy-agent-decomposition/latest")
+def get_strategy_agent_decomposition_latest() -> dict:
+    """WF-6M 매매기법/Agent 분해 (latest, read-only). 없으면 empty fallback."""
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/strategy_validation/strategy_agent_decomposition_latest.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            data["available"] = True
+            return data
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "_source": "empty", "available": False,
+        "final_verdict": "STILL_NOT_RECOMMENDED", "paper_rehearsal_candidate": False,
+        "exe_rebuild_recommendation": "EXE 재빌드 보류 (분석 리포트 없음)",
+        "baseline": {}, "strategy_only": [], "agent_roles": [], "agent_off_comparison": {},
+        "top_by_return": [], "top_low_live_risk": [], "conclusions": [],
+        "do_not_auto_apply": True, "auto_apply_allowed": False, "is_live_authorization": False,
+        "broker_order_sent": False, "order_created": False, "exe_build_executed": False,
+        "contains_secret": False, "no_profit_guarantee": True,
+        "disclaimer": (
+            "WF-6M 매매기법/Agent 분해 리포트가 아직 없습니다. CLI "
+            "`run_wf_6m_strategy_agent_decomposition.py --write-latest` 실행 후 갱신됩니다. "
+            "이 결과는 연구/백테스트 결과이며 실전매매 권고가 아닙니다."
+        ),
+    }
+
+
 @router.get("/system/wf-6m-root-cause/latest")
 def get_wf_6m_root_cause_latest() -> dict:
     """WF-6M 손실 원인분해 (latest, read-only). 없으면 empty fallback."""

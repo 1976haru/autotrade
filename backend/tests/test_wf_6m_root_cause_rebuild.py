@@ -13,8 +13,7 @@ import pytest
 
 from app.backtest.strategy_council_backtest import OHLCVBar
 from app.system import wf_6m_rebuild_experiments as rb
-from app.system import wf_6m_sim_v2 as v2
-from app.system.wf_6m_sim_v2 import SimV2Config, SimV2Result, result_to_dict, run_sim_v2
+from app.system.wf_6m_sim_v2 import SimV2Config, SimV2Result, run_sim_v2
 
 _KST = timezone(timedelta(hours=9))
 _SRC = Path(__file__).resolve().parents[1] / "app"

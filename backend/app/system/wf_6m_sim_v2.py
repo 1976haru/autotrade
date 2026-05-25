@@ -29,6 +29,23 @@ AGENT_MODES = (
     "AGENT_ENTRY_DECIDER", "AGENT_OFF", "AGENT_RISK_FILTER_ONLY",
     "AGENT_POSITION_SIZER_ONLY", "AGENT_VETO_ONLY", "AGENT_AFTER_TRADE_REVIEW_ONLY",
 )
+# DECOMPOSITION-01 7-role 분해 (위 modes 와 의미 매핑).
+AGENT_ROLE_MODES = (
+    "AGENT_OFF", "AGENT_ENTRY_SELECTOR", "AGENT_RISK_VETO_ONLY",
+    "AGENT_POSITION_SIZER_ONLY", "AGENT_EXIT_ADVISOR_ONLY",
+    "AGENT_REGIME_FILTER_ONLY", "AGENT_REVIEW_ONLY",
+)
+# 단일전략 기반(진입권을 매매기법에만) 모드 — single_buys 사용.
+_SINGLE_SOURCE_MODES = frozenset({
+    "AGENT_OFF", "AGENT_AFTER_TRADE_REVIEW_ONLY", "AGENT_REVIEW_ONLY",
+    "AGENT_RISK_FILTER_ONLY", "AGENT_RISK_VETO_ONLY", "AGENT_EXIT_ADVISOR_ONLY",
+    "AGENT_REGIME_FILTER_ONLY",
+})
+# council 진입권 모드.
+_COUNCIL_SOURCE_MODES = frozenset({
+    "AGENT_ENTRY_DECIDER", "AGENT_ENTRY_SELECTOR", "AGENT_POSITION_SIZER_ONLY",
+    "AGENT_VETO_ONLY",
+})
 
 
 @dataclass(frozen=True)
@@ -53,7 +70,16 @@ class SimV2Config:
     cooldown_days: int = 3
     worst_symbol_cooldown: bool = False
     worst_strategy_cooldown: bool = False
-    regime_block_down_day: bool = False               # 시장(횡단면) 하락일 진입 중단
+    regime_block_down_day: bool = False               # 시장(횡단면) *전일* 하락일 진입 중단
+    daily_loss_stop_pct: float = 0.0                  # 당일 -x% 도달 시 당일 진입 중단
+    equity_dd_stop_pct: float = 0.0                   # 전체 고점 대비 -x% 도달 시 진입 중단
+    size_scale: float = 1.0                           # 진입 notional 배율(0.5=축소)
+    # 매매기법 필터 + 청산 실험.
+    allowed_strategies: frozenset[str] | None = None  # None=전체. 단일전략/조합 테스트용.
+    max_hold_min: int = 0                             # >0 이면 N분 경과 시 강제청산
+    trailing_stop_pct: float = 0.0                    # >0 이면 고점 대비 -x% 트레일링 청산
+    time_stop_min: int = 0                            # >0 이면 N분 내 미진전 시 청산
+    veto_exclude_grade: bool = False                  # EXCLUDE 등급 종목 진입 차단
     # 랭킹 보조 입력.
     grade_map: dict[str, str] = field(default_factory=dict)
     strategy_pf: dict[str, float | None] = field(default_factory=dict)
@@ -117,18 +143,23 @@ def _hold_bucket(mins: float) -> str:
     return "240m+"
 
 
-def _is_candidate(sig: dict[str, Any], agent_mode: str, min_quality: float) -> bool:
+def _is_candidate(sig: dict[str, Any], agent_mode: str, min_quality: float,
+                  allowed: frozenset[str] | None = None) -> bool:
     council_buy = sig["council_action"] == "BUY"
-    single_buy = bool(sig["single_buys"])
-    if agent_mode == "AGENT_ENTRY_DECIDER":
+    single_list = sig["single_buys"]
+    if allowed is not None:
+        single_list = tuple(s for s in single_list if s in allowed)
+        if council_buy and not any(s in allowed for s in (sig["selected"] or single_list)):
+            council_buy = False
+    single_buy = bool(single_list)
+    if agent_mode in ("AGENT_ENTRY_DECIDER", "AGENT_ENTRY_SELECTOR", "AGENT_POSITION_SIZER_ONLY"):
         return council_buy
-    if agent_mode == "AGENT_POSITION_SIZER_ONLY":
-        return council_buy
-    if agent_mode in ("AGENT_OFF", "AGENT_AFTER_TRADE_REVIEW_ONLY"):
+    if agent_mode in ("AGENT_OFF", "AGENT_AFTER_TRADE_REVIEW_ONLY", "AGENT_REVIEW_ONLY",
+                      "AGENT_EXIT_ADVISOR_ONLY", "AGENT_REGIME_FILTER_ONLY"):
         return single_buy
     if agent_mode == "AGENT_VETO_ONLY":
         return single_buy and sig["council_action"] != "HOLD"
-    if agent_mode == "AGENT_RISK_FILTER_ONLY":
+    if agent_mode in ("AGENT_RISK_FILTER_ONLY", "AGENT_RISK_VETO_ONLY"):
         return single_buy and sig.get("quality_score", 0.0) >= min_quality
     return council_buy
 
@@ -213,6 +244,8 @@ def run_sim_v2(bars: Sequence[Any], signals: dict[tuple[str, str], dict[str, Any
     consec_losses = 0
     symbol_cooldown: dict[str, int] = {}     # symbol → 진입금지 남은 일수(완화)
     strategy_loss: dict[str, float] = defaultdict(float)
+    day_start_equity = cfg.initial_capital
+    equity_peak = cfg.initial_capital
 
     def _close(sym: str, price: float, ts: str, reason: str) -> None:
         nonlocal cash, cost_paid, tax_paid, slip_paid, consec_losses
@@ -241,7 +274,9 @@ def run_sim_v2(bars: Sequence[Any], signals: dict[tuple[str, str], dict[str, Any
         mkey = f"{date.year}-{date.month:02d}"
         if cur_date is not None and date != cur_date:
             daily_equity.append((cur_date, cash))
+            day_start_equity = cash
         cur_date = date
+        equity_peak = max(equity_peak, cash)
         if mkey not in month_start_equity:
             month_start_equity[mkey] = cash
             month_peak_equity[mkey] = cash
@@ -251,13 +286,25 @@ def run_sim_v2(bars: Sequence[Any], signals: dict[tuple[str, str], dict[str, Any
         for sym, bar, is_last in rows:
             if sym in positions:
                 pos = positions[sym]
-                fc = (cfg.forced_close_min is not None
-                      and (bar.timestamp.astimezone(_KST).hour * 60
-                           + bar.timestamp.astimezone(_KST).minute) >= cfg.forced_close_min)
+                bmin = bar.timestamp.astimezone(_KST).hour * 60 + bar.timestamp.astimezone(_KST).minute
+                pos["peak"] = max(pos.get("peak", pos["entry_px"]), bar.high)
+                held = (bar.timestamp - datetime.fromisoformat(pos["entry_ts"])).total_seconds() / 60.0
+                fc = cfg.forced_close_min is not None and bmin >= cfg.forced_close_min
+                trail = (cfg.trailing_stop_pct > 0
+                         and bar.low <= pos["peak"] * (1 - cfg.trailing_stop_pct / 100.0))
+                tstop = (cfg.time_stop_min > 0 and held >= cfg.time_stop_min
+                         and bar.close <= pos["entry_px"])
+                mhold = cfg.max_hold_min > 0 and held >= cfg.max_hold_min
                 if bar.low <= pos["stop"]:
                     _close(sym, pos["stop"], ts.isoformat(), "STOP")
                 elif bar.high >= pos["target"]:
                     _close(sym, pos["target"], ts.isoformat(), "TARGET")
+                elif trail:
+                    _close(sym, pos["peak"] * (1 - cfg.trailing_stop_pct / 100.0), ts.isoformat(), "TRAIL")
+                elif tstop:
+                    _close(sym, bar.close, ts.isoformat(), "TIME_STOP")
+                elif mhold:
+                    _close(sym, bar.close, ts.isoformat(), "MAX_HOLD")
                 elif is_last or fc:
                     _close(sym, bar.close, ts.isoformat(), "FORCED" if fc and not is_last else "EOD")
 
@@ -276,6 +323,12 @@ def run_sim_v2(bars: Sequence[Any], signals: dict[tuple[str, str], dict[str, Any
             entries_allowed = False
         if cfg.regime_block_down_day and market_day_ret.get(date, 0.0) < 0:
             entries_allowed = False
+        if cfg.daily_loss_stop_pct and day_start_equity > 0:
+            if (day_start_equity - cash) / day_start_equity * 100 >= cfg.daily_loss_stop_pct:
+                entries_allowed = False
+        if cfg.equity_dd_stop_pct and equity_peak > 0:
+            if (equity_peak - cash) / equity_peak * 100 >= cfg.equity_dd_stop_pct:
+                entries_allowed = False
 
         if not entries_allowed:
             continue
@@ -292,8 +345,12 @@ def run_sim_v2(bars: Sequence[Any], signals: dict[tuple[str, str], dict[str, Any
                 continue
             if cfg.worst_symbol_cooldown and symbol_cooldown.get(sym, 0) > 0:
                 continue
+            grade = cfg.grade_map.get(sym, "WATCH")
+            if (cfg.veto_exclude_grade or cfg.agent_mode == "AGENT_RISK_VETO_ONLY") and grade == "EXCLUDE":
+                continue
             sig = signals.get((sym, ts.isoformat()))
-            if sig is None or not _is_candidate(sig, cfg.agent_mode, cfg.min_quality_for_risk_filter):
+            if sig is None or not _is_candidate(sig, cfg.agent_mode,
+                                                cfg.min_quality_for_risk_filter, cfg.allowed_strategies):
                 continue
             cands.append((sym, bar, sig))
         if not cands:
@@ -306,9 +363,13 @@ def run_sim_v2(bars: Sequence[Any], signals: dict[tuple[str, str], dict[str, Any
                 skipped_max += 1
                 continue
             entry_px = bar.close * (1 + slip)
-            notional = min(cfg.max_position_notional, cash)
+            cap = cfg.max_position_notional * cfg.size_scale
+            notional = min(cap, cash)
             if cfg.agent_mode == "AGENT_POSITION_SIZER_ONLY":
-                notional = min(notional, cfg.max_position_notional * (0.5 + 0.5 * sig["confidence"]))
+                # GO 1~2M / TUNE 0.5~1M / 그 외 confidence 비례 축소.
+                g = cfg.grade_map.get(sym, "WATCH")
+                scale = 1.0 if g == "GO" else (0.5 if g == "TUNE" else 0.25)
+                notional = min(notional, cfg.max_position_notional * scale * (0.5 + 0.5 * sig["confidence"]))
             if notional < cfg.min_position_notional:
                 skipped_cash += 1
                 continue
@@ -330,11 +391,14 @@ def run_sim_v2(bars: Sequence[Any], signals: dict[tuple[str, str], dict[str, Any
             slip_paid += qty * bar.close * slip
             buy_notional_total += gross
             cash -= cost_basis
-            strat = (sig["selected"][0] if sig["selected"]
-                     else (sig["single_buys"][0] if sig["single_buys"] else "UNKNOWN"))
+            pool = sig["single_buys"] or sig["selected"]
+            if cfg.allowed_strategies is not None:
+                pool = tuple(s for s in pool if s in cfg.allowed_strategies) or pool
+            strat = pool[0] if pool else "UNKNOWN"
             positions[sym] = {
                 "entry_px": entry_px, "qty": qty, "entry_ts": ts.isoformat(),
                 "cost_basis": cost_basis, "entry_bucket": sig["time_bucket"], "strategy": strat,
+                "peak": bar.high,
                 "stop": entry_px * (1 - sig["stop_pct"] / 100.0),
                 "target": entry_px * (1 + sig["target_pct"] / 100.0)}
 

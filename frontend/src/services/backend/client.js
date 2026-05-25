@@ -993,6 +993,9 @@ export const backendApi = {
     backendFetch("/api/system/wf-6m-root-cause/latest"),
   wf6mRebuildLatest: () =>
     backendFetch("/api/system/wf-6m-rebuild/latest"),
+  // WF-6M 매매기법/Agent 분해 latest (read-only). Paper/Backtest only · EXE 빌드 0건.
+  strategyAgentDecompositionLatest: () =>
+    backendFetch("/api/system/strategy-agent-decomposition/latest"),
   // 11-00: EXE 빌드 전 통합 검증 Gate (fast, read-only). subprocess/KIS 호출 0건.
   finalPrebuildGate: () => backendFetch("/api/system/final-prebuild-gate"),
   // #54 / 7-02: 기본 Universe 50개 상태 (read-only). secret 값 0건.
