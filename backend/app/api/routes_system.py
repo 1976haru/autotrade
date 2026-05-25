@@ -678,6 +678,51 @@ def get_kis_intraday_100_validation_latest() -> dict:
     }
 
 
+@router.get("/system/wf-6m-50symbols/latest")
+def get_wf_6m_50symbols_latest() -> dict:
+    """WF-6M-50SYMBOLS-01 — 6개월·50종목·1000만원 전략 종합 검증 (latest, read-only).
+
+    `reports/strategy_validation/wf_6m_50symbols_latest.json` 가 있으면 반환, **없으면 empty
+    fallback**. 무거운 시뮬/backtest 는 API 에서 실행하지 않음(CLI
+    `run_wf_6m_50symbols_report.py` 전용). 주문 / KIS 주문 API 호출 0건, secret 0건.
+    """
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/strategy_validation/wf_6m_50symbols_latest.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            data["available"] = True
+            return data
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "_source": "empty",
+        "available": False,
+        "data_source": "KIS_INTRADAY_DAILYCHART_5M",
+        "final_verdict": "RESEARCH_ONLY",
+        "live_possibility": "실전 검토 불가",
+        "initial_capital": 10_000_000,
+        "final_equity": 10_000_000,
+        "total_return_pct": None,
+        "trading_days": 0,
+        "grades": {"GO": 0, "WATCH": 0, "TUNE": 0, "EXCLUDE": 0},
+        "do_not_auto_apply": True,
+        "is_live_authorization": False,
+        "broker_order_sent": False,
+        "order_created": False,
+        "contains_secret": False,
+        "no_profit_guarantee": True,
+        "disclaimer": (
+            "6개월·50종목·1000만원 종합 검증 리포트가 아직 없습니다. CLI "
+            "`run_wf_6m_50symbols_report.py --write-latest` 실행 후 갱신됩니다. "
+            "Paper/Backtest only · 자동 적용 / 실전 전환 / 주문 0건, 수익 보장 아님."
+        ),
+    }
+
+
 @router.get("/system/intraday-data-source/status")
 def get_intraday_data_source_status() -> dict:
     """INTRADAY-DATA-02 — 분봉 데이터 소스 상태 (read-only, 실제 호출 없음).

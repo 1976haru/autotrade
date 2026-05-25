@@ -20,6 +20,7 @@ import { StrategyPotentialReportCard } from "../common/StrategyPotentialReportCa
 import { RealDataStrategyValidationCard } from "../common/RealDataStrategyValidationCard";
 import { IntradayStrategyValidationCard } from "../common/IntradayStrategyValidationCard";
 import { KisIntraday100ValidationCard } from "../common/KisIntraday100ValidationCard";
+import { Wf6m50SymbolsCard } from "../common/Wf6m50SymbolsCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
@@ -103,6 +104,9 @@ export function AISignal({ activeStratIds }) {
       {/* KIS-INTRADAY-100-VALIDATION-01: 실제 KIS 분봉 100종목 전략 최종 판정 —
           read-only 시세 수집, KIS 주문 API 0건, 자동 적용/실전 전환/주문 0건. */}
       <KisIntraday100ValidationCard />
+      {/* WF-6M-50SYMBOLS-01: 6개월·50종목·1000만원 자금곡선 + 등급화 + 업그레이드 방향 —
+          Paper/Backtest only, KIS 주문 0건, 자동 적용/실전 전환/주문 0건. */}
+      <Wf6m50SymbolsCard />
       {/* P-31: 분석용 데이터 내보내기 (CSV/JSONL) — secret 미포함, 주문 신호 아님. */}
       <DecisionEpisodeExportButton />
       {/* P-32: 이벤트 로그 품질 점검 — 진단 전용, 자동 주문 중단 아님. */}

@@ -983,6 +983,10 @@ export const backendApi = {
   // KIS 주문 API 호출 0건. 자동 적용/실전 전환/주문 0건. 수익 보장 아님.
   kisIntraday100ValidationLatest: () =>
     backendFetch("/api/system/kis-intraday-100-validation/latest"),
+  // WF-6M-50SYMBOLS-01: 6개월·50종목·1000만원 전략 종합 검증 latest (read-only).
+  // Paper/Backtest only · KIS 주문 API 0건 · 자동 적용/실전 전환/주문 0건 · 수익 보장 아님.
+  wf6m50SymbolsLatest: () =>
+    backendFetch("/api/system/wf-6m-50symbols/latest"),
   // 11-00: EXE 빌드 전 통합 검증 Gate (fast, read-only). subprocess/KIS 호출 0건.
   finalPrebuildGate: () => backendFetch("/api/system/final-prebuild-gate"),
   // #54 / 7-02: 기본 Universe 50개 상태 (read-only). secret 값 0건.
