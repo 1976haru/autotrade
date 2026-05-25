@@ -26,6 +26,7 @@ import { Wf6mRebuildExperimentsCard } from "../common/Wf6mRebuildExperimentsCard
 import { StrategyAgentDecompositionCard } from "../common/StrategyAgentDecompositionCard";
 import { ForwardValidationCard } from "../common/ForwardValidationCard";
 import { ForwardUniverseCard } from "../common/ForwardUniverseCard";
+import { Locked60dWeeklyValidationCard } from "../common/Locked60dWeeklyValidationCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
@@ -122,6 +123,8 @@ export function AISignal({ activeStratIds }) {
       <ForwardValidationCard />
       {/* FORWARD-UNIVERSE-REBUILD-01: point-in-time 종목 선별 검증 — Paper/Backtest only, EXE 빌드 0건. */}
       <ForwardUniverseCard />
+      {/* 60D-WEEKLY-FIXED-REVALIDATION-01: 고정 룰 holdout 재검증 — Paper/Backtest only, EXE 빌드 0건. */}
+      <Locked60dWeeklyValidationCard />
       {/* P-31: 분석용 데이터 내보내기 (CSV/JSONL) — secret 미포함, 주문 신호 아님. */}
       <DecisionEpisodeExportButton />
       {/* P-32: 이벤트 로그 품질 점검 — 진단 전용, 자동 주문 중단 아님. */}

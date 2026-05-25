@@ -131,13 +131,19 @@ def _jaccard(a: frozenset, b: frozenset) -> float:
 def run_universe_backtest(
     bars, signals, *, selector: str, lookback_days: int, rebalance_freq: str,
     universe_size: int, rule: dict[str, Any], in_sample_top10: frozenset[str] | None,
-    label: str,
+    label: str, count_window: set | None = None,
 ) -> dict[str, Any]:
+    """rolling rebalance backtest. lookback 은 *항상* point-in-time(이전 거래일만).
+
+    count_window 가 주어지면 rebalance_date 가 그 집합에 속하는 기간만 성과에 계상한다
+    (holdout 검증용). lookback 은 count_window 와 무관하게 실제 과거를 사용 — look-ahead 없음.
+    """
     from app.system.wf_6m_sim_v2 import SimV2Config, result_to_dict, run_sim_v2
 
     days = fus.trading_days(bars)
     rdates = fus.rebalance_dates(days, rebalance_freq)
     period_returns: list[float] = []
+    period_pfs: list[float] = []
     per_period: list[dict[str, Any]] = []
     universes: list[frozenset] = []
     total_trades = 0
@@ -159,10 +165,15 @@ def run_universe_backtest(
         uni, excl, smeta = fus.select_universe(
             selector, scores, size=universe_size, in_sample_top10=in_sample_top10,
             prev_selected=prev_sel)
+        prev_sel = uni if uni is not None else frozenset(scores)
+        # holdout: count_window 밖 rebalance 는 selection 상태만 이어가고 성과 미계상.
+        if count_window is not None and rd not in count_window:
+            continue
         tb, tsig = _slice(bars, signals, test_dates)
         kw = dict(agent_mode=rule["agent_mode"], selection_mode=rule.get("selection_mode", "composite_rank"),
                   universe=uni, grade_map={}, strategy_pf={}, bucket_edge={})
-        for k in ("daily_loss_stop_pct", "equity_dd_stop_pct", "worst_symbol_cooldown"):
+        for k in ("daily_loss_stop_pct", "equity_dd_stop_pct", "worst_symbol_cooldown",
+                  "slippage_bps", "fee_bps_per_side", "sell_tax_bps"):
             if k in rule:
                 kw[k] = rule[k]
         if rule.get("allowed_strategies"):
@@ -171,14 +182,15 @@ def run_universe_backtest(
             kw["apply_position_sizing"] = True
         r = result_to_dict(run_sim_v2(tb, tsig, SimV2Config(**kw)))
         period_returns.append(r["total_return_pct"])
+        if r["profit_factor"] is not None:
+            period_pfs.append(r["profit_factor"])
         total_trades += r["trade_count"]
-        sel_set = uni if uni is not None else frozenset(scores)
+        sel_set = prev_sel
         universes.append(sel_set)
         per_period.append({"rebalance_date": str(rd), "selected": sorted(sel_set)[:25],
                            "selected_count": len(sel_set), "excluded_count": len(excl),
-                           "return_pct": r["total_return_pct"], "trades": r["trade_count"],
-                           "look_ahead": smeta.get("look_ahead", False)})
-        prev_sel = sel_set
+                           "return_pct": r["total_return_pct"], "pf": r["profit_factor"],
+                           "trades": r["trade_count"], "look_ahead": smeta.get("look_ahead", False)})
 
     chained = _chain(period_returns)
     # selection turnover / stability.
@@ -189,6 +201,7 @@ def run_universe_backtest(
         "rebalance_freq": rebalance_freq, "universe_size": universe_size,
         "look_ahead_warning": selector in fus._LOOKAHEAD_SELECTORS,
         **chained, "total_trades": total_trades,
+        "median_pf": round(statistics.median(period_pfs), 4) if period_pfs else None,
         "low_confidence": total_trades < 100,
         "selection_turnover": round(statistics.mean(turns), 3) if turns else None,
         "universe_stability": round(statistics.mean(stab), 3) if stab else None,
@@ -375,7 +388,7 @@ def run_forward_universe(
 def _slim_sel(r: dict[str, Any]) -> dict[str, Any]:
     return {k: r.get(k) for k in (
         "_label", "selector", "lookback_days", "rebalance_freq", "universe_size", "verdict",
-        "forward_return_pct", "forward_mdd_pct", "positive_ratio", "worst_period_pct",
+        "forward_return_pct", "forward_mdd_pct", "median_pf", "positive_ratio", "worst_period_pct",
         "total_trades", "selection_turnover", "universe_stability", "low_confidence",
         "look_ahead_warning")}
 

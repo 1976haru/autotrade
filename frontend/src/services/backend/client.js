@@ -1002,6 +1002,9 @@ export const backendApi = {
   // WF-6M forward universe rebuild latest (read-only). point-in-time 종목선별 · EXE 빌드 0건.
   forwardUniverseLatest: () =>
     backendFetch("/api/system/forward-universe/latest"),
+  // 60d/weekly 고정 룰 재검증 latest (read-only). holdout · EXE 빌드 0건 · 실전 금지.
+  locked60dWeeklyLatest: () =>
+    backendFetch("/api/system/locked-60d-weekly/latest"),
   // 11-00: EXE 빌드 전 통합 검증 Gate (fast, read-only). subprocess/KIS 호출 0건.
   finalPrebuildGate: () => backendFetch("/api/system/final-prebuild-gate"),
   // #54 / 7-02: 기본 Universe 50개 상태 (read-only). secret 값 0건.
