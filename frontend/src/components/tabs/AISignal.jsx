@@ -28,6 +28,7 @@ import { ForwardValidationCard } from "../common/ForwardValidationCard";
 import { ForwardUniverseCard } from "../common/ForwardUniverseCard";
 import { Locked60dWeeklyValidationCard } from "../common/Locked60dWeeklyValidationCard";
 import { Locked60dWeeklyNewDataCard } from "../common/Locked60dWeeklyNewDataCard";
+import { Intraday1YScaledValidationCard } from "../common/Intraday1YScaledValidationCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
@@ -128,6 +129,8 @@ export function AISignal({ activeStratIds }) {
       <Locked60dWeeklyValidationCard />
       {/* 60D-WEEKLY-NEW-DATA: 고정 룰을 추가 기간 새 데이터로 재검증 — Paper/Backtest only, EXE 빌드 0건. */}
       <Locked60dWeeklyNewDataCard />
+      {/* 1Y-SCALED-VALIDATION: 1년 데이터 10/25/50 확장 검증 — Paper/Backtest only, EXE 빌드 0건. */}
+      <Intraday1YScaledValidationCard />
       {/* P-31: 분석용 데이터 내보내기 (CSV/JSONL) — secret 미포함, 주문 신호 아님. */}
       <DecisionEpisodeExportButton />
       {/* P-32: 이벤트 로그 품질 점검 — 진단 전용, 자동 주문 중단 아님. */}
