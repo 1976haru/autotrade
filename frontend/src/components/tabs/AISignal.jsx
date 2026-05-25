@@ -27,6 +27,7 @@ import { StrategyAgentDecompositionCard } from "../common/StrategyAgentDecomposi
 import { ForwardValidationCard } from "../common/ForwardValidationCard";
 import { ForwardUniverseCard } from "../common/ForwardUniverseCard";
 import { Locked60dWeeklyValidationCard } from "../common/Locked60dWeeklyValidationCard";
+import { Locked60dWeeklyNewDataCard } from "../common/Locked60dWeeklyNewDataCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
@@ -125,6 +126,8 @@ export function AISignal({ activeStratIds }) {
       <ForwardUniverseCard />
       {/* 60D-WEEKLY-FIXED-REVALIDATION-01: 고정 룰 holdout 재검증 — Paper/Backtest only, EXE 빌드 0건. */}
       <Locked60dWeeklyValidationCard />
+      {/* 60D-WEEKLY-NEW-DATA: 고정 룰을 추가 기간 새 데이터로 재검증 — Paper/Backtest only, EXE 빌드 0건. */}
+      <Locked60dWeeklyNewDataCard />
       {/* P-31: 분석용 데이터 내보내기 (CSV/JSONL) — secret 미포함, 주문 신호 아님. */}
       <DecisionEpisodeExportButton />
       {/* P-32: 이벤트 로그 품질 점검 — 진단 전용, 자동 주문 중단 아님. */}
