@@ -127,7 +127,39 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--max-calls-per-day", type=int, default=6, help="종목/일 backward 호출 상한")
     p.add_argument("--json", dest="json_out", default=None)
     p.add_argument("--markdown", default=None)
+    # resume / 진행률.
+    p.add_argument("--resume", action="store_true",
+                   help="이미 수집된(충분한) CSV 종목은 skip 하고 미완료만 재수집")
+    p.add_argument("--min-complete-days", type=int, default=0,
+                   help="resume 완료 판정 최소 거래일 (0=num_days*0.8 자동)")
+    p.add_argument("--progress-json", default=None, help="진행률 JSON 경로")
+    p.add_argument("--failed-json", default=None, help="실패 종목 JSON 경로")
+    p.add_argument("--rate-max-calls", type=int, default=2, help="rate limiter 윈도우당 최대 호출")
+    p.add_argument("--rate-window", type=float, default=1.1, help="rate limiter 윈도우(초)")
     return p.parse_args(argv)
+
+
+def _csv_day_count(path: Path) -> int:
+    """기존 CSV 의 distinct 거래일 수 (resume 완료 판정용). 실패 시 0."""
+    try:
+        import csv as _csv
+        with path.open(encoding="utf-8") as f:
+            r = _csv.DictReader(f)
+            dates = {(row.get("timestamp") or "")[:10] for row in r}
+        dates.discard("")
+        return len(dates)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def _write_progress(path: Path | None, payload: dict) -> None:
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _resolve_symbols(args: argparse.Namespace) -> list[str]:
@@ -262,8 +294,8 @@ async def _run(args: argparse.Namespace) -> dict:
     s = Settings(_env_file=str(_env_file)) if _env_file.exists() else Settings()
     if not (s.kis_app_key and s.kis_app_secret):
         raise RuntimeError("KIS 자격(app_key/app_secret) 미설정 — 수집 불가")
-    # KIS 모의(paper) 시세 호출은 초당 건수 제한이 빡빡 — 보수적으로 2 calls/sec.
-    rl = SlidingWindowRateLimiter(max_calls=2, window_seconds=1.1)
+    # KIS 모의(paper) 시세 호출은 초당 건수 제한이 빡빡 — 윈도우/호출수 조정 가능.
+    rl = SlidingWindowRateLimiter(max_calls=args.rate_max_calls, window_seconds=args.rate_window)
     client = KisClient(s.kis_app_key, s.kis_app_secret, is_paper=s.kis_is_paper, rate_limiter=rl)
     if _seed_cached_token(client, s.kis_is_paper):
         _eprint("[collect] 캐시된 access token 재사용 (토큰 재발급 안 함)")
@@ -292,10 +324,60 @@ async def _run(args: argparse.Namespace) -> dict:
     oldest_date = trading_days[0]
     # 종목당 호출 상한: 거래일 수 × 4(하루 ≈ 4 call) + 여유.
     max_calls_symbol = args.num_days * 5 + 6
+    # resume 완료 판정 기준 거래일 (기본 = 발견된 거래일 수의 80%).
+    min_complete = args.min_complete_days or max(1, int(len(trading_days) * 0.8))
+    progress_path = Path(args.progress_json) if args.progress_json else None
+    failed_path = Path(args.failed_json) if args.failed_json else None
+
     per_symbol: list[dict] = []
     succeeded = 0
+    skipped = 0
     total_bars = 0
+
+    def _emit_progress() -> None:
+        done = {p["symbol"] for p in per_symbol}
+        pending = [s for s in symbols if s not in done]
+        payload = {
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "target_symbols": len(symbols), "num_days": args.num_days,
+            "bar_size": args.bar_size, "end": end,
+            "trading_day_count": len(trading_days), "output_dir": str(out_dir),
+            "counts": {
+                "completed": sum(1 for p in per_symbol if p["status"] in ("OK", "PARTIAL_SUCCESS", "SKIP")),
+                "skipped": sum(1 for p in per_symbol if p["status"] == "SKIP"),
+                "failed": sum(1 for p in per_symbol if p["status"] in ("FAILED", "NO_DATA")),
+                "pending": len(pending),
+            },
+            "completed": [p for p in per_symbol if p["status"] in ("OK", "PARTIAL_SUCCESS", "SKIP")],
+            "failed": [p for p in per_symbol if p["status"] in ("FAILED", "NO_DATA")],
+            "pending": pending,
+            "is_live_authorization": False, "broker_order_sent": False,
+            "order_created": False, "kis_order_api_called": False, "contains_secret": False,
+        }
+        _write_progress(progress_path, payload)
+        if failed_path is not None:
+            _write_progress(failed_path, {
+                "updated_at": payload["updated_at"],
+                "failed": payload["failed"],
+                "failed_symbols": [p["symbol"] for p in payload["failed"]]})
+
     for i, sym in enumerate(symbols, 1):
+        fname = f"{sym}_{args.bar_size}.csv"
+        fpath = out_dir / fname
+        # resume: 이미 충분히 수집된 CSV 는 skip (완료된 종목 보존).
+        if args.resume and fpath.exists():
+            ex_days = _csv_day_count(fpath)
+            if ex_days >= min_complete:
+                ex_bars = max(0, sum(1 for _ in fpath.open(encoding="utf-8")) - 1)
+                succeeded += 1
+                total_bars += ex_bars
+                per_symbol.append({"symbol": sym, "status": "SKIP", "bars": ex_bars,
+                                   "days_with_data": ex_days, "reason": "resume: 기존 CSV 보존",
+                                   "file": str(fpath)})
+                _eprint(f"  [{i}/{len(symbols)}] {sym} SKIP (기존 {ex_days}일/{ex_bars}bars 보존)")
+                _emit_progress()
+                continue
+
         err: str | None = None
         try:
             one_min, _calls = await _collect_symbol_backward(
@@ -313,21 +395,23 @@ async def _run(args: argparse.Namespace) -> dict:
             per_symbol.append({"symbol": sym, "status": "FAILED", "bars": 0,
                                "days_with_data": days_with_data, "reason": err})
             _eprint(f"  [{i}/{len(symbols)}] {sym} FAILED {err}")
+            _emit_progress()
             continue
         if not bars:
             per_symbol.append({"symbol": sym, "status": "NO_DATA", "bars": 0,
                                "days_with_data": days_with_data, "reason": "빈 응답(상장폐지/거래정지 의심)"})
             _eprint(f"  [{i}/{len(symbols)}] {sym} NO_DATA")
+            _emit_progress()
             continue
-        # CSV 저장.
-        fname = f"{sym}_{args.bar_size}.csv"
-        fpath = out_dir / fname
-        with fpath.open("w", encoding="utf-8", newline="") as f:
+        # CSV 저장 (임시파일 후 rename — 중단 시 부분파일 방지).
+        tmp = fpath.with_suffix(".csv.tmp")
+        with tmp.open("w", encoding="utf-8", newline="") as f:
             w = csv.writer(f)
             w.writerow(["timestamp", "open", "high", "low", "close", "volume", "symbol"])
             for b in bars:
                 w.writerow([b["timestamp"], b["open"], b["high"], b["low"],
                             b["close"], b["volume"], b["symbol"]])
+        tmp.replace(fpath)
         succeeded += 1
         total_bars += len(bars)
         status = "OK" if not err else "PARTIAL_SUCCESS"
@@ -335,12 +419,16 @@ async def _run(args: argparse.Namespace) -> dict:
                            "days_with_data": days_with_data,
                            "reason": err or "", "file": str(fpath)})
         _eprint(f"  [{i}/{len(symbols)}] {sym} {status} bars={len(bars)} days={days_with_data}")
+        _emit_progress()
 
-    failed = len(symbols) - succeeded
+    skipped = sum(1 for p in per_symbol if p["status"] == "SKIP")
+    failed = sum(1 for p in per_symbol if p["status"] in ("FAILED", "NO_DATA"))
     overall = "OK" if failed == 0 and succeeded else (
         "PARTIAL_SUCCESS" if succeeded else "FAIL")
+    _emit_progress()
     return {
-        "status": overall, "requested": len(symbols), "succeeded": succeeded, "failed": failed,
+        "status": overall, "requested": len(symbols), "succeeded": succeeded,
+        "skipped": skipped, "failed": failed,
         "trading_days": trading_days, "trading_day_count": len(trading_days),
         "bar_size": args.bar_size, "end": end, "output_dir": str(out_dir),
         "total_bars": total_bars, "per_symbol": per_symbol,

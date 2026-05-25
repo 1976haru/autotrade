@@ -689,18 +689,39 @@ def get_wf_6m_50symbols_latest() -> dict:
     import json
     from pathlib import Path
 
+    def _progress() -> dict:
+        """수집 진행률(있으면). 카드의 데이터없음/진행중/완료 구분용 — secret 0건."""
+        p = Path("reports/wf_6m_50symbols_progress.json")
+        if not p.exists():
+            return {"collection_status": "NONE"}
+        try:
+            pg = json.loads(p.read_text(encoding="utf-8"))
+            counts = pg.get("counts", {})
+            pending = int(counts.get("pending", 0) or 0)
+            return {
+                "collection_status": "IN_PROGRESS" if pending > 0 else "COMPLETE",
+                "collection_counts": counts,
+                "collection_target": pg.get("target_symbols"),
+                "collection_updated_at": pg.get("updated_at"),
+            }
+        except Exception:  # noqa: BLE001
+            return {"collection_status": "NONE"}
+
+    prog = _progress()
     latest = Path("reports/strategy_validation/wf_6m_50symbols_latest.json")
     if latest.exists():
         try:
             data = json.loads(latest.read_text(encoding="utf-8"))
             data["_source"] = "report_file"
             data["available"] = True
+            data.update(prog)
             return data
         except Exception:  # noqa: BLE001
             pass
     return {
         "_source": "empty",
         "available": False,
+        **prog,
         "data_source": "KIS_INTRADAY_DAILYCHART_5M",
         "final_verdict": "RESEARCH_ONLY",
         "live_possibility": "실전 검토 불가",

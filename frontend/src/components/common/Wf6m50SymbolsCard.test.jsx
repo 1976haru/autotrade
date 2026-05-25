@@ -121,10 +121,30 @@ describe("<Wf6m50SymbolsCard>", () => {
     expect(await screen.findByTestId("wf6m-error")).toBeTruthy();
   });
 
-  it("available=false empty fallback", async () => {
-    render(<Wf6m50SymbolsCard apiClient={_api(_report({ available: false }))} />);
+  it("available=false empty fallback (데이터 없음)", async () => {
+    render(<Wf6m50SymbolsCard apiClient={_api(_report({
+      available: false, collection_status: "NONE" }))} />);
     expect(await screen.findByTestId("wf6m-empty")).toBeTruthy();
     expect(screen.queryByTestId("wf6m-verdict")).toBeNull();
+    expect(screen.queryByTestId("wf6m-collecting")).toBeNull();
+  });
+
+  it("수집 진행 중 상태 표시 (데이터 없음과 구분)", async () => {
+    render(<Wf6m50SymbolsCard apiClient={_api({
+      available: false, collection_status: "IN_PROGRESS", collection_target: 50,
+      collection_counts: { completed: 11, failed: 0, pending: 39, skipped: 11 } })} />);
+    const c = await screen.findByTestId("wf6m-collecting");
+    expect(c.textContent).toContain("수집 진행 중");
+    expect(c.textContent).toContain("11/50");
+    // 진행 중일 때는 '리포트 없음' 안내를 띄우지 않음.
+    expect(screen.queryByTestId("wf6m-empty")).toBeNull();
+  });
+
+  it("완료 상태(available=true)면 진행중/없음 안내 미표시", async () => {
+    render(<Wf6m50SymbolsCard apiClient={_api(_report({ collection_status: "COMPLETE" }))} />);
+    await screen.findByTestId("wf6m-verdict");
+    expect(screen.queryByTestId("wf6m-collecting")).toBeNull();
+    expect(screen.queryByTestId("wf6m-empty")).toBeNull();
   });
 
   it("매수/매도/실전/자동적용/승인 버튼 0개 (새로고침·복사만)", async () => {

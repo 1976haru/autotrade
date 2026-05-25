@@ -103,7 +103,21 @@ export function Wf6m50SymbolsCard({
           }}>종합 검증 결과를 불러올 수 없습니다 (backend 연결 확인).</div>
         ) : null}
 
-        {report && report.available === false ? (
+        {/* 수집 진행 중 안내 (데이터 없음 / 진행 중 / 완료 구분). */}
+        {report && report.collection_status === "IN_PROGRESS" ? (
+          <div data-testid="wf6m-collecting" style={{
+            fontSize: "var(--fs-xs)", color: "#1e3a8a", marginBottom: 6,
+            padding: "6px 10px", borderRadius: 6, background: "#eff6ff",
+            border: "1px solid #bfdbfe",
+          }}>
+            ⏳ <b>데이터 수집 진행 중</b> — 완료{" "}
+            {report.collection_counts?.completed ?? 0}/{report.collection_target ?? 50} ·
+            실패 {report.collection_counts?.failed ?? 0} ·
+            대기 {report.collection_counts?.pending ?? 0}. 수집 완료 후 종합 검증이 실행됩니다.
+          </div>
+        ) : null}
+
+        {report && report.available === false && report.collection_status !== "IN_PROGRESS" ? (
           <div data-testid="wf6m-empty" style={{
             fontSize: "var(--fs-xs)", color: "var(--c-text-3)", marginBottom: 6,
             padding: "6px 10px", borderRadius: 6, background: "var(--c-bg-2)",
