@@ -999,6 +999,9 @@ export const backendApi = {
   // WF-6M forward/OOS 검증 latest (read-only). Paper/Backtest only · EXE 빌드 0건 · 실전 금지.
   forwardValidationLatest: () =>
     backendFetch("/api/system/forward-validation/latest"),
+  // WF-6M forward universe rebuild latest (read-only). point-in-time 종목선별 · EXE 빌드 0건.
+  forwardUniverseLatest: () =>
+    backendFetch("/api/system/forward-universe/latest"),
   // 11-00: EXE 빌드 전 통합 검증 Gate (fast, read-only). subprocess/KIS 호출 0건.
   finalPrebuildGate: () => backendFetch("/api/system/final-prebuild-gate"),
   // #54 / 7-02: 기본 Universe 50개 상태 (read-only). secret 값 0건.
