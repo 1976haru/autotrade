@@ -121,8 +121,21 @@ class TestApiResponses:
             else:
                 yield (p.lower(), o)
 
+        # `missing_credentials` 는 *어떤 자격이 비어 있는지* 알려주는 필드명
+        # 라벨 목록(예: "KIS_APP_KEY")이며 secret VALUE 가 아니다 — 노출 안전.
+        # 그 외 credential 계열 필드는 반드시 boolean presence flag(`*_present`).
+        safe_credential_labels = {
+            "KIS_APP_KEY", "KIS_APP_SECRET", "KIS_ACCOUNT_NO",
+            "KIWOOM_APP_KEY", "KIWOOM_APP_SECRET", "KIWOOM_ACCOUNT_NO",
+        }
         for ep in ("/api/kis-paper/readiness", "/api/kis-paper/auto/status"):
             for key, val in _walk(client.get(ep).json()):
+                if "missing_credential" in key:
+                    assert isinstance(val, str) and val in safe_credential_labels, (
+                        f"{ep}: missing_credentials 는 알려진 필드명 라벨만 허용 "
+                        f"({val!r})"
+                    )
+                    continue
                 if any(s in key for s in ("app_key", "app_secret", "account_no",
                                           "secret", "credential")):
                     assert isinstance(val, bool), (

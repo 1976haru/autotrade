@@ -331,8 +331,10 @@ def test_api_run_once_trade_creates_filled_order(client):
                for o in order_list)
 
 
-def test_api_run_once_trade_dry_run_default_no_order(client):
-    # body 없이 → .env 기본값(dry_run=true, allow_fills=false) → 주문 미생성.
+def test_api_run_once_trade_dry_run_default_no_order(safe_default_flags, client):
+    # body 없이 → *코드 안전 기본값*(dry_run=true, allow_fills=false) → 주문 미생성.
+    # safe_default_flags 가 운영자 .env(EXE 기본 dry_run=false/allow_fills=true)를
+    # 코드 default 로 덮어써 테스트를 hermetic 하게 만든다.
     res = client.post("/api/auto-paper/run-once-trade", json={
         "symbol": "005930", "price": 75_000,
         "per_symbol_cap_krw": 1_000_000, "available_cash_krw": 10_000_000,

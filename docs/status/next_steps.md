@@ -7,7 +7,7 @@
 
 | # | 작업 | 근거 |
 |---|---|---|
-| P0-1 | 사전 환경 실패 7건 격리 (`DEFAULT_MODE=SIMULATION` fixture 강제) | `known_risks.md` §4.1 |
+| ✅ P0-1 | ~~사전 환경 실패 격리 (`DEFAULT_MODE=SIMULATION` fixture 강제)~~ **완료** — 원 7건 + EXE 기본 `.env` 조건 3건 모두 격리, `app/` 변경 0건 | `known_risks.md` §4.1 |
 | P0-2 | `backend/requirements.lock.txt` 도입 (`pip-compile` 또는 `uv pip compile`) | `dependency_policy.md`, `known_risks.md` §2.1 |
 | P0-3 | KIS 모의투자 API 실 연결 통합 테스트 1건 (운영자 hand-test 가능한 fixture) | `known_risks.md` §3.3 |
 | P0-4 | Paper 운영 시작 — 28일 데이터 축적 (`#72` Paper Gate evaluator 입력) | `paper_gate_policy.md` |

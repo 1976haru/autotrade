@@ -364,7 +364,7 @@ def test_safety_flags_unchanged():
     assert s.kis_is_paper is True
 
 
-def test_simulated_fills_flag_default_false():
+def test_simulated_fills_flag_default_false(safe_default_flags):
     s = Settings()
     assert s.ai_paper_allow_simulated_fills is False
     assert s.ai_paper_fill_slippage_bps == 0.0

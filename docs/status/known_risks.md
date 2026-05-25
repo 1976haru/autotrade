@@ -101,24 +101,34 @@ LIVE 활성화 *전* 다음이 필요:
 
 ## 4. CI / 테스트 안정성
 
-### 4.1 사전 환경 실패 (7건)
+### 4.1 사전 환경 의존 실패 — **격리 완료 (P0-1)**
 
-#87 audit 시점에서 확인된 *환경 의존 실패* (`pytest -q` 전체 실행):
-- `test_ai_routes.py::test_analyze_persists_default_mode_on_audit_row`
-- `test_ai_routes.py::test_analyze_audit_row_carries_mode_even_on_provider_error`
-- `test_brokers_kis_stub.py::test_constructor_reads_settings_credentials_when_unset`
-- `test_brokers_kis_stub.py::test_get_price_raises_when_no_credentials`
-- `test_data_quality.py::test_cli_runs_with_format_json`
-- `test_mvp_completion_doc.py::test_summary_script_secret_check_exits_clean`
-- `test_routes.py::test_status_exposes_safety_flags`
+#87 audit 시점에서 확인된 *환경 의존 실패* 7건은 후속 PR 에서
+`DEFAULT_MODE=SIMULATION` 강제 autouse fixture 로 격리되었다
+(`test_routes.py::_clean_safety_env`, `test_ai_routes.py::_clean_default_mode`,
+`test_brokers_kis_stub.py::_clean_kis_env`). CLI/서브프로세스 기반 2건
+(`test_data_quality.py::test_cli_runs_with_format_json`,
+`test_mvp_completion_doc.py::test_summary_script_secret_check_exits_clean`)은
+모드 비의존이라 재현되지 않는다.
 
-원인: 일부 테스트가 `DEFAULT_MODE` 환경변수가 `SIMULATION` 임을 가정하지만
-실제 runner 가 `PAPER` 를 주입 → assert mismatch. 본 7건은 `main` 의 *기존*
-상태이며 #88 의 새 변경과 무관 (재현 검증 완료 — #84 / #85 / #86 / #87 / #88
-모두 동일).
+추가로, EXE 기본 `.env`(`.env.example`: `DEFAULT_MODE=PAPER` +
+`ENABLE_KIS_PAPER_AUTO_TRADING=true` + `AI_PAPER_TICK_DRY_RUN=false` +
+`AI_PAPER_ALLOW_SIMULATED_FILLS=true`)를 `backend/.env` 로 둔 *운영자 박스*
+조건에서 전체 스위트 실행 시 다음 3건이 추가로 실패하던 것을 격리했다:
 
-**후속**: 본 테스트들을 `DEFAULT_MODE=SIMULATION` 강제 fixture 로 격리 (별도
-PR — `app/` 코드 변경 0건 작업 가능).
+- `test_ai_paper_background_tick_driver.py::test_simulated_fills_flag_default_false`
+  — 코드 default 검증인데 `.env` override → `safe_default_flags` fixture 적용.
+- `test_ai_paper_full_trade_flow_e2e.py::test_api_run_once_trade_dry_run_default_no_order`
+  — body 미지정 시 *코드 안전 기본값* 을 기대하는데 `.env` 가 dry_run=false /
+  allow_fills=true 로 override → `safe_default_flags` fixture 적용.
+- `test_secret_exposure_guard.py::TestApiResponses::test_credential_fields_boolean_only`
+  — `missing_credentials` 가 *필드명 라벨 목록*(예: `KIS_APP_KEY`, secret VALUE
+  아님)인데 heuristic 이 boolean 만 허용해 오탐 (단독 실행 시 항상 실패하던
+  순서 의존 버그). 라벨 목록을 알려진 안전 라벨 allowlist 로 검증하도록 수정.
+
+**결과**: 전체 스위트가 `backend/.env`(EXE 기본) 유무 / `DEFAULT_MODE` 주입과
+무관하게 green (7628 passed). `app/` 운영 로직 / broker / RiskManager /
+OrderExecutor / route_order 변경 0건 — 테스트 격리만.
 
 ### 4.2 Frontend stress test flakiness
 
