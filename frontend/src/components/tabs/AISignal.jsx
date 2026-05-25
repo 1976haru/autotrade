@@ -21,6 +21,8 @@ import { RealDataStrategyValidationCard } from "../common/RealDataStrategyValida
 import { IntradayStrategyValidationCard } from "../common/IntradayStrategyValidationCard";
 import { KisIntraday100ValidationCard } from "../common/KisIntraday100ValidationCard";
 import { Wf6m50SymbolsCard } from "../common/Wf6m50SymbolsCard";
+import { Wf6mRootCauseCard } from "../common/Wf6mRootCauseCard";
+import { Wf6mRebuildExperimentsCard } from "../common/Wf6mRebuildExperimentsCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
@@ -107,6 +109,10 @@ export function AISignal({ activeStratIds }) {
       {/* WF-6M-50SYMBOLS-01: 6개월·50종목·1000만원 자금곡선 + 등급화 + 업그레이드 방향 —
           Paper/Backtest only, KIS 주문 0건, 자동 적용/실전 전환/주문 0건. */}
       <Wf6m50SymbolsCard />
+      {/* WF-6M ROOT-CAUSE+REBUILD: 손실 원인분해 + 재설계 실험 — Paper/Backtest only,
+          KIS 주문 0건, 자동 적용/실전 전환/주문 0건. */}
+      <Wf6mRootCauseCard />
+      <Wf6mRebuildExperimentsCard />
       {/* P-31: 분석용 데이터 내보내기 (CSV/JSONL) — secret 미포함, 주문 신호 아님. */}
       <DecisionEpisodeExportButton />
       {/* P-32: 이벤트 로그 품질 점검 — 진단 전용, 자동 주문 중단 아님. */}

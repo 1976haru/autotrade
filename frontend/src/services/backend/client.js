@@ -987,6 +987,12 @@ export const backendApi = {
   // Paper/Backtest only · KIS 주문 API 0건 · 자동 적용/실전 전환/주문 0건 · 수익 보장 아님.
   wf6m50SymbolsLatest: () =>
     backendFetch("/api/system/wf-6m-50symbols/latest"),
+  // WF-6M ROOT-CAUSE+REBUILD: 손실 원인분해 / 재설계 실험 latest (read-only).
+  // Paper/Backtest only · 자동 적용/실전 전환/주문 0건 · 수익 보장 아님.
+  wf6mRootCauseLatest: () =>
+    backendFetch("/api/system/wf-6m-root-cause/latest"),
+  wf6mRebuildLatest: () =>
+    backendFetch("/api/system/wf-6m-rebuild/latest"),
   // 11-00: EXE 빌드 전 통합 검증 Gate (fast, read-only). subprocess/KIS 호출 0건.
   finalPrebuildGate: () => backendFetch("/api/system/final-prebuild-gate"),
   // #54 / 7-02: 기본 Universe 50개 상태 (read-only). secret 값 0건.
