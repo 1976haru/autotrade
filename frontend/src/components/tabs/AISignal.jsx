@@ -24,6 +24,7 @@ import { Wf6m50SymbolsCard } from "../common/Wf6m50SymbolsCard";
 import { Wf6mRootCauseCard } from "../common/Wf6mRootCauseCard";
 import { Wf6mRebuildExperimentsCard } from "../common/Wf6mRebuildExperimentsCard";
 import { StrategyAgentDecompositionCard } from "../common/StrategyAgentDecompositionCard";
+import { ForwardValidationCard } from "../common/ForwardValidationCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
 import { OperatingLoopCard } from "./OperatingLoopCard";
@@ -116,6 +117,8 @@ export function AISignal({ activeStratIds }) {
       <Wf6mRebuildExperimentsCard />
       {/* DECOMPOSITION-01: 매매기법 vs Agent 분해 — Paper/Backtest only, EXE 빌드 0건. */}
       <StrategyAgentDecompositionCard />
+      {/* FORWARD-VALIDATION-01: 고정 룰 forward/OOS 검증 — Paper/Backtest only, EXE 빌드 0건. */}
+      <ForwardValidationCard />
       {/* P-31: 분석용 데이터 내보내기 (CSV/JSONL) — secret 미포함, 주문 신호 아님. */}
       <DecisionEpisodeExportButton />
       {/* P-32: 이벤트 로그 품질 점검 — 진단 전용, 자동 주문 중단 아님. */}

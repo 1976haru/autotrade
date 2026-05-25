@@ -80,6 +80,7 @@ class SimV2Config:
     trailing_stop_pct: float = 0.0                    # >0 이면 고점 대비 -x% 트레일링 청산
     time_stop_min: int = 0                            # >0 이면 N분 내 미진전 시 청산
     veto_exclude_grade: bool = False                  # EXCLUDE 등급 종목 진입 차단
+    apply_position_sizing: bool = False               # 등급별 사이징(agent mode 무관 결합용)
     # 랭킹 보조 입력.
     grade_map: dict[str, str] = field(default_factory=dict)
     strategy_pf: dict[str, float | None] = field(default_factory=dict)
@@ -113,6 +114,7 @@ class SimV2Result:
     by_hold_bucket: dict[str, Any] = field(default_factory=dict)
     by_strategy: dict[str, Any] = field(default_factory=dict)
     by_grade: dict[str, Any] = field(default_factory=dict)
+    by_symbol: dict[str, Any] = field(default_factory=dict)
     skipped_max_positions: int = 0
     skipped_no_cash: int = 0
     low_confidence: bool = False
@@ -365,7 +367,7 @@ def run_sim_v2(bars: Sequence[Any], signals: dict[tuple[str, str], dict[str, Any
             entry_px = bar.close * (1 + slip)
             cap = cfg.max_position_notional * cfg.size_scale
             notional = min(cap, cash)
-            if cfg.agent_mode == "AGENT_POSITION_SIZER_ONLY":
+            if cfg.agent_mode == "AGENT_POSITION_SIZER_ONLY" or cfg.apply_position_sizing:
                 # GO 1~2M / TUNE 0.5~1M / 그 외 confidence 비례 축소.
                 g = cfg.grade_map.get(sym, "WATCH")
                 scale = 1.0 if g == "GO" else (0.5 if g == "TUNE" else 0.25)
@@ -500,6 +502,7 @@ def _summarize_v2(cfg, label, trades, daily_equity, cost_paid, tax_paid, slip_pa
         by_time_bucket=_bucket_stats("entry_bucket"),
         by_hold_bucket=_hold_stats(trades),
         by_strategy=_bucket_stats("strategy"), by_grade=_bucket_stats("grade"),
+        by_symbol=_bucket_stats("symbol"),
         skipped_max_positions=skipped_max, skipped_no_cash=skipped_cash,
         low_confidence=(n < 100))
 
@@ -531,7 +534,8 @@ def result_to_dict(r: SimV2Result) -> dict[str, Any]:
         "tax_paid_total": r.tax_paid_total, "slippage_paid_total": r.slippage_paid_total,
         "trading_days": r.trading_days, "by_time_bucket": r.by_time_bucket,
         "by_hold_bucket": r.by_hold_bucket, "by_strategy": r.by_strategy,
-        "by_grade": r.by_grade, "skipped_max_positions": r.skipped_max_positions,
+        "by_grade": r.by_grade, "by_symbol": r.by_symbol,
+        "skipped_max_positions": r.skipped_max_positions,
         "skipped_no_cash": r.skipped_no_cash, "low_confidence": r.low_confidence,
         "is_live_authorization": r.is_live_authorization, "broker_order_sent": r.broker_order_sent,
         "order_created": r.order_created, "do_not_auto_apply": r.do_not_auto_apply,

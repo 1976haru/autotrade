@@ -744,6 +744,40 @@ def get_wf_6m_50symbols_latest() -> dict:
     }
 
 
+@router.get("/system/forward-validation/latest")
+def get_forward_validation_latest() -> dict:
+    """WF-6M forward/OOS 검증 (latest, read-only). 없으면 empty fallback."""
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/strategy_validation/forward_validation_latest.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            data["available"] = True
+            return data
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "_source": "empty", "available": False,
+        "final_forward_verdict": "FORWARD_FAIL",
+        "exe_rebuild_recommendation": "EXE 재빌드 보류 (forward 리포트 없음)",
+        "paper_rehearsal_recommendation": "Paper 리허설 아직 불가",
+        "rule_locked_before_validation": True, "best": {}, "candidate_scores": {},
+        "monthly_forward": {}, "anchored_forward": {}, "symbol_split": {},
+        "worst_month_holdout": {}, "agent_forward": {}, "conclusions": [], "next_steps": [],
+        "do_not_auto_apply": True, "auto_apply_allowed": False, "is_live_authorization": False,
+        "live_trading_recommendation": False, "broker_order_sent": False, "order_created": False,
+        "exe_build_executed": False, "contains_secret": False, "no_profit_guarantee": True,
+        "safety_disclaimer": (
+            "WF-6M forward 검증 리포트가 아직 없습니다. CLI "
+            "`run_wf_6m_forward_validation.py --write-latest` 실행 후 갱신됩니다. "
+            "이 결과는 연구/백테스트 결과이며 실전매매 권고가 아닙니다."
+        ),
+    }
+
+
 @router.get("/system/strategy-agent-decomposition/latest")
 def get_strategy_agent_decomposition_latest() -> dict:
     """WF-6M 매매기법/Agent 분해 (latest, read-only). 없으면 empty fallback."""
