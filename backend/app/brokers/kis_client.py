@@ -109,6 +109,49 @@ class KisClient:
             raise KisApiError(f"KIS quote endpoint returned {r.status_code}: {r.text[:200]}")
         return r.json()
 
+    async def inquire_time_dailychartprice(
+        self,
+        symbol: str,
+        *,
+        date: str,
+        hour: str = "153000",
+        include_past: bool = True,
+    ) -> dict:
+        """주식일별분봉조회 [국내주식-213] — read-only 분봉 시세 조회.
+
+        GET /uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice
+        TR ID: FHKST03010230. **주문 API 가 아니다** — 시세 조회 전용.
+
+        한 호출은 `date` 의 `hour`(HHMMSS) 기준 과거 방향으로 분봉 묶음을 반환한다.
+        하루 전체를 덮으려면 caller 가 hour 를 뒤로 옮겨가며 여러 번 호출한다.
+        Returns raw JSON (output1 요약 + output2 분봉 배열). Caller 가 매핑한다.
+        """
+        token = await self._ensure_token()
+        await self._throttle()
+        async with self._client() as client:
+            r = await client.get(
+                "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice",
+                params={
+                    "FID_COND_MRKT_DIV_CODE": "J",
+                    "FID_INPUT_ISCD":         symbol,
+                    "FID_INPUT_HOUR_1":       hour,
+                    "FID_INPUT_DATE_1":       date,
+                    "FID_PW_DATA_INCU_YN":    "Y" if include_past else "N",
+                    "FID_FAKE_TICK_INCU_YN":  "N",
+                },
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "appkey":        self.app_key,
+                    "appsecret":     self.app_secret,
+                    "tr_id":         "FHKST03010230",
+                    "custtype":      "P",
+                },
+            )
+        if r.status_code != 200:
+            raise KisApiError(
+                f"KIS time-dailychartprice endpoint returned {r.status_code}: {r.text[:200]}")
+        return r.json()
+
     def _balance_tr_id(self) -> str:
         return "VTTC8434R" if self.is_paper else "TTTC8434R"
 

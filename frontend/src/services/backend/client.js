@@ -979,6 +979,10 @@ export const backendApi = {
   // 자동 적용/실전 전환/주문 0건. 수익 보장 아님.
   realIntradayFinalResult: () =>
     backendFetch("/api/system/real-intraday-final-result/latest"),
+  // KIS-INTRADAY-100-VALIDATION-01: 실제 KIS 분봉 100종목 전략 최종 판정 latest (read-only).
+  // KIS 주문 API 호출 0건. 자동 적용/실전 전환/주문 0건. 수익 보장 아님.
+  kisIntraday100ValidationLatest: () =>
+    backendFetch("/api/system/kis-intraday-100-validation/latest"),
   // 11-00: EXE 빌드 전 통합 검증 Gate (fast, read-only). subprocess/KIS 호출 0건.
   finalPrebuildGate: () => backendFetch("/api/system/final-prebuild-gate"),
   // #54 / 7-02: 기본 Universe 50개 상태 (read-only). secret 값 0건.
