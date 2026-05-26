@@ -7,6 +7,7 @@ CLI orchestration(fake collect_fn) + endpoint. 실제 KIS 수집/네트워크/he
 from __future__ import annotations
 
 import datetime as dt
+import json
 import re
 import sys
 from dataclasses import dataclass
@@ -308,6 +309,77 @@ def test_collection_script_no_order_or_exe():
 
 def test_validation_script_no_order_or_exe():
     _assert_clean((_SCRIPTS / "validate_robust_intraday_dataset.py").read_text(encoding="utf-8"))
+
+
+def test_runner_script_no_order_or_exe():
+    _assert_clean((_SCRIPTS / "run_robust50_collection_to_final_report.py").read_text(encoding="utf-8"))
+
+
+# ──────────────────────────── explicit-symbol collect + failed extract ────────────────────────────
+def test_failed_symbols_extract():
+    C = _import_script("collect_robust_intraday_dataset")
+    rep = {"per_symbol": [{"symbol": "A", "status": "FAILED"}, {"symbol": "B", "status": "OK"},
+                          {"symbol": "C", "status": "NO_DATA"}, {"symbol": "D", "status": "SKIP"}]}
+    assert C.failed_symbols_of(rep) == ["A", "C"]
+
+
+def test_collect_explicit_symbols_with_fake():
+    C = _import_script("collect_robust_intraday_dataset")
+    called = {}
+
+    def fake(ns):
+        called["symbols"] = ns.symbols
+        return {"status": "OK", "succeeded": 1, "requested": 1, "per_symbol": []}
+
+    rep = C.collect_explicit_symbols(["005930"], num_days=5, collect_fn=fake)
+    assert rep["stage"] == "5m" and rep["is_live_authorization"] is False
+    assert called["symbols"] == "005930"
+    # 빈 리스트는 collect_fn 호출 없이 short-circuit.
+    empty = C.collect_explicit_symbols([], num_days=5, collect_fn=lambda ns: 1 / 0)
+    assert empty["status"] == "OK" and empty["succeeded"] == 0
+
+
+# ──────────────────────────── runner chain (fake collect + validate) ────────────────────────────
+def test_runner_chain_collect_retry_validate(monkeypatch, tmp_path):
+    R = _import_script("run_robust50_collection_to_final_report")
+    calls = {"retry": 0}
+
+    def fake_collect(**kw):
+        return {"status": "PARTIAL_SUCCESS", "requested": 35, "succeeded": 33, "skipped": 0,
+                "failed": 2, "total_bars": 5000,
+                "per_symbol": [{"symbol": "000270", "status": "FAILED"},
+                               {"symbol": "114800", "status": "NO_DATA"},
+                               {"symbol": "005930", "status": "OK"}]}
+
+    def fake_retry(symbols, **kw):
+        calls["retry"] += 1
+        return {"status": "OK", "per_symbol": [{"symbol": s, "status": "OK"} for s in symbols]}
+
+    rdir = tmp_path / "reports"
+    rdir.mkdir()
+    (rdir / "robust_dataset_manifest.json").write_text(json.dumps({
+        "trading_days": 250, "actual_period": "2025-05-15 ~ 2026-05-26 (250 거래일)",
+        "start_date": "2025-05-15", "end_date": "2026-05-26", "symbol_count": 35,
+        "data_quality_status": "WARN", "time_split_status": "PASS", "regime_label_status": "OK",
+        "one_minute_availability": "UNAVAILABLE", "ready_for_robust_backtest": True,
+        "warnings": [], "next_recommended_task": "x"}), encoding="utf-8")
+    (rdir / "robust_dataset_quality.json").write_text(json.dumps({
+        "total_bars": 99999, "symbols_present": 35,
+        "per_symbol": [{"present": True, "day_count": 250}], "group_quality": {}}), encoding="utf-8")
+
+    monkeypatch.setattr(R.C, "run_robust_collection", lambda **kw: fake_collect(**kw))
+    monkeypatch.setattr(R.C, "collect_explicit_symbols", fake_retry)
+    monkeypatch.setattr(R.V, "main", lambda argv=None: 0)
+
+    s = R.run_to_final(report_dir=str(rdir), max_retry_failed=2, write_latest=True)
+    assert s["collection_status"] == "PARTIAL_SUCCESS"
+    assert calls["retry"] == 1  # 1회 재시도로 모두 회복 → 중단
+    assert s["remaining_failed_symbols"] == []
+    assert s["trading_days"] == 250 and s["ready_for_robust_backtest"] is True
+    assert s["backtest_executed"] is False and s["is_live_authorization"] is False
+    assert s["do_not_auto_apply"] is True and s["no_profit_guarantee"] is True
+    assert (rdir / "robust50_final_collection_summary.json").exists()
+    assert (rdir / "robust50_final_collection_summary.md").exists()
 
 
 # ──────────────────────────── CLI orchestration (fake, no network) ────────────────────────────

@@ -142,6 +142,41 @@ def run_robust_collection(
     return report
 
 
+def collect_explicit_symbols(
+    symbols: list[str], *, num_days: int, end: str | None = None, resume: bool = True,
+    sleep_seconds: float = 0.25, rate_max_calls: int = 2, rate_window: float = 1.1,
+    max_calls_per_day: int = 6, output_dir: str = ROBUST_5M_DIR,
+    progress_json: str | None = None, failed_json: str | None = None, collect_fn=None,
+) -> dict:
+    """명시한 종목 리스트만 5분봉으로 (재)수집 — 실패 종목 재시도용. (read-only, 주문 0건)"""
+    if not symbols:
+        return {"status": "OK", "requested": 0, "succeeded": 0, "failed": 0,
+                "total_bars": 0, "per_symbol": [], "stage": "5m", "output_dir": output_dir,
+                "is_live_authorization": False, "kis_order_api_called": False,
+                "broker_order_sent": False}
+    collect_fn = collect_fn or _default_collect_fn
+    prog = progress_json or str(Path(REPORT_DIR) / "robust_dataset_5m_retry_progress.json")
+    failed = failed_json or str(Path(REPORT_DIR) / "robust_dataset_failed_symbols.json")
+    ns = _build_collector_ns(
+        symbols=symbols, end=end, num_days=num_days, bar_size="5m", output_dir=output_dir,
+        resume=resume, progress_json=prog, failed_json=failed, sleep_seconds=sleep_seconds,
+        rate_max_calls=rate_max_calls, rate_window=rate_window,
+        max_calls_per_day=max_calls_per_day, min_complete_days=0)
+    rep = dict(collect_fn(ns) or {})
+    rep["stage"] = "5m"
+    rep["output_dir"] = output_dir
+    rep.setdefault("is_live_authorization", False)
+    rep.setdefault("kis_order_api_called", False)
+    rep.setdefault("broker_order_sent", False)
+    return rep
+
+
+def failed_symbols_of(report: dict) -> list[str]:
+    """수집 report 에서 실패/무데이터 종목코드만 추출 (재시도 대상)."""
+    return [p.get("symbol") for p in (report.get("per_symbol") or [])
+            if p.get("status") in ("FAILED", "NO_DATA") and p.get("symbol")]
+
+
 def build_one_minute_availability(report: dict, out_dir: str) -> dict:
     """1분봉 subset 수집 결과 → availability 분류 (UNAVAILABLE 은 FAIL 이 아님)."""
     succeeded = int(report.get("succeeded", 0) or 0)
