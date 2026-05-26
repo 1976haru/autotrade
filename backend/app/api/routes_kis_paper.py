@@ -10,8 +10,11 @@ REST endpoints:
 본 라우트는 *secret / 계좌번호 원문* 을 응답에 carry 하지 *않는다* — 존재
 여부 (`*_present: bool`) 만 노출.
 
-본 모듈은 broker / OrderExecutor / route_order 를 *직접 호출하지 않는다*.
-실제 KIS paper 흐름은 engine 의 default tick runner 가 안전 단위로 처리.
+본 모듈은 broker.place_order 를 *직접 호출하지 않는다* — KIS paper 자동주문은
+모두 sanctioned `execute_kis_paper_auto_order` → `route_order` (RiskManager →
+PermissionGate → OrderExecutor) 경로로만 위임한다. quick/slow Start 는
+`live_runner.build_kis_paper_tick_runner` 를 engine 에 주입해 실제 흐름을
+실행하고, mock 은 외부 API 0건의 카운터 루프(engine default tick runner)를 쓴다.
 """
 
 from __future__ import annotations
@@ -36,6 +39,9 @@ logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/kis-paper", tags=["kis-paper"])
+
+# detached background engine task 참조 보관 (GC 방지). /start 에서 사용.
+_BACKGROUND_TASKS: set = set()
 
 
 # ====================================================================
@@ -188,14 +194,49 @@ async def post_kis_paper_start(
             },
         )
 
-    # 백그라운드 실행 — engine.start() 가 async 이므로 task 로 schedule.
+    # KIS paper(quick/slow) 모드는 *실제* 자동매매 흐름을 실행한다 — 시세 조회 →
+    # Agent Council 판단 → execute_kis_paper_auto_order(route_order 위임). mock 은
+    # 외부 API 0건의 빠른 카운터 루프(engine default tick runner) 유지.
+    tick_runner = None
+    cleanup = None
+    if mode in (TestMode.QUICK, TestMode.SLOW):
+        from app.api.deps import get_broker, get_risk_manager
+        from app.db.session import SessionLocal
+        from app.kis_paper.live_runner import build_kis_paper_tick_runner
+
+        # request scope 밖에서 broker/risk/db 를 직접 구성 (background task).
+        bg_db = SessionLocal()
+        broker = get_broker()
+        risk = get_risk_manager()
+        tick_runner, cleanup = build_kis_paper_tick_runner(
+            db=bg_db,
+            broker=broker,
+            risk=risk,
+            settings=settings,
+            credentials_present=bool(
+                rd.kis_key_present and rd.kis_secret_present and rd.kis_account_present
+            ),
+        )
+
+    # 백그라운드 실행 — engine.start() 가 async 이므로 *실행 중인* 이벤트 루프에
+    # detached task 로 schedule 한다. (이전 구현은
+    # background_tasks.add_task(asyncio.create_task, ...) 였는데, Starlette 가
+    # 비-async callable 인 asyncio.create_task 를 threadpool 에서 호출 →
+    # "no running event loop" RuntimeError 로 *루프가 시작조차 안 됐다*. 본
+    # 핸들러는 async 라 이미 루프 위에 있으므로 직접 create_task 한다.)
     async def _run() -> None:
         try:
-            await engine.start(mode, rd)
+            await engine.start(mode, rd, tick_runner=tick_runner)
         except Exception as e:  # noqa: BLE001 — engine 자체가 모든 예외를 catch 하지만 방어
             logger.exception("kis-paper engine top-level failure: %s", e)
+        finally:
+            if cleanup is not None:
+                cleanup()
 
-    background_tasks.add_task(asyncio.create_task, _run())
+    task = asyncio.create_task(_run())
+    # task GC 방지 — 완료 시 set 에서 제거.
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
 
     return KisPaperStatusOut(**engine.status_dict())
 
