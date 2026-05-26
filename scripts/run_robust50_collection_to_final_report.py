@@ -58,16 +58,22 @@ def _read_json(path: Path) -> dict:
 def run_to_final(
     *, symbol_set: str = "robust50", period: str = "2y", num_days: int | None = 300,
     resume: bool = True, max_retry_failed: int = 2, write_latest: bool = True,
-    report_dir: str = REPORT_DIR,
+    report_dir: str = REPORT_DIR, sleep_seconds: float = 0.35,
+    rate_max_calls: int = 1, rate_window: float = 1.0,
 ) -> dict:
-    """수집 → 실패 재시도 → 품질검증(--write-latest) → 최종 summary 까지 한 번에 진행."""
+    """수집 → 실패 재시도 → 품질검증(--write-latest) → 최종 summary 까지 한 번에 진행.
+
+    pacing 기본값(rate_max_calls=1 / window=1.0 / sleep=0.35)은 KIS 모의 초당건수 제한
+    *아래*로 맞춰 EGW00201 backoff 재시도 churn 을 줄이기 위함(첫 시도 성공률↑ → 순 처리량↑).
+    """
     resolved_days = num_days if num_days is not None else _PERIOD_DAYS.get(period, 240)
 
-    _eprint(f"[runner] collect pass1: symbol_set={symbol_set} num_days={resolved_days} resume={resume}")
+    _eprint(f"[runner] collect pass1: symbol_set={symbol_set} num_days={resolved_days} resume={resume} "
+            f"pacing(rate={rate_max_calls}/{rate_window}s sleep={sleep_seconds})")
     rep = C.run_robust_collection(
         stage="5m", symbol_set=symbol_set, period=period, num_days=num_days, end=None,
-        resume=resume, sleep_seconds=0.25, rate_max_calls=2, rate_window=1.1,
-        max_calls_per_day=6)
+        resume=resume, sleep_seconds=sleep_seconds, rate_max_calls=rate_max_calls,
+        rate_window=rate_window, max_calls_per_day=6)
 
     failed = C.failed_symbols_of(rep)
     retry_log: list[dict] = []
@@ -75,7 +81,9 @@ def run_to_final(
         if not failed:
             break
         _eprint(f"[runner] retry {attempt + 1}/{max_retry_failed}: {len(failed)} symbols -> {failed}")
-        r2 = C.collect_explicit_symbols(failed, num_days=resolved_days, resume=True)
+        r2 = C.collect_explicit_symbols(
+            failed, num_days=resolved_days, resume=True, sleep_seconds=sleep_seconds,
+            rate_max_calls=rate_max_calls, rate_window=rate_window)
         before = len(failed)
         failed = C.failed_symbols_of(r2)
         retry_log.append({"attempt": attempt + 1, "before": before, "remaining": len(failed),
@@ -173,6 +181,9 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--resume", action="store_true", default=True)
         p.add_argument("--no-resume", dest="resume", action="store_false")
         p.add_argument("--max-retry-failed", type=int, default=2)
+        p.add_argument("--sleep-seconds", type=float, default=0.35)
+        p.add_argument("--rate-max-calls", type=int, default=1)
+        p.add_argument("--rate-window", type=float, default=1.0)
         p.add_argument("--write-latest", action="store_true", default=True)
         p.add_argument("--no-backtest", action="store_true", default=True,
                        help="명시적 no-backtest (기본 — 본 wrapper 는 백테스트를 실행하지 않음)")
@@ -182,7 +193,8 @@ def main(argv: list[str] | None = None) -> int:
         summary = run_to_final(
             symbol_set=args.symbol_set, period=args.period, num_days=args.num_days,
             resume=args.resume, max_retry_failed=args.max_retry_failed,
-            write_latest=args.write_latest)
+            write_latest=args.write_latest, sleep_seconds=args.sleep_seconds,
+            rate_max_calls=args.rate_max_calls, rate_window=args.rate_window)
 
         print(f"[OK] collection_status={summary['collection_status']} "
               f"succeeded={summary['succeeded']}/{summary['requested_symbols']} "
