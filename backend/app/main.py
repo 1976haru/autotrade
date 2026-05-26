@@ -39,6 +39,7 @@ from app.api.routes_themes import router as themes_router
 from app.api.routes_virtual import router as virtual_router
 from app.api.routes_watchlists import router as watchlists_router
 from app.api.routes_kis_paper import router as kis_paper_router  # #89
+from app.api.health import router as health_router
 from app.core.config import get_settings
 from app.db.migration_runner import (
     MigrationState,
@@ -281,6 +282,7 @@ app.include_router(notifications_router, prefix="/api")
 app.include_router(monitoring_router, prefix="/api")
 app.include_router(analytics_router, prefix="/api")
 app.include_router(kis_paper_router, prefix="/api")  # #89
+app.include_router(health_router, prefix="/api")
 
 
 @app.get("/")
