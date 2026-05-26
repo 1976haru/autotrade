@@ -49,6 +49,10 @@ _RECENT_WINDOW = 6
 
 # route_order 위임 + 권한 게이트가 NEEDS_APPROVAL 로 큐 이동시킨 경우의 reason_code.
 _BLOCKED_BY_PERMISSION_GATE = "BLOCKED_BY_PERMISSION_GATE"
+# exit_plan 없는 BUY 차단 (auto_permission.KisPaperPermReason.MISSING_EXIT_PLAN) —
+# 권한 게이트가 *주문 전* 차단하므로 broker 호출 0건. 운영자 가시성을 위해
+# risk_block 으로 카운트.
+_MISSING_EXIT_PLAN = "MISSING_EXIT_PLAN"
 
 # tick 결과 dict — engine._merge_tick_result 가 읽는 카운터 키.
 TickResult = dict[str, Any]
@@ -211,8 +215,12 @@ def build_kis_paper_tick_runner(
             out["orders_rejected"] = 1
             out["risk_blocks"] = 1
             out["failures"] = [f"{symbol} 주문 거부: {result.reason_message[:120]}"]
-        # KIS_PAPER_DRY_RUN_OK / KIS_PAPER_AUTO_DISABLED / window-blocked →
-        # attempted 만 카운트 (정상 안전 기본값, 오류 아님 · 실패 메시지 0건).
+        elif rc == _MISSING_EXIT_PLAN:
+            # exit_plan 없는 BUY 차단 — 권한 게이트가 주문 전 막음 (broker 호출 0건).
+            out["risk_blocks"] = 1
+            out["failures"] = [f"{symbol} BUY 차단: exit_plan 없음 (MISSING_EXIT_PLAN)"]
+        # KIS_PAPER_DRY_RUN_OK / KIS_PAPER_AUTO_DISABLED / MARKET_CLOSED / window-blocked
+        # → attempted 만 카운트 (정상 안전 기본값, 오류 아님 · 실패 메시지 0건).
         return out
 
     def cleanup() -> None:
