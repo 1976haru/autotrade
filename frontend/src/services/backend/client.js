@@ -975,6 +975,10 @@ export const backendApi = {
   // INTRADAY-DATA-02: 분봉 데이터 소스 상태 (read-only). KIS 실제 호출 0건, secret 0건.
   intradayDataSourceStatus: () =>
     backendFetch("/api/system/intraday-data-source/status"),
+  // ROBUST-DATASET-COLLECTION-01: robust 분봉 데이터셋 상태 (read-only).
+  // 수집/품질검증/메타데이터 전용 · 백테스트/주문/실전 전환/EXE 빌드 0건 · 수익 보장 아님.
+  robustDatasetStatus: () =>
+    backendFetch("/api/system/robust-dataset/status"),
   // REAL-INTRADAY-TEST-01: 실제 분봉 전략 가능성 최종 판정 latest (read-only).
   // 자동 적용/실전 전환/주문 0건. 수익 보장 아님.
   realIntradayFinalResult: () =>

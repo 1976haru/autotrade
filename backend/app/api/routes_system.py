@@ -1067,6 +1067,71 @@ def get_intraday_data_source_status() -> dict:
     }
 
 
+@router.get("/system/robust-dataset/status")
+def get_robust_dataset_status() -> dict:
+    """KIS-INTRADAY-ROBUST-DATASET-COLLECTION-01 — robust 데이터셋 상태 (read-only).
+
+    `reports/strategy_validation/robust_dataset_status.json` 가 있으면 그 snapshot 을
+    반환하고, 없으면 종목군 manifest 기반 empty fallback 을 반환한다(무거운 적재/검증은
+    API 에서 실행하지 않음 — CLI `validate_robust_intraday_dataset.py --write-latest` 전용).
+    broker / OrderExecutor / route_order / KIS 주문 API 호출 0건, secret/계좌 원문 0건.
+    """
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/strategy_validation/robust_dataset_status.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            data["available"] = True
+            return data
+        except Exception:  # noqa: BLE001
+            pass
+
+    # empty fallback — 종목군 manifest 는 수집 없이도 계산 가능(메타데이터).
+    try:
+        from app.market_data.robust_dataset import (
+            build_robust_symbol_groups,
+            symbol_group_to_dict,
+        )
+        groups = symbol_group_to_dict(build_robust_symbol_groups())
+        symbols_by_group = groups["symbols_by_group"]
+        symbol_count = groups["total_symbols"]
+    except Exception:  # noqa: BLE001
+        symbols_by_group = {}
+        symbol_count = 0
+
+    return {
+        "_source": "empty", "available": False,
+        "collection_status": "NOT_COLLECTED",
+        "data_quality_status": "FAIL",
+        "symbol_count": symbol_count,
+        "actual_period": "수집 전",
+        "trading_days": 0,
+        "ready_for_robust_backtest": False,
+        "one_minute_available": False,
+        "one_minute_availability": "UNAVAILABLE",
+        "time_split_status": "FAIL",
+        "regime_label_status": "FAIL",
+        "symbols_by_group": symbols_by_group,
+        "warnings": ["아직 robust 데이터셋이 수집되지 않았습니다."],
+        "next_recommended_task": (
+            "CLI `collect_robust_intraday_dataset.py` 수집 후 "
+            "`validate_robust_intraday_dataset.py --write-latest` 실행."
+        ),
+        "live_trading_recommendation": False, "real_order_allowed": False,
+        "is_live_authorization": False, "is_order_signal": False,
+        "kis_order_api_called": False, "broker_order_sent": False,
+        "exe_build_executed": False, "contains_secret": False,
+        "do_not_auto_apply": True, "no_profit_guarantee": True,
+        "disclaimer": (
+            "robust 데이터셋 상태(read-only). 데이터 수집/품질검증/메타데이터 전용 — "
+            "백테스트/주문/실전 전환/EXE 빌드 0건, 수익 보장 아님."
+        ),
+    }
+
+
 @router.get("/system/intraday-strategy-validation/latest")
 def get_intraday_strategy_validation_latest() -> dict:
     """INTRADAY-DATA-01 — 분봉 단타 전략 검증 (latest, read-only, 무거운 실행 금지).
