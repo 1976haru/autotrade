@@ -81,6 +81,10 @@ class KisPaperAutoDecision:
     position_quantity:    int               = 0
     is_short_entry:       bool              = False
     short_position:       bool              = False
+    # V2: 판단에 쓰인 시세 출처 — "kis"(실시간) / "mock" / "yfinance". 실제
+    # KIS 모의주문 전송(not dry_run)은 price_source="kis" 에서만 허용된다.
+    price_source:         str               = "kis"
+    price_is_stale:       bool              = False
 
     def __post_init__(self) -> None:
         if self.is_short_entry is not False:
@@ -221,6 +225,8 @@ def build_permission_input(
         window_end=str(getattr(settings, "kis_paper_auto_order_window_end", "14:50")),
         min_confidence=float(getattr(settings, "kis_paper_auto_min_confidence", 0.6)),
         min_quality_score=int(getattr(settings, "kis_paper_auto_min_quality_score", 60)),
+        price_source=str(getattr(decision, "price_source", "kis") or "kis"),
+        price_is_stale=bool(getattr(decision, "price_is_stale", False)),
         now=now,
     )
 

@@ -28,6 +28,7 @@ from app.auto_paper.loop import (
     get_auto_paper_loop,
 )
 from app.auto_paper.ledger import get_ledger
+from app.auto_paper.paper_auto_mode import resolve_paper_auto_mode
 from app.auto_paper.events import DecisionAction
 from app.auto_paper.decisions import (
     AIRecommendationInput,
@@ -2023,6 +2024,21 @@ def get_run_readiness() -> dict:
         "market_data": {
             "provider": str(settings.market_data_provider),
             "is_mock":  str(settings.market_data_provider).strip().lower() == "mock",
+            "is_kis_realtime": str(settings.market_data_provider).strip().lower() == "kis",
+        },
+        # V2: 4-모드 분류 (VIRTUAL_ONLY / KIS_REALTIME_DRYRUN /
+        # KIS_REALTIME_PAPER_AUTO / KIS_REALTIME_SMOKE_TEST) + 정상/스모크 한도.
+        "paper_auto_mode": resolve_paper_auto_mode(settings).to_dict(),
+        "paper_auto_limits": {
+            "smoke_mode":               bool(getattr(settings, "kis_paper_smoke_mode", False)),
+            "smoke_symbol":             str(getattr(settings, "kis_paper_smoke_symbol", "005930")),
+            "smoke_qty":                int(getattr(settings, "kis_paper_smoke_qty", 1)),
+            "max_concurrent_positions": int(getattr(settings, "kis_paper_max_concurrent_positions", 5)),
+            "per_symbol_notional_krw":  int(getattr(settings, "kis_paper_per_symbol_notional_krw", 1_000_000)),
+            "daily_buy_limit_krw":      int(getattr(settings, "kis_paper_daily_buy_limit_krw", 3_000_000)),
+            "max_new_positions_per_tick": int(getattr(settings, "kis_paper_max_new_positions_per_tick", 1)),
+            "max_orders_per_day":       int(getattr(settings, "kis_paper_auto_max_orders_per_day", 10)),
+            "scan_max_symbols":         int(getattr(settings, "kis_paper_scan_max_symbols", 10)),
         },
         "permission": {
             "paper_virtual_execution_allowed": True,

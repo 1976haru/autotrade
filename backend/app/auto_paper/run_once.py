@@ -187,6 +187,10 @@ class RunOnceResult:
     market_phase:    str
     recorded_event_id: str | None        = None
     metadata:        dict[str, Any]      = field(default_factory=dict)
+    # V2: 판단에 쓰인 시세 출처 — "mock" / "yfinance" / "kis". 진단 파이프라인은
+    # 기본 mock. KIS 실시간 경로는 driver_bridge 스캔이 담당하며 본 값은 표시용.
+    price_source:    str                 = "mock"
+    price_is_stale:  bool                = False
 
     # 절대 invariant.
     is_order_signal:       bool = False
@@ -219,6 +223,8 @@ class RunOnceResult:
             "universe_count":       int(self.universe_count),
             "market_data_provider": self.market_data_provider,
             "market_data_is_mock":  bool(self.market_data_is_mock),
+            "price_source":         self.price_source,
+            "price_is_stale":       bool(self.price_is_stale),
             "market_phase":         self.market_phase,
             "recorded_event_id":    self.recorded_event_id,
             "metadata":             dict(self.metadata),
@@ -417,6 +423,7 @@ def run_paper_pipeline_once(
             universe_count=uni.count,
             market_data_provider=str(market_data_provider),
             market_data_is_mock=bool(is_mock),
+            price_source=("mock" if is_mock else str(market_data_provider)),
             market_phase=phase.value,
             recorded_event_id=event_id,
             metadata=meta,

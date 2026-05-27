@@ -22,7 +22,12 @@ class Settings(BaseSettings):
     enable_kimp_strategy: bool = False        # 김프(Korean Premium) 전략 모듈 활성
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     database_url: str = "sqlite:///./data/auto_trader.db"
-    market_data_provider: Literal["mock", "yfinance"] = "mock"
+    # market data provider — "mock" (합성), "yfinance" (지연 시세), "kis" (실시간
+    # KIS 시세, read-only quote API). **provider="kis" 일 때만** KIS 실시세 기반
+    # Paper Auto 가 KIS 모의주문을 전송할 수 있다. mock / yfinance 에서는 KIS
+    # 모의주문 전송이 차단된다 (mock 시세로 KIS 주문 전송 금지 — auto_permission
+    # 의 KIS_REALTIME_PRICE_REQUIRED 가드).
+    market_data_provider: Literal["mock", "yfinance", "kis"] = "mock"
 
     enable_fill_polling:           bool = False
     fill_polling_interval_seconds: int  = 5
@@ -132,6 +137,23 @@ class Settings(BaseSettings):
     # KIS 모의 체결 조회 polling — 기본 OFF (안전). enable_fill_polling 와 별개.
     kis_paper_fill_polling:           bool  = False
     kis_paper_fill_poll_interval_seconds: int = 10
+
+    # ── KIS Realtime Paper Auto V2 ─────────────────────────────────────────
+    # 정상 Paper Auto 운용 한도 (smoke mode 아님). 조건 충족 시 *여러 종목* 을
+    # 리스크 한도 내에서 KIS 모의주문. 본 값들은 KIS 모의 한도일 뿐 실거래 한도가
+    # 아니다 — is_live_authorization 은 항상 False.
+    kis_paper_max_concurrent_positions: int = 5
+    kis_paper_per_symbol_notional_krw:  int = 1_000_000
+    kis_paper_daily_buy_limit_krw:      int = 3_000_000
+    # 1 tick 당 신규 진입 허용 종목 수 (버스트 방지). 0/음수는 1 로 보정.
+    kis_paper_max_new_positions_per_tick: int = 1
+    # 1 tick 당 KIS 실시세 조회 종목 수 상한 (rate limit 보호). 0 이면 universe 전체.
+    kis_paper_scan_max_symbols:         int = 10
+    # Smoke mode — *정상 Paper Auto 의 하위 제한 모드*. True 면 단일 종목 / 1주 /
+    # 1건만 (최초 안전 확인용). 정상 운용에서는 반드시 false.
+    kis_paper_smoke_mode:               bool = False
+    kis_paper_smoke_symbol:             str  = "005930"
+    kis_paper_smoke_qty:                int  = 1
 
     def symbol_whitelist_set(self) -> set[str]:
         """env 콤마 문자열을 set으로 파싱. 공백 strip."""
