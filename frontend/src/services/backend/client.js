@@ -1028,6 +1028,9 @@ export const backendApi = {
   // CHECKLIST-04 P2: 실제 1분봉 intrabar 백테스트 (read-only).
   intrabarRealDataBacktestLatest: () =>
     backendFetch("/api/system/intrabar-realdata-backtest/latest"),
+  // CHECKLIST-04 ranking-redesign: composite ranking 후보 비교 (read-only).
+  rankingRedesignLatest: () =>
+    backendFetch("/api/system/ranking-redesign/latest"),
   // 11-00: EXE 빌드 전 통합 검증 Gate (fast, read-only). subprocess/KIS 호출 0건.
   finalPrebuildGate: () => backendFetch("/api/system/final-prebuild-gate"),
   // #54 / 7-02: 기본 Universe 50개 상태 (read-only). secret 값 0건.

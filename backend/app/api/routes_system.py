@@ -714,6 +714,36 @@ def get_intrabar_signal_ranking_latest() -> dict:
         }
 
 
+@router.get("/system/ranking-redesign/latest")
+def get_ranking_redesign_latest() -> dict:
+    """CHECKLIST-04 — composite ranking 재설계 후보 비교 (latest, read-only).
+
+    `reports/backtest/ranking_redesign_latest.json` 가 있으면 반환, 없으면 가벼운
+    NOT_READY fallback (무거운 비교는 CLI `run_ranking_redesign.py --write-latest` 전용).
+    어떤 후보도 런타임/전략에 자동 적용되지 않음. 주문 / KIS API 0건.
+    """
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/backtest/ranking_redesign_latest.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            return data
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "_source": "empty", "available": False,
+        "verdict": "RANKING_REJECTED",
+        "recommendation": "리포트 없음 — CLI run_ranking_redesign.py --write-latest 실행 후 갱신.",
+        "auto_apply_allowed": False, "applied_to_runtime": False,
+        "is_live_authorization": False, "is_order_signal": False,
+        "no_profit_guarantee": True, "contains_secret": False,
+        "disclaimer": "연구용 백테스트 — 자동 적용 안 됨, 실전매매 권고 아님.",
+    }
+
+
 @router.get("/system/intrabar-realdata-backtest/latest")
 def get_intrabar_realdata_backtest_latest() -> dict:
     """CHECKLIST-04 P2 — 실제 1분봉 intrabar 백테스트 (latest, read-only).

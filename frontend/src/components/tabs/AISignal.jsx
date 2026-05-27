@@ -31,6 +31,7 @@ import { Locked60dWeeklyNewDataCard } from "../common/Locked60dWeeklyNewDataCard
 import { Intraday1YScaledValidationCard } from "../common/Intraday1YScaledValidationCard";
 import { IntrabarSignalRankingCard } from "../common/IntrabarSignalRankingCard";
 import { IntrabarRealDataBacktestCard } from "../common/IntrabarRealDataBacktestCard";
+import { RankingRedesignCard } from "../common/RankingRedesignCard";
 import { RobustDatasetStatusCard } from "../common/RobustDatasetStatusCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
@@ -138,6 +139,8 @@ export function AISignal({ activeStratIds }) {
       <IntrabarSignalRankingCard />
       {/* CHECKLIST-04 P2: 실제 1분봉 intrabar 백테스트 — 연구용 백테스트, 주문 0건. */}
       <IntrabarRealDataBacktestCard />
+      {/* CHECKLIST-04 ranking-redesign: composite ranking 후보 비교 — 자동 적용 0, 주문 0건. */}
+      <RankingRedesignCard />
       {/* ROBUST-DATASET-COLLECTION: robust 분봉 데이터셋 수집/품질/메타데이터 — 수집 전용, 백테스트/주문 0건. */}
       <RobustDatasetStatusCard />
       {/* P-31: 분석용 데이터 내보내기 (CSV/JSONL) — secret 미포함, 주문 신호 아님. */}
