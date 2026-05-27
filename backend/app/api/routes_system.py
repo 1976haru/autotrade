@@ -714,6 +714,38 @@ def get_intrabar_signal_ranking_latest() -> dict:
         }
 
 
+@router.get("/system/intrabar-realdata-backtest/latest")
+def get_intrabar_realdata_backtest_latest() -> dict:
+    """CHECKLIST-04 P2 — 실제 1분봉 intrabar 백테스트 (latest, read-only).
+
+    `reports/backtest/intrabar_realdata_backtest_latest.json` 가 있으면 반환, 없으면
+    *가벼운* NOT_READY fallback (무거운 backtest 는 API 에서 실행 안 함 — CLI
+    `run_intrabar_realdata_backtest.py --write-latest` 전용). 주문 / KIS API 0건.
+    """
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/backtest/intrabar_realdata_backtest_latest.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            return data
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "_source": "empty", "available": False,
+        "verdict": "REALDATA_BACKTEST_NOT_READY", "confidence_level": "LOW",
+        "coverage": {"symbol_count_1m": 0, "replayable_trades": 0},
+        "conclusion": ["실제 1분봉 subset 리포트가 아직 없습니다."],
+        "next_steps": ["장중 collect_intrabar_1m_subset.py 로 1분봉 확보 → "
+                       "run_intrabar_realdata_backtest.py --write-latest 실행"],
+        "disclaimer": "연구용 백테스트이며 실전매매 권고가 아닙니다. 수익을 보장하지 않습니다.",
+        "is_live_authorization": False, "is_order_signal": False,
+        "auto_apply_allowed": False, "no_profit_guarantee": True, "contains_secret": False,
+    }
+
+
 @router.get("/system/wf-6m-50symbols/latest")
 def get_wf_6m_50symbols_latest() -> dict:
     """WF-6M-50SYMBOLS-01 — 6개월·50종목·1000만원 전략 종합 검증 (latest, read-only).

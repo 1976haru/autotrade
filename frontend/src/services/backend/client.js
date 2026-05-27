@@ -1025,6 +1025,9 @@ export const backendApi = {
   // CHECKLIST-04 P1: 1분봉 intrabar 체결 + composite signal ranking (read-only).
   intrabarSignalRankingLatest: () =>
     backendFetch("/api/system/intrabar-signal-ranking/latest"),
+  // CHECKLIST-04 P2: 실제 1분봉 intrabar 백테스트 (read-only).
+  intrabarRealDataBacktestLatest: () =>
+    backendFetch("/api/system/intrabar-realdata-backtest/latest"),
   // 11-00: EXE 빌드 전 통합 검증 Gate (fast, read-only). subprocess/KIS 호출 0건.
   finalPrebuildGate: () => backendFetch("/api/system/final-prebuild-gate"),
   // #54 / 7-02: 기본 Universe 50개 상태 (read-only). secret 값 0건.
