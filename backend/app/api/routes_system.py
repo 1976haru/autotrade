@@ -744,6 +744,36 @@ def get_final_backtest_report_latest() -> dict:
     }
 
 
+@router.get("/system/strategy-edge-redesign/latest")
+def get_strategy_edge_redesign_latest() -> dict:
+    """CHECKLIST-05 — 전략 엣지 재설계 연구 (latest, read-only).
+
+    `reports/backtest/strategy_edge_redesign_latest.json` 가 있으면 반환, 없으면 가벼운
+    NOT_READY fallback (무거운 backtest 는 CLI run_strategy_edge_redesign.py 전용).
+    신규 후보 전략은 런타임에 등록/자동 적용되지 않음. 주문 / KIS API 0건.
+    """
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/backtest/strategy_edge_redesign_latest.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            return data
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "_source": "empty", "available": False,
+        "verdict": "BACKTEST_INFRA_INCOMPLETE",
+        "conclusion": ["리포트 없음 — CLI run_strategy_edge_redesign.py --write-latest 실행 후 갱신."],
+        "auto_apply_allowed": False, "applied_to_runtime": False,
+        "is_live_authorization": False, "is_order_signal": False,
+        "no_profit_guarantee": True, "contains_secret": False,
+        "disclaimer": "연구용 백테스트 — 신규 후보 자동 적용 안 됨, 실전매매 권고 아님.",
+    }
+
+
 @router.get("/system/risk-filter-validation/latest")
 def get_risk_filter_validation_latest() -> dict:
     """CHECKLIST-04 — RISK_FILTER_ONLY 후보 OOS 검증 (latest, read-only).
