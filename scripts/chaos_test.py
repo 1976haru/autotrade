@@ -19,8 +19,13 @@ import asyncio
 import json
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+# STABILITY_4H_READY 인정 임계 (초) — 14400(4h)에 근접.
+_FOUR_HOURS_SEC = 14400.0
+_FOUR_HOUR_NEAR_RATIO = 0.98
 
 _BACKEND_DIR = Path(__file__).resolve().parents[1] / "backend"
 sys.path.insert(0, str(_BACKEND_DIR))
@@ -68,78 +73,103 @@ async def _flaky(fail_times: int, exc: Exception):
     return fn
 
 
-async def run_chaos(*, duration_sec: float, fast: bool, log: JsonlLogger) -> dict:
-    # tick 수: fast 면 압축(>=200 보장 위해 240), 아니면 duration/30s 가정.
-    n_ticks = 240 if fast else max(1, int(duration_sec // 30))
+async def _instant(_):  # 즉시 backoff — 실제로 안 잠
+    return None
 
-    async def _instant(_):  # fast backoff — 실제로 안 잠
-        return None
-    sleep = _instant if fast else asyncio.sleep
 
-    tick_completed = 0
-    tick_failed = 0
-    recovered = 0
-    recovery_attempts = 0
-    backend_restart_count = 0
-    watchdog_restart_count = 0
-    errors = 0
-    warnings = 0
+async def _one_tick(i: int, c: dict, *, backoff_delays, backoff_sleep,
+                    log: JsonlLogger) -> None:
+    """단일 chaos tick 처리 — counters dict c 를 갱신. broker 호출 0건."""
+    scenario = _SCENARIOS[i % len(_SCENARIOS)]
 
-    for i in range(n_ticks):
-        scenario = _SCENARIOS[i % len(_SCENARIOS)]
+    if scenario == "PRICE_STALE":
+        stale = is_price_stale(None, now=datetime.now(timezone.utc), max_age_seconds=60)
+        log.warn("CHAOS_TICK", tick_id=i, scenario=scenario,
+                 reason_code=RecoveryReason.PRICE_STALE.value, recovered=True,
+                 price_stale=stale, action="SKIP")
+        c["warnings"] += 1
+        c["tick_completed"] += 1   # 의도된 skip — 정상 처리 (fatal 아님)
+        return
 
-        if scenario == "PRICE_STALE":
-            stale = is_price_stale(None, now=datetime.now(timezone.utc),
-                                   max_age_seconds=60)
-            log.warn("CHAOS_TICK", tick_id=i, scenario=scenario,
-                     reason_code=RecoveryReason.PRICE_STALE.value, recovered=True,
-                     price_stale=stale, action="SKIP")
-            warnings += 1
-            tick_completed += 1   # 의도된 skip — 정상 처리 (fatal 아님)
-            continue
+    if scenario == "BACKEND_KILL":
+        action, reason = decide_action(health_ok=False)
+        if action == WatchdogAction.RESTART_BACKEND:
+            c["backend_restart_count"] += 1
+            c["watchdog_restart_count"] += 1
+            log.error("CHAOS_BACKEND_KILL", tick_id=i, scenario=scenario,
+                      reason_code=reason, recovered=True, action=action.value)
+            c["errors"] += 1
+        action2, _ = decide_action(health_ok=True, last_tick_at=None)
+        assert action2 == WatchdogAction.OK   # 재시작 후 복구
+        c["tick_completed"] += 1
+        return
 
-        if scenario == "BACKEND_KILL":
-            # health 다운 → watchdog 재시작 결정 → 복구.
-            action, reason = decide_action(health_ok=False)
-            if action == WatchdogAction.RESTART_BACKEND:
-                backend_restart_count += 1
-                watchdog_restart_count += 1
-                log.error("CHAOS_BACKEND_KILL", tick_id=i, scenario=scenario,
-                          reason_code=reason, recovered=True, action=action.value)
-                errors += 1
-            # 재시작 후 health 정상 가정 → 복구.
-            action2, _ = decide_action(health_ok=True, last_tick_at=None)
-            assert action2 == WatchdogAction.OK
-            tick_completed += 1
-            continue
+    exc_map = {
+        "NET_DOWN": ConnectionError("network unreachable"),
+        "KIS_TIMEOUT": TimeoutError("KIS API EGW00201 timed out"),
+        "DB_LOCK": RuntimeError("database is locked (OperationalError)"),
+        "TOKEN_EXPIRED": RuntimeError("KIS EGW00133 token expired / unauthorized"),
+    }
+    fn = await _flaky(fail_times=2, exc=exc_map[scenario])
+    c["recovery_attempts"] += 1
+    result, ev = await retry_with_backoff(
+        fn, retries=3, delays=backoff_delays, sleep=backoff_sleep,
+        tick_id=str(i), symbol="005930",
+    )
+    log.warn("CHAOS_TICK", **ev.to_dict(), scenario=scenario)
+    c["warnings"] += 1
+    if result is not None and ev.recovered:
+        c["recovered"] += 1
+        c["tick_completed"] += 1
+    else:
+        c["tick_failed"] += 1
+        c["errors"] += 1
 
-        # NET_DOWN / KIS_TIMEOUT / DB_LOCK / TOKEN_EXPIRED — 1~2회 실패 후 복구.
-        exc_map = {
-            "NET_DOWN": ConnectionError("network unreachable"),
-            "KIS_TIMEOUT": TimeoutError("KIS API EGW00201 timed out"),
-            "DB_LOCK": RuntimeError("database is locked (OperationalError)"),
-            "TOKEN_EXPIRED": RuntimeError("KIS EGW00133 token expired / unauthorized"),
-        }
-        fn = await _flaky(fail_times=2, exc=exc_map[scenario])
-        recovery_attempts += 1
-        result, ev = await retry_with_backoff(
-            fn, retries=3, delays=(0.0, 0.0, 0.0) if fast else (1.0, 2.0, 4.0),
-            sleep=sleep, tick_id=str(i), symbol="005930",
-        )
-        log.warn("CHAOS_TICK", **ev.to_dict(), scenario=scenario)
-        warnings += 1
-        if result is not None and ev.recovered:
-            recovered += 1
-            tick_completed += 1
-        else:
-            tick_failed += 1
-            errors += 1
 
-    # secret sanitize 검증 — 일부러 secret 포함 레코드를 기록해 마스킹 확인.
-    log.info("CHAOS_SECRET_PROBE", kis_app_secret="sk-secretSHOULDBEMASKED1234567890",
-             account_no="12345678-90", note="probe — 반드시 마스킹돼야 함")
+async def run_chaos(*, duration_sec: float, fast: bool, real_time: bool = False,
+                    tick_sleep: float = 1.0, log: JsonlLogger) -> dict:
+    """accelerated(기본) 또는 real_time(wall-clock soak) chaos 실행.
 
-    # 로그 파일 2차 secret 스캔.
+    - accelerated: tick 수 = fast?240 : duration/30. backoff 즉시(또는 1/2/4).
+    - real_time: duration 동안 *실제 대기*(tick_sleep)하며 반복 — wall-clock soak.
+    """
+    mode = "real_time" if real_time else "accelerated"
+    # real_time/fast 는 backoff 즉시 (wall-clock 은 tick_sleep 이 지배).
+    backoff_sleep = _instant if (fast or real_time) else asyncio.sleep
+    backoff_delays = (0.0, 0.0, 0.0) if (fast or real_time) else (1.0, 2.0, 4.0)
+
+    c = {"tick_completed": 0, "tick_failed": 0, "recovered": 0,
+         "recovery_attempts": 0, "backend_restart_count": 0,
+         "watchdog_restart_count": 0, "errors": 0, "warnings": 0}
+
+    start = time.monotonic()
+    if real_time:
+        i = 0
+        while (time.monotonic() - start) < duration_sec:
+            await _one_tick(i, c, backoff_delays=backoff_delays,
+                            backoff_sleep=backoff_sleep, log=log)
+            i += 1
+            remaining = duration_sec - (time.monotonic() - start)
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(max(0.01, tick_sleep), remaining))
+    else:
+        n_ticks = 240 if fast else max(1, int(duration_sec // 30))
+        for i in range(n_ticks):
+            await _one_tick(i, c, backoff_delays=backoff_delays,
+                            backoff_sleep=backoff_sleep, log=log)
+    actual_wall = round(time.monotonic() - start, 2)
+
+    # secret sanitize 검증 — 일부러 *가짜* secret 레코드를 기록해 마스킹 확인.
+    # (실제 secret 아님 — sanitize 가 ***MASKED*** 로 가려야 PASS. 소스 스캐너는
+    #  의도된 fixture 라 ignore 마커로 제외.)
+    log.info(
+        "CHAOS_SECRET_PROBE",
+        kis_app_secret="sk-secretSHOULDBEMASKED1234567890",  # security-scan: ignore
+        account_no="12345678-90",  # security-scan: ignore
+        note="probe — 반드시 마스킹돼야 함",
+    )
+
     secret_leak_count = 0
     try:
         text = log.path.read_text(encoding="utf-8")
@@ -148,22 +178,32 @@ async def run_chaos(*, duration_sec: float, fast: bool, log: JsonlLogger) -> dic
     except Exception:  # noqa: BLE001
         pass
 
-    rate = (round(100.0 * recovered / recovery_attempts, 1)
-            if recovery_attempts else 100.0)
-    passed = (tick_failed == 0 and secret_leak_count == 0 and rate == 100.0)
+    rate = (round(100.0 * c["recovered"] / c["recovery_attempts"], 1)
+            if c["recovery_attempts"] else 100.0)
+    passed = (c["tick_failed"] == 0 and secret_leak_count == 0 and rate == 100.0)
+    # STABILITY_4H_READY 는 *실제* wall-clock 이 4h 근접일 때만.
+    stability_4h_ready = bool(
+        real_time and passed and c["tick_completed"] >= 200
+        and actual_wall >= _FOUR_HOURS_SEC * _FOUR_HOUR_NEAR_RATIO
+    )
 
     return {
         "duration": duration_sec,
+        "mode": mode,
         "fast": fast,
-        "tick_completed": tick_completed,
-        "tick_failed": tick_failed,
+        "real_time": real_time,
+        "tick_sleep": tick_sleep if real_time else None,
+        "actual_wall_clock_seconds": actual_wall,
+        "tick_completed": c["tick_completed"],
+        "tick_failed": c["tick_failed"],
         "recovery_success_rate": rate,
-        "backend_restart_count": backend_restart_count,
-        "watchdog_restart_count": watchdog_restart_count,
+        "backend_restart_count": c["backend_restart_count"],
+        "watchdog_restart_count": c["watchdog_restart_count"],
         "secret_leak_count": secret_leak_count,
-        "errors": errors,
-        "warnings": warnings,
+        "errors": c["errors"],
+        "warnings": c["warnings"],
         "pass_fail": "PASS" if passed else "FAIL",
+        "stability_4h_ready": stability_4h_ready,
         "is_live_authorization": False,
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -172,17 +212,27 @@ async def run_chaos(*, duration_sec: float, fast: bool, log: JsonlLogger) -> dic
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Chaos test for runtime stability")
     p.add_argument("--duration", default="2m")
-    p.add_argument("--fast", action="store_true")
+    p.add_argument("--fast", action="store_true",
+                   help="accelerated — 즉시 실행(기본 검증용)")
+    p.add_argument("--real-time", "--wall-clock", dest="real_time",
+                   action="store_true",
+                   help="실제 wall-clock soak — duration 동안 tick_sleep 간격으로 실제 대기")
+    p.add_argument("--tick-sleep", type=float, default=1.0,
+                   help="real_time tick 간 실제 대기(초). default 1.0")
     p.add_argument("--log", default=str(Path("logs") / "chaos_test.jsonl"))
     p.add_argument("--out", default=str(Path("logs") / "chaos_test_result.json"))
     args = p.parse_args(argv)
 
     dur = _parse_duration(args.duration)
     log = JsonlLogger(args.log)
-    log.info("CHAOS_START", duration_sec=dur, fast=args.fast)
-    result = asyncio.run(run_chaos(duration_sec=dur, fast=args.fast, log=log))
-    log.info("CHAOS_DONE", **{k: result[k] for k in ("pass_fail", "tick_completed",
-             "recovery_success_rate", "secret_leak_count")})
+    log.info("CHAOS_START", duration_sec=dur, fast=args.fast,
+             real_time=args.real_time, tick_sleep=args.tick_sleep)
+    result = asyncio.run(run_chaos(duration_sec=dur, fast=args.fast,
+                                   real_time=args.real_time, tick_sleep=args.tick_sleep,
+                                   log=log))
+    log.info("CHAOS_DONE", **{k: result[k] for k in (
+        "pass_fail", "mode", "actual_wall_clock_seconds", "tick_completed",
+        "recovery_success_rate", "secret_leak_count", "stability_4h_ready")})
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)

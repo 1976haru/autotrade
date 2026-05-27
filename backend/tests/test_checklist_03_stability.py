@@ -180,6 +180,9 @@ def test_fast_chaos_passes(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     result = json.loads(out.read_text(encoding="utf-8"))
     assert result["pass_fail"] == "PASS"
+    assert result["mode"] == "accelerated"
+    assert result["real_time"] is False
+    assert result["stability_4h_ready"] is False   # accelerated 는 4h 판정 불가
     assert result["tick_completed"] >= 200
     assert result["recovery_success_rate"] == 100.0
     assert result["secret_leak_count"] == 0
@@ -189,3 +192,50 @@ def test_fast_chaos_passes(tmp_path):
     txt = log.read_text(encoding="utf-8")
     for pat in (r"sk-[A-Za-z0-9]{20,}", r"\b\d{8}-\d{2}\b"):
         assert not re.search(pat, txt), f"secret leak: {pat}"
+
+
+def test_real_time_mode_actually_waits(tmp_path):
+    """--real-time 은 실제 wall-clock 대기 — mode/actual_wall_clock_seconds 기록."""
+    import time as _t
+    root = Path(__file__).resolve().parents[2]
+    out = tmp_path / "rt_result.json"
+    log = tmp_path / "rt.jsonl"
+    t0 = _t.monotonic()
+    r = subprocess.run(
+        [sys.executable, str(root / "scripts" / "chaos_test.py"),
+         "--duration", "3s", "--real-time", "--tick-sleep", "1",
+         "--out", str(out), "--log", str(log)],
+        capture_output=True, text=True, timeout=60,
+    )
+    elapsed = _t.monotonic() - t0
+    assert r.returncode == 0, r.stdout + r.stderr
+    result = json.loads(out.read_text(encoding="utf-8"))
+    assert result["mode"] == "real_time"
+    assert result["real_time"] is True
+    assert result["tick_sleep"] == 1.0
+    # 실제로 ~3초 대기했는지 (wall-clock).
+    assert result["actual_wall_clock_seconds"] >= 2.0
+    assert elapsed >= 2.0
+    # 3초짜리는 4h 미달 → stability_4h_ready=False.
+    assert result["stability_4h_ready"] is False
+    assert result["pass_fail"] == "PASS"
+
+
+def _load_chaos_module():
+    import importlib.util
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location(
+        "chaos_test_mod", root / "scripts" / "chaos_test.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_stability_4h_ready_requires_real_time_and_near_4h(tmp_path):
+    """stability_4h_ready — accelerated 4h 라벨이어도 wall-clock 짧으면 False."""
+    chaos = _load_chaos_module()
+    log = JsonlLogger(tmp_path / "a.jsonl")
+    res = asyncio.run(chaos.run_chaos(
+        duration_sec=14400, fast=True, real_time=False, log=log))
+    assert res["stability_4h_ready"] is False
+    assert res["mode"] == "accelerated"
