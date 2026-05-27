@@ -1040,6 +1040,9 @@ export const backendApi = {
   // CHECKLIST-05: 전략 엣지 재설계 연구 (read-only, 신규 후보 자동 적용 0).
   strategyEdgeRedesignLatest: () =>
     backendFetch("/api/system/strategy-edge-redesign/latest"),
+  // CHECKLIST-05: 장중 평균회귀 전략 연구 (read-only, research-only, 자동 적용 0).
+  meanReversionStrategyLatest: () =>
+    backendFetch("/api/system/mean-reversion-strategy/latest"),
   // 11-00: EXE 빌드 전 통합 검증 Gate (fast, read-only). subprocess/KIS 호출 0건.
   finalPrebuildGate: () => backendFetch("/api/system/final-prebuild-gate"),
   // #54 / 7-02: 기본 Universe 50개 상태 (read-only). secret 값 0건.
