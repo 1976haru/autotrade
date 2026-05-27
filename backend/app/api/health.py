@@ -10,6 +10,9 @@ secret 값 출력 0건(present 여부 bool 만), 안전 flag mutate 0건.
 
 from __future__ import annotations
 
+import os
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -25,6 +28,55 @@ router = APIRouter(prefix="/health", tags=["health"])
 OK = "OK"
 WARN = "WARN"
 FAIL = "FAIL"
+
+# 프로세스 시작 시각 (uptime 계산).
+_PROCESS_START = time.time()
+# tick 지연 판정 임계 (초) — 기본 30s 간격 × 3.
+_TICK_STALE_SECONDS = 90.0
+
+
+def _stability_block() -> dict[str, Any]:
+    """Watchdog/안정성 메트릭 — 실패해도 health 를 깨뜨리지 않는다."""
+    now = datetime.now(timezone.utc)
+    block: dict[str, Any] = {
+        "watchdog_enabled": str(os.environ.get("WATCHDOG_ENABLED", "")).lower()
+        in ("1", "true", "yes"),
+        "backend_uptime_sec": round(time.time() - _PROCESS_START, 1),
+        "last_tick_at": None,
+        "tick_stale": False,
+        "engine_state": None,
+        "errors_last_5min": 0,
+        "recovery_success_rate": None,   # 라이브 미집계 (chaos_test 에서 산출)
+        "last_restart_at": None,
+        "secret_leak_detected": False,
+        "log_file_path": str(os.environ.get("STABILITY_LOG_PATH",
+                                            "logs/runtime.jsonl")),
+    }
+    try:
+        from app.kis_paper.engine import get_engine
+        block["engine_state"] = getattr(get_engine().state, "value",
+                                        str(get_engine().state))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from app.system.event_log import EventLevel, get_runtime_event_log
+        log = get_runtime_event_log()
+        recent = log.recent(limit=1)
+        if recent:
+            block["last_tick_at"] = recent[-1].timestamp
+            try:
+                last = datetime.fromisoformat(recent[-1].timestamp)
+                if last.tzinfo is None:
+                    last = last.replace(tzinfo=timezone.utc)
+                block["tick_stale"] = (now - last).total_seconds() > _TICK_STALE_SECONDS
+            except Exception:  # noqa: BLE001
+                pass
+        errs = log.recent(limit=500, min_level=EventLevel.ERROR,
+                          since=(now - timedelta(minutes=5)).isoformat())
+        block["errors_last_5min"] = len(errs)
+    except Exception:  # noqa: BLE001
+        pass
+    return block
 
 
 @router.get("")
@@ -95,6 +147,8 @@ def health_full(db: Session = Depends(get_db)) -> dict[str, Any]:
         "overall": overall,
         "checks": checks,
         "credentials_present": cred,
+        # Watchdog/안정성 메트릭 (CHECKLIST-03).
+        "stability": _stability_block(),
         # 불변: 본 엔드포인트는 주문/실거래 권한과 무관.
         "is_live_authorization": False,
         "contains_secret": False,

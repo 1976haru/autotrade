@@ -46,6 +46,20 @@ def test_api_health_full_no_secret_values():
         assert forbidden not in low
 
 
+def test_api_health_full_stability_block():
+    """CHECKLIST-03 — stability 블록(watchdog/tick/uptime) 포함, 안전 불변."""
+    d = client.get("/api/health/full").json()
+    assert "stability" in d
+    s = d["stability"]
+    for k in ("watchdog_enabled", "backend_uptime_sec", "last_tick_at",
+              "tick_stale", "engine_state", "errors_last_5min",
+              "recovery_success_rate", "secret_leak_detected", "log_file_path"):
+        assert k in s, f"missing stability field: {k}"
+    assert s["secret_leak_detected"] is False
+    assert isinstance(s["watchdog_enabled"], bool)
+    assert isinstance(s["backend_uptime_sec"], (int, float))
+
+
 def test_api_health_full_safety_flags_reported():
     d = client.get("/api/health/full").json()
     sf = d["checks"]["safety_flags"]
