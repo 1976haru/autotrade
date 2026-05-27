@@ -68,6 +68,36 @@ def _write_json(path: Path, payload: dict) -> None:
     _write_atomic(path, json.dumps(payload, ensure_ascii=False, indent=2))
 
 
+def _read_existing_rows(path: Path) -> list[dict]:
+    """기존 1분봉 CSV 보존용 로드 (없으면 빈 list)."""
+    if not (path.exists() and path.stat().st_size > 0):
+        return []
+    import csv as _csv
+    out = []
+    try:
+        with path.open(encoding="utf-8") as fh:
+            for r in _csv.DictReader(fh):
+                out.append({k: r.get(k) for k in ("timestamp", "open", "high",
+                                                  "low", "close", "volume")})
+    except Exception:  # noqa: BLE001
+        return []
+    return out
+
+
+def _merge_rows(existing: list[dict], new: list[dict]) -> list[dict]:
+    """기존+신규 1분봉 병합 — timestamp 기준 dedupe + 정렬 (기존 데이터 보존)."""
+    by_ts: dict[str, dict] = {}
+    for r in existing + new:
+        ts = str(r.get("timestamp"))
+        if ts and ts != "None":
+            by_ts[ts] = r
+    return [by_ts[k] for k in sorted(by_ts)]
+
+
+def _trading_days(rows: list[dict]) -> int:
+    return len({str(r.get("timestamp"))[:10] for r in rows if r.get("timestamp")})
+
+
 def _rows_to_csv(rows: list[dict], symbol: str) -> str:
     lines = ["timestamp,open,high,low,close,volume,symbol"]
     for r in rows:
@@ -119,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     failed_path = REPORT_DIR / "intrabar_1m_failed_symbols.json"
     summary_path = REPORT_DIR / "intrabar_1m_collection_summary.json"
 
-    collected: list[str] = [s for s in target if already_collected(s, out_dir)]
+    collected: list[str] = []   # merge 모드 — 모든 종목 재처리(기존 보존 + 과거 추가)
     failed: dict[str, str] = {}
 
     if args.dry_run:
@@ -159,14 +189,15 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:  # noqa: BLE001
             pass
         for sym in target:
-            if already_collected(sym, out_dir):
-                continue
             try:
-                rows = await _collect_one(client, sym, end_date=end_date,
-                                          oldest_date=oldest_date, sleep=args.sleep,
-                                          max_calls=args.max_calls_per_symbol)
-                if rows:
-                    _write_atomic(csv_path(sym, out_dir), _rows_to_csv(rows, sym))
+                # 기존 데이터 보존 + 부족한 과거 일자 추가 (merge).
+                existing = _read_existing_rows(csv_path(sym, out_dir))
+                new_rows = await _collect_one(client, sym, end_date=end_date,
+                                              oldest_date=oldest_date, sleep=args.sleep,
+                                              max_calls=args.max_calls_per_symbol)
+                merged = _merge_rows(existing, new_rows)
+                if merged:
+                    _write_atomic(csv_path(sym, out_dir), _rows_to_csv(merged, sym))
                     collected.append(sym)
                 else:
                     failed[sym] = "EMPTY_RESPONSE"

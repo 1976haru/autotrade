@@ -341,12 +341,22 @@ def run_realdata_backtest(
     n_days = len(trading_days)
     if align_to_1m:
         four_way = _four_way(trade_recs)
-        # 기간이 짧으면(거래일 < 10) coverage 높아도 LOW — 장기성 아님.
+        # 거래일/거래수 임계 — coverage 높아도 기간 짧으면 보수적.
         if n_days < 10:
             verdict = "PERIOD_TOO_SHORT_LOW_CONFIDENCE"
             confidence = "LOW"
-        elif replay_cov >= 0.60:
+        elif n_days < 20:
+            verdict = "ALIGNED_INTRABAR_SENSITIVITY_PARTIAL"
+            confidence = "MEDIUM"
+        elif n_days >= 60 and total_tr >= 100:
+            verdict = "INTRABAR_REALDATA_READY"
+            confidence = "HIGH"
+        elif n_days >= 20 and total_tr >= 50:
             verdict = "ALIGNED_INTRABAR_SENSITIVITY_READY"
+            confidence = "HIGH"
+        else:
+            verdict = "ALIGNED_INTRABAR_SENSITIVITY_PARTIAL"
+            confidence = "MEDIUM"
 
     return {
         "available": True,
