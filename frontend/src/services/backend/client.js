@@ -1034,6 +1034,9 @@ export const backendApi = {
   // CHECKLIST-04 risk-filter: RISK_FILTER_ONLY OOS 검증 (read-only, 자동 적용 0).
   riskFilterValidationLatest: () =>
     backendFetch("/api/system/risk-filter-validation/latest"),
+  // CHECKLIST-04 capstone: 4전략 단독 + Council 통합 백테스트 (read-only, 자동 적용 0).
+  finalBacktestReportLatest: () =>
+    backendFetch("/api/system/final-backtest-report/latest"),
   // 11-00: EXE 빌드 전 통합 검증 Gate (fast, read-only). subprocess/KIS 호출 0건.
   finalPrebuildGate: () => backendFetch("/api/system/final-prebuild-gate"),
   // #54 / 7-02: 기본 Universe 50개 상태 (read-only). secret 값 0건.
