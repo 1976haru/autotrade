@@ -124,9 +124,14 @@ def _collect(symbol_paths: dict[str, Path], regime_map: dict[str, str], *,
     mr: dict[str, list[dict]] = {k: [] for k in MR_CANDIDATES}
     by_symbol_group: dict[str, dict[str, list[dict]]] = {}
 
+    meta: dict[str, dict] = {}
     for sym, path in symbol_paths.items():
         bars5 = load_ohlcv_from_csv(str(path), default_symbol=sym)
         days5 = _group_by_day(bars5)
+        if days5:
+            day_isos = [d[0].timestamp.date().isoformat() for d in days5]
+            meta[sym] = {"first_day": min(day_isos), "last_day": max(day_isos),
+                         "days": len(days5), "bars": len(bars5)}
         prev_close = None
         s_strat = {k: [] for k in _STRATS}
         s_council: list[dict] = []
@@ -172,7 +177,30 @@ def _collect(symbol_paths: dict[str, Path], regime_map: dict[str, str], *,
             mr[k] += s_mr[k]
         by_symbol_group[sym] = {"strat": s_strat, "council": s_council, "mr": s_mr}
 
-    return strat, council, mr, by_symbol_group
+    return strat, council, mr, by_symbol_group, meta
+
+
+def _coverage(meta: dict[str, dict]) -> dict[str, Any]:
+    """그룹별 데이터 coverage / date range / bars (partial 진단용)."""
+    cov: dict[str, Any] = {}
+    all_first, all_last = [], []
+    for g, members in UNIVERSE_GROUPS.items():
+        codes = [c for c, _n in members if c in meta]
+        firsts = [meta[c]["first_day"] for c in codes]
+        lasts = [meta[c]["last_day"] for c in codes]
+        bars = sum(meta[c]["bars"] for c in codes)
+        days = max((meta[c]["days"] for c in codes), default=0)
+        all_first += firsts
+        all_last += lasts
+        cov[g] = {
+            "present": len(codes), "total": len(members),
+            "available_symbols": codes,
+            "date_range": [min(firsts), max(lasts)] if firsts else None,
+            "max_trading_days": days, "total_bars": bars,
+            "sufficient": len(codes) >= 5,
+        }
+    span = ([min(all_first), max(all_last)] if all_first else None)
+    return {"by_group": cov, "overall_date_range": span}
 
 
 def _strategy_block(trades: list[dict]) -> dict[str, Any]:
@@ -200,29 +228,37 @@ def _strategy_block(trades: list[dict]) -> dict[str, Any]:
 
 def run_universe_regime_backtest(*, data_dirs: list[Path] | None = None,
                                  symbols: Sequence[str] | None = None,
-                                 run_council: bool = True) -> dict[str, Any]:
+                                 run_council: bool = True,
+                                 allow_partial: bool = False) -> dict[str, Any]:
     dirs = [Path(d) for d in data_dirs] if data_dirs else _DATA_DIRS_DEFAULT
     universe = build_universe_manifest(dirs)
     all_paths = _scan_dirs(dirs)
     if symbols:
         all_paths = {s: p for s, p in all_paths.items() if s in set(symbols)}
 
-    # regime map (proxy).
+    # regime map (proxy). proxy 미수집 시 대형 평균으로 fallback.
     regime_map: dict[str, str] = {}
     proxy_path = all_paths.get(MARKET_PROXY_SYMBOL)
+    proxy_used = MARKET_PROXY_SYMBOL
+    if not proxy_path:
+        # fallback: 첫 LARGE_CAP_CORE 종목을 proxy 로(사후 attribution 용).
+        for code, _n in UNIVERSE_GROUPS["LARGE_CAP_CORE"]:
+            if code in all_paths:
+                proxy_path, proxy_used = all_paths[code], code
+                break
     if proxy_path:
-        pbars = load_ohlcv_from_csv(str(proxy_path), default_symbol=MARKET_PROXY_SYMBOL)
+        pbars = load_ohlcv_from_csv(str(proxy_path), default_symbol=proxy_used)
         pdays = {d[0].timestamp.date().isoformat(): d for d in _group_by_day(pbars)}
         regime_map = build_regime_map(pdays)
-    regime_manifest = build_regime_manifest(regime_map, MARKET_PROXY_SYMBOL)
+    regime_manifest = build_regime_manifest(regime_map, proxy_used)
 
     sym2groups = symbol_groups()
     needed = [s for s in all_paths if s in sym2groups]
     if len(needed) < 5:
         return _empty(len(needed), list(all_paths), universe, regime_manifest)
 
-    strat, council, mr, by_sym = _collect({s: all_paths[s] for s in needed},
-                                          regime_map, run_council=run_council)
+    strat, council, mr, by_sym, meta = _collect({s: all_paths[s] for s in needed},
+                                                regime_map, run_council=run_council)
 
     # 그룹별 집계.
     group_results: dict[str, Any] = {}
@@ -263,11 +299,52 @@ def run_universe_regime_backtest(*, data_dirs: list[Path] | None = None,
 
     verdict, conclusion, survivors, failures = _verdict(group_results, regime_results)
 
+    coverage = _coverage(meta)
+    sufficient_groups = [g for g, c in coverage["by_group"].items() if c["sufficient"]]
+    missing_symbols = universe.get("failed_symbols", [])
+    # 기간 비대칭(그룹별 max_trading_days 편차) 경고.
+    spans = [c["max_trading_days"] for c in coverage["by_group"].values() if c["present"]]
+    period_asym = bool(spans) and (max(spans) - min(spans) > 20)
+
+    partial_block: dict[str, Any] = {}
+    if allow_partial:
+        # partial 진단: verdict 를 3종으로 제한.
+        if len(sufficient_groups) < 3:
+            verdict = "NEED_FULL_COLLECTION"
+            conclusion = [f"데이터 충분 그룹 {sufficient_groups} (<3개) — 종목군 비교 불가. "
+                          "background 수집 완료 후 전체 재검증 필요. 본 결과는 진단 전용."]
+        elif survivors:
+            verdict = "GROUP_SIGNAL_HINT_FOUND"
+            conclusion = [f"일부 그룹×전략에서 PF≥1 *힌트*: {survivors} — *확정 엣지 아님*, "
+                          "표본/기간 부족. 전체 수집 + OOS 재검증 필요."]
+        else:
+            verdict = "PARTIAL_DIAGNOSTIC_ONLY"
+            conclusion = ["부분 데이터 진단 — 가용 그룹에서 뚜렷한 PF≥1 신호 없음. 확정 결론 "
+                          "아님, 전체 수집 후 재검증 필요."]
+        partial_block = {
+            "partial_data": True,
+            "warning": "PARTIAL_DATA_WARNING",
+            "available_symbols_count": len(needed),
+            "missing_symbols": missing_symbols,
+            "group_coverage": coverage["by_group"],
+            "date_range_by_group": {g: c["date_range"] for g, c in coverage["by_group"].items()},
+            "bars_by_group": {g: c["total_bars"] for g, c in coverage["by_group"].items()},
+            "period_asymmetry_warning": period_asym,
+            "overall_date_range": coverage["overall_date_range"],
+            "confidence": "PARTIAL",
+            "sufficient_groups": sufficient_groups,
+            "do_not_use_as_final": True,
+        }
+
     return {
         "available": True, "mode": "universe_regime_backtest", "is_research_only": True,
+        "partial_data": bool(allow_partial),
+        "confidence": "PARTIAL" if allow_partial else "RESEARCH",
         "cost_model": {"round_trip_bps": _ROUND_TRIP_BPS, "execution": "5m_fallback_uniform"},
         "universe_manifest": universe,
         "regime_manifest": regime_manifest,
+        "coverage": coverage,
+        **partial_block,
         "group_results": group_results,
         "regime_results": regime_results,
         "survivors": survivors,

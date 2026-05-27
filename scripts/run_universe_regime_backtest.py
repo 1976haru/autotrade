@@ -55,6 +55,17 @@ def _md(r: dict) -> str:
               f"수집 종목 {r.get('symbol_count')}."]
         return "\n".join(L)
 
+    if r.get("partial_data"):
+        cov = r.get("group_coverage", {})
+        L += ["> ⚠️ **PARTIAL_DATA_WARNING** — 부분 데이터 진단 전용입니다. 최종 verdict 아님, "
+              f"신뢰도 {r.get('confidence')}, do_not_use_as_final=true. "
+              f"가용 종목 {r.get('available_symbols_count')}개, 충분 그룹 "
+              f"{r.get('sufficient_groups')}, 기간 비대칭={r.get('period_asymmetry_warning')}.", "",
+              "### group coverage", "", "| 그룹 | 가용/전체 | 충분 | 기간 | bars |", "|---|---|---|---|---|"]
+        for g, c in cov.items():
+            L.append(f"| {g} | {c['present']}/{c['total']} | {c['sufficient']} | "
+                     f"{c['date_range']} | {c['total_bars']} |")
+        L.append("")
     L += [f"**최종 verdict**: `{r['verdict']}`", "",
           "## 결론", *[f"- {c}" for c in r.get("conclusion", [])], "",
           "## 그룹별 4전략 net PF (+ Council)", "",
@@ -105,6 +116,8 @@ def main() -> int:
     ap.add_argument("--data-dirs", nargs="*")
     ap.add_argument("--symbols", nargs="*")
     ap.add_argument("--no-council", action="store_true")
+    ap.add_argument("--allow-partial", action="store_true",
+                    help="부분 데이터로 진단 실행 (partial_data=true, PARTIAL_DATA_WARNING)")
     ap.add_argument("--write-latest", action="store_true")
     ap.add_argument("--out-dir")
     a = ap.parse_args()
@@ -112,7 +125,8 @@ def main() -> int:
     try:
         r = run_universe_regime_backtest(
             data_dirs=[Path(d) for d in a.data_dirs] if a.data_dirs else None,
-            symbols=a.symbols or None, run_council=not a.no_council)
+            symbols=a.symbols or None, run_council=not a.no_council,
+            allow_partial=a.allow_partial)
     except Exception as e:  # noqa: BLE001
         print(f"[error] {e}")
         return 2
@@ -133,8 +147,22 @@ def main() -> int:
     _dump("universe_regime_backtest_result.json", r)
     (out / "universe_regime_backtest_result.md").write_text(_md(r), encoding="utf-8")
     if a.write_latest:
-        _dump("universe_regime_backtest_latest.json", r)
-    print(f"[ok] verdict={r.get('verdict')} available={r.get('available')} -> {out}")
+        latest = out / "universe_regime_backtest_latest.json"
+        # 최종(partial_data=false) 리포트가 이미 있으면 partial 결과로 덮어쓰지 않는다.
+        if r.get("partial_data") and latest.exists():
+            try:
+                prev = json.loads(latest.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                prev = {}
+            if prev.get("partial_data") is False and prev.get("available"):
+                _dump("universe_regime_backtest_partial_latest.json", r)
+                print("[guard] 기존 최종 리포트 보존 — partial 결과는 *_partial_latest.json 에 기록.")
+            else:
+                _dump("universe_regime_backtest_latest.json", r)
+        else:
+            _dump("universe_regime_backtest_latest.json", r)
+    print(f"[ok] verdict={r.get('verdict')} partial={r.get('partial_data')} "
+          f"available={r.get('available')} -> {out}")
     return 0 if r.get("available") else 1
 
 
