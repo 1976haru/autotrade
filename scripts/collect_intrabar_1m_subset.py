@@ -76,39 +76,39 @@ def _rows_to_csv(rows: list[dict], symbol: str) -> str:
     return "\n".join(lines) + "\n"
 
 
-async def _collect_one(client, symbol: str, days: int):
-    """raw 1분봉 backward 수집 — read-only inquire_time_dailychartprice 만."""
-    import asyncio
+def _load_base_collector():
+    """기존 5분봉 수집기의 *검증된* backward-walk 로직 재사용 (importlib)."""
+    import importlib.util
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(
+        "kis_5m_collector", root / "scripts" / "collect_kis_intraday_ohlcv.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
-    from app.market_data.kis_intraday_fetch import (
-        dedupe_by_timestamp,
-        parse_minute_rows,
-    )
 
-    all_rows: list[dict] = []
-    # 단순화: 최근 N일을 (date,hour) 윈도우로 backward 수집 (기존 5m 수집기와 동일 전략).
-    # 실제 수집 루프는 운영자 환경(장중)에서 동작. 여기서는 1회 호출 골격만.
-    from datetime import datetime, timezone
-    today = datetime.now(timezone.utc).astimezone().strftime("%Y%m%d")
-    for attempt in range(3):
-        try:
-            raw = await client.inquire_time_dailychartprice(symbol, date=today, hour="153000")
-            parsed = parse_minute_rows(getattr(raw, "output2", raw), symbol)
-            all_rows = dedupe_by_timestamp(list(getattr(parsed, "records", []) or []))
-            break
-        except Exception as exc:  # noqa: BLE001
-            if any(m in str(exc) for m in _RATE_LIMIT_MARKERS) and attempt < 2:
-                await asyncio.sleep(1.0 * (attempt + 1))
-                continue
-            raise
-    return all_rows
+async def _collect_one(client, symbol: str, *, end_date: str, oldest_date: str,
+                       sleep: float, max_calls: int):
+    """raw 1분봉 backward 수집 — 기존 _collect_symbol_backward 재사용 (resample 안 함)."""
+    from app.market_data.kis_intraday_fetch import dedupe_by_timestamp
+
+    base = _load_base_collector()
+    recs, _calls = await base._collect_symbol_backward(
+        client, symbol, end_date, oldest_date, sleep, max_calls)
+    rows = dedupe_by_timestamp(list(recs or []))
+    rows.sort(key=lambda r: str(r.get("timestamp")))
+    return rows
 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Collect raw 1m subset (read-only)")
     p.add_argument("--symbols", default=",".join(SUBSET_UNIVERSE))
     p.add_argument("--days", type=int, default=60)
+    p.add_argument("--end", default=None, help="수집 종료(최신) 날짜 YYYYMMDD (default=오늘 KST)")
+    p.add_argument("--max-calls-per-symbol", type=int, default=12)
+    p.add_argument("--sleep", type=float, default=0.6)
     p.add_argument("--out-dir", default=str(OUT_DIR))
+    p.add_argument("--resume", action="store_true", help="완료 종목 skip (기본 동작)")
     p.add_argument("--dry-run", action="store_true",
                    help="네트워크 호출 없이 대상/경로만 출력 (장외 점검용)")
     args = p.parse_args(argv)
@@ -137,14 +137,34 @@ def main(argv: list[str] | None = None) -> int:
     from app.brokers.kis_client import KisClient
     from app.core.config import get_settings
 
+    from datetime import datetime, timedelta, timezone
+    _KST = timezone(timedelta(hours=9))
+    end_date = args.end or datetime.now(_KST).strftime("%Y%m%d")
+    oldest_date = (datetime.strptime(end_date, "%Y%m%d")
+                   - timedelta(days=int(args.days * 1.6))).strftime("%Y%m%d")
+
     async def _run():
-        settings = get_settings()
-        client = KisClient(is_paper=bool(getattr(settings, "kis_is_paper", True)))
+        # cwd 무관하게 backend/.env 에서 KIS 자격 로드 (get_settings 는 cwd 상대).
+        from app.core.config import Settings
+        _env = _BACKEND_DIR / ".env"
+        settings = Settings(_env_file=str(_env)) if _env.exists() else get_settings()
+        if not (settings.kis_app_key and settings.kis_app_secret):
+            failed["__all__"] = "KIS_CREDENTIALS_MISSING"
+            return
+        client = KisClient(settings.kis_app_key, settings.kis_app_secret,
+                           is_paper=bool(getattr(settings, "kis_is_paper", True)))
+        base = _load_base_collector()
+        try:
+            base._seed_cached_token(client, settings.kis_is_paper)
+        except Exception:  # noqa: BLE001
+            pass
         for sym in target:
             if already_collected(sym, out_dir):
                 continue
             try:
-                rows = await _collect_one(client, sym, args.days)
+                rows = await _collect_one(client, sym, end_date=end_date,
+                                          oldest_date=oldest_date, sleep=args.sleep,
+                                          max_calls=args.max_calls_per_symbol)
                 if rows:
                     _write_atomic(csv_path(sym, out_dir), _rows_to_csv(rows, sym))
                     collected.append(sym)

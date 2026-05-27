@@ -275,9 +275,15 @@ def run_realdata_backtest(
             scaled.append(npl + base_slip - new_slip)
         stress.append({"slippage_bps": slip, **_trade_metrics(scaled, entries)})
 
-    confidence = ("MEDIUM" if len(with_1m) >= 5 and one_m["trade_count"] >= 100
-                  else "LOW")
-    verdict = _verdict(with_1m, one_m, confidence)
+    total_tr = one_m["trade_count"] or 0
+    replay_cov = round(replayable / total_tr, 4) if total_tr else 0.0
+    if replay_cov >= 0.60:
+        confidence = "HIGH"
+    elif replay_cov >= 0.30:
+        confidence = "MEDIUM"
+    else:
+        confidence = "LOW"   # replay coverage 부족 → 1분봉 착시 결론 약함
+    verdict = _verdict(with_1m, five_m, one_m, replay_cov, ranked)
 
     return {
         "available": True,
@@ -288,6 +294,8 @@ def run_realdata_backtest(
             "symbols_with_1m": with_1m, "symbols_with_5m_only": with_5m_only,
             "symbol_count_1m": len(with_1m),
             "replayable_trades": replayable,
+            "total_trades": one_m["trade_count"],
+            "replay_coverage_pct": round(replay_cov * 100.0, 2),
             "execution_confidence_distribution": conf_dist,
         },
         "execution_5m_vs_1m": {"five_minute": five_m, "intrabar_1m": one_m,
@@ -330,14 +338,24 @@ def _delta(a, b):
     return round(b - a, 4)
 
 
-def _verdict(with_1m, one_m, confidence) -> str:
-    if not with_1m:
-        return "REALDATA_BACKTEST_NOT_READY"
-    if one_m["trade_count"] < 30:
-        return "ONE_MINUTE_DATA_READY"   # 데이터는 있으나 거래표본 부족
-    if confidence == "LOW":
-        return "INTRABAR_REALDATA_READY"
-    return "RANKING_REALDATA_VALIDATED"
+def _verdict(with_1m, five_m, one_m, replay_cov, ranked) -> str:
+    """replay coverage 기반 정직 판정 — 좋아 보여도 coverage 낮으면 LOW."""
+    if not with_1m or replay_cov <= 0:
+        return "INTRABAR_REALDATA_NOT_READY"
+    if replay_cov < 0.30:
+        return "INTRABAR_REALDATA_LOW_CONFIDENCE"
+    if replay_cov < 0.60:
+        return "INTRABAR_REALDATA_MEDIUM_CONFIDENCE"
+    # coverage ≥ 60% — ranking 실측 검증 조건.
+    pf5, pf1 = five_m.get("profit_factor"), one_m.get("profit_factor")
+    mdd5, mdd1 = five_m.get("mdd_pct"), one_m.get("mdd_pct")
+    pf_improve = pf5 is not None and pf1 is not None and pf1 > pf5
+    mdd_improve = mdd5 is not None and mdd1 is not None and mdd1 < mdd5
+    score_ok = ranked.selected_avg_score > ranked.rejected_avg_score
+    enough = (one_m["trade_count"] or 0) >= 100
+    if (pf_improve or mdd_improve) and score_ok and enough:
+        return "RANKING_REALDATA_VALIDATED"
+    return "INTRABAR_REALDATA_READY"
 
 
 def _conclusion(five_m, one_m, ranked, confidence, n_syms) -> list[str]:
