@@ -69,6 +69,41 @@ def _emit_decision_event(*, symbol, price, action, dry_run, force_dry_run) -> No
     except Exception:  # noqa: BLE001 — 이벤트 기록 실패가 루프를 깨지 않게.
         pass
 
+
+def _emit_order_event(*, symbol, price, original_action, reason_code, submitted) -> None:
+    """주문 *시도* 결과를 RuntimeEvent 로 기록 — order_attempted=True 명시.
+
+    dry-run/거부/exit_plan 차단 모두 order_submitted=False. exit_plan 없는 BUY
+    차단은 code=BUY_BLOCKED_NO_EXIT_PLAN, action=BLOCK 로 남긴다.
+    """
+    try:
+        from app.system.event_log import log_event
+        blocked = reason_code in (_MISSING_EXIT_PLAN, KIS_PAPER_REJECTED)
+        code = ("BUY_BLOCKED_NO_EXIT_PLAN" if reason_code == _MISSING_EXIT_PLAN
+                else f"KIS_PAPER_ORDER_{reason_code}")
+        action = "BLOCK" if blocked else original_action
+        log_event(
+            level="WARN" if blocked else "INFO",
+            category="PAPER",
+            code=code,
+            message=(f"{symbol} {original_action} 주문시도 → {reason_code} "
+                     f"(submitted={bool(submitted)})"),
+            details={
+                "symbol": symbol,
+                "price": int(price),
+                "price_source": "kis",
+                "action": action,
+                "original_action": original_action,
+                "reason_code": reason_code,
+                "order_attempted": True,
+                "order_submitted": bool(submitted),
+                "broker_order_sent": bool(submitted),
+                "is_live_authorization": False,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
 _log = logging.getLogger(__name__)
 
 # 최초 검증 기본 종목 (시총 상위 1종목) · 1주. config 로 override 가능.
@@ -291,6 +326,10 @@ def build_kis_paper_tick_runner(
             out["failures"] = [f"{symbol} BUY 차단: exit_plan 없음 (MISSING_EXIT_PLAN)"]
         # KIS_PAPER_DRY_RUN_OK / KIS_PAPER_AUTO_DISABLED / MARKET_CLOSED / window-blocked
         # → attempted 만 카운트 (정상 안전 기본값, 오류 아님 · 실패 메시지 0건).
+
+        # 주문 시도 결과를 RuntimeEvent 로 기록 (order_attempted=True, submit 여부 명시).
+        _emit_order_event(symbol=symbol, price=price, original_action=action,
+                          reason_code=rc, submitted=(rc == KIS_PAPER_SUBMITTED))
         return out
 
     def cleanup() -> None:
