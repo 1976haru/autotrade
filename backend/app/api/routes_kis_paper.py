@@ -95,6 +95,10 @@ class KisPaperStartIn(BaseModel):
     # KIS_PAPER_REAL_MARKET_DRYRUN — 실 KIS 시세는 흘리되 dry_run 강제 True 로
     # 주문 전송 0건(결정만 기록). quick/slow 에서만 의미. default False.
     dry_run_preview: bool = False
+    # 실제 KIS 모의주문 전송 명시 동의. dry_run_preview=False AND
+    # paper_order_confirm=True 일 때만 조건 충족 시 KIS 모의주문 전송.
+    # default False → 미동의면 무조건 dry-run(주문 0건). 실거래와 무관.
+    paper_order_confirm: bool = False
 
 
 class KisPaperStatusOut(BaseModel):
@@ -219,8 +223,10 @@ async def post_kis_paper_start(
             credentials_present=bool(
                 rd.kis_key_present and rd.kis_secret_present and rd.kis_account_present
             ),
-            # dry_run_preview → dry_run 강제 True (주문 전송 0건, 결정만 기록).
-            force_dry_run=bool(body.dry_run_preview),
+            # 실제 KIS 모의주문은 dry_run_preview=False AND paper_order_confirm=True
+            # 일 때만 허용. 그 외에는 force_dry_run=True (주문 전송 0건, 결정만 기록).
+            # 기본값(둘 다 미지정)은 안전하게 dry-run.
+            force_dry_run=bool(body.dry_run_preview) or not bool(body.paper_order_confirm),
         )
 
     # 백그라운드 실행 — engine.start() 가 async 이므로 *실행 중인* 이벤트 루프에
