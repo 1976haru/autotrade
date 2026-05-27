@@ -44,6 +44,8 @@ export function UniverseRegimeBacktestCard({
 
   const groups = report?.group_results || {};
   const regimes = report?.regime_results || {};
+  const pitRegimes = report?.point_in_time_regime_results || {};
+  const su = report?.strong_uptrend_comparison || null;
 
   return (
     <div data-testid={testId}>
@@ -98,11 +100,32 @@ export function UniverseRegimeBacktestCard({
             </div>
 
             <div data-testid="urb-regimes" style={{ fontSize: "var(--fs-xs)", color: "var(--c-text)", marginBottom: 6 }}>
-              <b>국면별 ORB / MOMENTUM / Council (net PF, 사후):</b>
+              <b>국면별 Council net PF — ⚠️ posthoc(사후·look-ahead, 매매 불가):</b>
               {Object.entries(regimes).map(([rg, blk]) => (
                 <div key={rg}>{rg}: ORB {_pf(blk.ORB?.net_pf)} · MOM {_pf(blk.MOMENTUM?.net_pf)} · Council {_pf(blk.COUNCIL?.net_pf)}</div>
               ))}
             </div>
+
+            <div data-testid="urb-pit-regimes" style={{ fontSize: "var(--fs-xs)", color: "var(--c-text)", marginBottom: 6 }}>
+              <b>국면별 Council net PF — ✅ point-in-time(진입 시점 정보만, look-ahead 없음):</b>
+              {Object.entries(pitRegimes).map(([rg, blk]) => (
+                <div key={rg}>{rg}: ORB {_pf(blk.ORB?.net_pf)} · MOM {_pf(blk.MOMENTUM?.net_pf)} · Council {_pf(blk.COUNCIL?.net_pf)}</div>
+              ))}
+              <div style={{ color: "var(--c-text-3)" }}>posthoc↔PIT 일치율: {_pf(report.posthoc_vs_pit_agreement_rate)}</div>
+            </div>
+
+            {su ? (
+              <div data-testid="urb-strong-uptrend" style={{
+                fontSize: "var(--fs-xs)", color: su.hint_survives_without_lookahead ? "var(--c-text)" : "#7f1d1d",
+                marginBottom: 6, padding: "4px 8px", borderRadius: 6, background: "#fff7ed",
+                border: "1px solid #fed7aa",
+              }}>
+                <b>STRONG_UPTREND 힌트 검증:</b> posthoc(look-ahead) Council PF {_pf(su.posthoc_council_pf)} →
+                PIT(entry-known) Council PF {_pf(su.pit_council_pf)} (n={su.pit_council_trade_count}) ·
+                look-ahead 없이 유지: <b>{String(su.hint_survives_without_lookahead)}</b>
+                {su.hint_survives_without_lookahead ? "" : " — 사후 힌트는 look-ahead 제거 시 사라짐(매매 불가)"}
+              </div>
+            ) : null}
 
             <div data-testid="urb-survivors" style={{ fontSize: "var(--fs-xs)", color: "var(--c-text)", marginBottom: 4 }}>
               살아남은(PF≥1) 그룹×전략: <b>{(report.survivors || []).length ? report.survivors.join(", ") : "없음"}</b> ·

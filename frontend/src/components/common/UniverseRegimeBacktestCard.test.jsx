@@ -22,9 +22,19 @@ function _complete() {
       ETF_PROXY: { present: 0, note: "데이터 없음" },
     },
     regime_results: {
-      STRONG_UPTREND: { ORB: blk(0.3), MOMENTUM: blk(0.25), COUNCIL: blk(0.7) },
+      STRONG_UPTREND: { ORB: blk(0.3), MOMENTUM: blk(0.25), COUNCIL: blk(1.299) },
       SIDEWAYS: { ORB: blk(0.15), MOMENTUM: blk(0.12), COUNCIL: blk(0.5) },
     },
+    point_in_time_regime_results: {
+      PIT_STRONG_UPTREND: { ORB: blk(0.156), MOMENTUM: blk(0.224), COUNCIL: blk(0.728) },
+      PIT_HIGH_VOLATILITY: { ORB: blk(0.203), MOMENTUM: blk(0.16), COUNCIL: blk(0.774) },
+    },
+    posthoc_vs_pit_agreement_rate: 0.505,
+    strong_uptrend_comparison: {
+      posthoc_council_pf: 1.299, pit_council_pf: 0.728, pit_council_trade_count: 161,
+      hint_survives_without_lookahead: false,
+    },
+    regime_lookahead_flags: { posthoc_regime_is_lookahead: true },
     survivors: [], failures: ["LARGE_CAP_CORE"],
     auto_apply_allowed: false, applied_to_runtime: false, is_live_authorization: false,
     no_profit_guarantee: true,
@@ -46,6 +56,10 @@ describe("<UniverseRegimeBacktestCard>", () => {
     expect(screen.getByTestId("urb-groups").textContent).toContain("LARGE_CAP_CORE");
     expect(screen.getByTestId("urb-groups").textContent).toContain("데이터 없음");
     expect(screen.getByTestId("urb-regimes").textContent).toContain("STRONG_UPTREND");
+    // PIT section + STRONG_UPTREND look-ahead 검증 표시.
+    expect(screen.getByTestId("urb-pit-regimes").textContent).toContain("PIT_STRONG_UPTREND");
+    expect(screen.getByTestId("urb-strong-uptrend").textContent).toContain("false");
+    expect(screen.getByTestId("urb-strong-uptrend").textContent).toContain("사라짐");
     expect(screen.getByTestId("urb-survivors").textContent).toContain("없음");
     expect(screen.getByTestId("urb-auto").textContent).toContain("true");
     expect(screen.getByTestId("urb-auto").textContent).toContain("false");

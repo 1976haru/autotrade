@@ -34,6 +34,13 @@ from app.backtest.strategy_council_backtest import (
     _group_by_day,
     load_ohlcv_from_csv,
 )
+from app.backtest.point_in_time_regime import (
+    PIT_REGIMES,
+    classify_pit_regime,
+    lookahead_flags,
+    proxy_pit_daily_features,
+    regime_direction,
+)
 from app.market_data.market_regime_diversification import build_regime_map, build_regime_manifest
 from app.market_data.universe_diversification import (
     MARKET_PROXY_SYMBOL,
@@ -94,7 +101,8 @@ def _mfe_mae_5m(entry, et, day_bars5):
     return round(max(0.0, mfe), 1), round(min(0.0, mae), 1)
 
 
-def _rec(name, sym, day, bar, ve, regime, day_bars5, *, exit_plan=None):
+def _rec(name, sym, day, bar, ve, regime, day_bars5, *, exit_plan=None,
+         pit_label="PIT_UNKNOWN", pit_conf=0.0, pit_features=None):
     entry = bar.close
     if entry <= 0:
         return None
@@ -112,12 +120,19 @@ def _rec(name, sym, day, bar, ve, regime, day_bars5, *, exit_plan=None):
             "stop_first": res.exit_reason in ("STOP_HIT", "AMBIGUOUS_STOP_FIRST"),
             "target_hit": res.exit_reason == "TARGET_HIT",
             "vol_exp": ve, "low_liq": ve < 0.8, "regime": regime,
+            # posthoc(look-ahead) vs point-in-time(entry-known) regime 둘 다 carry.
+            "posthoc_regime_label": regime,
+            "point_in_time_regime_label": pit_label,
+            "point_in_time_regime_confidence": pit_conf,
+            "point_in_time_features_used": list((pit_features or {}).keys()),
             "time_bucket": _time_bucket(et), "mfe_bps": mfe, "mae_bps": mae,
             "net_edge_bps": tp * 1e4 - _ROUND_TRIP_BPS}
 
 
 def _collect(symbol_paths: dict[str, Path], regime_map: dict[str, str], *,
+             pit_proxy_by_date: dict[str, dict] | None = None,
              run_council: bool = True):
+    pit_proxy_by_date = pit_proxy_by_date or {}
     """종목별 4전략/council/평균회귀 trade 수집 (5분봉 체결)."""
     strat: dict[str, list[dict]] = {k: [] for k in _STRATS}
     council: list[dict] = []
@@ -144,20 +159,35 @@ def _collect(symbol_paths: dict[str, Path], regime_map: dict[str, str], *,
             done_s: set[str] = set()
             done_c: set[str] = set()
             council_done = False
+            proxy_feats = pit_proxy_by_date.get(day, {})
+            day_open = day_bars[0].open
+            first_5m_ret = ((day_bars[0].close - day_open) / day_open) if day_open else None
             for i in range(len(day_bars)):
                 mi = _build_input(day_bars, i, opening_range_bars=6,
                                   recent_closes_window=5, prev_close=prev_close)
                 b = day_bars[i]
                 ve = (b.volume / avg_vol) if avg_vol else 1.0
+                # PIT regime: 진입 시점 정보만 (전일 proxy 모멘텀 + 당일 장초반 entry 이전).
+                pit_feats = {
+                    **proxy_feats, "opening_gap": gap, "first_5m_return": first_5m_ret,
+                    "price_vs_vwap_so_far": (((b.close - mi.vwap) / mi.vwap)
+                                             if mi.vwap else None),
+                    "opening_range_width_so_far": (
+                        ((mi.opening_range_high - mi.opening_range_low) / day_open)
+                        if (mi.opening_range_high and mi.opening_range_low and day_open)
+                        else None),
+                }
+                pit_label, pit_conf = classify_pit_regime(pit_feats)
+                _pk = dict(pit_label=pit_label, pit_conf=pit_conf, pit_features=pit_feats)
                 for nm, ev in _STRATS.items():
                     if nm not in done_s and ev(mi).signal == CouncilAction.BUY:
-                        r = _rec(nm, sym, day, b, ve, regime, day_bars)
+                        r = _rec(nm, sym, day, b, ve, regime, day_bars, **_pk)
                         if r:
                             s_strat[nm].append(r)
                             done_s.add(nm)
                 for cn, cf in MR_CANDIDATES.items():
                     if cn not in done_c and cf(mi, ve=ve, gap=gap, day_bars=day_bars, i=i):
-                        r = _rec(cn, sym, day, b, ve, regime, day_bars)
+                        r = _rec(cn, sym, day, b, ve, regime, day_bars, **_pk)
                         if r:
                             s_mr[cn].append(r)
                             done_c.add(cn)
@@ -165,7 +195,7 @@ def _collect(symbol_paths: dict[str, Path], regime_map: dict[str, str], *,
                     c = run_agent_council(mi)
                     if c.final_action == CouncilAction.BUY:
                         r = _rec("COUNCIL", sym, day, b, ve, regime, day_bars,
-                                 exit_plan=c.exit_plan)
+                                 exit_plan=c.exit_plan, **_pk)
                         if r:
                             s_council.append(r)
                             council_done = True
@@ -246,10 +276,19 @@ def run_universe_regime_backtest(*, data_dirs: list[Path] | None = None,
             if code in all_paths:
                 proxy_path, proxy_used = all_paths[code], code
                 break
+    pit_proxy_by_date: dict[str, dict] = {}
     if proxy_path:
         pbars = load_ohlcv_from_csv(str(proxy_path), default_symbol=proxy_used)
-        pdays = {d[0].timestamp.date().isoformat(): d for d in _group_by_day(pbars)}
+        pday_list = _group_by_day(pbars)
+        pdays = {d[0].timestamp.date().isoformat(): d for d in pday_list}
         regime_map = build_regime_map(pdays)
+        # PIT: 전일까지의 proxy 모멘텀/변동성 (당일 close/range 미사용).
+        p_sorted = sorted(pdays)
+        closes = [pdays[dte][-1].close for dte in p_sorted]
+        ranges = [((max(b.high for b in pdays[dte]) - min(b.low for b in pdays[dte]))
+                   / pdays[dte][0].open) if pdays[dte][0].open else None for dte in p_sorted]
+        for k, dte in enumerate(p_sorted):
+            pit_proxy_by_date[dte] = proxy_pit_daily_features(closes, ranges, k)
     regime_manifest = build_regime_manifest(regime_map, proxy_used)
 
     sym2groups = symbol_groups()
@@ -257,8 +296,9 @@ def run_universe_regime_backtest(*, data_dirs: list[Path] | None = None,
     if len(needed) < 5:
         return _empty(len(needed), list(all_paths), universe, regime_manifest)
 
-    strat, council, mr, by_sym, meta = _collect({s: all_paths[s] for s in needed},
-                                                regime_map, run_council=run_council)
+    strat, council, mr, by_sym, meta = _collect(
+        {s: all_paths[s] for s in needed}, regime_map,
+        pit_proxy_by_date=pit_proxy_by_date, run_council=run_council)
 
     # 그룹별 집계.
     group_results: dict[str, Any] = {}
@@ -296,6 +336,40 @@ def run_universe_regime_backtest(*, data_dirs: list[Path] | None = None,
         block["COUNCIL"] = _strategy_block(ct) if ct else {"trade_count": 0}
         if any(block[k].get("trade_count") for k in block):
             regime_results[rg] = block
+
+    # 국면별 집계 — point-in-time(진입 시점 정보만, look-ahead 없음).
+    pit_regime_results: dict[str, Any] = {}
+    for pl in PIT_REGIMES:
+        block = {}
+        for k in _STRATS:
+            rt = [t for t in strat[k] if t["point_in_time_regime_label"] == pl]
+            block[k] = _strategy_block(rt) if rt else {"trade_count": 0}
+        ct = [t for t in council if t["point_in_time_regime_label"] == pl]
+        block["COUNCIL"] = _strategy_block(ct) if ct else {"trade_count": 0}
+        if any(block[k].get("trade_count") for k in block):
+            pit_regime_results[pl] = block
+
+    # posthoc vs PIT 일치율 (방향 매핑 기준).
+    all_trades = council + [t for k in _STRATS for t in strat[k]]
+    agree = sum(1 for t in all_trades
+                if regime_direction(t["posthoc_regime_label"])
+                == regime_direction(t["point_in_time_regime_label"]))
+    agreement_rate = round(agree / len(all_trades), 3) if all_trades else None
+
+    # STRONG_UPTREND 힌트: posthoc(look-ahead) vs PIT(entry-known) Council PF.
+    posthoc_su = (regime_results.get("STRONG_UPTREND", {}).get("COUNCIL", {}) or {}).get("net_pf")
+    pit_su = (pit_regime_results.get("PIT_STRONG_UPTREND", {}).get("COUNCIL", {}) or {}).get("net_pf")
+    pit_su_n = (pit_regime_results.get("PIT_STRONG_UPTREND", {}).get("COUNCIL", {}) or {}).get("trade_count", 0)
+    strong_uptrend_comparison = {
+        "posthoc_council_pf": posthoc_su,
+        "posthoc_is_lookahead": True,
+        "posthoc_not_tradeable": True,
+        "pit_council_pf": pit_su,
+        "pit_council_trade_count": pit_su_n,
+        "hint_survives_without_lookahead": bool(pit_su is not None and pit_su >= 1.0),
+        "note": "posthoc STRONG_UPTREND 은 사후 라벨(매매 불가). PIT 에서 PF≥1 이어도 research "
+                "hint 일 뿐 — paper rehearsal 후보 아님.",
+    }
 
     verdict, conclusion, survivors, failures = _verdict(group_results, regime_results)
 
@@ -347,6 +421,10 @@ def run_universe_regime_backtest(*, data_dirs: list[Path] | None = None,
         **partial_block,
         "group_results": group_results,
         "regime_results": regime_results,
+        "point_in_time_regime_results": pit_regime_results,
+        "regime_lookahead_flags": lookahead_flags(),
+        "posthoc_vs_pit_agreement_rate": agreement_rate,
+        "strong_uptrend_comparison": strong_uptrend_comparison,
         "survivors": survivors,
         "failures": failures,
         "verdict": verdict, "conclusion": conclusion,
@@ -359,9 +437,10 @@ def run_universe_regime_backtest(*, data_dirs: list[Path] | None = None,
         "auto_apply_allowed": False, "applied_to_runtime": False,
         "is_live_authorization": False, "is_order_signal": False,
         "no_profit_guarantee": True, "contains_secret": False,
-        "disclaimer": "연구용 백테스트이며 실전매매 권고가 아닙니다. regime 라벨은 사후 attribution "
-                      "전용(진입 신호 미사용). 어떤 전략/종목군도 런타임에 자동 적용되지 않습니다. "
-                      "수익을 보장하지 않습니다.",
+        "disclaimer": "연구용 백테스트이며 실전매매 권고가 아닙니다. posthoc regime은 사후 "
+                      "분석용이며 매매 규칙으로 사용할 수 없습니다. point-in-time regime은 진입 "
+                      "시점 정보만 사용하지만, 아직 연구용 attribution입니다. 어떤 전략/종목군도 "
+                      "런타임에 자동 적용되지 않습니다. 수익을 보장하지 않습니다.",
     }
 
 
