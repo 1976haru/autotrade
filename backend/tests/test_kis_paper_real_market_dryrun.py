@@ -233,7 +233,75 @@ def test_runner_real_council_over_rising_kis_prices(db, monkeypatch):
     assert all(o.get("is_live_authorization") is False for o in outs)
 
 
-# ─────────── 4) 정적 가드 ───────────
+# ─────────── 4) 매 tick 판단이 RuntimeEvent 로 기록 (HOLD 포함) ───────────
+
+
+def _capture_log_event(monkeypatch):
+    events = []
+    import app.system.event_log as ev
+    monkeypatch.setattr(ev, "log_event",
+                        lambda **kw: events.append(kw))
+    return events
+
+
+def test_runner_emits_decision_event_for_hold(db, monkeypatch):
+    monkeypatch.setattr(lr, "run_agent_council", lambda mi, **kw: _FakeDecision("HOLD"))
+    events = _capture_log_event(monkeypatch)
+    runner, _c = lr.build_kis_paper_tick_runner(
+        db=db, broker=_FakeKisBroker([70000]), risk=object(),
+        settings=_settings(), credentials_present=True, force_dry_run=True,
+    )
+    asyncio.run(runner(None, None, 0))
+    assert len(events) == 1
+    e = events[0]
+    assert e["code"] == "KIS_PAPER_DECISION_HOLD"
+    assert e["details"]["price_source"] == "kis"
+    assert e["details"]["final_action"] == "HOLD"
+    assert e["details"]["dry_run"] is True
+    assert e["details"]["order_submitted"] is False
+    assert e["details"]["broker_order_sent"] is False
+    assert e["details"]["is_live_authorization"] is False
+
+
+def test_runner_emits_decision_event_for_buy(db, monkeypatch):
+    monkeypatch.setattr(lr, "run_agent_council", lambda mi, **kw: _FakeDecision("BUY"))
+
+    async def _fake_exec(*a, **k):
+        return types.SimpleNamespace(reason_code="KIS_PAPER_DRY_RUN_OK", submitted=False,
+                                     fill_status=None, reason_message="dry")
+    monkeypatch.setattr(lr, "execute_kis_paper_auto_order", _fake_exec)
+    events = _capture_log_event(monkeypatch)
+    runner, _c = lr.build_kis_paper_tick_runner(
+        db=db, broker=_FakeKisBroker([70000]), risk=object(),
+        settings=_settings(), credentials_present=True, force_dry_run=True,
+    )
+    asyncio.run(runner(None, None, 0))
+    codes = [e["code"] for e in events]
+    assert "KIS_PAPER_DECISION_BUY" in codes
+
+
+def test_emit_decision_event_uses_valid_category_and_records():
+    """REAL log_event 사용 — category 가 유효(EventCategory)해서 실제로 기록되는지.
+
+    (monkeypatch 없이 — 'KIS_PAPER' 같은 invalid category 회귀를 잡는다.)
+    """
+    from app.system.event_log import (
+        get_runtime_event_log,
+        reset_runtime_event_log_for_tests,
+    )
+    reset_runtime_event_log_for_tests()
+    lr._emit_decision_event(symbol="005930", price=70000, action="HOLD",
+                            dry_run=True, force_dry_run=True)
+    events = get_runtime_event_log().recent(limit=10)
+    reset_runtime_event_log_for_tests()
+    codes = [e.code for e in events]
+    assert "KIS_PAPER_DECISION_HOLD" in codes, f"event not recorded: {codes}"
+    rec = [e for e in events if e.code == "KIS_PAPER_DECISION_HOLD"][0]
+    assert rec.details["price_source"] == "kis"
+    assert rec.details["order_submitted"] is False
+
+
+# ─────────── 5) 정적 가드 ───────────
 
 
 def test_live_runner_no_direct_place_order_still_holds():

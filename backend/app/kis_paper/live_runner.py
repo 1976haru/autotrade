@@ -40,6 +40,35 @@ from app.kis_paper.auto_executor import (
     execute_kis_paper_auto_order,
 )
 
+
+def _emit_decision_event(*, symbol, price, action, dry_run, force_dry_run) -> None:
+    """매 tick 판단을 RuntimeEvent 로 기록 — HOLD/BUY/SELL 모두 남긴다.
+
+    in-memory event log (log_event) 사용 — broker / DB 세션 0건. 실패해도 루프를
+    깨지 않는다. details 에 secret 0건 (symbol/price/action 만).
+    """
+    try:
+        from app.system.event_log import log_event
+        log_event(
+            level="INFO",
+            category="PAPER",
+            code=f"KIS_PAPER_DECISION_{action}",
+            message=f"{symbol} {action} @ {price} (price_source=kis, dry_run={bool(dry_run)})",
+            details={
+                "symbol": symbol,
+                "price": int(price),
+                "price_source": "kis",
+                "final_action": action,
+                "dry_run": bool(dry_run),
+                "force_dry_run": bool(force_dry_run),
+                "order_submitted": False,
+                "broker_order_sent": False,
+                "is_live_authorization": False,
+            },
+        )
+    except Exception:  # noqa: BLE001 — 이벤트 기록 실패가 루프를 깨지 않게.
+        pass
+
 _log = logging.getLogger(__name__)
 
 # 최초 검증 기본 종목 (시총 상위 1종목) · 1주. config 로 override 가능.
@@ -207,6 +236,10 @@ def build_kis_paper_tick_runner(
             out["ai_sell_signals"] = 1
         else:
             out["ai_hold_signals"] = 1
+
+        # 매 tick 판단을 RuntimeEvent 로 기록 — HOLD/BUY/SELL 모두 (price_source=kis).
+        _emit_decision_event(symbol=symbol, price=price, action=action,
+                             dry_run=out["dry_run"], force_dry_run=force_dry_run)
 
         # 3. BUY/SELL 결정만 주문 흐름 진입 — HOLD → 주문 0건.
         kpd = decision.to_kis_paper_decision(quantity=qty, price=price)

@@ -945,10 +945,11 @@ export const backendApi = {
 
   // #89 KIS Paper one-click test — 한투 모의투자 전용. 실거래 0건 invariant.
   kisPaperReadiness: () => backendFetch("/api/kis-paper/readiness"),
-  kisPaperStart: ({ mode, confirm = false } = {}) =>
+  kisPaperStart: ({ mode, confirm = false, dryRunPreview = false } = {}) =>
     backendFetch("/api/kis-paper/start", {
       method: "POST",
-      body: JSON.stringify({ mode, confirm }),
+      // dry_run_preview=true → 실 KIS 시세는 흘리되 주문 전송 0건(결정만 기록).
+      body: JSON.stringify({ mode, confirm, dry_run_preview: dryRunPreview }),
     }),
   kisPaperStop: () => backendFetch("/api/kis-paper/stop", { method: "POST" }),
   kisPaperStatus: () => backendFetch("/api/kis-paper/status"),
