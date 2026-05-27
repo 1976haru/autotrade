@@ -118,6 +118,27 @@ def test_slippage_stress_increases_cost(tmp_path):
         assert stress[15.0] <= stress[5.0]
 
 
+def test_aligned_mode_high_coverage_4way(tmp_path):
+    """align_to_1m=True → 1분봉 날짜로 제한, coverage↑, 4-way 비교 산출."""
+    one, five = _build_fixture(tmp_path, target_first=True)
+    r = run_realdata_backtest(one_min_dir=one, five_min_dir=five,
+                              symbols=["005930", "000660"], align_to_1m=True)
+    assert r["align_to_1m"] is True
+    ac = r["aligned_coverage"]
+    assert ac is not None
+    # aligned → 모든 거래가 1분봉 replay (coverage 100%).
+    assert ac["coverage_pct"] == 100.0
+    assert ac["one_minute_replayed_count"] == ac["aligned_total_trades"]
+    fw = r["aligned_comparison"]
+    for k in ("basic_5m_earliest_first", "basic_5m_composite",
+              "intrabar_1m_earliest_first", "intrabar_1m_composite"):
+        assert k in fw, f"missing 4-way key: {k}"
+    # fixture 는 2 거래일뿐 → 기간 짧음 → LOW.
+    assert r["verdict"] == "PERIOD_TOO_SHORT_LOW_CONFIDENCE"
+    assert r["confidence_level"] == "LOW"
+    assert r["is_live_authorization"] is False
+
+
 def test_empty_data_not_ready(tmp_path):
     r = run_realdata_backtest(one_min_dir=tmp_path / "none", five_min_dir=tmp_path / "none5",
                               symbols=["005930"])

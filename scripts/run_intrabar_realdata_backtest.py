@@ -56,13 +56,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--one-min-dir", default="data/market/robust_intraday_1m_subset")
     p.add_argument("--five-min-dir", default="data/market/intraday_ohlcv/kis_6m")
     p.add_argument("--symbols", default=",".join(_TEN))
+    p.add_argument("--align-to-1m", action="store_true",
+                   help="1분봉 보유 날짜로 5분봉 거래 제한 → replay coverage↑ (정밀 비교)")
     p.add_argument("--write-latest", action="store_true")
     p.add_argument("--out-dir", default=str(_OUT))
     args = p.parse_args(argv)
 
     syms = [s.strip() for s in args.symbols.split(",") if s.strip()]
     r = run_realdata_backtest(one_min_dir=args.one_min_dir,
-                              five_min_dir=args.five_min_dir, symbols=syms)
+                              five_min_dir=args.five_min_dir, symbols=syms,
+                              align_to_1m=args.align_to_1m)
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     (out / "intrabar_realdata_backtest_result.json").write_text(

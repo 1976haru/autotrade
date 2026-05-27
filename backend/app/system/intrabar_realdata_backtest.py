@@ -23,9 +23,44 @@ from typing import Any, Sequence
 from app.backtest.intrabar_execution import CostModel, simulate_intrabar_execution
 from app.backtest.signal_ranking import (
     SignalCandidate,
+    compute_composite_score,
     earliest_first,
     rank_signals,
 )
+
+
+def _four_way(trade_recs: list[dict], *, max_slots: int = 5) -> dict[str, Any]:
+    """5m/1m × earliest-first/composite 4-way 비교 — 일자별 슬롯 선택 후 집계.
+
+    earliest: 같은 날 timestamp 빠른 순 max_slots. composite: score 높은 순.
+    각 조합에서 선택된 거래의 net_pnl 합계 metric. (장기 수익성 아님 — 민감도.)
+    """
+    by_day: dict[str, list[dict]] = {}
+    for r in trade_recs:
+        by_day.setdefault(r["day"], []).append(r)
+
+    def _select(recs: list[dict], key, reverse: bool) -> list[dict]:
+        return sorted(recs, key=key, reverse=reverse)[:max_slots]
+
+    sel_ef: list[dict] = []
+    sel_comp: list[dict] = []
+    for recs in by_day.values():
+        sel_ef += _select(recs, key=lambda r: str(r["ts"]), reverse=False)
+        sel_comp += _select(recs, key=lambda r: r["score"], reverse=True)
+
+    def _m(recs, field):
+        pnls = [r[field] for r in recs]
+        ent = [r["entry"] for r in recs]
+        return _trade_metrics(pnls, ent)
+
+    return {
+        "basic_5m_earliest_first": _m(sel_ef, "pnl5"),
+        "basic_5m_composite": _m(sel_comp, "pnl5"),
+        "intrabar_1m_earliest_first": _m(sel_ef, "pnl1"),
+        "intrabar_1m_composite": _m(sel_comp, "pnl1"),
+        "selected_count_earliest_first": len(sel_ef),
+        "selected_count_composite": len(sel_comp),
+    }
 
 FIVE_MIN_DIR_DEFAULT = Path("data/market/intraday_ohlcv/kis_6m")
 ONE_MIN_DIR_DEFAULT = Path("data/market/robust_intraday_1m_subset")
@@ -170,8 +205,13 @@ def run_realdata_backtest(
     slippage_stress: Sequence[float] = _DEFAULT_SLIPPAGES,
     max_hold_minutes: int = 30,
     low_volume_threshold: float = 0.8,
+    align_to_1m: bool = False,
 ) -> dict[str, Any]:
-    """실제 1분봉+5분봉으로 intrabar+ranking 백테스트. 1분봉 없으면 NOT_READY."""
+    """실제 1분봉+5분봉으로 intrabar+ranking 백테스트. 1분봉 없으면 NOT_READY.
+
+    align_to_1m=True: 1분봉이 있는 날짜로 5분봉 거래를 *제한* → replay coverage↑.
+    (장기 수익성 아님 — 짧은 구간에서 intrabar 체결 민감도 정밀 비교용.)
+    """
     one_dir = Path(one_min_dir) if one_min_dir else ONE_MIN_DIR_DEFAULT
     five_dir = Path(five_min_dir) if five_min_dir else FIVE_MIN_DIR_DEFAULT
 
@@ -197,6 +237,8 @@ def run_realdata_backtest(
     by_group: dict[str, list[float]] = {}
     liquidity_flagged = 0
     cost = CostModel(slippage_bps=slippage_stress[0])
+    trade_recs: list[dict] = []   # 4-way 비교용 per-trade 기록.
+    trading_days: set[str] = set()
 
     for sym in with_1m:
         bars5 = _load_csv(five_map[sym])
@@ -205,9 +247,13 @@ def run_realdata_backtest(
         days1 = _group_by_day(bars1)
         group = _SYMBOL_GROUP.get(sym, "OTHER")
         for day, d5 in sorted(days5.items()):
+            # aligned 모드: 1분봉 있는 날짜만 (replay coverage↑).
+            if align_to_1m and day not in days1:
+                continue
             t = _generate_orb_trade(d5, sym)
             if t is None:
                 continue
+            trading_days.add(day)
             d1 = days1.get(day)
             five_r = simulate_intrabar_execution(
                 side="BUY", entry_time=t["entry_time"], entry_price=t["entry_price"],
@@ -233,7 +279,7 @@ def run_realdata_backtest(
                 liquidity_flagged += 1
             by_regime.setdefault(t["regime"], []).append(one_r.net_pnl)
             by_group.setdefault(group, []).append(one_r.net_pnl)
-            candidates.append(SignalCandidate(
+            cand = SignalCandidate(
                 symbol=sym, strategy="ORB", timestamp=t["entry_time"], side="BUY",
                 confidence=min(0.95, 0.5 + t["volume_expansion"] * 0.1),
                 quality_score=min(100.0, 50.0 + t["volume_expansion"] * 15.0),
@@ -242,7 +288,12 @@ def run_realdata_backtest(
                 estimated_cost_bps=cost.commission_bps * 2 + cost.tax_bps
                 + cost.slippage_bps * 2,
                 volume_expansion=t["volume_expansion"], liquidity_score=(40.0 if low_liq else 70.0),
-                regime_label=t["regime"], symbol_group=group))
+                regime_label=t["regime"], symbol_group=group)
+            candidates.append(cand)
+            trade_recs.append({
+                "day": day, "symbol": sym, "ts": t["entry_time"],
+                "score": compute_composite_score(cand), "entry": t["entry_price"],
+                "pnl5": five_r.net_pnl, "pnl1": one_r.net_pnl})
             if len(replay_sample) < 8:
                 replay_sample.append({
                     "symbol": sym, "day": day, "strategy": "ORB",
@@ -285,6 +336,18 @@ def run_realdata_backtest(
         confidence = "LOW"   # replay coverage 부족 → 1분봉 착시 결론 약함
     verdict = _verdict(with_1m, five_m, one_m, replay_cov, ranked)
 
+    # ── aligned 모드: 1분봉 날짜로 제한 → coverage↑, 4-way 정밀 비교 ──
+    four_way = None
+    n_days = len(trading_days)
+    if align_to_1m:
+        four_way = _four_way(trade_recs)
+        # 기간이 짧으면(거래일 < 10) coverage 높아도 LOW — 장기성 아님.
+        if n_days < 10:
+            verdict = "PERIOD_TOO_SHORT_LOW_CONFIDENCE"
+            confidence = "LOW"
+        elif replay_cov >= 0.60:
+            verdict = "ALIGNED_INTRABAR_SENSITIVITY_READY"
+
     return {
         "available": True,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -320,6 +383,17 @@ def run_realdata_backtest(
         "trade_replay_sample": replay_sample,
         "confidence_level": confidence,
         "verdict": verdict,
+        "align_to_1m": align_to_1m,
+        "trading_days": n_days,
+        "aligned_coverage": ({
+            "aligned_total_trades": total_tr,
+            "one_minute_replayed_count": replayable,
+            "coverage_pct": round(replay_cov * 100.0, 2),
+            "ambiguous_trade_count": ambiguous,
+            "stop_first_count": stop_first,
+            "trading_days": n_days,
+        } if align_to_1m else None),
+        "aligned_comparison": four_way,
         "conclusion": _conclusion(five_m, one_m, ranked, confidence, len(with_1m)),
         "next_steps": [
             "더 많은 종목/기간의 실제 1분봉 확보 → confidence MEDIUM→HIGH",
