@@ -404,6 +404,7 @@ def run_realdata_backtest(
             "trading_days": n_days,
         } if align_to_1m else None),
         "aligned_comparison": four_way,
+        "ranking_verdict": _ranking_verdict(four_way) if align_to_1m else None,
         "conclusion": _conclusion(five_m, one_m, ranked, confidence, len(with_1m)),
         "next_steps": [
             "더 많은 종목/기간의 실제 1분봉 확보 → confidence MEDIUM→HIGH",
@@ -414,6 +415,20 @@ def run_realdata_backtest(
         "is_live_authorization": False, "is_order_signal": False,
         "auto_apply_allowed": False, "no_profit_guarantee": True, "contains_secret": False,
     }
+
+
+def _ranking_verdict(four_way: dict | None) -> str:
+    """composite 가 earliest-first 대비 (1분봉 실행 기준) PF↑ 또는 MDD↓ 면 검증,
+    아니면 재설계 필요. ranking weight 는 *변경하지 않고* 판정만 한다."""
+    if not four_way:
+        return "RANKING_REDESIGN_NEEDED"
+    c = four_way.get("intrabar_1m_composite", {})
+    e = four_way.get("intrabar_1m_earliest_first", {})
+    pf_c, pf_e = c.get("profit_factor"), e.get("profit_factor")
+    mdd_c, mdd_e = c.get("mdd_pct"), e.get("mdd_pct")
+    pf_better = pf_c is not None and pf_e is not None and pf_c > pf_e
+    mdd_better = mdd_c is not None and mdd_e is not None and mdd_c < mdd_e
+    return "RANKING_REALDATA_VALIDATED" if (pf_better or mdd_better) else "RANKING_REDESIGN_NEEDED"
 
 
 def _delta(a, b):

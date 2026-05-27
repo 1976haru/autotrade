@@ -137,6 +137,8 @@ def test_aligned_mode_high_coverage_4way(tmp_path):
     assert r["verdict"] == "PERIOD_TOO_SHORT_LOW_CONFIDENCE"
     assert r["confidence_level"] == "LOW"
     assert r["is_live_authorization"] is False
+    # ranking_verdict 노출 (검증/재설계 둘 중 하나).
+    assert r["ranking_verdict"] in ("RANKING_REALDATA_VALIDATED", "RANKING_REDESIGN_NEEDED")
 
 
 def test_empty_data_not_ready(tmp_path):
