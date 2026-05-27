@@ -54,6 +54,26 @@ _BLOCKED_BY_PERMISSION_GATE = "BLOCKED_BY_PERMISSION_GATE"
 # risk_block 으로 카운트.
 _MISSING_EXIT_PLAN = "MISSING_EXIT_PLAN"
 
+
+class _ForceDryRunSettings:
+    """settings 래퍼 — `kis_paper_auto_order_dry_run` 만 True 로 강제.
+
+    KIS_PAPER_REAL_MARKET_DRYRUN 모드용. .env 의 `dry_run=false` 를 *파일 변경
+    없이* 런타임에서 True 로만 덮어쓴다(더 보수적 방향). 나머지 모든 속성은
+    원본 settings 로 위임. 이 래퍼가 적용되면 execute_kis_paper_auto_order 는
+    `KIS_PAPER_DRY_RUN_OK` 로 종료 — route_order / broker 주문 호출 0건 보장.
+    """
+
+    __slots__ = ("_base",)
+
+    def __init__(self, base: Any):
+        object.__setattr__(self, "_base", base)
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "kis_paper_auto_order_dry_run":
+            return True
+        return getattr(object.__getattribute__(self, "_base"), name)
+
 # tick 결과 dict — engine._merge_tick_result 가 읽는 카운터 키.
 TickResult = dict[str, Any]
 TickRunner = Callable[[Any, Any, int], Awaitable[TickResult]]
@@ -112,6 +132,7 @@ def build_kis_paper_tick_runner(
     credentials_present: bool,
     universe: tuple[str, ...] | None = None,
     quantity_per_order: int = 1,
+    force_dry_run: bool = False,
 ) -> tuple[TickRunner, Callable[[], None]]:
     """실제 KIS 모의 자동매매 tick runner + cleanup 콜백을 만든다.
 
@@ -120,11 +141,17 @@ def build_kis_paper_tick_runner(
 
     *주입식* — broker / risk / db 를 caller(route)가 request scope 밖에서
     구성해 넘긴다. engine 은 broker/route_order 를 import 하지 않는다.
+
+    force_dry_run=True (KIS_PAPER_REAL_MARKET_DRYRUN) — 실 KIS 시세는 그대로
+    흘리되 dry_run 을 *강제* True 로 덮어써 BUY/SELL 결정이 나와도 주문을
+    전송하지 않고 결정만 기록한다(route_order/broker 주문 호출 0건). .env 미변경.
     """
     syms = _resolve_universe(settings, universe)
     broker_is_kis_paper = _broker_is_kis_paper(broker)
     qty = max(1, int(quantity_per_order))
     history: dict[str, list[float]] = defaultdict(list)
+    # force_dry_run 이면 dry_run 강제 True 래퍼 사용 (주문 전송 원천 차단).
+    exec_settings = _ForceDryRunSettings(settings) if force_dry_run else settings
 
     async def runner(engine: Any, mode: Any, tick_idx: int) -> TickResult:
         out = _zero_result()
@@ -164,6 +191,16 @@ def build_kis_paper_tick_runner(
         decision = run_agent_council(market_input)
         out["ai_decisions"] = 1
         action = decision.final_action.value
+        # 실 KIS 시세 + 판단 결과 carry (이벤트/UI 표시용). dry_run/주문 불변값 명시.
+        out["last_symbol"] = symbol
+        out["last_price"] = price
+        out["price_source"] = "kis"
+        out["last_action"] = action
+        out["dry_run"] = bool(force_dry_run) or bool(
+            getattr(settings, "kis_paper_auto_order_dry_run", False))
+        out["order_submitted"] = False
+        out["broker_order_sent"] = False
+        out["is_live_authorization"] = False
         if action == "BUY":
             out["ai_buy_signals"] = 1
         elif action == "SELL":
@@ -181,7 +218,7 @@ def build_kis_paper_tick_runner(
             result = await execute_kis_paper_auto_order(
                 db,
                 decision=kpd,
-                settings=settings,
+                settings=exec_settings,
                 broker=broker,
                 risk=risk,
                 broker_is_kis_paper=broker_is_kis_paper,

@@ -92,6 +92,9 @@ class KisPaperStartIn(BaseModel):
     mode: str   # quick / slow / mock
     # 운영자 명시 확인 — UI 가 "모의투자 주문 테스트 시작" 모달에서 true 보내야.
     confirm:    bool = False
+    # KIS_PAPER_REAL_MARKET_DRYRUN — 실 KIS 시세는 흘리되 dry_run 강제 True 로
+    # 주문 전송 0건(결정만 기록). quick/slow 에서만 의미. default False.
+    dry_run_preview: bool = False
 
 
 class KisPaperStatusOut(BaseModel):
@@ -216,6 +219,8 @@ async def post_kis_paper_start(
             credentials_present=bool(
                 rd.kis_key_present and rd.kis_secret_present and rd.kis_account_present
             ),
+            # dry_run_preview → dry_run 강제 True (주문 전송 0건, 결정만 기록).
+            force_dry_run=bool(body.dry_run_preview),
         )
 
     # 백그라운드 실행 — engine.start() 가 async 이므로 *실행 중인* 이벤트 루프에
