@@ -678,6 +678,42 @@ def get_kis_intraday_100_validation_latest() -> dict:
     }
 
 
+@router.get("/system/intrabar-signal-ranking/latest")
+def get_intrabar_signal_ranking_latest() -> dict:
+    """CHECKLIST-04 P1 — 1분봉 intrabar 체결 + composite signal ranking 비교 (read-only).
+
+    `reports/backtest/intrabar_signal_ranking_latest.json` 가 있으면 반환, 없으면
+    *합성 샘플*을 즉석 계산해 반환(가벼움, 데이터 비의존). 주문 / KIS API 호출 0건,
+    secret 0건. 연구용 백테스트 — 실전매매 권고 아님.
+    """
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/backtest/intrabar_signal_ranking_latest.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            return data
+        except Exception:  # noqa: BLE001
+            pass
+    # 가벼운 합성 샘플 즉석 계산 (heavy backtest 아님).
+    try:
+        from app.system.intrabar_signal_ranking import build_report
+        data = build_report()
+        data["_source"] = "inline_sample"
+        return data
+    except Exception:  # noqa: BLE001
+        return {
+            "_source": "empty", "available": False,
+            "ranking_differs": False, "is_live_authorization": False,
+            "is_order_signal": False, "auto_apply_allowed": False,
+            "contains_secret": False, "no_profit_guarantee": True,
+            "disclaimer": "연구용 백테스트 리포트가 아직 없습니다. CLI "
+            "`run_intrabar_signal_ranking.py --write-latest` 실행 후 갱신됩니다.",
+        }
+
+
 @router.get("/system/wf-6m-50symbols/latest")
 def get_wf_6m_50symbols_latest() -> dict:
     """WF-6M-50SYMBOLS-01 — 6개월·50종목·1000만원 전략 종합 검증 (latest, read-only).

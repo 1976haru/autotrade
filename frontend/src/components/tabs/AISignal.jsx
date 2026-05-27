@@ -29,6 +29,7 @@ import { ForwardUniverseCard } from "../common/ForwardUniverseCard";
 import { Locked60dWeeklyValidationCard } from "../common/Locked60dWeeklyValidationCard";
 import { Locked60dWeeklyNewDataCard } from "../common/Locked60dWeeklyNewDataCard";
 import { Intraday1YScaledValidationCard } from "../common/Intraday1YScaledValidationCard";
+import { IntrabarSignalRankingCard } from "../common/IntrabarSignalRankingCard";
 import { RobustDatasetStatusCard } from "../common/RobustDatasetStatusCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
@@ -132,6 +133,8 @@ export function AISignal({ activeStratIds }) {
       <Locked60dWeeklyNewDataCard />
       {/* 1Y-SCALED-VALIDATION: 1년 데이터 10/25/50 확장 검증 — Paper/Backtest only, EXE 빌드 0건. */}
       <Intraday1YScaledValidationCard />
+      {/* CHECKLIST-04 P1: 1분봉 intrabar 체결 + composite signal ranking — 연구용 백테스트, 주문 0건. */}
+      <IntrabarSignalRankingCard />
       {/* ROBUST-DATASET-COLLECTION: robust 분봉 데이터셋 수집/품질/메타데이터 — 수집 전용, 백테스트/주문 0건. */}
       <RobustDatasetStatusCard />
       {/* P-31: 분석용 데이터 내보내기 (CSV/JSONL) — secret 미포함, 주문 신호 아님. */}

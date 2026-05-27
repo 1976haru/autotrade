@@ -1022,6 +1022,9 @@ export const backendApi = {
   // 1년 데이터 10/25/50 확장 검증 latest (read-only). 룰 변경 0건 · EXE 빌드 0건 · 실전 금지.
   intraday1yScaledValidationLatest: () =>
     backendFetch("/api/system/intraday-1y-scaled-validation/latest"),
+  // CHECKLIST-04 P1: 1분봉 intrabar 체결 + composite signal ranking (read-only).
+  intrabarSignalRankingLatest: () =>
+    backendFetch("/api/system/intrabar-signal-ranking/latest"),
   // 11-00: EXE 빌드 전 통합 검증 Gate (fast, read-only). subprocess/KIS 호출 0건.
   finalPrebuildGate: () => backendFetch("/api/system/final-prebuild-gate"),
   // #54 / 7-02: 기본 Universe 50개 상태 (read-only). secret 값 0건.
