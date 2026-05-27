@@ -1043,6 +1043,9 @@ export const backendApi = {
   // CHECKLIST-05: 장중 평균회귀 전략 연구 (read-only, research-only, 자동 적용 0).
   meanReversionStrategyLatest: () =>
     backendFetch("/api/system/mean-reversion-strategy/latest"),
+  // CHECKLIST-05: 평균회귀 exit 구조 연구 (read-only, research-only, 자동 적용 0).
+  meanReversionExitLatest: () =>
+    backendFetch("/api/system/mean-reversion-exit/latest"),
   // 11-00: EXE 빌드 전 통합 검증 Gate (fast, read-only). subprocess/KIS 호출 0건.
   finalPrebuildGate: () => backendFetch("/api/system/final-prebuild-gate"),
   // #54 / 7-02: 기본 Universe 50개 상태 (read-only). secret 값 0건.

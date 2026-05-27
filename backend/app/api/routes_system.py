@@ -744,6 +744,36 @@ def get_final_backtest_report_latest() -> dict:
     }
 
 
+@router.get("/system/mean-reversion-exit/latest")
+def get_mean_reversion_exit_latest() -> dict:
+    """CHECKLIST-05 — 평균회귀 exit 구조 연구 (latest, read-only).
+
+    `reports/backtest/mean_reversion_exit_latest.json` 가 있으면 반환, 없으면 가벼운
+    NOT_READY fallback (무거운 backtest 는 CLI run_mean_reversion_exit.py 전용).
+    entry/exit 구조는 research-only — 런타임 등록/자동 적용 0건. 주문 / KIS API 0건.
+    """
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/backtest/mean_reversion_exit_latest.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            return data
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "_source": "empty", "available": False,
+        "verdict": "BACKTEST_INFRA_INCOMPLETE", "is_research_only": True,
+        "conclusion": ["리포트 없음 — CLI run_mean_reversion_exit.py --write-latest 실행 후 갱신."],
+        "auto_apply_allowed": False, "applied_to_runtime": False,
+        "is_live_authorization": False, "is_order_signal": False,
+        "no_profit_guarantee": True, "contains_secret": False,
+        "disclaimer": "연구용 백테스트 — exit 구조 자동 적용 안 됨, 실전매매 권고 아님.",
+    }
+
+
 @router.get("/system/mean-reversion-strategy/latest")
 def get_mean_reversion_strategy_latest() -> dict:
     """CHECKLIST-05 — 장중 평균회귀 전략 연구 (latest, read-only).
