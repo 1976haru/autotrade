@@ -155,6 +155,13 @@ class Settings(BaseSettings):
     kis_paper_smoke_symbol:             str  = "005930"
     kis_paper_smoke_qty:                int  = 1
 
+    # KIS-PAPER-REAL-TICK-RUNNER-WIRING-V1 — quick/slow one-click 모드의 tick_runner
+    # 를 *V2 다종목 KIS 실시간 스캔* 으로 흘려보낼지 여부. default False (안전,
+    # 기존 단일 종목 live_runner 사용). True 로 켜야만 다종목 실시간 시세 스캔으로
+    # 진입한다. 본 flag 는 *실거래 활성화* 와 *전혀 무관* — 모든 KIS 모의주문은
+    # 여전히 KIS_IS_PAPER=true / ENABLE_LIVE_TRADING=false 가 강제된다.
+    use_real_tick_runner:               bool = False
+
     def symbol_whitelist_set(self) -> set[str]:
         """env 콤마 문자열을 set으로 파싱. 공백 strip."""
         if not self.symbol_whitelist:

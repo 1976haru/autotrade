@@ -204,30 +204,49 @@ async def post_kis_paper_start(
     # KIS paper(quick/slow) 모드는 *실제* 자동매매 흐름을 실행한다 — 시세 조회 →
     # Agent Council 판단 → execute_kis_paper_auto_order(route_order 위임). mock 은
     # 외부 API 0건의 빠른 카운터 루프(engine default tick runner) 유지.
+    #
+    # KIS-PAPER-REAL-TICK-RUNNER-WIRING-V1:
+    # USE_REAL_TICK_RUNNER=true 면 *V2 다종목 KIS 실시간 스캔* (real_tick_runner)
+    # 으로 흘려보낸다. False (default) 면 기존 단일 종목 live_runner 유지.
     tick_runner = None
     cleanup = None
     if mode in (TestMode.QUICK, TestMode.SLOW):
         from app.api.deps import get_broker, get_risk_manager
         from app.db.session import SessionLocal
-        from app.kis_paper.live_runner import build_kis_paper_tick_runner
+        from app.kis_paper.real_tick_runner import should_use_real_tick_runner
 
         # request scope 밖에서 broker/risk/db 를 직접 구성 (background task).
         bg_db = SessionLocal()
         broker = get_broker()
         risk = get_risk_manager()
-        tick_runner, cleanup = build_kis_paper_tick_runner(
-            db=bg_db,
-            broker=broker,
-            risk=risk,
-            settings=settings,
-            credentials_present=bool(
-                rd.kis_key_present and rd.kis_secret_present and rd.kis_account_present
-            ),
-            # 실제 KIS 모의주문은 dry_run_preview=False AND paper_order_confirm=True
-            # 일 때만 허용. 그 외에는 force_dry_run=True (주문 전송 0건, 결정만 기록).
-            # 기본값(둘 다 미지정)은 안전하게 dry-run.
-            force_dry_run=bool(body.dry_run_preview) or not bool(body.paper_order_confirm),
-        )
+        force_dry = bool(body.dry_run_preview) or not bool(body.paper_order_confirm)
+
+        if should_use_real_tick_runner(settings):
+            from app.kis_paper.real_tick_runner import build_real_kis_paper_tick_runner
+            tick_runner, cleanup = build_real_kis_paper_tick_runner(
+                db=bg_db,
+                broker=broker,
+                risk=risk,
+                settings=settings,
+                credentials_present=bool(
+                    rd.kis_key_present and rd.kis_secret_present and rd.kis_account_present
+                ),
+                # 실제 KIS 모의주문은 dry_run_preview=False AND paper_order_confirm=True
+                # 일 때만 허용. 그 외에는 force_dry_run=True (주문 전송 0건, 결정만 기록).
+                force_dry_run=force_dry,
+            )
+        else:
+            from app.kis_paper.live_runner import build_kis_paper_tick_runner
+            tick_runner, cleanup = build_kis_paper_tick_runner(
+                db=bg_db,
+                broker=broker,
+                risk=risk,
+                settings=settings,
+                credentials_present=bool(
+                    rd.kis_key_present and rd.kis_secret_present and rd.kis_account_present
+                ),
+                force_dry_run=force_dry,
+            )
 
     # 백그라운드 실행 — engine.start() 가 async 이므로 *실행 중인* 이벤트 루프에
     # detached task 로 schedule 한다. (이전 구현은
@@ -311,6 +330,7 @@ def _resolve_paper_broker_kind(settings) -> str:
 
 
 def _kis_auto_config(settings) -> dict:
+    from app.kis_paper.real_tick_runner import should_use_real_tick_runner
     return {
         "enable_kis_paper_auto_trading": bool(settings.enable_kis_paper_auto_trading),
         "dry_run":                       bool(settings.kis_paper_auto_order_dry_run),
@@ -327,6 +347,8 @@ def _kis_auto_config(settings) -> dict:
         "default_mode":                  getattr(
             settings.default_mode, "value", settings.default_mode),
         "paper_broker_kind":             _resolve_paper_broker_kind(settings),
+        # KIS-PAPER-REAL-TICK-RUNNER-WIRING-V1: 운영자 가시성.
+        "use_real_tick_runner":          bool(should_use_real_tick_runner(settings)),
     }
 
 
