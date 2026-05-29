@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Card, SectionLabel } from "../common";
+import { AutoRefreshFooter } from "../common/AutoRefreshFooter";
+import { useAutoRefresh } from "../../hooks/useAutoRefresh";
 import AgentRiskProfileSelector, {
   getRiskProfileLabel,
   normalizeRiskProfile,
@@ -276,12 +278,14 @@ export function AutoPaperLoopCard({
     }
   }, [apiClient, refresh]);
 
+  // KIS-PAPER-FULL-LIFECYCLE E: shared hook → visibility-pause, 토글, last-updated.
+  const auto = useAutoRefresh(refresh, { intervalMs: pollIntervalMs });
+  const _bootRef = useRef(false);
   useEffect(() => {
-    refresh();
-    if (!pollIntervalMs || pollIntervalMs <= 0) return undefined;
-    const t = setInterval(refresh, pollIntervalMs);
-    return () => clearInterval(t);
-  }, [refresh, pollIntervalMs]);
+    if (_bootRef.current) return;
+    _bootRef.current = true;
+    void auto.manualRefresh();
+  }, [auto]);
 
   // P-16: mount 시 backend 영속 자금 설정 1회 로드 (있으면) → localStorage mirror.
   // 실패해도 조용히 무시 — localStorage 값으로 동작 (구버전 backend / 테스트 mock).
@@ -1433,6 +1437,18 @@ export function AutoPaperLoopCard({
         본 카드는 *Paper 모의 자동 루프* 만 제어합니다. 시작 버튼이 broker 에
         직접 주문을 보내지 않으며, 실거래는 어떤 경로로도 진행되지 않습니다.
       </div>
+
+      {/* KIS-PAPER-FULL-LIFECYCLE E: 자동 새로고침 footer (탭 비활성 시 일시정지). */}
+      <AutoRefreshFooter
+        isAutoOn={auto.isAutoOn}
+        setIsAutoOn={auto.setIsAutoOn}
+        lastUpdatedAt={auto.lastUpdatedAt}
+        isRefreshing={auto.isRefreshing}
+        lastError={auto.lastError}
+        manualRefresh={auto.manualRefresh}
+        intervalMs={auto.intervalMs}
+        testId="auto-paper-loop-auto-refresh"
+      />
     </Card>
   );
 }
