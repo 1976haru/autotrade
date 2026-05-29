@@ -2317,7 +2317,7 @@ def get_universe_status(db: Session = Depends(get_db)) -> dict:
 
 
 @_AP.get("/portfolio-source")
-def get_portfolio_source(
+async def get_portfolio_source(
     last_prices: str | None = None,
     db: Session = Depends(get_db),
 ) -> dict:
@@ -2325,8 +2325,11 @@ def get_portfolio_source(
 
     - 한 카드의 현금/총자산/포지션은 같은 source 에서만 표시.
     - 조회 실패 시 0원으로 채우지 않고 source=UNAVAILABLE + cash=None.
-    - KIS 모의 계좌는 자격 존재 여부만 보고(원문 0건), 잔고 조회 미연결 시
-      NOT_CONFIGURED 로 표시(실제 잔고 0원과 구분).
+    - **KIS-PAPER-FULL-LIFECYCLE-V1**: KIS 모의 계좌 자격이 있으면 broker.get_balance /
+      get_positions 를 **read-only** 로 1회 조회해 fetcher 에 주입 → NOT_CONFIGURED 가
+      OK 로 전환. is_paper=False (live) broker 는 호출 0건(safety guard). 실패 시
+      fetcher=None 으로 폴백 → snapshot 이 API_UNAVAILABLE / NOT_CONFIGURED 로 표시
+      (0원 fallback 0건). secret 원문 carry 0건 — 숫자/심볼/수량만 노출.
     """
     from app.portfolio.portfolio_snapshot import build_portfolio_source_report
 
@@ -2341,12 +2344,44 @@ def get_portfolio_source(
     except Exception:  # noqa: BLE001 — readiness 실패해도 portfolio 표시는 계속.
         kis_credentials_present = False
 
-    # 잔고 fetcher 는 *주입하지 않는다* — 본 PR 은 KIS 모의 잔고 조회를 추가하지
-    # 않으므로(broker 호출 금지) KIS snapshot 은 NOT_CONFIGURED 로 표시된다.
+    # KIS-PAPER-FULL-LIFECYCLE-V1: 자격이 있을 때만, *모의* broker 한정 1회 read-only
+    # 조회 → cash / total_asset / positions 캡쳐. 실패는 흡수(NOT_CONFIGURED/UNAVAILABLE
+    # 로 자연스럽게 처리되어 0원 fallback 0건).
+    kis_balance_data: dict | None = None
+    if kis_credentials_present:
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+
+            from app.api.deps import get_broker
+            _b = get_broker()
+            if bool(getattr(_b, "is_paper", False)) and type(_b).__name__ == "KisBrokerAdapter":
+                bal = await _b.get_balance()
+                pos = await _b.get_positions()
+                kis_balance_data = {
+                    "cash":         int(bal.cash),
+                    "total_asset":  int(bal.equity),
+                    "positions": [
+                        {
+                            "symbol":       p.symbol,
+                            "quantity":     int(p.quantity),
+                            "avg_price":    int(p.avg_price),
+                            "market_price": int(p.market_price),
+                        }
+                        for p in pos
+                    ],
+                    "position_count": len(pos),
+                    "last_updated":   _dt.now(_tz.utc).isoformat(),
+                }
+        except Exception:  # noqa: BLE001 — KIS 호출 실패는 흡수(0원 fallback 금지).
+            kis_balance_data = None
+
+    _captured = kis_balance_data
+    kis_fetcher = (lambda: dict(_captured)) if _captured is not None else None
+
     report = build_portfolio_source_report(
         db,
         kis_credentials_present=kis_credentials_present,
-        kis_balance_fetcher=None,
+        kis_balance_fetcher=kis_fetcher,
         last_prices=prices or None,
     )
     return {

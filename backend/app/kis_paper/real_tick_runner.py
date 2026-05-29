@@ -312,6 +312,30 @@ def build_real_kis_paper_tick_runner(
     def _session_factory() -> Any:
         return db
 
+    # KIS-PAPER-FULL-LIFECYCLE-V1 (B): 매 tick 종료 시 OrderAuditLog 에서 FillPoller
+    # 가 *FILLED* 로 update 한 audit row 중 *이전 tick 이후 새로 본 것* 만 카운트해
+    # tick_result["fills_observed"] 로 forward — engine 의 in-memory counter 와 DB
+    # write 가 decouple 된 문제를 해결. 본 runner 가 *broker / route_order 를 호출하지
+    # 않으며*, DB read-only SELECT 만 수행한다.
+    _seen_filled_audit_ids: set[int] = set()
+
+    def _count_new_fills() -> int:
+        try:
+            from sqlalchemy import select
+            from app.db.models import OrderAuditLog
+            rows = db.execute(
+                select(OrderAuditLog.id).where(
+                    OrderAuditLog.broker_status == "FILLED",
+                    OrderAuditLog.executed.is_(True),
+                )
+            ).scalars().all()
+            ids = {int(i) for i in rows if i is not None}
+            new_ids = ids - _seen_filled_audit_ids
+            _seen_filled_audit_ids.update(new_ids)
+            return len(new_ids)
+        except Exception:  # noqa: BLE001 — fill counter 가 죽어도 tick 자체는 진행.
+            return 0
+
     async def runner(engine: Any, mode: Any, tick_idx: int) -> TickResult:
         # V2 스캔은 자체 try/except 로 종목별 격리 + scan-level except 처리.
         # 본 wrapper 는 매핑 + persist 만 담당.
@@ -353,6 +377,10 @@ def build_real_kis_paper_tick_runner(
             return out
 
         tick_result = _map_scan_to_tick_result(scan)
+        # KIS-PAPER-FULL-LIFECYCLE-V1 (B): FillPoller 가 audit row 를 FILLED 로 update
+        # 한 *새로운* 건수를 counter 로 forward (engine.fills_observed 와 동기화).
+        tick_result["fills_observed"] = int(tick_result.get("fills_observed", 0) or 0) \
+            + _count_new_fills()
         _persist_tick(persist_dir=pdir, run_id=rid, tick_idx=tick_idx,
                       scan=scan, tick_result=tick_result)
         _emit_runtime_event(run_id=rid, tick_idx=tick_idx,
