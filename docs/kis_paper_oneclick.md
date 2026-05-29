@@ -194,14 +194,38 @@ GET /api/kis-paper/report
 
 ## 10. 후속 작업 (#89 의 의도적 미완 부분)
 
-- 실 KIS Paper API 호출을 흘리는 tick runner — 본 PR 시점에는 default runner
-  가 *카운터 갱신만* 한다. 운영자가 본인 PC 에서 `KIS_APP_KEY` 등을 채운
-  상태에서 별도 wrapper 주입 시 활성화.
+- ~~실 KIS Paper API 호출을 흘리는 tick runner~~ → **KIS-PAPER-REAL-TICK-RUNNER-WIRING-V1
+  에서 활성화 완료**. quick/slow 모드는 `live_runner.build_kis_paper_tick_runner`
+  (단일 종목) 가 default 로 주입되며, `USE_REAL_TICK_RUNNER=true` (env / settings) 면
+  `real_tick_runner.build_real_kis_paper_tick_runner` 가 V2 *다종목* KIS 실시간
+  스캔(`driver_bridge.kis_paper_realtime_scan_tick`) 으로 라우팅한다. 두 경로 모두
+  `execute_kis_paper_auto_order` → `route_order` → RiskManager → PermissionGate →
+  OrderExecutor → KisBrokerAdapter.place_order(is_paper=True) 의 sanctioned 단일
+  진입점을 통과하며, broker 주문 메서드 직접 호출 0건은 정적 grep 가드로 lock.
+  per-tick 결과는 `reports/kis_paper_test/{run_id}_tick_{idx:04d}.json` 에 즉시
+  disk persist (운영자가 중단해도 데이터 보존). 자세한 동기/구조는
+  [`reports/tick_runner_diagnosis.md`](../reports/tick_runner_diagnosis.md).
 - DailyReport 와의 통합 — `KisPaperRunReport` 를 `reports/kis-paper/` 에 markdown
   저장 (storage 정책은 `.gitignore` 의 `reports/*` 와 lockstep).
 - AuditEvent 와의 통합 — 본 PR 시점 engine 자체는 *AuditEvent 미작성*.
   실 broker 호출 흐름 활성화 시점에 `route_order` 가 자동으로 OrderAuditLog
   를 남기므로 추가 코드 0건.
+
+### 10-A. USE_REAL_TICK_RUNNER 결정 매트릭스
+
+| 시나리오 | `false` (default) | `true` (실 V2 스캔) |
+|---|---|---|
+| quick / slow 시작 | live_runner (단일 005930) | real_tick_runner (V2 다종목) |
+| mock 시작 | engine default (counter only) | engine default (counter only) |
+| KIS 자격 미설정 | readiness 차단 → 진입 X | readiness 차단 → 진입 X |
+| KIS 시세 실패 | 즉시 break (silent swap 금지) | 종목별 skip + loop 유지 |
+| HOLD 결정 | AgentDecisionLog 기록 + 주문 0건 | 동일 |
+| BUY exit_plan 없음 | `MISSING_EXIT_PLAN` 차단 | 동일 (auto_permission) |
+| 실계좌 place_order | NotImplementedError | NotImplementedError (동일 backstop) |
+
+`paper_order_confirm=False` (UI default) 면 *어떤 경로에서도* `force_dry_run=True`
+래퍼가 적용돼 KIS API 호출 0건 (`KIS_PAPER_DRY_RUN_OK` 만). 실거래 활성화 토글이
+*아니다* — `ENABLE_LIVE_TRADING=false` / `KIS_IS_PAPER=true` 강제.
 
 ## 11. 참고
 

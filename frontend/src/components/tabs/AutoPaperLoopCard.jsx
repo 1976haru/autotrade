@@ -855,6 +855,64 @@ export function AutoPaperLoopCard({
           </div>
         </div>
 
+        {/* V2: 운용 모드 (VIRTUAL_ONLY / KIS_REALTIME_DRYRUN / KIS_REALTIME_PAPER_AUTO
+            / KIS_REALTIME_SMOKE_TEST) — 정상 Paper Auto 와 smoke 를 명확히 구분. */}
+        {(() => {
+          const m = readiness?.paper_auto_mode;
+          const lim = readiness?.paper_auto_limits;
+          if (!m) return null;
+          const mode = m.mode || "VIRTUAL_ONLY";
+          const smoke = m.smoke_mode === true;
+          const scopeMsg = smoke
+            ? "최초 안전 확인 — 1종목 / 1주 / 1건 제한 (정상 운용 아님)"
+            : mode === "KIS_REALTIME_PAPER_AUTO"
+              ? "조건 충족 시 리스크 한도 내 KIS 모의주문 자동 전송 (여러 종목)"
+              : mode === "KIS_REALTIME_DRYRUN"
+                ? "KIS 실시간 시세로 판단만 기록 — 주문 전송 없음"
+                : "가상/진단 전용 — KIS 모의주문 전송 없음";
+          return (
+            <div
+              data-testid="paper-auto-mode"
+              data-mode={mode}
+              data-price-source={m.price_source}
+              data-broker-order-enabled={String(!!m.broker_order_enabled)}
+              style={{
+                marginTop: 6, padding: 8, borderRadius: 6,
+                border: "1px solid var(--c-border)", fontSize: "var(--fs-xs)",
+                lineHeight: 1.6, background: "var(--c-bg-2)",
+              }}
+            >
+              <div>
+                운용 모드: <strong data-testid="paper-auto-mode-value">{mode}</strong>
+                {" · "}price_source: <strong>{m.price_source || "—"}</strong>
+                {" · "}market_data: <strong>{m.market_data_provider || "—"}</strong>
+              </div>
+              <div style={{ color: "var(--c-text-2)" }}>{scopeMsg}</div>
+              {m.kis_realtime === false && m.broker_order_enabled === false && (
+                <div data-testid="paper-auto-mode-mock-note" style={{ color: "var(--c-text-3)" }}>
+                  market_data_provider=kis 가 아니면 KIS 모의주문을 전송하지 않습니다
+                  (mock 시세 주문 금지).
+                </div>
+              )}
+              {lim && (
+                <div data-testid="paper-auto-limits" style={{ color: "var(--c-text-3)", marginTop: 2 }}>
+                  {smoke ? (
+                    <>smoke 종목 {lim.smoke_symbol} · 수량 {lim.smoke_qty}주 · 일일 1건</>
+                  ) : (
+                    <>
+                      종목당 {Number(lim.per_symbol_notional_krw || 0).toLocaleString()}원 ·
+                      {" "}동시보유 {lim.max_concurrent_positions} ·
+                      {" "}일일 매수한도 {Number(lim.daily_buy_limit_krw || 0).toLocaleString()}원 ·
+                      {" "}일일 {lim.max_orders_per_day}건 ·
+                      {" "}tick당 신규 {lim.max_new_positions_per_tick}종목
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* INSTALL-UX-FIX-01: KIS Paper Auto / dry-run / Fill Polling OFF 의미 설명 (설치본 혼란 방지). */}
         <div data-testid="exec-status-explain" style={{
           marginTop: 4, fontSize: "var(--fs-xs)", color: "var(--c-text-3)", lineHeight: 1.5,

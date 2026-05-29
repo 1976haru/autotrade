@@ -1034,6 +1034,21 @@ export const backendApi = {
   // CHECKLIST-04 risk-filter: RISK_FILTER_ONLY OOS 검증 (read-only, 자동 적용 0).
   riskFilterValidationLatest: () =>
     backendFetch("/api/system/risk-filter-validation/latest"),
+  // CHECKLIST-04 capstone: 4전략 단독 + Council 통합 백테스트 (read-only, 자동 적용 0).
+  finalBacktestReportLatest: () =>
+    backendFetch("/api/system/final-backtest-report/latest"),
+  // CHECKLIST-05: 전략 엣지 재설계 연구 (read-only, 신규 후보 자동 적용 0).
+  strategyEdgeRedesignLatest: () =>
+    backendFetch("/api/system/strategy-edge-redesign/latest"),
+  // CHECKLIST-05: 장중 평균회귀 전략 연구 (read-only, research-only, 자동 적용 0).
+  meanReversionStrategyLatest: () =>
+    backendFetch("/api/system/mean-reversion-strategy/latest"),
+  // CHECKLIST-05: 평균회귀 exit 구조 연구 (read-only, research-only, 자동 적용 0).
+  meanReversionExitLatest: () =>
+    backendFetch("/api/system/mean-reversion-exit/latest"),
+  // CHECKLIST-05: 종목군 × 시장국면 다변화 백테스트 (read-only, research-only, 자동 적용 0).
+  universeRegimeBacktestLatest: () =>
+    backendFetch("/api/system/universe-regime-backtest/latest"),
   // 11-00: EXE 빌드 전 통합 검증 Gate (fast, read-only). subprocess/KIS 호출 0건.
   finalPrebuildGate: () => backendFetch("/api/system/final-prebuild-gate"),
   // #54 / 7-02: 기본 Universe 50개 상태 (read-only). secret 값 0건.

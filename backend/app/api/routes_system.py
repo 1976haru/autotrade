@@ -714,6 +714,156 @@ def get_intrabar_signal_ranking_latest() -> dict:
         }
 
 
+@router.get("/system/final-backtest-report/latest")
+def get_final_backtest_report_latest() -> dict:
+    """CHECKLIST-04 capstone — 4전략 단독 + Council 통합 백테스트 (latest, read-only).
+
+    `reports/backtest/full_report_latest.json` 가 있으면 반환, 없으면 가벼운
+    NOT_READY fallback (무거운 backtest 는 CLI run_final_multi_strategy_backtest.py 전용).
+    어떤 전략/필터도 런타임에 자동 적용되지 않음. 주문 / KIS API 0건.
+    """
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/backtest/full_report_latest.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            return data
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "_source": "empty", "available": False,
+        "verdict": "BACKTEST_INFRA_INCOMPLETE",
+        "conclusion": ["리포트 없음 — CLI run_final_multi_strategy_backtest.py --write-latest 실행 후 갱신."],
+        "auto_apply_allowed": False, "applied_to_runtime": False,
+        "is_live_authorization": False, "is_order_signal": False,
+        "no_profit_guarantee": True, "contains_secret": False,
+        "disclaimer": "연구용 백테스트 — 자동 적용 안 됨, 실전매매 권고 아님.",
+    }
+
+
+@router.get("/system/universe-regime-backtest/latest")
+def get_universe_regime_backtest_latest() -> dict:
+    """CHECKLIST-05 — 종목군 × 시장국면 다변화 백테스트 (latest, read-only).
+
+    `reports/backtest/universe_regime_backtest_latest.json` 가 있으면 반환, 없으면 가벼운
+    NOT_READY fallback (무거운 backtest 는 CLI run_universe_regime_backtest.py 전용).
+    어떤 종목군/전략도 런타임 등록/자동 적용 0건. 주문 / KIS API 0건.
+    """
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/backtest/universe_regime_backtest_latest.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            return data
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "_source": "empty", "available": False,
+        "verdict": "NEED_MORE_DATA", "is_research_only": True,
+        "conclusion": ["리포트 없음 — CLI run_universe_regime_backtest.py --write-latest 실행 후 갱신."],
+        "auto_apply_allowed": False, "applied_to_runtime": False,
+        "is_live_authorization": False, "is_order_signal": False,
+        "no_profit_guarantee": True, "contains_secret": False,
+        "disclaimer": "연구용 백테스트 — 종목군/전략 자동 적용 안 됨, 실전매매 권고 아님.",
+    }
+
+
+@router.get("/system/mean-reversion-exit/latest")
+def get_mean_reversion_exit_latest() -> dict:
+    """CHECKLIST-05 — 평균회귀 exit 구조 연구 (latest, read-only).
+
+    `reports/backtest/mean_reversion_exit_latest.json` 가 있으면 반환, 없으면 가벼운
+    NOT_READY fallback (무거운 backtest 는 CLI run_mean_reversion_exit.py 전용).
+    entry/exit 구조는 research-only — 런타임 등록/자동 적용 0건. 주문 / KIS API 0건.
+    """
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/backtest/mean_reversion_exit_latest.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            return data
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "_source": "empty", "available": False,
+        "verdict": "BACKTEST_INFRA_INCOMPLETE", "is_research_only": True,
+        "conclusion": ["리포트 없음 — CLI run_mean_reversion_exit.py --write-latest 실행 후 갱신."],
+        "auto_apply_allowed": False, "applied_to_runtime": False,
+        "is_live_authorization": False, "is_order_signal": False,
+        "no_profit_guarantee": True, "contains_secret": False,
+        "disclaimer": "연구용 백테스트 — exit 구조 자동 적용 안 됨, 실전매매 권고 아님.",
+    }
+
+
+@router.get("/system/mean-reversion-strategy/latest")
+def get_mean_reversion_strategy_latest() -> dict:
+    """CHECKLIST-05 — 장중 평균회귀 전략 연구 (latest, read-only).
+
+    `reports/backtest/mean_reversion_strategy_latest.json` 가 있으면 반환, 없으면 가벼운
+    NOT_READY fallback (무거운 backtest 는 CLI run_mean_reversion_strategy.py 전용).
+    후보는 research-only — 런타임 전략으로 등록/자동 적용되지 않음. 주문 / KIS API 0건.
+    """
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/backtest/mean_reversion_strategy_latest.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            return data
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "_source": "empty", "available": False,
+        "verdict": "BACKTEST_INFRA_INCOMPLETE", "is_research_only": True,
+        "conclusion": ["리포트 없음 — CLI run_mean_reversion_strategy.py --write-latest 실행 후 갱신."],
+        "auto_apply_allowed": False, "applied_to_runtime": False,
+        "is_live_authorization": False, "is_order_signal": False,
+        "no_profit_guarantee": True, "contains_secret": False,
+        "disclaimer": "연구용 백테스트 — 후보 자동 적용 안 됨, 실전매매 권고 아님.",
+    }
+
+
+@router.get("/system/strategy-edge-redesign/latest")
+def get_strategy_edge_redesign_latest() -> dict:
+    """CHECKLIST-05 — 전략 엣지 재설계 연구 (latest, read-only).
+
+    `reports/backtest/strategy_edge_redesign_latest.json` 가 있으면 반환, 없으면 가벼운
+    NOT_READY fallback (무거운 backtest 는 CLI run_strategy_edge_redesign.py 전용).
+    신규 후보 전략은 런타임에 등록/자동 적용되지 않음. 주문 / KIS API 0건.
+    """
+    import json
+    from pathlib import Path
+
+    latest = Path("reports/backtest/strategy_edge_redesign_latest.json")
+    if latest.exists():
+        try:
+            data = json.loads(latest.read_text(encoding="utf-8"))
+            data["_source"] = "report_file"
+            return data
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "_source": "empty", "available": False,
+        "verdict": "BACKTEST_INFRA_INCOMPLETE",
+        "conclusion": ["리포트 없음 — CLI run_strategy_edge_redesign.py --write-latest 실행 후 갱신."],
+        "auto_apply_allowed": False, "applied_to_runtime": False,
+        "is_live_authorization": False, "is_order_signal": False,
+        "no_profit_guarantee": True, "contains_secret": False,
+        "disclaimer": "연구용 백테스트 — 신규 후보 자동 적용 안 됨, 실전매매 권고 아님.",
+    }
+
+
 @router.get("/system/risk-filter-validation/latest")
 def get_risk_filter_validation_latest() -> dict:
     """CHECKLIST-04 — RISK_FILTER_ONLY 후보 OOS 검증 (latest, read-only).

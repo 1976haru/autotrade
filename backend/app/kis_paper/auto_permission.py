@@ -42,6 +42,9 @@ class KisPaperPermReason(StrEnum):
     LOW_CONFIDENCE                 = "LOW_CONFIDENCE"
     LOW_QUALITY_SCORE              = "LOW_QUALITY_SCORE"
     MISSING_EXIT_PLAN              = "MISSING_EXIT_PLAN"
+    # V2: 실시간 KIS 시세가 아니면 실제 KIS 모의주문 전송 금지 (mock 시세 차단).
+    KIS_REALTIME_PRICE_REQUIRED    = "KIS_REALTIME_PRICE_REQUIRED"
+    KIS_PRICE_STALE                = "KIS_PRICE_STALE"
 
 
 _REASON_MESSAGE_KO: dict[str, str] = {
@@ -73,6 +76,10 @@ _REASON_MESSAGE_KO: dict[str, str] = {
         "신호 quality_score 가 자동주문 최소 기준 미달입니다.",
     KisPaperPermReason.MISSING_EXIT_PLAN:
         "청산 계획(stop/target)이 없어 자동주문을 진행하지 않습니다.",
+    KisPaperPermReason.KIS_REALTIME_PRICE_REQUIRED:
+        "실시간 KIS 시세 기준이 아니라 KIS 모의주문을 전송하지 않습니다 (mock 시세 주문 금지).",
+    KisPaperPermReason.KIS_PRICE_STALE:
+        "KIS 시세가 오래되어(stale) KIS 모의주문을 전송하지 않습니다.",
 }
 
 
@@ -112,6 +119,11 @@ class KisPaperOrderPermissionInput:
     # 품질 임계.
     min_confidence:                float = 0.6
     min_quality_score:             int  = 60
+    # V2: 시세 출처 가드 — 실제 전송(not dry_run)은 KIS 실시간 시세만 허용.
+    # default "kis" 로 backward-compat (기존 caller 무회귀); bridge/executor 가
+    # 결정의 실제 price_source 를 명시 주입한다.
+    price_source:                  str  = "kis"
+    price_is_stale:                bool = False
     # 시각 (UTC) — None 이면 now(UTC).
     now:                           datetime | None = None
 
@@ -215,6 +227,14 @@ def evaluate_kis_paper_order_permission(
     # BUY 는 청산 계획 필수 (SELL 은 청산 자체이므로 면제).
     if side == "BUY" and not inp.has_exit_plan:
         return _block(KisPaperPermReason.MISSING_EXIT_PLAN)
+
+    # V2: 실제 KIS 모의주문 전송(not dry_run)은 *실시간 KIS 시세* 기준에서만.
+    # mock/yfinance 시세로는 KIS 모의주문을 전송하지 않는다 (silent fallback 금지).
+    if not inp.dry_run:
+        if str(inp.price_source).strip().lower() != "kis":
+            return _block(KisPaperPermReason.KIS_REALTIME_PRICE_REQUIRED)
+        if inp.price_is_stale:
+            return _block(KisPaperPermReason.KIS_PRICE_STALE)
 
     # 한도.
     if inp.max_order_notional > 0 and inp.notional_krw > inp.max_order_notional:

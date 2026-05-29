@@ -33,6 +33,11 @@ import { IntrabarSignalRankingCard } from "../common/IntrabarSignalRankingCard";
 import { IntrabarRealDataBacktestCard } from "../common/IntrabarRealDataBacktestCard";
 import { RankingRedesignCard } from "../common/RankingRedesignCard";
 import { RiskFilterValidationCard } from "../common/RiskFilterValidationCard";
+import { FinalBacktestReportCard } from "../common/FinalBacktestReportCard";
+import { StrategyEdgeRedesignCard } from "../common/StrategyEdgeRedesignCard";
+import { MeanReversionStrategyCard } from "../common/MeanReversionStrategyCard";
+import { MeanReversionExitResearchCard } from "../common/MeanReversionExitResearchCard";
+import { UniverseRegimeBacktestCard } from "../common/UniverseRegimeBacktestCard";
 import { RobustDatasetStatusCard } from "../common/RobustDatasetStatusCard";
 import { AgentDecisionSummaryCard } from "./AgentDecisionSummaryCard";
 import { AgentStatsCard } from "./AgentStatsCard";
@@ -144,6 +149,16 @@ export function AISignal({ activeStratIds }) {
       <RankingRedesignCard />
       {/* CHECKLIST-04 risk-filter: RISK_FILTER_ONLY OOS 검증 — 자동 적용 0, 주문 0건. */}
       <RiskFilterValidationCard />
+      {/* CHECKLIST-04 capstone: 4전략 단독 + Council 통합 최종 백테스트 — 자동 적용 0, 주문 0건. */}
+      <FinalBacktestReportCard />
+      {/* CHECKLIST-05: 전략 엣지 재설계 연구 — 신규 후보 자동 적용 0, 주문 0건. */}
+      <StrategyEdgeRedesignCard />
+      {/* CHECKLIST-05: 장중 평균회귀 전략 연구 — research-only, 자동 적용 0, 주문 0건. */}
+      <MeanReversionStrategyCard />
+      {/* CHECKLIST-05: 평균회귀 exit 구조 연구 — research-only, 자동 적용 0, 주문 0건. */}
+      <MeanReversionExitResearchCard />
+      {/* CHECKLIST-05: 종목군 × 시장국면 다변화 백테스트 — research-only, 자동 적용 0, 주문 0건. */}
+      <UniverseRegimeBacktestCard />
       {/* ROBUST-DATASET-COLLECTION: robust 분봉 데이터셋 수집/품질/메타데이터 — 수집 전용, 백테스트/주문 0건. */}
       <RobustDatasetStatusCard />
       {/* P-31: 분석용 데이터 내보내기 (CSV/JSONL) — secret 미포함, 주문 신호 아님. */}
