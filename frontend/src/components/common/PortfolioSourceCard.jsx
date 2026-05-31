@@ -14,16 +14,12 @@
  *  - 실거래 계좌 잔고가 아니라는 안내.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Card, SectionLabel } from "./index";
 import { backendApi } from "../../services/backend/client";
-import { useAutoRefresh } from "../../hooks/useAutoRefresh";
-import { AutoRefreshFooter } from "./AutoRefreshFooter";
 
-// KIS-PAPER-FULL-LIFECYCLE E: 폴링 활성화 (이전엔 0 → 비활성). 10초 주기 + 탭 비활성
-// 시 일시정지 + 토글 + 마지막 갱신 시각 표시. 백엔드 부하 합리화(>=1s clamp).
-const POLL_INTERVAL_MS = 10_000;
+const POLL_INTERVAL_MS = 0;
 
 const _SOURCE_LABEL = {
   PAPER_SIMULATED: "Paper 모의 포트폴리오",
@@ -172,23 +168,19 @@ export function PortfolioSourceCard({
       setReport(r || null);
       setError(null);
     } catch (err) {
-      // 백엔드 호출 실패 — 마지막 데이터 유지(setReport(null) 하지 않음, "확인 불가" 회피).
+      setReport(null);
       setError(err?.message || String(err));
-      throw err;   // hook 에서 lastError 잡도록 re-raise.
     } finally {
       setLoading(false);
     }
   }, [apiClient]);
 
-  const auto = useAutoRefresh(refresh, { intervalMs: pollIntervalMs });
-  // 첫 마운트 시 1회 즉시 새로고침 (이전 useEffect 의 'refresh()' 즉시 호출과 동등).
-  // useAutoRefresh 자체는 첫 interval fire 까지 대기하므로 부팅 시 즉시 호출 유지.
-  const _bootRef = useRef(false);
   useEffect(() => {
-    if (_bootRef.current) return;
-    _bootRef.current = true;
-    void auto.manualRefresh();
-  }, [auto]);
+    refresh();
+    if (!pollIntervalMs || pollIntervalMs <= 0) return undefined;
+    const t = setInterval(refresh, pollIntervalMs);
+    return () => clearInterval(t);
+  }, [refresh, pollIntervalMs]);
 
   const paper = report?.paper_simulated || null;
   const kis = report?.kis_paper_account || null;
@@ -252,18 +244,6 @@ export function PortfolioSourceCard({
           본 화면은 포트폴리오 표시 전용입니다. 주문/거래 실행 기능이 아니며,
           자격정보(계좌번호/secret)는 표시되지 않습니다. broker 호출 0건.
         </div>
-
-        {/* KIS-PAPER-FULL-LIFECYCLE E: 자동 새로고침 + 마지막 갱신 + 토글. */}
-        <AutoRefreshFooter
-          isAutoOn={auto.isAutoOn}
-          setIsAutoOn={auto.setIsAutoOn}
-          lastUpdatedAt={auto.lastUpdatedAt}
-          isRefreshing={auto.isRefreshing || loading}
-          lastError={auto.lastError || error}
-          manualRefresh={auto.manualRefresh}
-          intervalMs={auto.intervalMs}
-          testId="portfolio-source-auto-refresh"
-        />
       </Card>
     </div>
   );

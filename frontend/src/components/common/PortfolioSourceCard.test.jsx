@@ -13,7 +13,7 @@
  */
 
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 
 import { PortfolioSourceCard } from "./PortfolioSourceCard";
 
@@ -129,16 +129,12 @@ describe("<PortfolioSourceCard>", () => {
     expect(err.textContent).toContain("0원이 아닙니다");
   });
 
-  it("매수/매도/실전/Place Order 버튼 0개, 입력 form 0개 (자동새로고침 토글 1 허용)", async () => {
+  it("매수/매도/실전/Place Order 버튼 0개, 입력 form 0개", async () => {
     const { container } = render(
       <PortfolioSourceCard apiClient={_api(_report(_PAPER_OK, _KIS_UNAVAILABLE))} />);
     await screen.findByTestId("portfolio-source-paper-section");
-    // KIS-PAPER-FULL-LIFECYCLE E: AutoRefreshFooter 가 추가됨 — 자동 ON 상태(default)에서는
-    // button 0, *checkbox 1개* (자동 새로고침 토글) 만 허용.
     expect(container.querySelectorAll("button").length).toBe(0);
-    const inputs = container.querySelectorAll("input, textarea, select");
-    expect(inputs.length).toBe(1);
-    expect(inputs[0].getAttribute("type")).toBe("checkbox");
+    expect(container.querySelectorAll("input, textarea, select").length).toBe(0);
     // 실행 가능한 매수/매도/실전 라벨 버튼이 없어야 한다 (안내 문구는 별개).
     const text = container.textContent;
     for (const forbidden of ["Place Order", "실거래 시작", "주문 실행", "매수 실행", "매도 실행"]) {
@@ -160,51 +156,5 @@ describe("<PortfolioSourceCard>", () => {
     render(<PortfolioSourceCard apiClient={{}} />);
     await waitFor(() =>
       expect(screen.getByTestId("portfolio-source-card")).toBeTruthy());
-  });
-
-  // ─────────── KIS-PAPER-FULL-LIFECYCLE E: 자동 새로고침 동작 ───────────
-
-  it("[E] AutoRefreshFooter 노출 + last-updated + 토글 표시", async () => {
-    render(<PortfolioSourceCard
-      apiClient={_api(_report(_PAPER_OK, _KIS_UNAVAILABLE))}
-      pollIntervalMs={1500}
-    />);
-    await screen.findByTestId("portfolio-source-paper-section");
-    expect(screen.getByTestId("portfolio-source-auto-refresh")).toBeTruthy();
-    expect(screen.getByTestId("portfolio-source-auto-refresh-toggle")).toBeTruthy();
-    expect(screen.getByTestId("portfolio-source-auto-refresh-last").textContent)
-      .toMatch(/방금 전|초 전|—/);
-    // 자동 ON 상태 — 인터벌 표시.
-    expect(screen.getByTestId("portfolio-source-auto-refresh").textContent)
-      .toContain("자동 새로고침 ON");
-  });
-
-  it("[E] 자동 새로고침 OFF 토글 후 수동 버튼 활성화", async () => {
-    const api = _api(_report(_PAPER_OK, _KIS_UNAVAILABLE));
-    render(<PortfolioSourceCard apiClient={api} pollIntervalMs={5000} />);
-    await screen.findByTestId("portfolio-source-paper-section");
-    // OFF 로 토글.
-    const toggle = screen.getByTestId("portfolio-source-auto-refresh-toggle");
-    fireEvent.click(toggle);
-    // 수동 새로고침 버튼 나타남.
-    expect(screen.getByTestId("portfolio-source-auto-refresh-manual")).toBeTruthy();
-    // 클릭 시 API 추가 호출.
-    const before = api.portfolioSource.mock.calls.length;
-    fireEvent.click(screen.getByTestId("portfolio-source-auto-refresh-manual"));
-    await waitFor(() =>
-      expect(api.portfolioSource.mock.calls.length).toBe(before + 1));
-  });
-
-  it("[E] 백엔드 호출 실패 시 footer 에 에러 표시 + 카드 자체는 유지", async () => {
-    const api = { portfolioSource: vi.fn(async () => { throw new Error("ECONNREFUSED"); }) };
-    render(<PortfolioSourceCard apiClient={api} pollIntervalMs={5000} />);
-    await waitFor(() =>
-      expect(screen.getByTestId("portfolio-source-auto-refresh")).toBeTruthy());
-    // 에러 노출 (footer 의 -error testid OR 카드 본문의 portfolio-source-error).
-    await waitFor(() => {
-      const fErr = screen.queryByTestId("portfolio-source-auto-refresh-error");
-      const bErr = screen.queryByTestId("portfolio-source-error");
-      expect(fErr || bErr).toBeTruthy();
-    });
   });
 });

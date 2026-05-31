@@ -36,19 +36,9 @@ jobs:
       - name: Test (fast)
         # vitest run + stress test 파일 제외. vitest config 또는 glob exclude로
         # 처리 — 본 PR에선 명시적 exclude 패턴 사용.
-        #
-        # KIS-PAPER-FULL-LIFECYCLE: `--pool=forks --maxWorkers=1` 추가 — CI 2-core
-        # 머신에서 vitest 의 병렬 worker 가 microtask 큐를 starve 시켜 `waitFor(
-        # ()=>expect(mock).toHaveBeenCalled())` 류 테스트(예: PaperCapitalCard P-16 /
-        # AutoPaperLoopCard #4-RiskProfileUI 등 memory documented sampled flakes)가
-        # 불규칙 fail 하는 문제 박멸. 단일 fork worker 강제 → race 자체 제거.
-        # 로컬 측정: 3053/3053 PASS in 272s (병렬 ~46s 대비 ~6배 ↑, but flake 0).
-        # (vitest CLI 가 `--poolOptions.forks.singleFork=true` flag 를 reject 하므로
-        # 동등 효과의 `--maxWorkers=1` 사용 — pool=forks 안에서 worker 1개 강제.)
         run: |
           cd frontend
-          npx vitest run --exclude '**/*.stress.test.jsx' \
-            --pool=forks --maxWorkers=1
+          npx vitest run --exclude '**/*.stress.test.jsx'
       - name: Build
         run: |
           cd frontend
