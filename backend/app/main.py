@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -88,6 +89,13 @@ async def lifespan(_app: FastAPI):
         "[startup] lifespan begin — migration_nonblocking=%s",
         cfg.migration_nonblocking,
     )
+
+    # PART1-3: capital_state 영속화 활성화를 env 로 동기화. capital_state 는
+    # get_settings 를 import 하지 않는다는 원칙(안전 flag 결합 0건)을 지키기
+    # 위해, pydantic 이 .env 에서 읽은 값을 os.environ 에 명시 반영한다.
+    if cfg.paper_capital_persist:
+        os.environ["PAPER_CAPITAL_PERSIST"] = "true"
+        _startup_logger.info("[startup] paper capital persistence ENABLED")
 
     poller: FillPoller | None = None
     poller_starter_task: asyncio.Task | None = None

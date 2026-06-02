@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     enable_fill_polling:           bool = False
     fill_polling_interval_seconds: int  = 5
 
+    # PART1-3: Paper 현금/원금/실현손익을 재시작 간 디스크에 영속할지 여부.
+    # 안전 flag 5종과 무관 — 모의 잔고 보존용. lifespan 이 이 값을 os.environ
+    # 으로 동기화해 capital_state(_persistence_enabled) 가 읽는다 (capital_state
+    # 는 get_settings 를 import 하지 않는다는 원칙 유지를 위해 env 경유).
+    paper_capital_persist: bool = False
+
     # fix/desktop-nonblocking-migration-health: 데스크톱 EXE 운영자가 첫 실행 시
     # alembic migration 으로 1~2분 멈춰 보이는 문제 해결을 위한 *opt-in* flag.
     # True 이면 lifespan 이 migration 을 background thread 로 띄우고 즉시 yield
