@@ -1,3 +1,5 @@
+import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from app.brokers.base import (
@@ -111,6 +113,9 @@ class KisBrokerAdapter(BrokerAdapter):
         account_no: str | None = None,
         is_paper:   bool | None = None,
         client:     KisClient | None = None,
+        quote_cache_ttl_seconds:   float | None = None,
+        balance_cache_ttl_seconds: float | None = None,
+        clock: Callable[[], float] | None = None,
     ):
         settings = get_settings()
         self.app_key    = app_key    if app_key    is not None else settings.kis_app_key
@@ -118,6 +123,22 @@ class KisBrokerAdapter(BrokerAdapter):
         self.account_no = account_no if account_no is not None else settings.kis_account_no
         self.is_paper   = is_paper   if is_paper   is not None else settings.kis_is_paper
         self._client = client
+
+        # Short-TTL read-only caches (EGW00201 mitigation, 2026-06-02). A scan
+        # tick re-reads balance per symbol/order and re-quotes the same symbol
+        # across scan + route_order; caching collapses those duplicate calls.
+        # Monotonic clock injectable for deterministic tests.
+        self._clock: Callable[[], float] = clock or time.monotonic
+        self._quote_cache_ttl = float(
+            quote_cache_ttl_seconds if quote_cache_ttl_seconds is not None
+            else getattr(settings, "kis_quote_cache_ttl_seconds", 0.0)
+        )
+        self._balance_cache_ttl = float(
+            balance_cache_ttl_seconds if balance_cache_ttl_seconds is not None
+            else getattr(settings, "kis_balance_cache_ttl_seconds", 0.0)
+        )
+        self._quote_cache: dict[str, tuple[float, Quote]] = {}
+        self._balance_cache: tuple[float, dict] | None = None
 
     def has_credentials(self) -> bool:
         return bool(self.app_key and self.app_secret and self.account_no)
@@ -133,17 +154,42 @@ class KisBrokerAdapter(BrokerAdapter):
         return self._client
 
     async def get_price(self, symbol: str) -> Quote:
+        if self._quote_cache_ttl > 0:
+            hit = self._quote_cache.get(symbol)
+            if hit is not None and (self._clock() - hit[0]) < self._quote_cache_ttl:
+                # Return the *same* Quote, preserving its original fetch
+                # timestamp — a cached quote honestly reports its true age, so
+                # RiskManager's stale check still sees real staleness.
+                return hit[1]
         raw = await self.client.get_price(symbol)
         output = raw.get("output") or {}
         price_str = output.get("stck_prpr")
         if price_str is None:
             raise KisApiError(f"KIS quote response missing output.stck_prpr: {raw}")
-        return Quote(
+        quote = Quote(
             symbol=symbol,
             price=int(price_str),
             timestamp=datetime.now(timezone.utc).isoformat(),
             source="kis",
         )
+        if self._quote_cache_ttl > 0:
+            self._quote_cache[symbol] = (self._clock(), quote)
+        return quote
+
+    async def _cached_inquire_balance(self) -> dict:
+        """inquire-balance with a short TTL cache shared by get_balance and
+        get_positions. Balance is effectively constant within a scan tick, so a
+        few-second TTL collapses many identical calls into one. Invalidated on
+        place_order so post-fill reads are fresh."""
+        cano, prdt = self._split_account()
+        if self._balance_cache_ttl > 0 and self._balance_cache is not None:
+            ts, cached = self._balance_cache
+            if (self._clock() - ts) < self._balance_cache_ttl:
+                return cached
+        raw = await self.client.inquire_balance(cano, prdt)
+        if self._balance_cache_ttl > 0:
+            self._balance_cache = (self._clock(), raw)
+        return raw
 
     def _split_account(self) -> tuple[str, str]:
         if not self.account_no or len(self.account_no) < 10:
@@ -154,16 +200,14 @@ class KisBrokerAdapter(BrokerAdapter):
         return self.account_no[:-2], self.account_no[-2:]
 
     async def get_balance(self) -> Balance:
-        cano, prdt = self._split_account()
-        raw = await self.client.inquire_balance(cano, prdt)
+        raw = await self._cached_inquire_balance()
         output2 = (raw.get("output2") or [{}])[0]
         cash   = int(output2.get("dnca_tot_amt", "0"))
         equity = int(output2.get("tot_evlu_amt", "0"))
         return Balance(cash=cash, equity=equity, buying_power=cash, currency="KRW")
 
     async def get_positions(self) -> list[Position]:
-        cano, prdt = self._split_account()
-        raw = await self.client.inquire_balance(cano, prdt)
+        raw = await self._cached_inquire_balance()
         positions: list[Position] = []
         for item in raw.get("output1") or []:
             qty = int(item.get("hldg_qty", "0") or "0")
@@ -198,6 +242,9 @@ class KisBrokerAdapter(BrokerAdapter):
             )
         except KisApiError as e:
             raise e
+        # A submitted order changes cash/positions — drop the balance cache so
+        # the next read reflects the order instead of a pre-order snapshot.
+        self._balance_cache = None
         return _kis_order_response_to_result(raw, order)
 
     async def cancel_order(self, order_id: str) -> OrderResult:

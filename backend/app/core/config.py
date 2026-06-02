@@ -185,8 +185,23 @@ class Settings(BaseSettings):
     # default 빈 문자열 — `_default_paper_broker_kind`가 default_mode + kis_is_paper
     # 로 자동 추론. 운영자가 명시 override 가능.
     paper_broker_kind: str = ""
-    kis_rate_limit_calls:          int   = 5
-    kis_rate_limit_window_seconds: float = 1.0
+    # KIS 모의투자 quote API documented rate limit = 2 req/s. 이전 default(5/1.0)
+    # 는 EGW00201("초당 거래건수 초과") cascade 의 직접 원인이었다 — V2 다종목 scan
+    # 이 1~2 tick 만에 quote 호출 5+회 발사 후 KIS 가 500 응답 → engine 자동중단.
+    # 안전 margin 포함 2 req per 1.1s (≈ 1.8 req/s) 로 default 조정. 운영자가
+    # 필요 시 KIS_RATE_LIMIT_CALLS / KIS_RATE_LIMIT_WINDOW_SECONDS 로 override.
+    kis_rate_limit_calls:          int   = 2
+    kis_rate_limit_window_seconds: float = 1.1
+
+    # EGW00201 후속 (2026-06-02): 다종목 scan 은 동일 tick 안에서 잔고를 종목마다
+    # 다시 조회하고(잔고는 tick 내 사실상 불변) 같은 종목 시세를 scan + route_order
+    # 가 중복 조회한다 — 06-02 EGW00201 141건 중 138건이 balance/quote 였다. 읽기
+    # 전용 quote/balance 응답을 *짧게* 캐싱해 중복 호출을 제거한다.
+    #   - TTL 은 STALE_PRICE_MAX_AGE_SECONDS(60) 보다 *훨씬* 짧게 둬 시세 신선도를
+    #     해치지 않는다(캐시된 Quote 는 원래 조회 timestamp 를 보존 — stale 판정 정직).
+    #   - 0 이면 캐싱 비활성(기존 동작). 주문 체결 후에는 balance 캐시를 즉시 무효화.
+    kis_quote_cache_ttl_seconds:   float = 1.5
+    kis_balance_cache_ttl_seconds: float = 5.0
 
     openai_api_key: str = ""
     anthropic_api_key: str = ""
