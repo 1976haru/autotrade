@@ -30,6 +30,7 @@ from app.api.routes_monitoring import router as monitoring_router
 from app.api.routes_paper import router as paper_router
 from app.api.routes_system import router as system_router
 from app.api.routes_reconciliation import router as reconciliation_router
+from app.api.routes_reporting import router as reporting_router
 from app.api.routes_risk import router as risk_router
 from app.api.routes_futures import router as futures_router
 from app.api.routes_shadow import router as shadow_router
@@ -281,6 +282,7 @@ app.include_router(auto_paper_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(monitoring_router, prefix="/api")
 app.include_router(analytics_router, prefix="/api")
+app.include_router(reporting_router, prefix="/api")
 app.include_router(kis_paper_router, prefix="/api")  # #89
 app.include_router(health_router, prefix="/api")
 
