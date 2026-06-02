@@ -94,8 +94,8 @@ class TestConstants:
     def test_default_is_three(self):
         assert DEFAULT_MAX_CONCURRENT_POSITIONS == 3
 
-    def test_allowed_options(self):
-        assert ALLOWED_MAX_CONCURRENT_POSITIONS == (3, 5, 10)
+    def test_allowed_options(self):  # now (3,5,8,10)
+        assert ALLOWED_MAX_CONCURRENT_POSITIONS == (3, 5, 8, 10)
 
     def test_default_is_in_allowed(self):
         assert DEFAULT_MAX_CONCURRENT_POSITIONS in ALLOWED_MAX_CONCURRENT_POSITIONS
@@ -119,13 +119,13 @@ class TestDataclassInvariants:
     def test_default_snapshot_carries_max_positions(self):
         cfg = get_paper_capital_config()
         assert cfg.max_concurrent_positions == 3
-        assert cfg.allowed_max_concurrent_positions_options == (3, 5, 10)
+        assert cfg.allowed_max_concurrent_positions_options == (3, 5, 8, 10)
 
     def test_to_dict_includes_p03_fields(self):
         cfg = get_paper_capital_config()
         d = cfg.to_dict()
         assert d["max_concurrent_positions"] == 3
-        assert d["allowed_max_concurrent_positions_options"] == [3, 5, 10]
+        assert d["allowed_max_concurrent_positions_options"] == [3, 5, 8, 10]
 
     def test_invalid_value_rejected_at_dataclass(self):
         with pytest.raises(ValueError, match="max_concurrent_positions"):
@@ -155,7 +155,7 @@ class TestDataclassInvariants:
 
 
 class TestSetMaxConcurrentPositions:
-    @pytest.mark.parametrize("value", [3, 5, 10])
+    @pytest.mark.parametrize("value", [3, 5, 8, 10])
     def test_allowed_values(self, value):
         cfg, fallback = set_max_concurrent_positions(value)
         assert cfg.max_concurrent_positions == value
@@ -398,9 +398,9 @@ class TestApiEndpoints:
         assert res.status_code == 200
         body = res.json()
         assert body["max_concurrent_positions"] == 3
-        assert body["allowed_max_concurrent_positions_options"] == [3, 5, 10]
+        assert body["allowed_max_concurrent_positions_options"] == [3, 5, 8, 10]
 
-    @pytest.mark.parametrize("count", [3, 5, 10])
+    @pytest.mark.parametrize("count", [3, 5, 8, 10])
     def test_post_accepts_allowed(self, api_client, count):
         res = api_client.post(
             "/api/auto-paper/max-concurrent-positions",
@@ -421,7 +421,7 @@ class TestApiEndpoints:
         assert res.status_code == 400
         detail = res.json().get("detail", {})
         assert detail.get("error") == "invalid_max_concurrent_positions"
-        assert detail.get("allowed_max_concurrent_positions_options") == [3, 5, 10]
+        assert detail.get("allowed_max_concurrent_positions_options") == [3, 5, 8, 10]
 
     def test_post_fallback(self, api_client):
         res = api_client.post(

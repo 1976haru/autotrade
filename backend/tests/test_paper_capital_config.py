@@ -88,14 +88,43 @@ class TestConstantsAndDefaults:
     def test_default_initial_cash_is_10m(self):
         assert DEFAULT_PAPER_INITIAL_CASH == 10_000_000
 
-    def test_allowed_options_are_exactly_three(self):
-        assert ALLOWED_PAPER_INITIAL_CASH == (10_000_000, 30_000_000, 50_000_000)
+    def test_allowed_options_include_1eok(self):
+        assert ALLOWED_PAPER_INITIAL_CASH == (
+            10_000_000, 30_000_000, 50_000_000, 100_000_000,
+        )
 
     def test_default_is_in_allowed(self):
         assert DEFAULT_PAPER_INITIAL_CASH in ALLOWED_PAPER_INITIAL_CASH
 
     def test_currency_is_krw(self):
         assert PAPER_CAPITAL_CURRENCY == "KRW"
+
+    def test_1eok_seed_is_selectable(self):
+        """1억(100,000,000) 시드머니가 선택 가능해야 한다 — KIS 모의계좌 1억 반영."""
+        assert is_allowed_initial_cash(100_000_000) is True
+        assert 100_000_000 in ALLOWED_PAPER_INITIAL_CASH
+
+    def test_1eok_combo_applies_and_stays_paper_only(self):
+        """1억 시드 + 종목당 500만 + 동시 8 조합이 모두 수용되고, paper 전용
+        불변(실거래 무관)이 유지되는지."""
+        from app.auto_paper.capital_config import (
+            is_allowed_max_concurrent_positions,
+            is_allowed_per_symbol_max_krw,
+            set_max_concurrent_positions,
+            set_per_symbol_allocation,
+        )
+        assert is_allowed_per_symbol_max_krw(5_000_000) is True
+        assert is_allowed_max_concurrent_positions(8) is True
+
+        cfg, fb = set_paper_capital_config(100_000_000, fallback_to_default=False)
+        assert cfg.initial_cash == 100_000_000 and fb is False
+        cfg2, _ = set_per_symbol_allocation(per_symbol_max_krw=5_000_000)
+        assert cfg2.per_symbol_max_krw == 5_000_000
+        cfg3, _ = set_max_concurrent_positions(8)
+        assert cfg3.max_concurrent_positions == 8
+        d = cfg3.to_dict()
+        assert d["is_paper_only"] is True
+        assert d["is_live_authorization"] is False
 
     def test_is_allowed_helper(self):
         assert is_allowed_initial_cash(10_000_000) is True
@@ -160,7 +189,9 @@ class TestDataclassInvariants:
             "is_paper_only", "is_live_authorization", "updated_at",
         ):
             assert key in d, f"missing key: {key}"
-        assert d["allowed_initial_cash_options"] == [10_000_000, 30_000_000, 50_000_000]
+        assert d["allowed_initial_cash_options"] == [
+            10_000_000, 30_000_000, 50_000_000, 100_000_000,
+        ]
         assert d["is_paper_only"] is True
         assert d["is_live_authorization"] is False
 
@@ -280,7 +311,7 @@ class TestCapitalConfigAPI:
         body = res.json()
         assert body["initial_cash"] == DEFAULT_PAPER_INITIAL_CASH
         assert body["allowed_initial_cash_options"] == [
-            10_000_000, 30_000_000, 50_000_000,
+            10_000_000, 30_000_000, 50_000_000, 100_000_000,
         ]
         assert body["currency"] == "KRW"
         assert body["is_paper_only"] is True
@@ -289,7 +320,7 @@ class TestCapitalConfigAPI:
         assert "모의매매 전용" in body["notice"]
         assert "실전 계좌와 무관" in body["notice"]
 
-    @pytest.mark.parametrize("value", [10_000_000, 30_000_000, 50_000_000])
+    @pytest.mark.parametrize("value", [10_000_000, 30_000_000, 50_000_000, 100_000_000])
     def test_post_accepts_allowed(self, api_client, value):
         res = api_client.post(
             "/api/auto-paper/capital-config",
@@ -313,7 +344,7 @@ class TestCapitalConfigAPI:
         detail = body.get("detail", body)
         assert detail.get("error") == "invalid_paper_initial_cash"
         assert detail.get("allowed_initial_cash_options") == [
-            10_000_000, 30_000_000, 50_000_000,
+            10_000_000, 30_000_000, 50_000_000, 100_000_000,
         ]
         # store 는 변경되지 않음.
         res2 = api_client.get("/api/auto-paper/capital-config")

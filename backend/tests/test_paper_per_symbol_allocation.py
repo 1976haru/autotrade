@@ -95,7 +95,7 @@ class TestConstants:
         assert DEFAULT_PER_SYMBOL_MAX_KRW == 1_000_000
 
     def test_allowed_per_symbol_max_krw_options(self):
-        assert ALLOWED_PER_SYMBOL_MAX_KRW == (1_000_000, 2_000_000)
+        assert ALLOWED_PER_SYMBOL_MAX_KRW == (1_000_000, 2_000_000, 3_000_000, 5_000_000)
 
     def test_default_pct_is_10_percent(self):
         assert DEFAULT_PER_SYMBOL_MAX_PCT == 0.10
@@ -175,7 +175,7 @@ class TestDataclassInvariants:
         assert cfg.per_symbol_max_krw == DEFAULT_PER_SYMBOL_MAX_KRW
         assert cfg.per_symbol_max_pct == DEFAULT_PER_SYMBOL_MAX_PCT
         assert cfg.effective_per_symbol_cap_krw == 1_000_000  # FIXED_KRW default
-        assert list(cfg.allowed_per_symbol_max_krw_options) == [1_000_000, 2_000_000]
+        assert list(cfg.allowed_per_symbol_max_krw_options) == [1_000_000, 2_000_000, 3_000_000, 5_000_000]
         assert 0.10 in cfg.allowed_per_symbol_max_pct_options
 
     def test_to_dict_carries_per_symbol_fields(self):
@@ -371,7 +371,7 @@ class TestApiEndpoints:
         assert body["per_symbol_max_krw"] == 1_000_000
         assert body["per_symbol_max_pct"] == 0.10
         assert body["effective_per_symbol_cap_krw"] == 1_000_000
-        assert body["allowed_per_symbol_max_krw_options"] == [1_000_000, 2_000_000]
+        assert body["allowed_per_symbol_max_krw_options"] == [1_000_000, 2_000_000, 3_000_000, 5_000_000]
         assert 0.10 in body["allowed_per_symbol_max_pct_options"]
 
     @pytest.mark.parametrize("krw", [1_000_000, 2_000_000])
@@ -439,7 +439,7 @@ class TestApiEndpoints:
         assert res.status_code == 400
         detail = res.json().get("detail", {})
         assert detail.get("allowed_per_symbol_max_krw_options") == [
-            1_000_000, 2_000_000,
+            1_000_000, 2_000_000, 3_000_000, 5_000_000,
         ]
 
     def test_post_fallback_to_default(self, api_client):
