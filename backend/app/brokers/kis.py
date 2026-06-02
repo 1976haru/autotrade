@@ -209,11 +209,24 @@ class KisBrokerAdapter(BrokerAdapter):
         for row in (raw.get("output1") or []):
             if row.get("odno") == order_id:
                 return _row_to_order_result(row, order_id)
+        # The order carries an ODNO, so KIS *accepted* it at submission time
+        # (place_order returns REJECTED at submission for rt_cd != '0' and never
+        # reaches here). Having no conclusion row in today's daily-ccld means the
+        # order is "submitted / accepted, not yet concluded" — NOT rejected.
+        #
+        # Returning REJECTED here was a bug: the fill poller would clobber a
+        # successfully-submitted order's RECEIVED status to REJECTED on the next
+        # tick. Observed 2026-06-02 — 6 paper BUYs were accepted (msg "모의투자
+        # 매수주문이 완료 되었습니다") yet recorded broker_status=REJECTED. Surface
+        # RECEIVED (an open status) so the order stays a poll candidate until it
+        # actually fills or shows a real conclusion row.
         return OrderResult(
             order_id=order_id,
-            status=OrderStatus.REJECTED,
-            symbol="UNKNOWN",
+            status=OrderStatus.RECEIVED,
+            symbol="",
             side=OrderSide.BUY,
             quantity=0,
-            message="order not found in today's KIS daily-ccld",
+            filled_quantity=0,
+            avg_fill_price=None,
+            message="submitted; no conclusion row in KIS daily-ccld yet",
         )

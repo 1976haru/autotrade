@@ -306,10 +306,22 @@ def test_get_order_status_returns_received_when_no_fills():
     assert result.avg_fill_price is None
 
 
-def test_get_order_status_unknown_id_returns_not_found_rejected():
+def test_get_order_status_not_in_ccld_stays_received_not_rejected():
+    """An accepted order (has ODNO) absent from today's daily-ccld is *submitted,
+    not yet concluded* — it must surface RECEIVED, never REJECTED.
+
+    Regression for 2026-06-02: 6 KIS paper BUYs were accepted ("모의투자 매수주문이
+    완료 되었습니다") but recorded broker_status=REJECTED, because this not-found
+    branch returned REJECTED and the fill poller then clobbered the order's
+    RECEIVED status. RECEIVED keeps it an open poll candidate until it fills.
+    """
     a = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801",
                          client=_stub_kis_client(daily_ccld_response={"output1": []}))
-    result = run(a.get_order_status("does-not-exist"))
-    assert result.status.value == "REJECTED"
-    assert "not found" in result.message
-    assert result.symbol == "UNKNOWN"
+    # ODNO shape mirrors the 2026-06-01 005935 BUY (broker_order_id 0000003912).
+    result = run(a.get_order_status("0000003912"))
+    assert result.status.value == "RECEIVED"
+    assert result.status.value != "REJECTED"
+    assert result.order_id == "0000003912"   # id preserved, not blanked
+    assert result.filled_quantity == 0
+    assert result.avg_fill_price is None
+    assert "daily-ccld" in result.message

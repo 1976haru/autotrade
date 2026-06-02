@@ -182,6 +182,66 @@ def test_poll_once_continues_past_a_failing_row():
         assert rows[1].broker_status == "FILLED"
 
 
+# ---------- regression: KIS submitted-but-not-concluded must not flip to REJECTED ----------
+
+class _FakeCcldClient:
+    """Duck-typed KIS client — only inquire_daily_ccld is used by get_order_status."""
+
+    def __init__(self, ccld: dict):
+        self._ccld = ccld
+
+    async def inquire_daily_ccld(self, cano, prdt):
+        return self._ccld
+
+
+def test_poll_once_does_not_reject_submitted_kis_order_absent_from_ccld():
+    """Regression (2026-06-02): a KIS paper BUY accepted at submission (has ODNO)
+    but not yet in today's daily-ccld must keep broker_status=RECEIVED through the
+    poller — never downgraded to REJECTED. Mirrors the 005935 BUY case where the
+    order succeeded ("모의투자 매수주문이 완료 되었습니다") yet was recorded REJECTED.
+    """
+    from app.brokers.kis import KisBrokerAdapter
+
+    Session = _session_factory()
+    with Session() as db:
+        a = _audit(db, broker_order_id="0000003912", broker_status="RECEIVED")
+        broker = KisBrokerAdapter(
+            app_key="k", app_secret="s", account_no="1234567801",
+            client=_FakeCcldClient({"output1": []}),  # nothing concluded yet
+        )
+        # RECEIVED stays RECEIVED → no clobber, no update.
+        assert run(poll_once(broker, db)) == 0
+    with Session() as db2:
+        loaded = db2.execute(select(OrderAuditLog).where(OrderAuditLog.id == a.id)).scalar_one()
+        assert loaded.broker_status == "RECEIVED"   # NOT REJECTED (the bug)
+        assert loaded.filled_quantity == 0
+
+
+def test_poll_once_advances_kis_order_once_it_concludes_filled():
+    """The same submitted order still advances to FILLED once it appears concluded
+    in daily-ccld — proving the RECEIVED-while-pending fix does not strand fills.
+    """
+    from app.brokers.kis import KisBrokerAdapter
+
+    Session = _session_factory()
+    ccld_filled = {"output1": [{
+        "odno": "0000003912", "pdno": "005935", "sll_buy_dvsn_cd": "02",
+        "ord_qty": "10", "tot_ccld_qty": "10", "avg_prvs": "75500", "cncl_yn": "N",
+    }]}
+    with Session() as db:
+        a = _audit(db, broker_order_id="0000003912", broker_status="RECEIVED")
+        broker = KisBrokerAdapter(
+            app_key="k", app_secret="s", account_no="1234567801",
+            client=_FakeCcldClient(ccld_filled),
+        )
+        assert run(poll_once(broker, db)) == 1
+    with Session() as db2:
+        loaded = db2.execute(select(OrderAuditLog).where(OrderAuditLog.id == a.id)).scalar_one()
+        assert loaded.broker_status == "FILLED"
+        assert loaded.filled_quantity == 10
+        assert loaded.avg_fill_price == 75500
+
+
 # ---------- FillPoller lifecycle ----------
 
 def test_fill_poller_rejects_non_positive_interval():
