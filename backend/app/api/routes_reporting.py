@@ -16,6 +16,11 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.reporting.cost_tracker import (
+    augment_trades_with_costs,
+    daily_cost_summary,
+    estimate_cost_for_frequency,
+)
 from app.reporting.trade_lifecycle import (
     aggregate_by_strategy,
     build_trade_lifecycle,
@@ -90,6 +95,43 @@ def get_trade_lifecycle(
             "체결가가 없으면 주문가 기준 추정(price_basis=ESTIMATE)입니다. "
             "손익은 비용(거래세/수수료/슬리피지) 미반영 총손익이며, 비용 반영은 "
             "비용 추적기를 참고하세요. 본 표는 표시용이며 주문 신호가 아닙니다."
+        ),
+        "is_order_signal": False,
+        "contains_secret": False,
+    }
+
+
+@router.get("/cost-summary")
+def get_cost_summary(
+    date: str | None = Query(None, description="KST 날짜 YYYY-MM-DD (없으면 최근 N일)"),
+    days: int = Query(1, ge=1, le=90),
+    mode: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    """STEP 4: 거래 비용 추적 — 거래수 / 총비용 / 비용전 손익 / ★비용후 손익 /
+    비용·수익 비율 + 거래별 비용. read-only."""
+    date_from, date_to = _kst_day_bounds_utc(date, days)
+    rows = build_trade_lifecycle(db, date_from=date_from, date_to=date_to, mode=mode)
+    return {
+        "summary":     daily_cost_summary(rows),
+        "trades":      augment_trades_with_costs(rows),
+        "is_order_signal": False,
+        "contains_secret": False,
+    }
+
+
+@router.get("/cost-estimate")
+def get_cost_estimate(
+    avg_trade_notional_krw: int = Query(5_000_000, ge=1),
+    round_trips_per_day:    int = Query(8, ge=0, le=1000),
+    trading_days:           int = Query(1, ge=1, le=250),
+):
+    """거래 빈도↑ 시 예상 비용 (단타 비용벽 미리보기). 순수 계산, DB 미접근."""
+    return {
+        **estimate_cost_for_frequency(
+            avg_trade_notional_krw=avg_trade_notional_krw,
+            round_trips_per_day=round_trips_per_day,
+            trading_days=trading_days,
         ),
         "is_order_signal": False,
         "contains_secret": False,
