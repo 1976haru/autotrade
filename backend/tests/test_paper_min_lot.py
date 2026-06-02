@@ -454,7 +454,7 @@ class TestRegressionWithPriorP:
             get_paper_capital_config,
         )
         assert DEFAULT_PAPER_INITIAL_CASH == 10_000_000
-        assert ALLOWED_PAPER_INITIAL_CASH == (10_000_000, 30_000_000, 50_000_000)
+        assert ALLOWED_PAPER_INITIAL_CASH == (10_000_000, 30_000_000, 50_000_000, 100_000_000)
         cfg = get_paper_capital_config()
         assert cfg.initial_cash == 10_000_000
 
@@ -466,7 +466,7 @@ class TestRegressionWithPriorP:
             DEFAULT_PER_SYMBOL_MAX_PCT,
         )
         assert DEFAULT_PER_SYMBOL_MAX_KRW == 1_000_000
-        assert ALLOWED_PER_SYMBOL_MAX_KRW == (1_000_000, 2_000_000)
+        assert ALLOWED_PER_SYMBOL_MAX_KRW == (1_000_000, 2_000_000, 3_000_000, 5_000_000)
         assert DEFAULT_PER_SYMBOL_MAX_PCT == 0.10
 
     def test_max_concurrent_default_intact(self):
@@ -476,7 +476,7 @@ class TestRegressionWithPriorP:
             ALLOWED_MAX_CONCURRENT_POSITIONS,
         )
         assert DEFAULT_MAX_CONCURRENT_POSITIONS == 3
-        assert ALLOWED_MAX_CONCURRENT_POSITIONS == (3, 5, 10)
+        assert ALLOWED_MAX_CONCURRENT_POSITIONS == (3, 5, 8, 10)
 
     def test_affordability_helper_intact(self):
         # P-04 helper 가 그대로 작동 + 본 모듈과 compute 결과 일치.
