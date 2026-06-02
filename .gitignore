@@ -93,6 +93,11 @@ backups/*
 *.db.backup
 *.sqlite.bak
 
+# ---------- CLAUDE.md slim 정리 백업 (2026-06-02) ----------
+# CLAUDE.md 를 핵심 지침만 남기고 슬림화하며 남긴 원본 백업. 변경이력 전문은
+# docs/claude_md_changelog_archive.md 로 *추적* 보존하므로 .bak 은 git 미추적.
+CLAUDE.md.bak
+
 
 # ---------- Tauri / Rust desktop build (#86) ----------
 # private signing key는 절대 commit 금지.
