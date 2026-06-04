@@ -22,7 +22,7 @@ import csv
 import io
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -63,6 +63,21 @@ class TradeRow:
         d = asdict(self)
         d["is_order_signal"] = False
         return d
+
+
+def _utc_iso(dt: datetime | None) -> str | None:
+    """created_at(naive, UTC 로 저장) → tz-aware ISO('+00:00').
+
+    naive ISO 를 그대로 내보내면 프론트의 `new Date(iso)` 가 *로컬(KST)* 로 잘못
+    해석해 UTC 값을 KST 인 양 표시한다(예: UTC 00:53 → 화면 00:53, 실제 KST 09:53).
+    UTC 마커를 붙여 보내면 프론트가 KST 로 정확히 변환한다. order audit endpoint
+    의 `_ensure_utc` 규약과 동일.
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
 
 
 def _price_of(row: OrderAuditLog) -> tuple[int | None, str]:
@@ -124,7 +139,7 @@ def build_trade_lifecycle(
         side = (r.side or "").upper()
         price, basis = _price_of(r)
         qty = _qty_of(r)
-        t_iso = r.created_at.isoformat() if r.created_at else None
+        t_iso = _utc_iso(r.created_at)
 
         if side == "BUY":
             open_lots[r.symbol].append({

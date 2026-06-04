@@ -67,6 +67,22 @@ def test_buy_then_sell_pairs_into_closed_trade_with_pnl():
     assert r.is_order_signal is False
 
 
+def test_timestamps_are_utc_marked_for_correct_kst_display():
+    """buy_time/sell_time must carry a UTC tz marker (+00:00) so the frontend
+    new Date() converts to KST instead of mis-reading naive UTC as local time."""
+    S = _session_factory()
+    with S() as db:
+        _order(db, symbol="005930", side="BUY", qty=2, t=_T0, avg_fill=10_000, filled=2)
+        _order(db, symbol="005930", side="SELL", qty=2, t=_T0 + timedelta(minutes=30),
+               avg_fill=10_500, filled=2)
+        rows = build_trade_lifecycle(db, date_from=_FROM, date_to=_TO)
+    r = rows[0]
+    assert r.buy_time.endswith("+00:00"), r.buy_time
+    assert r.sell_time.endswith("+00:00"), r.sell_time
+    # holding time still correct with tz-aware timestamps
+    assert r.holding_minutes == 30.0
+
+
 def test_open_position_when_no_sell():
     S = _session_factory()
     with S() as db:
