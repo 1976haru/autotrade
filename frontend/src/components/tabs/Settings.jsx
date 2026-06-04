@@ -29,6 +29,9 @@ import { FinalPrebuildGateCard } from "../common/FinalPrebuildGateCard";
 import { backendApi } from "../../services/backend/client";
 import { APP_INFO, appVersionLine } from "../../config/appInfo";
 import { latestReleaseNote } from "../../config/releaseNotes";
+// UI 대정리: 홈에서 옮겨온 진단/테스트 카드 (시스템 영역). 홈 5블록 정리.
+import { MonitoringCard } from "./MonitoringCard";
+import { KisPaperOneClickTestCard } from "./KisPaperOneClickTestCard";
 
 
 // 버전 / 공지 카드 — Settings 탭 상단에 노출. VersionBadge 클릭 시 release
@@ -252,6 +255,14 @@ export function Settings({ settings }) {
           분리 표시하고, 연결 실패 시 진단·DB·KIS 를 "확인 불가" 로 강등해
           모순(연결됨+실패 동시) 표시를 차단. read-only, broker 호출 0건. */}
       <BackendSidecarStatusCard />
+
+      {/* UI 대정리: 시스템 안정성 모니터링 — 홈에서 이동(홈은 5블록만).
+          server/DB/API 오류율/데이터 지연/주문 실패율/승인 대기/리스크/알림. read-only. */}
+      <MonitoringCard />
+
+      {/* UI 대정리: 한투 모의투자 AI 자동매매 원클릭 테스트 — 홈에서 이동.
+          실제 돈 0원, KIS_IS_PAPER=true / ENABLE_LIVE_TRADING=false 강제. */}
+      <KisPaperOneClickTestCard />
 
       {/* #63 / 8-01: EXE Preflight Smoke Test — health/config/KIS/DB/auto loop/
           Agent Council/Decision Episode/build 를 한 번에 점검 PASS/WARN/FAIL.

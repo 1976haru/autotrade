@@ -42,6 +42,8 @@ import { PortfolioSourceCard } from "../common/PortfolioSourceCard";
 import { UpdateBanner } from "../UpdateBanner";
 // UI-revamp STEP 1: 단일 거래 상태 요약 바 (요약 추가 — 기존 카드/안전배지 불변).
 import { TradingStatusBar } from "../common/TradingStatusBar";
+// UI 대정리 STEP 2: 홈 조작 버튼 한 줄 (시작/정지/긴급정지 — 기존 핸들러 재사용).
+import { HomeControlBar } from "../common/HomeControlBar";
 import {
   computeTradingStatus, summarizeTodayOrders,
   botFilledSymbolSet, classifyPositionSource, POSITION_SOURCE_BADGE,
@@ -571,28 +573,12 @@ export function Dashboard({
   const _backendStatus = useBackendStatus();
 
   return (
-    // 222: 레이아웃은 .dashboard-body 클래스가 결정. 모바일은 세로 스택,
-    // PC(≥768px)는 auto-fit grid로 카드들이 2~3열로 흐른다. 인라인 style은
-    // class CSS를 이기므로 layout 관련 인라인 속성은 두지 않는다.
+    // UI 대정리: 홈 = 5블록만. 1)상태바 2)조작버튼 3)내 계좌 4)오늘 거래 5)AI 판단.
+    // 진단/점검·요약 타일은 Settings(시스템) 등 각 탭으로 이동(삭제 0). 안전 문구·
+    // 시작/정지/긴급정지 핸들러는 그대로(위치만 이동). 222 레이아웃 class 유지.
     <div className="dashboard-body">
 
-      {/* UI-revamp STEP 1: 홈 최상단 "지금 상태" 요약 바 — 단일 판정 + 오늘 숫자.
-          "봇 RUNNING인데 루프 정지" 같은 모순 표시를 하나의 상태로 정리. 안전
-          배지/문구는 아래 기존 카드들이 그대로 유지(요약 추가). */}
-      <div className="dashboard-span-full">
-        <TradingStatusBar
-          status={_tradingStatus}
-          today={_today}
-          onJumpTab={onJumpTab}
-        />
-      </div>
-
-      {/* #59 + fix/step1-backend-autoconnect-final: 데이터 출처 banner.
-          기존 (error || !loading) 조건은 *backend 가 살아있어도 첫 시도가 실패
-          하면* 영구 demo/offline 표시 → "Backend 미연결" stuck. 이제는
-          connectionState === CONNECTING 또는 OFFLINE 일 때만 표시.
-          CONNECTED / DB_PREPARING 상태에서는 본 banner 숨김 — BackendOfflineBanner
-          이 별도 작은 배지로 fallback port 안내. */}
+      {/* offline일 때만 데이터 출처 배너(현행 유지) */}
       {(_backendStatus.connectionState === "CONNECTING"
         || _backendStatus.connectionState === "OFFLINE") && (
         <div className="dashboard-span-full">
@@ -608,339 +594,176 @@ export function Dashboard({
         </div>
       )}
 
-      {/* feature/desktop-auto-updater (A 단계): 앱 코드 자동 업데이트 배너.
-          GitHub Release latest 조회만 — 자동 설치 없음 (B 단계 signing key 필요).
-          사용자 .env / Secret / 실거래 flag 변경 0건 (테스트로 lock). */}
+      {/* ── 블록 1: 상태 바 (단일 진실) ── */}
       <div className="dashboard-span-full">
-        <UpdateBanner />
+        <TradingStatusBar status={_tradingStatus} today={_today} onJumpTab={onJumpTab} />
       </div>
 
-      {/* 230 (UI-002): Hero Summary — 앱명/모드/연결상태/긴급정지/결재대기 한 줄로 */}
+      {/* ── 블록 2: 조작 버튼 한 줄 (시작/정지/긴급정지 — 한 곳에만) ──
+          핸들러는 App.jsx가 주입한 기존 start/stop/onEmergencyStop 그대로(로직 0 수정). */}
       <div className="dashboard-span-full">
-        <HeroSummaryCard
-          emergencyStop={emergencyStop}
-          pendingCount={pendingCount}
-          stalePendingCount={stalePendingCount}
-        />
-      </div>
-
-      {/* 227: 스마트폰 운영자 패널 — 시작/일시정지/긴급정지 + 핵심 상태 한 화면 */}
-      <div className="dashboard-span-full">
-        <OperatorPanel
-          pendingCount={pendingCount}
+        <HomeControlBar
+          running={running}
+          onStart={start}
+          onStop={stop}
           emergencyStop={emergencyStop}
           onEmergencyStop={onEmergencyStop}
         />
       </div>
 
-      {/* fix/desktop-backend-sidecar-autostart: EXE 원클릭 시작/정지/긴급정지.
-          PAPER/SIMULATION 한정 — broker.place_order 호출 0건, 실거래 OFF 영구. */}
+      {/* ── 블록 3: 내 계좌 (KIS 모의계좌 기준 — 단일 source) ──
+          현금/총자산/평가손익 = PortfolioSourceCard(KIS). 보유종목 = 출처배지.
+          Paper 내부계산은 접힌 "상세 보기"로 흡수(삭제 0). KPI/봇누적 중복 제거. */}
       <div className="dashboard-span-full">
-        <AutoPaperLoopCard />
-      </div>
-
-      {/* Agent Council — 4전략(ORB/Momentum/Gap/VWAP) 투표 + 최종 판단 (advisory).
-          decision 미주입 시 안내 문구만 — 자동 tick / 평가 결과가 채워지면 표시. */}
-      <div className="dashboard-span-full">
-        <AgentCouncilVoteCard />
-      </div>
-
-      {/* #55 / 7-03: 포트폴리오 데이터 소스 통일 — 현금/총자산/포지션을 source/
-          status/last_updated 와 함께 표시. 조회 실패는 0원이 아니라 "확인 불가".
-          Paper 모의 포트폴리오와 KIS 모의 계좌를 섞지 않고 분리. read-only. */}
-      <div className="dashboard-span-full">
+        <SectionLabel>내 계좌 (KIS 모의계좌)</SectionLabel>
         <PortfolioSourceCard />
-      </div>
 
-      {/* Paper 가상 포트폴리오 — Paper 모의 체결 결과(현금/보유/평가/손익) 표시.
-          실거래 계좌와 무관, broker 호출 0건.
-          STEP 2: 실제 거래되는 곳은 위 KIS 모의계좌. 이 카드는 *내부 계산용(참고)*
-          임을 라벨로 명시해 "돈이 여러 곳에서 다르게 보임" 혼란을 줄인다 (삭제 X). */}
-      <div className="dashboard-span-full">
-        <div data-testid="paper-portfolio-note" style={{
-          fontSize: "var(--fs-xs)", color: "var(--c-text-3)", margin: "0 0 6px 2px",
-        }}>
-          ℹ️ 아래는 <b>내부 계산용(참고)</b> Paper 포트폴리오입니다 — 실제 거래·잔고는
-          위 <b>KIS 모의계좌</b> 기준입니다.
-        </div>
-        <PortfolioCard />
-      </div>
-
-      {/* 225: 현재 장세 배지 — 위험/상태 요약 위에 한 줄로 */}
-      <div className="dashboard-span-full">
-        <MarketRegimeBadge />
-      </div>
-
-      {/* #70: Monitoring Card — 시스템 안정성 (server / DB / API 오류율 /
-          데이터 지연 / 주문 실패율 / 승인 대기 / 리스크 이벤트 / 알림).
-          수익률 카드보다 위에 노출하여 운영자가 장애 신호를 우선 보게 한다. */}
-      <div className="dashboard-span-full">
-        <MonitoringCard />
-      </div>
-
-      {/* 232 (UI-004): Agent 판단 hero — 추천/Confidence/Regime/Readiness 한 화면 */}
-      <div className="dashboard-span-full">
-        <AgentDecisionHero />
-      </div>
-
-      {/* PHASE 5 (UI redesign): AI Agent가 선택한 4개 핵심 전략 표시.
-          read-only — 선택 / 변경 / 주문 발생 X. */}
-      <div className="dashboard-span-full">
-        <AgentStrategyChoiceCard />
-      </div>
-
-      {/* 85: Strategy Selection Card — 4개 단타 전략 vote → 최적 조합 advisory.
-          주문 아님 / 승인 후보 전 단계. broker call 0건, audit row 0건. */}
-      <div className="dashboard-span-full">
-        <StrategySelectionDashboardSlot />
-      </div>
-
-      {/* 89: 한투 모의투자 AI 자동매매 원클릭 테스트.
-          실제 돈 0원, KIS_IS_PAPER=true / ENABLE_LIVE_TRADING=false 강제. */}
-      <div className="dashboard-span-full">
-        <KisPaperOneClickTestCard />
-      </div>
-
-      {/* 긴급 정지가 오래 켜져 있을 때 reminder — 위험/상태 요약보다 먼저 노출 */}
-      <div className="dashboard-span-full">
-        <EmergencyStopStuckBanner
-          since={emergencyStopSince}
-          onClick={() => onJumpTab && onJumpTab("strat")}
-        />
-      </div>
-
-      {/* 116: 결재 처리 내역에 stale 비율이 25% 이상이면 적체 의심 banner */}
-      <div className="dashboard-span-full">
-        <HistoryStaleBanner
-          history={approvals && approvals.history}
-          onClick={() => onJumpTab && onJumpTab("approve")}
-        />
-      </div>
-
-      {/* 위험/상태 요약 */}
-      <div className="dashboard-span-full">
-        <StatusSummaryCard
-          emergencyStop={emergencyStop}
-          pendingCount={pendingCount}
-          stalePendingCount={stalePendingCount}
-          running={running}
-          ordersInWindow={_ordersInWindow}
-          idleThresholdLabel={idleThresholdId}
-          onJumpTab={onJumpTab}
-        />
-      </div>
-
-      {/* 102: 봇 idle 임계 chip — RUNNING일 때만 의미 있어 그때만 노출 */}
-      {running && (
-        <div className="dashboard-span-full" style={{
-          display: "flex", alignItems: "center", gap: 8,
-          fontSize: 9, color: "#475569", padding: "0 4px",
-        }}>
-          <span>봇 idle 임계:</span>
-          <BotIdleThresholdBar
-            active={idleThresholdId}
-            onChange={setIdleThresholdId}
-          />
-        </div>
-      )}
-
-      {/* KPI — 3개 카드는 한 줄에 함께 보여야 의미가 있어 PC에서도 span-full.
-          245 (Light-008): 큰 숫자 (--fs-2xl) + uppercase 라벨 + 더 넉넉한 padding. */}
-      <div className="dashboard-span-full" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        <Card>
-          <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)",
-                          marginBottom: 8, textTransform: "uppercase",
-                          letterSpacing: "0.06em", fontWeight: 600 }}>총 자산</div>
-          <div style={{ fontSize: "var(--fs-2xl)", fontWeight: "var(--fw-bold)",
-                          color: "var(--c-text)" }}>
-            {fmtKRW(Math.round(totalAsset))}원
-          </div>
-          <div style={{ fontSize: "var(--fs-sm)", color: "var(--c-text-3)",
-                          marginTop: 6 }}>현금 {fmtKRW(cash)}원</div>
-        </Card>
-        <Card>
-          <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)",
-                          marginBottom: 8, textTransform: "uppercase",
-                          letterSpacing: "0.06em", fontWeight: 600 }}>평가손익</div>
-          <div style={{ fontSize: "var(--fs-2xl)", fontWeight: "var(--fw-bold)",
-                          color: pnlColor(totalPnL) }}>
-            {totalPnL >= 0 ? "+" : ""}{fmtKRW(Math.round(totalPnL))}원
-          </div>
-          <div style={{ fontSize: "var(--fs-sm)",
-                          color: pnlColor(totalPnLPct), marginTop: 6 }}>
-            {fmtPct(totalPnLPct)}
-          </div>
-        </Card>
-        <Card>
-          <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)",
-                          marginBottom: 8, textTransform: "uppercase",
-                          letterSpacing: "0.06em", fontWeight: 600 }}>봇 누적</div>
-          <div style={{ fontSize: "var(--fs-2xl)", fontWeight: "var(--fw-bold)",
-                          color: pnlColor(stats.pnl) }}>
-            {stats.pnl >= 0 ? "+" : ""}{fmtKRW(stats.pnl)}원
-          </div>
-          <div style={{ fontSize: "var(--fs-sm)", color: "var(--c-text-3)",
-                          marginTop: 6 }}>승률 {winRate}%</div>
-        </Card>
-      </div>
-
-      {/* 43: Shadow trade summary — LIVE_SHADOW 모드에서 실 시세 기준 추정 후보 누적.
-          actual_broker_orders_sent invariant 0 + would-have 카운트 표시. 빈 상태에서도
-          mount 시 1회 호출해 카드 자체로 invariant 0 신호를 노출한다. */}
-      <div className="dashboard-span-full">
-        <ShadowSummaryCard
-          summary={_shadow.summary}
-          loading={_shadow.loading}
-          error={_shadow.error}
-          onRefresh={_shadow.refresh}
-        />
-      </div>
-
-      {/* 44: AI Assist 24h 요약 — AI 제안 + 결재 대기 카운트. AI는 제안만,
-          주문은 사람 승인 후. 결재 대기 카운트 클릭 시 결재 탭으로 점프. */}
-      <div className="dashboard-span-full">
-        <AiAssistSummaryTile
-          summary={_aiAssist.summary}
-          loading={_aiAssist.loading}
-          error={_aiAssist.error}
-          onJumpTab={onJumpTab}
-        />
-      </div>
-
-      {/* 24시간 활동 요약 — 내부에 여러 row가 있어 PC에서도 한 줄로 펼치는 게 가독적.
-          UI redesign PHASE 4: 모바일에서는 핵심 카드 위주로만 보이도록 PC 전용 처리. */}
-      <div className="dashboard-span-full dashboard-pc-only">
-        <Activity24hCard onJumpTab={onJumpTab} approvals={approvals} />
-      </div>
-
-      {/* 191: Agent Council 최근 chief 결정 — smartphone 운용 동선에서
-          직전 판단 한 줄로 확인 가능. 상세는 AI 탭에서.
-          PHASE 4: 모바일 기본 숨김 (AgentDecisionHero가 핵심 판단을 이미 보여줌). */}
-      <div className="dashboard-pc-only">
-        <AgentLatestTile onJumpTab={onJumpTab} />
-      </div>
-
-      {/* 60: AI Agent 모의매매 카드 — 마지막 결정/포지션/리스크 체크/Emergency Stop.
-          본 카드는 LIVE 발주 버튼을 노출하지 않는다 (test로 lock). */}
-      <AutoTraderCard />
-
-      {/* 18: 관심종목 universe 요약 — active watchlist 종목 수 + top 5.
-          PHASE 4: 모바일에서는 부가 정보 — 기본 숨김. */}
-      <div className="dashboard-pc-only">
-        <WatchlistSummaryTile onNavigate={onJumpTab ? () => onJumpTab("config") : undefined} />
-      </div>
-
-      {/* 22: 테마 / 뉴스 후보 필터 요약 — 주문 신호 아님 invariant.
-          PHASE 4: 모바일에서는 부가 정보 — 기본 숨김. */}
-      <div className="dashboard-pc-only">
-        <ThemeSummaryTile onNavigate={onJumpTab ? () => onJumpTab("signal") : undefined} />
-      </div>
-
-      {/* 봇 컨트롤 */}
-      <Card accentColor={running ? "#22c55e33" : undefined}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{
-              width: 10, height: 10, borderRadius: "50%",
-              background: running ? "#10b981" : "var(--c-text-4)",
-              boxShadow: running ? "0 0 0 4px #10b98133" : "none",
-            }} />
-            <span style={{
-              fontSize: "var(--fs-md)", fontWeight: "var(--fw-bold)",
-              color: running ? "#10b981" : "var(--c-text-3)",
-              letterSpacing: "0.04em",
-            }}>
-              {running ? "BOT RUNNING" : "BOT STOPPED"}
-            </span>
-          </div>
-          <button
-            onClick={running ? stop : start}
-            style={{
-              padding: "10px 22px", borderRadius: "var(--r-md)", border: "none",
-              cursor: "pointer", fontFamily: "inherit",
-              fontWeight: "var(--fw-bold)", fontSize: "var(--fs-base)",
-              background: running ? "#ef4444" : "#10b981",
-              color: "#fff",
-              boxShadow: "var(--sh-1)",
-            }}
-          >
-            {running ? "⏹ 정지" : "▶ 시작"}
-          </button>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", textAlign: "center" }}>
-          <StatBox label="매매" value={stats.total} color="#7dd3fc" />
-          <StatBox label="승"   value={stats.wins}  color="#22c55e" />
-          <StatBox label="패"   value={stats.losses} color="#ef4444" />
-          <StatBox label="승률" value={`${winRate}%`} color={+winRate >= 55 ? "#22c55e" : "#f59e0b"} />
-        </div>
-      </Card>
-
-      {/* 포지션 */}
-      <Card>
-        <SectionLabel>보유 종목 (KIS 모의계좌)</SectionLabel>
-        {positions.length === 0 ? (
-          <div style={{ color: "var(--c-text-3)", textAlign: "center",
-                          padding: 24, fontSize: "var(--fs-base)" }}>
-            아직 보유 포지션이 없습니다.
-          </div>
-        ) : positions.map((p) => {
-          const pnl = (p.cur - p.avg) * p.qty;
-          const pp  = ((p.cur - p.avg) / p.avg) * 100;
-          // STEP 2: 출처 배지 — 봇이 체결로 만든 종목 vs 기존 보유.
-          const _src = classifyPositionSource(p.code, _botFilledSymbols);
-          const _badge = POSITION_SOURCE_BADGE[_src];
-          return (
-            <div key={p.code} style={{
-              display: "flex", justifyContent: "space-between",
-              padding: "12px 0", borderBottom: "1px solid var(--c-border)",
-              fontSize: "var(--fs-base)",
-            }}>
-              <div>
-                <span style={{ color: "var(--c-info)", fontSize: "var(--fs-sm)",
-                                fontWeight: "var(--fw-bold)" }}>{p.code}</span>
-                <span data-testid={`position-source-${p.code}`}
-                      style={{ marginLeft: 8, fontSize: 10, fontWeight: 700,
-                               color: _badge.color, padding: "1px 6px", borderRadius: 4,
-                               border: `1px solid ${_badge.color}55`,
-                               background: `${_badge.color}15` }}>
-                  {_badge.label}
-                </span>
-                <br /><span style={{ color: "var(--c-text)" }}>{p.name}</span>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ color: pnlColor(pnl), fontWeight: "var(--fw-bold)",
-                                fontSize: "var(--fs-md)" }}>
-                  {pnl >= 0 ? "+" : ""}{fmtKRW(Math.round(pnl))}원
-                </div>
-                <div style={{ fontSize: "var(--fs-sm)", color: pnlColor(pp) }}>{fmtPct(pp)}</div>
-              </div>
+        <Card style={{ marginTop: 12 }}>
+          <SectionLabel>보유 종목</SectionLabel>
+          {positions.length === 0 ? (
+            <div style={{ color: "var(--c-text-3)", textAlign: "center",
+                            padding: 24, fontSize: "var(--fs-base)" }}>
+              아직 보유 포지션이 없습니다.
             </div>
-          );
-        })}
-      </Card>
+          ) : positions.map((p) => {
+            const pnl = (p.cur - p.avg) * p.qty;
+            const pp  = ((p.cur - p.avg) / p.avg) * 100;
+            const _src = classifyPositionSource(p.code, _botFilledSymbols);
+            const _badge = POSITION_SOURCE_BADGE[_src];
+            return (
+              <div key={p.code} style={{
+                display: "flex", justifyContent: "space-between",
+                padding: "12px 0", borderBottom: "1px solid var(--c-border)",
+                fontSize: "var(--fs-base)",
+              }}>
+                <div>
+                  <span style={{ color: "var(--c-info)", fontSize: "var(--fs-sm)",
+                                  fontWeight: "var(--fw-bold)" }}>{p.code}</span>
+                  <span data-testid={`position-source-${p.code}`}
+                        style={{ marginLeft: 8, fontSize: 10, fontWeight: 700,
+                                 color: _badge.color, padding: "1px 6px", borderRadius: 4,
+                                 border: `1px solid ${_badge.color}55`,
+                                 background: `${_badge.color}15` }}>
+                    {_badge.label}
+                  </span>
+                  <br /><span style={{ color: "var(--c-text)" }}>{p.name}</span>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ color: pnlColor(pnl), fontWeight: "var(--fw-bold)",
+                                  fontSize: "var(--fs-md)" }}>
+                    {pnl >= 0 ? "+" : ""}{fmtKRW(Math.round(pnl))}원
+                  </div>
+                  <div style={{ fontSize: "var(--fs-sm)", color: pnlColor(pp) }}>{fmtPct(pp)}</div>
+                </div>
+              </div>
+            );
+          })}
+        </Card>
 
-      {/* 최근 체결 */}
-      <Card>
-        <SectionLabel>RECENT TRADES {running && <span style={{ color: "var(--c-success)" }}>● LIVE</span>}</SectionLabel>
-        {trades.length === 0 ? (
-          <div style={{ color: "var(--c-text-3)", textAlign: "center",
-                          padding: 24, fontSize: "var(--fs-base)" }}>
-            아직 체결된 거래가 없습니다.
+        {/* Paper 내부계산 포트폴리오 — 접힌 상세(참고). 실제 거래는 위 KIS 계좌. */}
+        <details data-testid="paper-portfolio-details" style={{ marginTop: 8 }}>
+          <summary style={{ cursor: "pointer", fontSize: "var(--fs-xs)", color: "var(--c-text-3)" }}>
+            ℹ️ 내부 계산용(참고) Paper 포트폴리오 보기 — 실제 거래·잔고는 위 KIS 모의계좌
+          </summary>
+          <div style={{ marginTop: 8 }}>
+            <PortfolioCard />
           </div>
-        ) : trades.slice(0, 8).map((t) => (
-          <div key={t.id} style={{
-            display: "flex", justifyContent: "space-between",
-            padding: "10px 0", borderBottom: "1px solid var(--c-border)",
-            fontSize: "var(--fs-sm)",
-          }}>
-            <span style={{ color: "var(--c-text-3)" }}>{t.ts}</span>
-            <span style={{ color: "var(--c-text)" }}>{t.name}</span>
-            <span style={{ color: pnlColor(t.pnl), fontWeight: 700 }}>
-              {t.pnl >= 0 ? "+" : ""}{fmtKRW(t.pnl)}원
-            </span>
+        </details>
+      </div>
+
+      {/* ── 블록 4: 오늘 거래 (주문/체결/거부 + 최근 주문 + 거래없음 사유) ── */}
+      <div className="dashboard-span-full">
+        <SectionLabel>오늘 거래</SectionLabel>
+        {/* 오늘 한 줄 요약 + 거래없음/거부 사유 힌트 */}
+        <div data-testid="today-trades-summary" style={{
+          display: "flex", gap: 14, flexWrap: "wrap", fontSize: "var(--fs-sm)",
+          color: "var(--c-text-3)", marginBottom: 8,
+        }}>
+          <span>주문 <b style={{ color: "var(--c-text)" }}>{_today.orderCount}</b>건</span>
+          <span>체결 <b style={{ color: _today.filledCount > 0 ? "#22c55e" : "var(--c-text)" }}>{_today.filledCount}</b>건</span>
+          <span>거부 <b style={{ color: _today.rejectedCount > 0 ? "#ef4444" : "var(--c-text)" }}>{_today.rejectedCount}</b>건</span>
+          {_today.orderCount === 0 && (
+            <span style={{ color: "var(--c-text-4)" }}>· 오늘 신규 주문 없음 (장 시작 전·정지·차단 여부는 상태 바 참고)</span>
+          )}
+          {_today.filledCount === 0 && _today.orderCount > 0 && (
+            <span style={{ color: "var(--c-text-4)" }}>· 체결 0 — 사유는 거래 로그(audit 탭) 참고</span>
+          )}
+        </div>
+        <Activity24hCard onJumpTab={onJumpTab} approvals={approvals} />
+        <Card style={{ marginTop: 12 }}>
+          <SectionLabel>최근 체결 {running && <span style={{ color: "var(--c-success)" }}>● LIVE</span>}</SectionLabel>
+          {trades.length === 0 ? (
+            <div style={{ color: "var(--c-text-3)", textAlign: "center",
+                            padding: 24, fontSize: "var(--fs-base)" }}>
+              아직 체결된 거래가 없습니다.
+            </div>
+          ) : trades.slice(0, 8).map((t) => (
+            <div key={t.id} style={{
+              display: "flex", justifyContent: "space-between",
+              padding: "10px 0", borderBottom: "1px solid var(--c-border)",
+              fontSize: "var(--fs-sm)",
+            }}>
+              <span style={{ color: "var(--c-text-3)" }}>{t.ts}</span>
+              <span style={{ color: "var(--c-text)" }}>{t.name}</span>
+              <span style={{ color: pnlColor(t.pnl), fontWeight: 700 }}>
+                {t.pnl >= 0 ? "+" : ""}{fmtKRW(t.pnl)}원
+              </span>
+            </div>
+          ))}
+        </Card>
+      </div>
+
+      {/* ── 블록 5: AI 판단 (Agent Council 최종판단 + 4전략 한 줄씩) ── */}
+      <div className="dashboard-span-full">
+        <SectionLabel>AI 판단</SectionLabel>
+        <AgentCouncilVoteCard />
+        <div style={{ marginTop: 12 }}><AgentDecisionHero /></div>
+        <div style={{ marginTop: 12 }}><AgentStrategyChoiceCard /></div>
+      </div>
+
+      {/* ── 기타/고급 (기본 접힘) ── 5블록 외 카드는 *삭제하지 않고* 여기로 접어
+          넣는다(이동/접기). 상태/긴급정지 중복 카드는 상태 바·조작 버튼으로 단일화
+          됐지만, 안전 문구·고급 정보 보존을 위해 접힌 채로 유지(펼치면 그대로). */}
+      <div className="dashboard-span-full">
+        <details data-testid="home-advanced-details">
+          <summary style={{ cursor: "pointer", fontSize: "var(--fs-sm)",
+                             color: "var(--c-text-3)", padding: "8px 0" }}>
+            ⚙️ 기타 · 고급 (장세 / Agent 상세 / 운영 패널 / 전략선택 / 알림 요약 등) — 펼쳐보기
+          </summary>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 8 }}>
+            <MarketRegimeBadge />
+            <AutoPaperLoopCard />
+            <OperatorPanel
+              pendingCount={pendingCount}
+              emergencyStop={emergencyStop}
+              onEmergencyStop={onEmergencyStop}
+            />
+            <HeroSummaryCard
+              emergencyStop={emergencyStop}
+              pendingCount={pendingCount}
+              stalePendingCount={stalePendingCount}
+            />
+            <EmergencyStopStuckBanner
+              since={emergencyStopSince}
+              onClick={() => onJumpTab && onJumpTab("strat")}
+            />
+            <StrategySelectionDashboardSlot />
+            <AgentLatestTile onJumpTab={onJumpTab} />
+            <AutoTraderCard />
+            <ShadowSummaryCard
+              summary={_shadow.summary} loading={_shadow.loading}
+              error={_shadow.error} onRefresh={_shadow.refresh}
+            />
+            <AiAssistSummaryTile
+              summary={_aiAssist.summary} loading={_aiAssist.loading}
+              error={_aiAssist.error} onJumpTab={onJumpTab}
+            />
+            <WatchlistSummaryTile onNavigate={onJumpTab ? () => onJumpTab("config") : undefined} />
+            <ThemeSummaryTile onNavigate={onJumpTab ? () => onJumpTab("signal") : undefined} />
+            <UpdateBanner />
           </div>
-        ))}
-      </Card>
+        </details>
+      </div>
     </div>
   );
 }
