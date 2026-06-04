@@ -163,7 +163,8 @@ def _stub_kis_client_with_order(rt_cd: str = "0", odno: str = "0000123") -> KisC
         if request.url.path.endswith("/order-cash"):
             return httpx.Response(200, json={
                 "rt_cd": rt_cd,
-                "msg1":  "정상처리되었습니다." if rt_cd == "0" else "잔고부족",
+                "msg_cd": "MCA00000" if rt_cd == "0" else "40570000",
+                "msg1":  "정상처리되었습니다." if rt_cd == "0" else "주문 불가한 계좌입니다.",
                 "output": {"ODNO": odno, "ORD_TMD": "094530"},
             })
         return httpx.Response(404)
@@ -189,7 +190,9 @@ def test_place_order_paper_kis_failure_returns_rejected():
                          is_paper=True, client=_stub_kis_client_with_order(rt_cd="1"))
     result = run(a.place_order(order))
     assert result.status.value == "REJECTED"
-    assert "잔고부족" in result.message
+    assert "주문 불가한 계좌" in result.message
+    # exact KIS msg_cd is preserved for diagnosis / KIS support ticket
+    assert "40570000" in result.message
 
 
 def test_place_order_live_mode_explicitly_disabled():

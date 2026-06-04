@@ -38,8 +38,16 @@ def _kis_order_response_to_result(raw: dict, order: "OrderRequest") -> OrderResu
     """
     rt_cd = raw.get("rt_cd")
     msg = raw.get("msg1", "") or ""
+    msg_cd = raw.get("msg_cd", "") or ""
     output = raw.get("output") or {}
     odno = output.get("ODNO") or ""
+
+    # Preserve the KIS message code (msg_cd) alongside msg1 so a rejection records
+    # the *exact* KIS error code, e.g. "[40570000] 모의투자 주문이 불가한 계좌입니다".
+    # Previously only msg1 was kept, so the diagnostic code was lost — making it
+    # impossible to tell (account-not-registered vs contest-not-supported vs token)
+    # apart for a KIS support ticket. (2026-06-04)
+    full_msg = f"[{msg_cd}] {msg}" if msg_cd else msg
 
     if rt_cd != "0":
         return OrderResult(
@@ -48,7 +56,7 @@ def _kis_order_response_to_result(raw: dict, order: "OrderRequest") -> OrderResu
             symbol=order.symbol,
             side=order.side,
             quantity=order.quantity,
-            message=msg,
+            message=full_msg,
         )
 
     return OrderResult(
@@ -57,7 +65,7 @@ def _kis_order_response_to_result(raw: dict, order: "OrderRequest") -> OrderResu
         symbol=order.symbol,
         side=order.side,
         quantity=order.quantity,
-        message=msg,
+        message=full_msg,
     )
 
 
