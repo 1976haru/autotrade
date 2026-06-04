@@ -40,6 +40,13 @@ import { AgentCouncilVoteCard } from "./AgentCouncilVoteCard";
 import { PortfolioCard } from "../common/PortfolioCard";
 import { PortfolioSourceCard } from "../common/PortfolioSourceCard";
 import { UpdateBanner } from "../UpdateBanner";
+// UI-revamp STEP 1: 단일 거래 상태 요약 바 (요약 추가 — 기존 카드/안전배지 불변).
+import { TradingStatusBar } from "../common/TradingStatusBar";
+import {
+  computeTradingStatus, summarizeTodayOrders,
+  botFilledSymbolSet, classifyPositionSource, POSITION_SOURCE_BADGE,
+} from "../../utils/tradingStatus";
+import { currentMarketPhase, isMarketOpen } from "../../utils/marketHours";
 
 // 093/108: MODE_DISPLAY는 utils/modes.js로 이동(108) — 같은 팔레트를
 // AuditLog timeline에서도 mode badge로 쓰기 위해 공유. Dashboard는 re-export
@@ -534,6 +541,21 @@ export function Dashboard({
     _orderAudits.items, _idleThresholdEntry.windowMs,
   );
 
+  // UI-revamp STEP 1: 단일 거래 상태 + 오늘 핵심 숫자. running/emergencyStop은
+  // 기존 props, 장중 여부는 frontend marketHours(백엔드 호출 0). cycle/계좌차단
+  // 사유는 아직 props로 들어오지 않아 미지정(추후 wiring) — 그래도 긴급정지/정지/
+  // 장마감은 정확히 판정. realized 손익은 주문 row에 없어 null("—") — 추정 금지.
+  const _phase = currentMarketPhase();
+  const _tradingStatus = computeTradingStatus({
+    running,
+    emergencyStop,
+    marketOpen: isMarketOpen(),
+    marketPhase: _phase,
+  });
+  const _today = summarizeTodayOrders(_orderAudits.items);
+  // STEP 2: 보유 종목 출처 배지 — 봇이 *체결로* 만든 종목만 "봇이 매수".
+  const _botFilledSymbols = botFilledSymbolSet(_orderAudits.items);
+
   // 43: LIVE_SHADOW shadow trade summary — 실 시세 기준 추정 기록.
   // mount 시 1회 fetch. mode가 LIVE_SHADOW가 아닌 환경에서도 누적 기록을 보여
   // 줘야 운영자가 과거 shadow run 결과를 회고할 수 있다.
@@ -553,6 +575,17 @@ export function Dashboard({
     // PC(≥768px)는 auto-fit grid로 카드들이 2~3열로 흐른다. 인라인 style은
     // class CSS를 이기므로 layout 관련 인라인 속성은 두지 않는다.
     <div className="dashboard-body">
+
+      {/* UI-revamp STEP 1: 홈 최상단 "지금 상태" 요약 바 — 단일 판정 + 오늘 숫자.
+          "봇 RUNNING인데 루프 정지" 같은 모순 표시를 하나의 상태로 정리. 안전
+          배지/문구는 아래 기존 카드들이 그대로 유지(요약 추가). */}
+      <div className="dashboard-span-full">
+        <TradingStatusBar
+          status={_tradingStatus}
+          today={_today}
+          onJumpTab={onJumpTab}
+        />
+      </div>
 
       {/* #59 + fix/step1-backend-autoconnect-final: 데이터 출처 banner.
           기존 (error || !loading) 조건은 *backend 가 살아있어도 첫 시도가 실패
@@ -620,8 +653,16 @@ export function Dashboard({
       </div>
 
       {/* Paper 가상 포트폴리오 — Paper 모의 체결 결과(현금/보유/평가/손익) 표시.
-          실거래 계좌와 무관, broker 호출 0건. */}
+          실거래 계좌와 무관, broker 호출 0건.
+          STEP 2: 실제 거래되는 곳은 위 KIS 모의계좌. 이 카드는 *내부 계산용(참고)*
+          임을 라벨로 명시해 "돈이 여러 곳에서 다르게 보임" 혼란을 줄인다 (삭제 X). */}
       <div className="dashboard-span-full">
+        <div data-testid="paper-portfolio-note" style={{
+          fontSize: "var(--fs-xs)", color: "var(--c-text-3)", margin: "0 0 6px 2px",
+        }}>
+          ℹ️ 아래는 <b>내부 계산용(참고)</b> Paper 포트폴리오입니다 — 실제 거래·잔고는
+          위 <b>KIS 모의계좌</b> 기준입니다.
+        </div>
         <PortfolioCard />
       </div>
 
@@ -836,7 +877,7 @@ export function Dashboard({
 
       {/* 포지션 */}
       <Card>
-        <SectionLabel>LIVE POSITIONS</SectionLabel>
+        <SectionLabel>보유 종목 (KIS 모의계좌)</SectionLabel>
         {positions.length === 0 ? (
           <div style={{ color: "var(--c-text-3)", textAlign: "center",
                           padding: 24, fontSize: "var(--fs-base)" }}>
@@ -845,6 +886,9 @@ export function Dashboard({
         ) : positions.map((p) => {
           const pnl = (p.cur - p.avg) * p.qty;
           const pp  = ((p.cur - p.avg) / p.avg) * 100;
+          // STEP 2: 출처 배지 — 봇이 체결로 만든 종목 vs 기존 보유.
+          const _src = classifyPositionSource(p.code, _botFilledSymbols);
+          const _badge = POSITION_SOURCE_BADGE[_src];
           return (
             <div key={p.code} style={{
               display: "flex", justifyContent: "space-between",
@@ -854,6 +898,13 @@ export function Dashboard({
               <div>
                 <span style={{ color: "var(--c-info)", fontSize: "var(--fs-sm)",
                                 fontWeight: "var(--fw-bold)" }}>{p.code}</span>
+                <span data-testid={`position-source-${p.code}`}
+                      style={{ marginLeft: 8, fontSize: 10, fontWeight: 700,
+                               color: _badge.color, padding: "1px 6px", borderRadius: 4,
+                               border: `1px solid ${_badge.color}55`,
+                               background: `${_badge.color}15` }}>
+                  {_badge.label}
+                </span>
                 <br /><span style={{ color: "var(--c-text)" }}>{p.name}</span>
               </div>
               <div style={{ textAlign: "right" }}>

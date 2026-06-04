@@ -22,6 +22,28 @@ export const nowTime = () => {
 /** 현재 날짜 YYYY-MM-DD */
 export const nowDate = () => new Date().toLocaleDateString("ko-KR");
 
+// UI-revamp (2026-06-04): 시각 표시 KST 통일. 백엔드가 UTC(naive 또는 'Z')로 주는
+// 타임스탬프를 항상 한국시간으로 보여준다. naive(타임존 마커 없음)는 UTC로 간주.
+const _hasTz = (s) => typeof s === "string" && /([zZ])|([+-]\d\d:?\d\d)$/.test(s);
+
+/** ISO 타임스탬프 → KST "MM/DD HH:MM" (naive는 UTC로 간주). */
+export function formatKst(iso) {
+  if (!iso) return "";
+  const d = new Date(_hasTz(iso) || typeof iso !== "string" ? iso : iso + "Z");
+  if (Number.isNaN(d.getTime())) return String(iso);
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(d);
+}
+
+/** 현재 KST 시:분 "HH:MM" (상태 바 등). */
+export function nowKstHm(d = new Date()) {
+  return new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(d);
+}
+
 /** 합류점수 색상 */
 export const confluenceColor = (score) =>
   score >= 70 ? "#22c55e" : score >= 50 ? "#facc15" : "#ef4444";
