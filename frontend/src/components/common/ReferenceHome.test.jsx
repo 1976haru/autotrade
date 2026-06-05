@@ -29,6 +29,10 @@ vi.mock("../../services/backend/client", () => ({
     })),
     runtimeProfilePut: vi.fn(async () => ({ active_profile: { value: "aggressive" } })),
     performanceByTechnique: vi.fn(async () => ({ no_data: true, techniques: [], active_profile: "balanced" })),
+    agentFunnel: vi.fn(async () => ({ no_data: true, stages: [], drops: [] })),
+    agentCalibration: vi.fn(async () => ({ no_data: true, buckets: [] })),
+    agentShadow: vi.fn(async () => ({ no_data: true, tracking_count: 0, track_days: 5 })),
+    agentLearning: vi.fn(async () => ({ observations: [{ code: "INSUFFICIENT_SAMPLE", text: "아직 표본이 부족해요 — 판단 보류", evidence: {} }], footer: "이 관찰을 바탕으로 한 설정 변경은 운영자 승인으로 진행돼요." })),
     runtimeConfigPut: vi.fn(async (b) => ({
       max_concurrent_positions: { value: b.max_concurrent_positions ?? 5, min: 1, max: 10 },
       per_stock_budget: { value: b.per_stock_budget ?? 1000000, min: 100000, max: 10000000 },

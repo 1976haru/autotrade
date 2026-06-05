@@ -154,6 +154,11 @@ export const backendApi = {
   },
   performanceByTechnique: ({ period = "daily" } = {}) =>
     backendFetch(`/api/performance/by-technique?period=${encodeURIComponent(period)}`),
+  // AI 에이전트 대시보드 (읽기 전용).
+  agentFunnel:      ({ period = "daily" } = {}) => backendFetch(`/api/agent/funnel?period=${encodeURIComponent(period)}`),
+  agentCalibration: ({ period = "daily" } = {}) => backendFetch(`/api/agent/calibration?period=${encodeURIComponent(period)}`),
+  agentShadow:      ({ period = "daily" } = {}) => backendFetch(`/api/agent/shadow?period=${encodeURIComponent(period)}`),
+  agentLearning:    ({ period = "daily" } = {}) => backendFetch(`/api/agent/learning?period=${encodeURIComponent(period)}`),
   // 장중 런타임 설정 (동시진입 종목 수 / 종목당 투자금) — 2개 전용.
   runtimeConfigGet:       () => backendFetch("/api/runtime-config"),
   runtimeConfigPut:       (body) =>

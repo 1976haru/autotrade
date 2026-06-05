@@ -28,6 +28,7 @@ import { PerformanceCard } from "./PerformanceCard";
 import { LivePositionsCard } from "./LivePositionsCard";
 import { RiskProfileSwitchCard } from "./RiskProfileSwitchCard";
 import { TechniqueScorecard } from "./TechniqueScorecard";
+import { AgentDashboard } from "./AgentDashboard";
 
 // 등락 색 — 한국식(+빨강 −파랑). 라이트/다크 모두 대비 확보.
 const UP = "#e5443b", DOWN = "#2563eb";
@@ -377,11 +378,15 @@ export function ReferenceHome({
         </div>
 
         {/* ④ 에이전트 한 줄 */}
-        <button type="button" data-testid="refhome-agent" onClick={() => onJumpTab?.("signal")}
-          style={{ gridArea: "agent", ...card, cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", flexDirection: "column", gap: 8 }}>
-          <span style={secLabel}>에이전트 ›</span>
-          <span style={{ fontSize: F.md, fontWeight: 700, color: C.text }}>{aiOneLiner(latestAi)}</span>
-        </button>
+        {/* AG6: 에이전트 전용 섹션 (한 줄 → 대시보드로 확장) */}
+        <div style={{ gridArea: "agent", ...card }}>
+          <button type="button" data-testid="refhome-agent" onClick={() => onJumpTab?.("signal")}
+            style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
+            <span style={secLabel}>에이전트 ›</span>
+            <span style={{ fontSize: F.md, fontWeight: 700, color: C.text }}>{aiOneLiner(latestAi)}</span>
+          </button>
+          <AgentDashboard />
+        </div>
 
         {/* ②③ 주요 기능 바로가기 */}
         <div style={{ gridArea: "shortcuts", ...card }}>
