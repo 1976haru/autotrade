@@ -89,17 +89,16 @@ describe("UI smoke (backend offline)", () => {
   );
 
   it("user-facing primary surfaces hide raw 'Failed to fetch'", async () => {
+    // UI 개편: 기본 홈이 ReferenceHome(관제판)으로 교체됨. 기존 Dashboard
+    // surface(hero-summary 등)는 "전문가 보기"로 이동. 본 스모크는 *기본 홈*이
+    // 백엔드 offline 에서도 raw 'Failed to fetch'를 노출하지 않음을 검증한다
+    // (ReferenceHome 은 Promise.allSettled + graceful empty 로 처리).
     let view;
     await act(async () => { view = render(<App />); });
     await waitFor(() => {
-      expect(view.getByTestId("hero-summary")).toBeTruthy();
+      expect(view.getByTestId("reference-home")).toBeTruthy();
     });
-    // 핵심 surface (Hero / OperatingLoop / Reconciliation / AgentDecision Hero)
-    // 는 friendlyErrorMessage / ErrorState로 변환된다. 일부 보조 카드(예:
-    // OperatorPanel '데이터 일부 조회 실패: ...')는 다음 phase backlog.
-    const hero       = view.getByTestId("hero-summary");
-    expect(hero.textContent).not.toContain("Failed to fetch");
-    const agentHero  = view.queryByTestId("agent-decision-hero");
-    if (agentHero) expect(agentHero.textContent).not.toContain("Failed to fetch");
+    const home = view.getByTestId("reference-home");
+    expect(home.textContent).not.toContain("Failed to fetch");
   });
 });

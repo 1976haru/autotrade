@@ -123,6 +123,9 @@ export const backendApi = {
   // 모든 경로는 PAPER/SIMULATION 한정 — broker.place_order 호출 0건.
   desktopHealth:          () => backendFetch("/api/desktop/health"),
   autoPaperStatus:        () => backendFetch("/api/auto-paper/status"),
+  // 실시간 현황판("지금 AI가 하는 일") — read-only 최근 판단 로그. broker 호출 0건.
+  paperDecisionLog:       (limit = 12) =>
+    backendFetch(`/api/auto-paper/decision-log?limit=${limit}`),
   // P-16: Paper 자금 설정 영구 저장 — 사용자 설정 폴더(.env 와 분리).
   //       민감정보 저장 0건, broker.place_order 호출 0건.
   paperCapitalSettingsGet:   () =>

@@ -7,6 +7,8 @@ import { TopBar }       from "./components/layout/TopBar";
 import { BottomNav }    from "./components/layout/BottomNav";
 import { TopNav }       from "./components/layout/TopNav";
 import { Dashboard }    from "./components/tabs/Dashboard";
+import { ReferenceHome } from "./components/common/ReferenceHome";
+import { usePersistedState } from "./store/usePersistedState";
 import { StrategyRisk } from "./components/tabs/StrategyRisk";
 import { BotControl }   from "./components/tabs/BotControl";
 import { Approvals }    from "./components/tabs/Approvals";
@@ -54,6 +56,11 @@ function AppShell() {
   }, []);
 
   const [tab, setTab] = useState("dash");
+  // 새 홈(ReferenceHome, reference.jpg 스타일)이 기본. "전문가 보기"를 누르면 기존
+  // Dashboard(전체)로 전환되며 선택은 localStorage에 기억된다. 기존 홈은 보존(회귀 0).
+  const [homeView, setHomeView] = usePersistedState(
+    "home_view", "reference", (v) => v === "reference" || v === "expert",
+  );
   const portfolio  = usePortfolio();
   const strategy   = useStrategy();
   const { risk, update: updateRisk } = useRisk();
@@ -78,7 +85,22 @@ function AppShell() {
         const emergencyStopSince = emergencyStopOnSince(
           riskPolicy.emergencyStop, riskPolicy.history,
         );
-        return <Dashboard portfolio={portfolio} bot={bot} botControls={{ start: bot.start, stop: bot.stop }} emergencyStop={riskPolicy.emergencyStop} emergencyStopSince={emergencyStopSince} pendingCount={approvals.pending.length} stalePendingCount={stalePendingCount} approvals={approvals} onJumpTab={setTab} onEmergencyStop={() => riskPolicy.toggleEmergency({ decided_by: settings.operatorName, note: "operator panel" })} />;
+        const onEmergencyStop = () => riskPolicy.toggleEmergency({ decided_by: settings.operatorName, note: "operator panel" });
+        // 기본은 새 홈(ReferenceHome, reference.jpg 스타일). 시작/정지/긴급정지 핸들러는
+        // *동일한* 기존 함수를 그대로 넘긴다(로직 0 수정). "전문가 보기"는 기존 Dashboard를
+        // 손대지 않고 위에 얇은 "← 간편 홈으로" 줄만 얹어 보존한다.
+        if (homeView === "reference") {
+          return <ReferenceHome portfolio={portfolio} emergencyStop={riskPolicy.emergencyStop} onEmergencyStop={onEmergencyStop} onJumpTab={setTab} onExpert={() => setHomeView("expert")} operatorName={settings.operatorName} accountNo={settings.apiKeys?.accountNo} />;
+        }
+        return (
+          <>
+            <button type="button" data-testid="home-back-to-simple" onClick={() => setHomeView("reference")}
+              style={{ margin: "0 0 12px", padding: "8px 14px", borderRadius: 10, border: "1px solid var(--c-border, #2a3550)", background: "transparent", color: "var(--c-text-2, #94a3b8)", cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>
+              ← 홈으로
+            </button>
+            <Dashboard portfolio={portfolio} bot={bot} botControls={{ start: bot.start, stop: bot.stop }} emergencyStop={riskPolicy.emergencyStop} emergencyStopSince={emergencyStopSince} pendingCount={approvals.pending.length} stalePendingCount={stalePendingCount} approvals={approvals} onJumpTab={setTab} onEmergencyStop={onEmergencyStop} />
+          </>
+        );
       }
       case "strat":  return <StrategyRisk strategyOn={strategy.strategyOn} toggle={strategy.toggle} strategyParams={strategy.strategyParams} updateParam={strategy.updateParam} risk={risk} updateRisk={updateRisk} riskPolicy={riskPolicy} operatorName={settings.operatorName} />;
       case "bot":      return <BotControl bot={bot} />;
@@ -107,8 +129,9 @@ function AppShell() {
           다름. navigator.onLine 감시. */}
       <OfflineBanner />
       <BackendOfflineBanner />
-      {/* #63: 홈화면 설치 안내 — standalone 또는 dismiss된 세션에선 노출 X. */}
-      <PwaInstallHint />
+      {/* #63: 홈화면 설치 안내 — standalone/dismiss 세션에선 노출 X. 새 홈(관제판)에서는
+          최상단을 차지하지 않도록 숨기고, 설정(config) 탭으로 이동. */}
+      {tab === "config" && <PwaInstallHint />}
       <ReleaseNotesAutoPopup />
       <div style={{ flex:1, overflowY:"auto", padding:"14px 14px 90px", scrollbarWidth:"thin" }}>
         <ErrorBoundary label="현재 탭">

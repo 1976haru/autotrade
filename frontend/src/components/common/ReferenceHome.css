@@ -1,0 +1,55 @@
+/* ReferenceHome 반응형 레이아웃 + 다크 토글.
+ * 색/폰트는 전역 디자인 토큰(var(--c-*), var(--fs-*))을 사용 → 설정탭의 글자크기·
+ * 테마가 새 홈에도 그대로 적용된다. 기본은 밝은 테마(앱 chrome과 통일).
+ * 모바일(<=700): 1열(DOM 순서, 내 돈 먼저). 태블릿 2열, PC(>1024) 3열 풀폭. */
+
+.rh-root {
+  background: var(--c-bg);
+  color: var(--c-text);
+  min-height: 100%;
+  padding: 6px 6px 12px;
+}
+
+/* 다크 토글 — 새 홈 한정 고대비 다크 팔레트(전역 라이트 마이그레이션 비간섭). */
+.rh-root.rh-dark {
+  --c-bg:            #0b1220;
+  --c-surface:       #18233b;
+  --c-surface-2:     #1f2c47;
+  --c-surface-3:     #273550;
+  --c-border:        #3a4a68;
+  --c-border-strong: #4a5d80;
+  --c-text:    #f4f7fc;   /* 거의 흰색 — 대비 대폭 ↑ */
+  --c-text-2:  #d4dcec;
+  --c-text-3:  #9fb0cc;
+  --c-text-4:  #7b8aa6;
+}
+
+.rh-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr;            /* 모바일 기본: 1열 */
+  align-items: start;
+}
+
+@media (min-width: 701px) and (max-width: 1024px) {
+  .rh-grid {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "hero    account"
+      "profile account"
+      "chips   kpi"
+      "strat   live"
+      "agent   shortcuts";
+  }
+}
+
+@media (min-width: 1025px) {
+  .rh-grid {
+    grid-template-columns: 1.05fr 1.3fr 1fr;
+    grid-template-areas:
+      "hero    account  strat"
+      "profile account  agent"
+      "chips   kpi      shortcuts"
+      "chips   live     shortcuts";
+  }
+}

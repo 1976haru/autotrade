@@ -1,0 +1,261 @@
+// ReferenceHome(새 홈 — reference.jpg 스타일) 전용 순수 함수.
+// DOM/시간/네트워크 부작용 0 — 입력→값만. 일상 한국어, 추정치 금지(실체결 기준).
+
+// ── 계좌번호 마스킹 (절대원칙 #4: 평문 노출 금지) ──────────────────────────────
+/** "50191162-01" → "5019****-01" 식. 앞 4 + 끝 2만 노출, 가운데 별표.
+ *  값이 없거나 너무 짧으면 null (호출자가 "모의계좌"로 표시). */
+export function maskAccountNo(raw) {
+  if (!raw) return null;
+  const digits = String(raw).replace(/[^0-9]/g, "");
+  if (digits.length < 6) return null;
+  const head = digits.slice(0, 4);
+  const tail = digits.slice(-2);
+  return `${head}${"*".repeat(Math.max(2, digits.length - 6))}${tail}`;
+}
+
+// ── 매매기법 칩 (ORB·모멘텀·VWAP·갭) ──────────────────────────────────────────
+// strategy-performance 응답의 strategies[] 블록(decision_count/buy/sell/hold 등,
+// 모두 *실제 카운트*)에서 칩 데이터를 뽑는다. 승률·손익(추정치)은 쓰지 않는다.
+const STRATEGY_LABELS = Object.freeze({
+  ORB: "ORB",
+  MOMENTUM: "모멘텀",
+  VWAP: "VWAP",
+  GAP: "갭",
+});
+const CHIP_ORDER = ["ORB", "MOMENTUM", "VWAP", "GAP"];
+
+/** 최근 우세 신호를 일상어로. 추정 아님 — 실제 vote 카운트 비교. */
+function prevailingVerdict(block) {
+  const buy = block?.buy_vote_count || 0;
+  const sell = block?.sell_vote_count || 0;
+  const hold = block?.hold_vote_count || 0;
+  if (buy === 0 && sell === 0 && hold === 0) return "거래 시작 전";
+  if (buy >= sell && buy > 0) return "매수 우세";
+  if (sell > 0 && sell > buy) return "매도 우세";
+  return "관망";
+}
+
+/**
+ * @param {{strategies?: Array}|null} report  agentStrategyPerformance() 응답
+ * @returns {Array<{key, label, signals, verdict}>}  항상 4개(ORB/모멘텀/VWAP/갭)
+ */
+export function strategyChips(report) {
+  const blocks = Array.isArray(report?.strategies) ? report.strategies : [];
+  const byName = new Map();
+  for (const b of blocks) {
+    if (b && b.strategy) byName.set(String(b.strategy).toUpperCase(), b);
+  }
+  return CHIP_ORDER.map((key) => {
+    const b = byName.get(key);
+    const signals = b?.decision_count || 0;
+    return {
+      key,
+      label: STRATEGY_LABELS[key],
+      signals,
+      verdict: b ? prevailingVerdict(b) : "거래 시작 전",
+    };
+  });
+}
+
+// ── 미체결 카운트 ─────────────────────────────────────────────────────────────
+/** 제출됐지만 아직 체결/거부되지 않은 주문 수 (실체결 기준 — 추정 아님). */
+export function openOrderCount(orders) {
+  return (orders || []).filter((r) => {
+    if (!r) return false;
+    const bs = String(r.broker_status || "").toUpperCase();
+    const dec = String(r.decision || "").toUpperCase();
+    if (bs === "REJECTED" || dec === "REJECTED") return false;
+    if ((r.filled_quantity || 0) > 0 || bs === "FILLED") return false;
+    return true;
+  }).length;
+}
+
+// ── 종목코드 → 한글명 (전 화면 코드 노출 방지) ───────────────────────────────
+import { KR_STOCK_NAMES, MOCK_STOCKS } from "../config/constants";
+
+const _MOCK_NAME = Object.fromEntries((MOCK_STOCKS || []).map((s) => [s.code, s.name]));
+
+/** 코드 → 한글명. 모르면 코드 그대로(최후 fallback). extra=런타임 보강 맵(포지션 등). */
+export function resolveSymbolName(symbol, extra = null) {
+  if (!symbol) return symbol;
+  const code = String(symbol);
+  if (extra && extra[code] && extra[code] !== code) return extra[code];
+  return KR_STOCK_NAMES[code] || _MOCK_NAME[code] || code;
+}
+
+// ── KST 날짜 라벨 ("" 오늘 / "어제" / "MM/DD") ────────────────────────────────
+function _kstYmd(ms) {
+  return new Date(ms + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+// ── KST 시:분 ("HH:MM") — backend 가 emit 하는 naive(타임존 없는) UTC 타임스탬프를
+//    UTC 로 간주(+Z)해 KST(+9)로 변환한다. 030fa98 와 같은 취지(naive=UTC 가정).
+//    이 변환이 없으면 slice(11,16) 가 UTC 시각(예 02:56)을 그대로 노출했다. ─────
+function _kstHm(timestamp) {
+  if (!timestamp) return "—";
+  const s = /[zZ]|[+-]\d\d:?\d\d$/.test(timestamp) ? timestamp : `${timestamp}Z`;
+  const t = new Date(s).getTime();
+  if (Number.isNaN(t)) return "—";
+  return new Date(t + 9 * 3600 * 1000).toISOString().slice(11, 16);
+}
+/** entry.timestamp(UTC naive 가정)가 오늘이면 "", 어제면 "어제", 그 외 "MM/DD". */
+export function kstDayLabel(timestamp, now = new Date()) {
+  if (!timestamp) return "";
+  const s = /[zZ]|[+-]\d\d:?\d\d$/.test(timestamp) ? timestamp : `${timestamp}Z`;
+  const t = new Date(s).getTime();
+  if (Number.isNaN(t)) return "";
+  const day = _kstYmd(t);
+  const todayKey = _kstYmd(now.getTime());
+  const yKey = _kstYmd(now.getTime() - 24 * 3600 * 1000);
+  if (day === todayKey) return "";
+  if (day === yKey) return "어제";
+  return `${day.slice(5, 7)}/${day.slice(8, 10)}`;
+}
+
+// ── 실시간 현황판 "지금 AI가 하는 일" — decision-log entry → 일상어 한 줄 ──────
+const STRAT_KO = Object.freeze({
+  ORB: "ORB", MOMENTUM: "모멘텀", VWAP: "VWAP", GAP: "갭",
+});
+
+// ── 오늘 기준 매매기법 칩 (누적치 대신 *오늘* 신호 수 + 최근 판단) ───────────────
+const _CHIP_ORDER2 = ["ORB", "MOMENTUM", "VWAP", "GAP"];
+const _CHIP_LABEL2 = { ORB: "ORB", MOMENTUM: "모멘텀", VWAP: "VWAP", GAP: "갭" };
+const _ACT_VERDICT = { BUY: "매수", SELL: "매도", HOLD: "관망", EXIT: "청산", NO_OP: "관망" };
+
+/**
+ * decision-log entries(오늘 KST만) → [{key,label,signals,verdict}].
+ * signals = 오늘 해당 기법 신호 수, verdict = 오늘 가장 최근 판단(매수/관망/…).
+ * 오늘 신호 없으면 "오늘 신호 없음".
+ */
+export function todayStrategyChips(entries, now = new Date()) {
+  const todayKey = _kstYmd(now.getTime());
+  const counts = {}; const lastAct = {};
+  for (const e of (entries || [])) {
+    if (!e || !e.timestamp) continue;
+    const s = /[zZ]|[+-]\d\d:?\d\d$/.test(e.timestamp) ? e.timestamp : `${e.timestamp}Z`;
+    const t = new Date(s).getTime();
+    if (Number.isNaN(t) || _kstYmd(t) !== todayKey) continue;
+    const strat = String(e.strategy || "").toUpperCase();
+    if (!_CHIP_LABEL2[strat]) continue;
+    counts[strat] = (counts[strat] || 0) + 1;
+    if (!(strat in lastAct)) lastAct[strat] = String(e.decision_action || "").toUpperCase();
+  }
+  return _CHIP_ORDER2.map((key) => ({
+    key,
+    label: _CHIP_LABEL2[key],
+    signals: counts[key] || 0,
+    verdict: counts[key] ? (_ACT_VERDICT[lastAct[key]] || "관망") : "오늘 신호 없음",
+  }));
+}
+const ACTION_KO = Object.freeze({ BUY: "매수", SELL: "매도", HOLD: "보류", EXIT: "청산", NO_OP: "관망" });
+
+/** 장 마감/대기 안내 (현황판 비었을 때). */
+export function marketClosedLine() {
+  return "장이 닫혀 있어요 — 다음 장에서 다시 움직여요";
+}
+
+/**
+ * decision-log entry 1건 → { time, text }. 모두 실제 기록 기반(추정 아님).
+ * 예: "삼성전자 — 모멘텀이 매수 신호 → 주문 보냈어요"
+ *     "NAVER — 신호가 약해서 보류했어요"
+ */
+export function livePanelLine(entry, nameOf = resolveSymbolName) {
+  if (!entry) return null;
+  const time = _kstHm(entry.timestamp);   // ★UTC→KST 변환 (옛: raw slice = UTC 노출)
+  const name = nameOf(entry.symbol) || entry.symbol || "어떤 종목";
+  const strat = STRAT_KO[String(entry.strategy || "").toUpperCase()] || null;
+  const action = String(entry.decision_action || "").toUpperCase();
+  const fill = String(entry.paper_fill_status || "").toUpperCase();
+  const blocked = !!entry.risk_veto || fill === "PAPER_REJECTED";
+  // ★실제 주문 전송 여부 — paper_order_id 가 있거나 체결/대기 상태일 때만 "주문 나감".
+  //   결정만 나고 게이트(품질/한도 등)에서 막힌 건은 '주문 보냈어요'로 오보고하던 버그 수정.
+  const submitted = !!entry.paper_order_id
+    || fill === "PAPER_FILLED" || fill === "PAPER_PENDING";
+
+  let text;
+  if (blocked) {
+    text = `${name} — 리스크 판단이 주문을 막았어요`;
+  } else if (action === "HOLD" || action === "NO_OP" || action === "") {
+    text = `${name} — 신호가 약해서 보류했어요`;
+  } else {
+    const actKo = ACTION_KO[action] || "거래";
+    const sig = strat ? `${strat}이 ${actKo} 신호` : `${actKo} 신호`;
+    if (submitted) {
+      const done = fill === "PAPER_FILLED"
+        ? (action === "SELL" ? "팔았어요" : action === "BUY" ? "샀어요" : "주문 보냈어요")
+        : "주문 보냈어요";
+      text = `${name} — ${sig} → ${done}`;
+    } else {
+      // 결정은 났지만 주문이 나가지 않음(품질 미달/한도 등). 정직하게 표기.
+      text = `${name} — ${sig}였지만 주문은 안 나갔어요`;
+    }
+  }
+  return { time, text };
+}
+
+// ── 미니 KPI (오늘 실현손익 | 승률 | 체결률) — 실체결 기준만 ──────────────────
+/**
+ * @param {{cashState, today}} args  cashState=cash-state 응답, today=summarizeTodayOrders
+ * @returns {{realizedText, realizedRaw, winRateText, fillRateText}}
+ */
+export function miniKpis({ cashState, today } = {}) {
+  const rawRealized = cashState ? (cashState.realized_pnl_krw ?? null) : null;
+  const oc = today?.orderCount ?? 0;
+  const fc = today?.filledCount ?? 0;
+  const hasFills = fc > 0;
+  // ★체결이 있으면 '거래 시작 전'이 아니다 — 실현손익(청산손익)을 모르면 0원으로 표기.
+  const realizedRaw = rawRealized != null ? rawRealized : (hasFills ? 0 : null);
+  return {
+    realizedRaw,
+    realizedText: realizedRaw == null
+      ? "거래 시작 전"
+      : `${realizedRaw > 0 ? "+" : ""}${realizedRaw.toLocaleString("ko-KR")}원`,
+    // ★승률은 청산(매도 체결)로 손익이 확정돼야 계산 가능. 체결은 있으나 청산손익
+    //   데이터가 없으면 '청산 거래 없음'(체결됐으니 '거래 시작 전'은 틀림).
+    winRateText: hasFills ? "청산 거래 없음" : "거래 시작 전",
+    fillRateText: oc > 0 ? `${Math.round((fc / oc) * 100)}%` : "거래 시작 전",
+  };
+}
+
+// ── 오늘 진행률 (일일 매수금액 사용량 게이지) ─────────────────────────────────
+/**
+ * 오늘(KST 아님 — 전체 목록 기준 BUY notional) 매수 사용금액 vs 일일 한도.
+ * @returns {{orderCount, buyUsedKrw, buyMaxKrw, buyPct}}
+ */
+export function dailyProgress({ orders, today, buyMaxKrw = 3_000_000 } = {}) {
+  let buyUsed = 0;
+  for (const r of (orders || [])) {
+    if (!r) continue;
+    if (String(r.side || "").toUpperCase() !== "BUY") continue;
+    const bs = String(r.broker_status || "").toUpperCase();
+    const dec = String(r.decision || "").toUpperCase();
+    if (bs === "REJECTED" || dec === "REJECTED") continue;
+    const qty = r.filled_quantity || r.quantity || 0;
+    buyUsed += (r.price || 0) * qty;
+  }
+  const max = buyMaxKrw > 0 ? buyMaxKrw : 3_000_000;
+  return {
+    orderCount: today?.orderCount ?? 0,
+    buyUsedKrw: buyUsed,
+    buyMaxKrw: max,
+    buyPct: Math.min(100, Math.round((buyUsed / max) * 100)),
+  };
+}
+
+// ── 주요 기능 바로가기 (기존 탭으로 이동) ─────────────────────────────────────
+export const FEATURE_SHORTCUTS = Object.freeze([
+  { tab: "approve",  label: "승인",   icon: "📝" },
+  { tab: "strat",    label: "리스크", icon: "🛡️" },
+  { tab: "chart",    label: "차트",   icon: "📈" },
+  { tab: "backtest", label: "백테스트", icon: "🧪" },
+  { tab: "audit",    label: "로그",   icon: "📜" },
+  { tab: "engine",   label: "엔진",   icon: "⚙️" },
+]);
+
+// ── 계좌정보 행 색 포인트 (reference 항목별 보라/노랑/빨강 계열) ───────────────
+export const ACCOUNT_BULLET = Object.freeze({
+  estimatedAsset: "#b794f6", // 추정자산 — 보라
+  deposit:        "#f6e05e", // 예수금 — 노랑
+  stockValue:     "#b794f6", // 주식평가금액 — 보라
+  realized:       "#fc8181", // 실현손익 — 빨강 계열
+  returnPct:      "#fc8181", // 손익률 — 빨강 계열
+});
