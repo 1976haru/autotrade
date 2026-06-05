@@ -69,6 +69,9 @@ def _bot_is_running() -> bool:
 def get_runtime_config_endpoint() -> dict:
     cfg = get_runtime_config()
     cfg["active_profile"]["effective"] = _profile_effective(effective_active_profile())
+    # 모든 성향의 *클램프 적용 후* 실효값 — 프론트 전환 다이얼로그가 대상 성향을
+    #   미리 정직하게 보여줄 수 있게(프리셋 원값 표시 금지, U3).
+    cfg["profiles_effective"] = {p: _profile_effective(p) for p in VALID_PROFILES}
     return cfg
 
 
