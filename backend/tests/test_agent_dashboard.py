@@ -132,3 +132,41 @@ def test_api_funnel_and_calibration_empty():
             assert c.get("/api/agent/calibration?period=daily").json()["no_data"] is True
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+# ── AG5 학습 방향 (규칙 발화/침묵) ────────────────────────────────────────────
+
+def test_learning_rules_fire_with_evidence(db, monkeypatch):
+    import app.performance.agent_dashboard as ad
+    import app.performance.performance as pf
+    import app.performance.by_technique as bt
+    import app.performance.shadow as sh
+    monkeypatch.setattr(pf, "compute_performance", lambda *a, **k: {"win_rate": 0.6, "closed_count": 20})
+    monkeypatch.setattr(bt, "compute_by_technique", lambda *a, **k: {"techniques": [
+        {"technique": "ORB", "trade_count": 12, "win_rate": 0.40},
+        {"technique": "VWAP", "trade_count": 3, "win_rate": 0.0},   # 표본<10 → 침묵
+    ]})
+    monkeypatch.setattr(ad, "compute_calibration", lambda *a, **k: {"buckets": [
+        {"bucket": "0.7~0.8", "trade_count": 6, "win_rate": 0.5}]})
+    monkeypatch.setattr(sh, "compute_shadow", lambda *a, **k: {"completed_count": 8, "correct_rate": 0.75, "avoided_loss_krw": 5000})
+    out = ad.compute_learning(db, start=date(2026, 6, 5), end=date(2026, 6, 5))
+    codes = {o["code"] for o in out["observations"]}
+    assert codes == {"TECHNIQUE_LOW_WINRATE", "OVERCONFIDENCE", "GOOD_REJECTION"}
+    orb = next(o for o in out["observations"] if o["code"] == "TECHNIQUE_LOW_WINRATE")
+    assert orb["evidence"]["win_rate"] == 0.40 and orb["evidence"]["overall_win_rate"] == 0.6
+    assert "운영자 승인" in out["footer"]
+
+
+def test_learning_silent_when_conditions_unmet(db, monkeypatch):
+    import app.performance.agent_dashboard as ad
+    import app.performance.performance as pf
+    import app.performance.by_technique as bt
+    import app.performance.shadow as sh
+    monkeypatch.setattr(pf, "compute_performance", lambda *a, **k: {"win_rate": 0.7, "closed_count": 2})
+    monkeypatch.setattr(bt, "compute_by_technique", lambda *a, **k: {"techniques": [
+        {"technique": "ORB", "trade_count": 3, "win_rate": 0.5}]})   # 표본 부족
+    monkeypatch.setattr(ad, "compute_calibration", lambda *a, **k: {"buckets": []})
+    monkeypatch.setattr(sh, "compute_shadow", lambda *a, **k: {"completed_count": 1, "correct_rate": 0.0})
+    out = ad.compute_learning(db, start=date(2026, 6, 5), end=date(2026, 6, 5))
+    codes = {o["code"] for o in out["observations"]}
+    assert codes == {"INSUFFICIENT_SAMPLE"}   # 억지 관찰 없음

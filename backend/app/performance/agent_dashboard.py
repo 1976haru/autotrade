@@ -148,3 +148,79 @@ def compute_calibration(db: Session, *, start: date, end: date, mode: str | None
         "period_start_kst": start.isoformat(),
         "period_end_kst":   end.isoformat(),
     }
+
+
+# ── AG5: 다음 학습 방향 (규칙 기반 관찰 — LLM/추측 0) ──────────────────────────
+#
+# 임계값과 문구는 *코드 상수*. 조건 미충족 시 문장 자체를 생성하지 않는다(억지 금지).
+TECHNIQUE_MIN_SAMPLE   = 10     # 기법 관찰 최소 표본
+TECHNIQUE_WINRATE_GAP  = 0.15   # 기법 승률이 전체보다 이만큼 낮으면 발화
+OVERCONF_BUCKET        = "0.7~0.8"
+OVERCONF_MIN_SAMPLE    = 5
+OVERCONF_FLOOR         = 0.70   # 70%대 확신인데 실제 승률이 이 밑이면 과신
+SHADOW_CORRECT_MIN     = 0.60   # 기각 적중률
+SHADOW_MIN_COMPLETED   = 5
+
+LEARNING_FOOTER = "이 관찰을 바탕으로 한 설정 변경은 운영자 승인으로 진행돼요."
+
+
+def compute_learning(db: Session, *, start: date, end: date) -> dict[str, Any]:
+    """관찰 문장 + 근거 수치. 자동 학습 아님 — 사람이 읽고 가설을 세우는 1단계."""
+    from app.performance.by_technique import compute_by_technique
+    from app.performance.performance import compute_performance
+    from app.performance.shadow import compute_shadow
+
+    perf = compute_performance(db, start=start, end=end)
+    tech = compute_by_technique(db, start=start, end=end)
+    cal = compute_calibration(db, start=start, end=end)
+    shadow = compute_shadow(db, start=start, end=end)
+
+    overall_wr = perf.get("win_rate")
+    observations: list[dict[str, Any]] = []
+
+    # 1. 기법 승률 저조.
+    if overall_wr is not None:
+        for t in tech["techniques"]:
+            if t["trade_count"] >= TECHNIQUE_MIN_SAMPLE and t["win_rate"] is not None \
+                    and t["win_rate"] <= overall_wr - TECHNIQUE_WINRATE_GAP:
+                observations.append({
+                    "code": "TECHNIQUE_LOW_WINRATE",
+                    "text": f"{t['technique']} 찬성 거래의 승률이 낮아요 — 가중치 재검토 후보",
+                    "evidence": {"technique": t["technique"], "trades": t["trade_count"],
+                                 "win_rate": t["win_rate"], "overall_win_rate": overall_wr},
+                })
+
+    # 2. 과신 구간.
+    for b in cal["buckets"]:
+        if b["bucket"] == OVERCONF_BUCKET and b["trade_count"] >= OVERCONF_MIN_SAMPLE \
+                and b["win_rate"] < OVERCONF_FLOOR:
+            observations.append({
+                "code": "OVERCONFIDENCE",
+                "text": "확신 70%대 거래의 실제 승률이 그에 못 미쳐요 — 과신 구간",
+                "evidence": {"bucket": b["bucket"], "trades": b["trade_count"], "win_rate": b["win_rate"]},
+            })
+
+    # 3. 기각 적중.
+    if shadow["completed_count"] >= SHADOW_MIN_COMPLETED and shadow["correct_rate"] is not None \
+            and shadow["correct_rate"] >= SHADOW_CORRECT_MIN:
+        observations.append({
+            "code": "GOOD_REJECTION",
+            "text": "council의 기각이 손실을 잘 걸러내고 있어요",
+            "evidence": {"completed": shadow["completed_count"], "correct_rate": shadow["correct_rate"],
+                         "avoided_loss_krw": shadow["avoided_loss_krw"]},
+        })
+
+    # 4. 기본(표본 부족) — 다른 관찰이 하나도 없을 때만.
+    if not observations:
+        observations.append({
+            "code": "INSUFFICIENT_SAMPLE",
+            "text": "아직 표본이 부족해요 — 판단 보류",
+            "evidence": {"closed_count": perf.get("closed_count", 0)},
+        })
+
+    return {
+        "observations": observations,
+        "footer":       LEARNING_FOOTER,
+        "period_start_kst": start.isoformat(),
+        "period_end_kst":   end.isoformat(),
+    }

@@ -55,3 +55,35 @@ def get_calibration(period: str = Query("daily"), from_: str | None = Query(None
     out["period"] = period
     out["is_live_authorization"] = False
     return out
+
+
+@router.get("/shadow")
+async def get_shadow(period: str = Query("daily"), from_: str | None = Query(None, alias="from"),
+                     to: str | None = Query(None, alias="to"), db: Session = Depends(get_db)) -> dict:
+    """AG2: 기각 신호 그림자 추적. 가격 적재(방식 B)는 공유 limiter 경유·하루 1회."""
+    from app.performance.shadow import compute_shadow, refresh_shadow_prices
+    start, end = _period(period, from_, to)
+    try:
+        await refresh_shadow_prices(db)   # best-effort 가격 적재(실패해도 집계는 진행)
+    except Exception:  # noqa: BLE001
+        pass
+    out = compute_shadow(db, start=start, end=end)
+    out["period"] = period
+    out["is_live_authorization"] = False
+    return out
+
+
+@router.get("/learning")
+async def get_learning(period: str = Query("daily"), from_: str | None = Query(None, alias="from"),
+                       to: str | None = Query(None, alias="to"), db: Session = Depends(get_db)) -> dict:
+    from app.performance.agent_dashboard import compute_learning
+    from app.performance.shadow import refresh_shadow_prices
+    start, end = _period(period, from_, to)
+    try:
+        await refresh_shadow_prices(db)
+    except Exception:  # noqa: BLE001
+        pass
+    out = compute_learning(db, start=start, end=end)
+    out["period"] = period
+    out["is_live_authorization"] = False
+    return out
