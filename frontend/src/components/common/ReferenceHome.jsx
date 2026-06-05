@@ -44,9 +44,15 @@ const secLabel = { fontSize: F.lg, fontWeight: 800, color: C.text, marginBottom:
 // 성향 설명 — 일상어(영문 confidence/risk_flag 노출 금지).
 const PROFILE_DESC_KO = {
   CONSERVATIVE: "확신이 높을 때만 매수해요 · 위험 신호가 보이면 건너뛰어요 (안전 우선)",
-  BALANCED: "수익과 위험의 균형 · 확신 기준 50% · 위험 신호 1개까지 허용",
+  // B(SSOT): 실제 적용값(config) 기준 — 확신 60% / 동시 5종목 / 종목당 100만원.
+  BALANCED: "수익과 위험의 균형 · 확신 60% 이상일 때만 매수 · 동시 최대 5종목 · 종목당 100만원",
   AGGRESSIVE: "기회를 적극적으로 잡아요 · 확신 기준 40% · 위험 신호 2개까지 허용",
 };
+
+// B3: 현재 실제 운용 성향은 config(.env) 기준 'BALANCED(안정형)' 으로 고정.
+//   성향 *변경*(실행 반영)은 준비 중 — 버튼은 현재 성향을 강조 표시하고, 다른
+//   성향 탭 시 "준비 중" 안내를 띄운다(조용히 무시 금지). 실제 변경은 별도 PR.
+const EFFECTIVE_RISK_PROFILE = "BALANCED";
 
 export function ReferenceHome({
   portfolio, emergencyStop, onEmergencyStop,
@@ -60,6 +66,7 @@ export function ReferenceHome({
   const [logEntries, setLogEntries] = useState(null);
   const [stratReport, setStratReport] = useState(null); // Agent Council 전략별 카운트
   const [lastOkHm, setLastOkHm] = useState(null);
+  const [profileNote, setProfileNote] = useState(null); // B3: 성향 변경 준비중 안내
   const [theme, setTheme] = usePersistedState("refhome_theme", "light", (v) => v === "light" || v === "dark");
 
   const capital = usePaperCapitalSettings({ api: backendApi });
@@ -251,10 +258,13 @@ export function ReferenceHome({
           <div style={secLabel}>AI 운용 성향</div>
           <div style={{ display: "flex", gap: 8 }}>
             {RISK_PROFILES.map((p) => {
-              const active = p.value === riskProfile;
+              const active = p.value === EFFECTIVE_RISK_PROFILE;
               return (
                 <button key={p.value} type="button" data-testid={`refhome-profile-${p.value}`}
-                  onClick={() => capital.setField("riskProfile", p.value)}
+                  aria-pressed={active}
+                  onClick={() => setProfileNote(
+                    active ? null
+                      : "성향 변경은 준비 중이에요. 현재는 기본(안정형)으로 운용됩니다.")}
                   style={{
                     flex: 1, padding: "13px 4px", borderRadius: 12, cursor: "pointer", fontFamily: "inherit",
                     fontSize: F.md, fontWeight: 800, minHeight: 50,
@@ -262,14 +272,23 @@ export function ReferenceHome({
                     background: active ? "rgba(91,157,255,.16)" : "transparent",
                     color: active ? "#2563eb" : C.text2,
                   }}>
-                  {p.label.replace(" (기본값)", "")}
+                  {p.label.replace(" (기본값)", "")}{active ? " ·적용중" : ""}
                 </button>
               );
             })}
           </div>
           <div style={{ fontSize: F.base, color: C.text2, marginTop: 10, lineHeight: 1.5 }}>
-            {PROFILE_DESC_KO[riskProfile] || PROFILE_DESC_KO.BALANCED}
+            {PROFILE_DESC_KO[EFFECTIVE_RISK_PROFILE] || PROFILE_DESC_KO.BALANCED}
           </div>
+          {profileNote && (
+            <div data-testid="refhome-profile-note" style={{
+              marginTop: 8, fontSize: F.sm, fontWeight: 700, lineHeight: 1.45,
+              borderRadius: 10, padding: "9px 11px",
+              background: "rgba(245,170,30,.16)", color: "#7a4a00",
+            }}>
+              🛠️ {profileNote}
+            </div>
+          )}
         </div>
 
         {/* 숫자 칩 바 */}
