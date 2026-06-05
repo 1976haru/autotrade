@@ -165,6 +165,9 @@ class PaperDecisionLogEntry:
     paper_fill_status:  str | None           = None
     chain_id:           str | None           = None
     source_module:      str                  = PAPER_DECISION_LOG_SOURCE
+    # U7: 주문 보류/차단 사유 코드 (meta.reason_code). UI 가 한국어로 매핑해
+    #   "왜 주문이 안 나갔는지" 정직하게 표시. 없으면 None → UI "사유 확인 중".
+    reason_code:        str | None           = None
 
     # 절대 invariant.
     is_order_signal:       bool = False
@@ -209,6 +212,7 @@ class PaperDecisionLogEntry:
             "paper_fill_status":  self.paper_fill_status,
             "chain_id":           self.chain_id,
             "source_module":      self.source_module,
+            "reason_code":        self.reason_code,
             "is_order_signal":       False,
             "auto_apply_allowed":    False,
             "is_live_authorization": False,
@@ -386,6 +390,7 @@ def _row_to_entry(row: AgentDecisionLog) -> PaperDecisionLogEntry:
         paper_fill_status=meta.get("paper_fill_status"),
         chain_id=row.chain_id,
         source_module=str(meta.get("source_module") or PAPER_DECISION_LOG_SOURCE),
+        reason_code=(str(meta["reason_code"]) if meta.get("reason_code") else None),
     )
 
 

@@ -165,6 +165,31 @@ export function todayStrategyChips(entries, now = new Date()) {
 }
 const ACTION_KO = Object.freeze({ BUY: "매수", SELL: "매도", HOLD: "보류", EXIT: "청산", NO_OP: "관망" });
 
+// U7: 주문 보류/차단 사유 코드 → 일상 한국어. 데이터에 reason_code 가 있을 때만
+//   사용(지어내기 금지). 없으면 "사유 확인 중".
+const REASON_KO = Object.freeze({
+  KIS_PAPER_ORDER_LIMIT_EXCEEDED:   "일일 주문 한도",
+  KIS_PAPER_NOTIONAL_LIMIT_EXCEEDED:"1회 주문 금액 한도",
+  KIS_PAPER_ORDER_WINDOW_CLOSED:    "주문 시간대 아님",
+  KIS_REALTIME_PRICE_REQUIRED:      "실시간 시세 대기",
+  KIS_PRICE_STALE:                  "시세 지연",
+  LOW_CONFIDENCE:                   "신호 확신 부족",
+  LOW_QUALITY_SCORE:                "신호 품질 부족",
+  MISSING_EXIT_PLAN:                "청산 계획 없음",
+  MAX_CONCURRENT_POSITIONS_REACHED: "동시 보유 한도",
+  DAILY_BUY_LIMIT_REACHED:          "일일 매수금액 한도",
+  DUPLICATE_POSITION_BLOCKED:       "이미 보유 중",
+  KIS_PAPER_ERROR:                  "시세 조회 제한",
+  MARKET_CLOSED:                    "장 마감",
+  NO_STRATEGY_SIGNAL:               "신호 없음",
+});
+
+/** 보류 사유(한국어) — reason_code 가 매핑되면 그 사유, 아니면 null. */
+function _reasonKo(entry) {
+  const code = String(entry?.reason_code || "").toUpperCase();
+  return REASON_KO[code] || null;
+}
+
 /** 장 마감/대기 안내 (현황판 비었을 때). */
 export function marketClosedLine() {
   return "장이 닫혀 있어요 — 다음 장에서 다시 움직여요";
@@ -188,9 +213,13 @@ export function livePanelLine(entry, nameOf = resolveSymbolName) {
   const submitted = !!entry.paper_order_id
     || fill === "PAPER_FILLED" || fill === "PAPER_PENDING";
 
+  const reasonKo = _reasonKo(entry);
   let text;
   if (blocked) {
-    text = `${name} — 리스크 판단이 주문을 막았어요`;
+    // U7: 리스크 차단도 구체 사유가 있으면 함께.
+    text = reasonKo
+      ? `${name} — ${reasonKo}로 주문을 막았어요`
+      : `${name} — 리스크 판단이 주문을 막았어요`;
   } else if (action === "HOLD" || action === "NO_OP" || action === "") {
     text = `${name} — 신호가 약해서 보류했어요`;
   } else {
@@ -202,11 +231,33 @@ export function livePanelLine(entry, nameOf = resolveSymbolName) {
         : "주문 보냈어요";
       text = `${name} — ${sig} → ${done}`;
     } else {
-      // 결정은 났지만 주문이 나가지 않음(품질 미달/한도 등). 정직하게 표기.
-      text = `${name} — ${sig}였지만 주문은 안 나갔어요`;
+      // U7: 결정은 났지만 주문 미전송 — *실제 사유* 를 표시(reason_code 매핑).
+      //   사유를 모를 때만 "사유 확인 중"(지어내기 금지).
+      const why = reasonKo ? `${reasonKo}로 보류했어요` : "주문은 안 나갔어요 (사유 확인 중)";
+      text = `${name} — ${sig}였지만 ${why}`;
     }
   }
   return { time, text };
+}
+
+/**
+ * U7: 현황판 도배 방지 — *연속* 동일 텍스트(동일 종목+동일 사유) 이벤트를 묶는다.
+ *   원본 이벤트 기록은 백엔드에 보존되며, 화면만 압축한다. count>1 이면 "×N회".
+ *   time 은 묶음의 *첫(가장 이른) 표시 시각*을 유지.
+ * @param {Array<{time, text, day?}>} lines  livePanelLine 결과 배열
+ */
+export function groupLiveLines(lines) {
+  const out = [];
+  for (const l of (lines || [])) {
+    if (!l || !l.text) continue;
+    const prev = out[out.length - 1];
+    if (prev && prev.text === l.text) {
+      prev.count += 1;
+    } else {
+      out.push({ ...l, count: 1 });
+    }
+  }
+  return out;
 }
 
 // ── 미니 KPI (오늘 실현손익 | 승률 | 체결률) — 실체결 기준만 ──────────────────

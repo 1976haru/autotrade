@@ -453,6 +453,40 @@ class TestQuery:
         assert e.auto_apply_allowed is False
         assert e.is_live_authorization is False
 
+    def test_reason_code_surfaced_from_meta(self, db):
+        # U7: 주문 보류/차단 사유 코드(meta.reason_code)를 entry 가 노출 → UI 가
+        #   한국어로 매핑("일일 한도로 보류" 등). 정직성: 데이터에 있을 때만 표시.
+        from datetime import datetime, timezone
+        from app.auto_paper.decision_log import (
+            _row_to_entry, PAPER_DECISION_LOG_MODE, PAPER_DECISION_LOG_SOURCE,
+        )
+        from app.db.models import AgentDecisionLog
+        row = AgentDecisionLog(
+            created_at=datetime.now(timezone.utc), agent_name="PaperDecisionBridge",
+            symbol="005930", mode=PAPER_DECISION_LOG_MODE, decision="SELL",
+            confidence=None, reasons=["약세 청산"],
+            meta={"decision_id": "d1", "source_module": PAPER_DECISION_LOG_SOURCE,
+                  "reason_code": "KIS_PAPER_ORDER_LIMIT_EXCEEDED"},
+        )
+        db.add(row); db.flush()
+        e = _row_to_entry(row)
+        assert e.reason_code == "KIS_PAPER_ORDER_LIMIT_EXCEEDED"
+        assert e.to_dict()["reason_code"] == "KIS_PAPER_ORDER_LIMIT_EXCEEDED"
+
+    def test_reason_code_none_when_absent(self, db):
+        from datetime import datetime, timezone
+        from app.auto_paper.decision_log import (
+            _row_to_entry, PAPER_DECISION_LOG_MODE, PAPER_DECISION_LOG_SOURCE,
+        )
+        from app.db.models import AgentDecisionLog
+        row = AgentDecisionLog(
+            created_at=datetime.now(timezone.utc), agent_name="PaperDecisionBridge",
+            symbol="005930", mode=PAPER_DECISION_LOG_MODE, decision="HOLD",
+            confidence=None, reasons=[], meta={"source_module": PAPER_DECISION_LOG_SOURCE},
+        )
+        db.add(row); db.flush()
+        assert _row_to_entry(row).reason_code is None
+
     def test_query_filter_by_action(self, db):
         exp = _exp(recommended=[
             _se("sma_crossover", "005930"),

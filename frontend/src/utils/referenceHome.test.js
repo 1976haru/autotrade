@@ -5,6 +5,7 @@ import {
   openOrderCount,
   todayOpenOrderCount,
   livePanelLine,
+  groupLiveLines,
   marketClosedLine,
   miniKpis,
   dailyProgress,
@@ -188,6 +189,42 @@ describe("dailyProgress — 매수 사용금액 게이지", () => {
   });
   it("한도 0이면 기본값으로 보정", () => {
     expect(dailyProgress({ orders: [], today: {}, buyMaxKrw: 0 }).buyMaxKrw).toBe(3_000_000);
+  });
+});
+
+describe("livePanelLine — U7 보류 사유(reason_code)", () => {
+  const nameOf = (s) => ({ "005930": "삼성전자" }[s] || s);
+  it("주문 미전송 + reason_code → 구체 사유 표시", () => {
+    const r = livePanelLine({
+      symbol: "005930", decision_action: "SELL", strategy: "MOMENTUM",
+      paper_order_id: null, paper_fill_status: null,
+      reason_code: "KIS_PAPER_ORDER_LIMIT_EXCEEDED",
+    }, nameOf);
+    expect(r.text).toContain("일일 주문 한도로 보류했어요");
+    expect(r.text).not.toContain("사유 확인 중");
+  });
+  it("주문 미전송 + reason_code 없음 → '사유 확인 중'(지어내기 금지)", () => {
+    const r = livePanelLine({
+      symbol: "005930", decision_action: "SELL", strategy: "MOMENTUM",
+      paper_order_id: null, paper_fill_status: null,
+    }, nameOf);
+    expect(r.text).toContain("사유 확인 중");
+  });
+});
+
+describe("groupLiveLines — U7 연속 동일 이벤트 묶기", () => {
+  it("연속 동일 텍스트 count 누적, 다른 텍스트는 분리, 첫 시각 유지", () => {
+    const lines = [
+      { time: "09:01", text: "A" }, { time: "09:02", text: "A" }, { time: "09:03", text: "A" },
+      { time: "09:04", text: "B" }, { time: "09:05", text: "A" },
+    ];
+    const g = groupLiveLines(lines);
+    expect(g.map((l) => [l.text, l.count])).toEqual([["A", 3], ["B", 1], ["A", 1]]);
+    expect(g[0].time).toBe("09:01");
+  });
+  it("빈/널 입력 안전", () => {
+    expect(groupLiveLines(null)).toEqual([]);
+    expect(groupLiveLines([])).toEqual([]);
   });
 });
 

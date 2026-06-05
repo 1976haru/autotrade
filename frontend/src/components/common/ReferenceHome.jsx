@@ -20,7 +20,7 @@ import { usePersistedState } from "../../store/usePersistedState";
 import { RISK_PROFILES, normalizeRiskProfile } from "../AgentRiskProfileSelector";
 import {
   maskAccountNo, todayOpenOrderCount, ACCOUNT_BULLET, resolveSymbolName,
-  livePanelLine, kstDayLabel, marketClosedLine, miniKpis, dailyProgress,
+  livePanelLine, groupLiveLines, kstDayLabel, marketClosedLine, miniKpis, dailyProgress,
   strategyChips, FEATURE_SHORTCUTS,
 } from "../../utils/referenceHome";
 
@@ -152,7 +152,10 @@ export function ReferenceHome({
   const name = operatorName?.trim() ? operatorName.trim() : "운영자";
   const maxSymbols = alloc?.max_concurrent_positions ?? PAPER_ALLOC_FALLBACK.maxSymbols;
   const perSymbolKrw = alloc?.effective_per_symbol_cap_krw ?? alloc?.per_symbol_max_krw ?? PAPER_ALLOC_FALLBACK.perSymbolKrw;
-  const liveLines = (logEntries || []).map((e) => ({ ...livePanelLine(e), day: kstDayLabel(e.timestamp) })).filter((l) => l && l.text);
+  // U7: 연속 동일 이벤트(동일 종목+동일 사유)는 묶어서 표시(원본은 백엔드 보존, 화면만 압축).
+  const liveLines = groupLiveLines(
+    (logEntries || []).map((e) => ({ ...livePanelLine(e), day: kstDayLabel(e.timestamp) })).filter((l) => l && l.text)
+  );
 
   // 긴급정지 — 실수 방지 확인 1회 (해제는 확인 없이).
   const askEmergency = () => {
@@ -363,7 +366,12 @@ export function ReferenceHome({
                   <span style={{ color: C.text3, width: 70, flex: "none", fontWeight: 600 }}>
                     {l.day ? `${l.day} ` : ""}{l.time}
                   </span>
-                  <span style={{ color: C.text }}>{l.text}</span>
+                  <span style={{ color: C.text }}>
+                    {l.text}
+                    {l.count > 1 && (
+                      <span data-testid="refhome-live-repeat" style={{ color: C.text3, fontWeight: 700 }}> ×{l.count}회</span>
+                    )}
+                  </span>
                 </div>
               ))}
             </div>
