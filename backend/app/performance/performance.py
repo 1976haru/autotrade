@@ -36,6 +36,11 @@ class RoundTrip:
     cost:          int    # 거래비용(왕복)
     net_pnl:       int    # 비용 차감 후
     closed_at_kst: date   # 청산(SELL) KST 날짜
+    entry_audit_ids: list[int] = None  # S4: 소진된 진입 BUY order_audit_log id(들)
+
+    def __post_init__(self):
+        if self.entry_audit_ids is None:
+            self.entry_audit_ids = []
 
 
 def _kst_date(dt: datetime) -> date:
@@ -67,13 +72,14 @@ def compute_round_trips(db: Session, *, mode: str | None = None) -> list[RoundTr
             continue
         side = str(r.side or "").upper()
         if side == "BUY":
-            queue[r.symbol].append([qty, price])
+            queue[r.symbol].append([qty, price, int(r.id)])  # [qty, price, order id]
             continue
         if side != "SELL":
             continue
         remaining = qty
         matched_qty = 0
         buy_cost = 0
+        entry_ids: list[int] = []
         dq = queue[r.symbol]
         while remaining > 0 and dq:
             lot = dq[0]
@@ -81,6 +87,8 @@ def compute_round_trips(db: Session, *, mode: str | None = None) -> list[RoundTr
             buy_cost += lot[1] * take
             matched_qty += take
             remaining -= take
+            if lot[2] not in entry_ids:
+                entry_ids.append(lot[2])    # S4: 소진된 진입 BUY id 수집
             if take == lot[0]:
                 dq.popleft()
             else:
@@ -97,6 +105,7 @@ def compute_round_trips(db: Session, *, mode: str | None = None) -> list[RoundTr
             symbol=r.symbol, quantity=matched_qty, buy_cost=int(buy_cost),
             sell_notional=int(sell_notional), gross_pnl=int(gross),
             cost=int(cost), net_pnl=int(gross - cost), closed_at_kst=_kst_date(r.created_at),
+            entry_audit_ids=entry_ids,
         ))
     return trips
 

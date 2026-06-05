@@ -84,3 +84,20 @@ async def get_performance(
         "comparison": comparison,
         "is_live_authorization": False,
     }
+
+
+@router.get("/performance/by-technique")
+def get_performance_by_technique(
+    period: str = Query("daily"),
+    from_:  str | None = Query(None, alias="from"),
+    to:     str | None = Query(None, alias="to"),
+    db: Session = Depends(get_db),
+) -> dict:
+    """S4: 기법별 성적(찬성 거래 수·승률·순손익 기여). 읽기 전용, KIS 호출 0."""
+    from app.performance.by_technique import compute_by_technique
+    today = today_kst()
+    start, end = resolve_period(period, today=today, from_=_parse_date(from_), to=_parse_date(to))
+    out = compute_by_technique(db, start=start, end=end)
+    out["period"] = period
+    out["is_live_authorization"] = False
+    return out
