@@ -39,41 +39,73 @@ def _message_ko(change: dict[str, Any]) -> str | None:
 
 def record_runtime_config_changes(db: Session, changes: list[dict[str, Any]]) -> int:
     """변경 목록 → AgentDecisionLog row(들). 기록 건수 반환. 변경 0이면 0."""
-    from app.auto_paper.decision_log import (
-        PAPER_DECISION_LOG_MODE,
-        PAPER_DECISION_LOG_SOURCE,
-    )
-    from app.db.models import AgentDecisionLog
-
     n = 0
     for ch in changes or []:
         msg = _message_ko(ch)
         if not msg:
             continue
-        db.add(AgentDecisionLog(
-            created_at=datetime.now(timezone.utc),
-            agent_name="Operator",
-            symbol="SYSTEM",                      # 운영자 이벤트 — 종목 아님(화면은 reason 표시)
-            mode=PAPER_DECISION_LOG_MODE,
-            decision=OPERATOR_CONFIG_CHANGE_ACTION,
-            confidence=None,
-            reasons=[msg],
-            meta={
-                "source_module": PAPER_DECISION_LOG_SOURCE,
-                "reason_code":   OPERATOR_CONFIG_CHANGE_REASON_CODE,
-                "decision_id":   f"opcfg-{uuid.uuid4().hex[:10]}",
-                "strategy":      "",
-            },
-            chain_id=None,
-        ))
+        _add_operator_event(db, message=msg, action=OPERATOR_CONFIG_CHANGE_ACTION,
+                            reason_code=OPERATOR_CONFIG_CHANGE_REASON_CODE)
         n += 1
     if n:
         db.commit()
     return n
 
 
+# ── 공용 operator 이벤트 writer (R2 경로 재사용) ───────────────────────────────
+
+MANUAL_SELL_ACTION = "MANUAL_SELL"
+MANUAL_SELL_REASON_CODE = "OPERATOR_MANUAL_SELL"
+
+
+def _add_operator_event(db: Session, *, message: str, action: str,
+                        reason_code: str, prefix: str = "opev") -> None:
+    """운영자 이벤트 1건을 활동 피드(AgentDecisionLog/paper decision-log)에 적재.
+    commit 은 호출자 책임(여러 건 묶을 수 있게)."""
+    from app.auto_paper.decision_log import (
+        PAPER_DECISION_LOG_MODE,
+        PAPER_DECISION_LOG_SOURCE,
+    )
+    from app.db.models import AgentDecisionLog
+    db.add(AgentDecisionLog(
+        created_at=datetime.now(timezone.utc),
+        agent_name="Operator",
+        symbol="SYSTEM",
+        mode=PAPER_DECISION_LOG_MODE,
+        decision=action,
+        confidence=None,
+        reasons=[message],
+        meta={
+            "source_module": PAPER_DECISION_LOG_SOURCE,
+            "reason_code":   reason_code,
+            "decision_id":   f"{prefix}-{uuid.uuid4().hex[:10]}",
+            "strategy":      "",
+        },
+        chain_id=None,
+    ))
+
+
+def record_manual_sell_submitted(db: Session, *, symbol_name: str, quantity: int) -> None:
+    """수동 전량 매도 제출 기록 — '주문을 보냈어요'(체결 단정 금지)."""
+    _add_operator_event(
+        db, message=f"운영자가 {symbol_name} {int(quantity)}주 전량 매도 주문을 보냈어요",
+        action=MANUAL_SELL_ACTION, reason_code=MANUAL_SELL_REASON_CODE, prefix="opsell")
+    db.commit()
+
+
+def record_manual_sell_rejected(db: Session, *, symbol_name: str, reason_ko: str) -> None:
+    _add_operator_event(
+        db, message=f"수동 매도가 거절됐어요 — {reason_ko}",
+        action=MANUAL_SELL_ACTION, reason_code=MANUAL_SELL_REASON_CODE, prefix="opsell")
+    db.commit()
+
+
 __all__ = [
     "OPERATOR_CONFIG_CHANGE_ACTION",
     "OPERATOR_CONFIG_CHANGE_REASON_CODE",
+    "MANUAL_SELL_ACTION",
+    "MANUAL_SELL_REASON_CODE",
     "record_runtime_config_changes",
+    "record_manual_sell_submitted",
+    "record_manual_sell_rejected",
 ]
