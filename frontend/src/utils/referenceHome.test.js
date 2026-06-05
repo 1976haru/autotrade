@@ -85,6 +85,24 @@ describe("openOrderCount — 미체결(실체결 기준)", () => {
   });
 });
 
+describe("U9: 미체결 카운트 검증 — 06-05 재현 시 1건 (코드 수정 없이 확인만)", () => {
+  it("오늘 15주문(14체결·1미체결) + 과거일 미체결 2건 → summarize→count = 1", async () => {
+    const { summarizeTodayOrders } = await import("./tradingStatus");
+    const now = new Date("2026-06-05T03:00:00Z");   // KST 06-05 12:00
+    const today = "2026-06-05T03:00:00Z";           // KST 06-05
+    const prev  = "2026-06-04T03:00:00Z";           // KST 06-04 (phantom — 제외)
+    const orders = [];
+    for (let i = 0; i < 14; i++) orders.push({ created_at: today, side: "BUY", broker_status: "FILLED", filled_quantity: 1 });
+    orders.push({ created_at: today, side: "BUY", broker_status: "RECEIVED", filled_quantity: 0 }); // 오늘 미체결 1
+    orders.push({ created_at: prev,  side: "BUY", broker_status: "RECEIVED", filled_quantity: 0 }); // 과거 phantom
+    orders.push({ created_at: prev,  side: "BUY", broker_status: "RECEIVED", filled_quantity: 0 }); // 과거 phantom
+    const summary = summarizeTodayOrders(orders, now);
+    expect(summary.orderCount).toBe(15);
+    expect(summary.filledCount).toBe(14);
+    expect(todayOpenOrderCount(summary)).toBe(1);   // ★ 3 아님 — D2 적용 확인
+  });
+});
+
 describe("todayOpenOrderCount — D2 (오늘 기준 미체결)", () => {
   it("오늘 주문 − 체결 − 거부 (06-05: 15−14−0 = 1)", () => {
     expect(todayOpenOrderCount({ orderCount: 15, filledCount: 14, rejectedCount: 0 })).toBe(1);
