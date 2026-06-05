@@ -141,6 +141,10 @@ export const backendApi = {
     }),
   // P-01: Paper 시드머니 설정 — Paper 전용, 실전 계좌와 무관.
   paperCapitalConfig:     () => backendFetch("/api/auto-paper/capital-config"),
+  // 라이브 포지션 상황판 + 수동 전량 매도.
+  positionsLive:          () => backendFetch("/api/positions/live"),
+  positionSellAll:        (symbol) =>
+    backendFetch(`/api/positions/${encodeURIComponent(symbol)}/sell-all`, { method: "POST" }),
   // 성과 대시보드 (읽기 전용 집계). 탭 전환/수동 새로고침 시에만 조회.
   performanceGet:         ({ period = "daily", from, to } = {}) => {
     const qs = new URLSearchParams({ period });

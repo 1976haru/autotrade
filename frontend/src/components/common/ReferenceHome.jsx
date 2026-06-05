@@ -25,6 +25,7 @@ import {
 } from "../../utils/referenceHome";
 import { RuntimeConfigCard } from "./RuntimeConfigCard";
 import { PerformanceCard } from "./PerformanceCard";
+import { LivePositionsCard } from "./LivePositionsCard";
 
 // 등락 색 — 한국식(+빨강 −파랑). 라이트/다크 모두 대비 확보.
 const UP = "#e5443b", DOWN = "#2563eb";
@@ -70,6 +71,7 @@ export function ReferenceHome({
   const [lastOkHm, setLastOkHm] = useState(null);
   const [profileNote, setProfileNote] = useState(null); // B3: 성향 변경 준비중 안내
   const [rtConfig, setRtConfig] = useState(null);        // R3: 런타임 설정(실효값)
+  const [livePos, setLivePos] = useState(null);          // M3: 라이브 포지션
   const [theme, setTheme] = usePersistedState("refhome_theme", "light", (v) => v === "light" || v === "dark");
 
   const capital = usePaperCapitalSettings({ api: backendApi });
@@ -108,14 +110,16 @@ export function ReferenceHome({
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      const [aud, dec, cs, log, strat] = await Promise.allSettled([
+      const [aud, dec, cs, log, strat, pos] = await Promise.allSettled([
         backendApi.listOrderAudits({ limit: 50 }),
         backendApi.aiAgentDecisions(20),
         backendApi.paperCashState(),
         backendApi.paperDecisionLog(12),
         backendApi.agentStrategyPerformance(),
+        backendApi.positionsLive?.(),   // M3: 기존 폴링에 편승(신규 폴링 0)
       ]);
       if (cancelled) return;
+      if (pos.status === "fulfilled" && pos.value) setLivePos(pos.value);
       if (aud.status === "fulfilled") { const v = aud.value; setOrders(Array.isArray(v) ? v : (v?.items ?? [])); }
       if (dec.status === "fulfilled") setLatestAi(pickLatestChiefDecision(dec.value));
       if (cs.status === "fulfilled") setCashState(cs.value);
@@ -345,6 +349,8 @@ export function ReferenceHome({
           )}
           {/* P3: 성과 대시보드 — 계좌정보 카드 하단(승률·손익비·순손익 + 봇 vs 지수) */}
           <PerformanceCard />
+          {/* M3: 라이브 포지션 상황판 + 종목별 수동 전량 매도 */}
+          <LivePositionsCard data={livePos} />
         </div>
 
         {/* ⑥ 미니 KPI 줄 */}

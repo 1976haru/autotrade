@@ -8,6 +8,8 @@ vi.mock("../../services/backend/client", () => ({
     agentStrategyPerformance: vi.fn(async () => ({ strategies: [] })),
     paperCashState: vi.fn(async () => ({ realized_pnl_krw: 0 })),
     paperCapitalConfig: vi.fn(async () => ({ max_concurrent_positions: 5, per_symbol_max_krw: 1000000 })),
+    positionsLive: vi.fn(async () => ({ available: true, positions: [], fetched_at_kst: "09:05" })),
+    positionSellAll: vi.fn(async () => ({ status: "SUBMITTED", broker_order_no: "X", submitted_at_kst: "09:06", message: "주문을 보냈어요" })),
     performanceGet: vi.fn(async () => ({
       no_data: true, small_sample: false, win_rate: null, payoff_ratio: null,
       net_pnl_krw: 0, win_count: 0, loss_count: 0, period_start_kst: "2026-06-05",
