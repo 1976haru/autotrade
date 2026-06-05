@@ -150,8 +150,10 @@ export function ReferenceHome({
   const masked = maskAccountNo(accountNo);
   const realized = kpi.realizedRaw;
   const name = operatorName?.trim() ? operatorName.trim() : "운영자";
-  const maxSymbols = alloc?.max_concurrent_positions ?? PAPER_ALLOC_FALLBACK.maxSymbols;
-  const perSymbolKrw = alloc?.effective_per_symbol_cap_krw ?? alloc?.per_symbol_max_krw ?? PAPER_ALLOC_FALLBACK.perSymbolKrw;
+  // U4: SSOT — 실행이 실제 강제하는 config 실효값 우선(별도 capital-config store 가
+  //   어긋날 수 있음). effective_* 가 없으면 기존 필드 → fallback 순.
+  const maxSymbols = alloc?.effective_max_concurrent_positions ?? alloc?.max_concurrent_positions ?? PAPER_ALLOC_FALLBACK.maxSymbols;
+  const perSymbolKrw = alloc?.effective_per_symbol_notional_krw ?? alloc?.effective_per_symbol_cap_krw ?? alloc?.per_symbol_max_krw ?? PAPER_ALLOC_FALLBACK.perSymbolKrw;
   // U7: 연속 동일 이벤트(동일 종목+동일 사유)는 묶어서 표시(원본은 백엔드 보존, 화면만 압축).
   const liveLines = groupLiveLines(
     (logEntries || []).map((e) => ({ ...livePanelLine(e), day: kstDayLabel(e.timestamp) })).filter((l) => l && l.text)
@@ -171,8 +173,8 @@ export function ReferenceHome({
     fontFamily: "inherit", fontSize: F.md, fontWeight: 800, color: "#fff", minHeight: 56,
   };
 
-  const StatCell = ({ k, v }) => (
-    <div style={{ textAlign: "center" }}>
+  const StatCell = ({ k, v, testid }) => (
+    <div style={{ textAlign: "center" }} data-testid={testid}>
       <div style={{ fontSize: F.sm, color: "rgba(40,20,24,.78)", fontWeight: 600 }}>{k}</div>
       <div style={{ fontSize: F.md, fontWeight: 800, color: "#2a1418", marginTop: 3 }}>{v}</div>
     </div>
@@ -222,7 +224,7 @@ export function ReferenceHome({
             background: "rgba(42,20,24,.16)", borderRadius: 12, padding: "12px 6px" }}>
             <StatCell k="손절" v={`${EXIT_PLAN_DEFAULTS.stopLossPct}%`} />
             <StatCell k="익절" v={`+${EXIT_PLAN_DEFAULTS.takeProfitPct}%`} />
-            <StatCell k="설정 종목 수" v={`${maxSymbols}개`} />
+            <StatCell k="설정 종목 수" v={`${maxSymbols}개`} testid="refhome-max-symbols" />
             <StatCell k="종목당 투자금" v={`${Math.round(perSymbolKrw / 10000)}만원`} />
           </div>
           {/* 오늘 진행률 */}

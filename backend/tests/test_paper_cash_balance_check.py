@@ -783,3 +783,16 @@ def test_cash_state_realized_pnl_from_order_audit_log():
         assert body["realized_pnl_krw"] == 5_000   # (75,000 − 70,000) × 1
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+def test_capital_config_carries_effective_config_values_u4():
+    """U4: capital-config GET 가 실행 실효값(config)을 함께 내려, 화면이 별도
+    capital-config store 가 아닌 config 동시보유 한도를 표시할 수 있게 한다."""
+    from app.core.config import get_settings
+    with TestClient(app) as c:
+        r = c.get("/api/auto-paper/capital-config")
+    assert r.status_code == 200
+    body = r.json()
+    s = get_settings()
+    assert body["effective_max_concurrent_positions"] == int(s.kis_paper_max_concurrent_positions)
+    assert body["effective_per_symbol_notional_krw"] == int(s.kis_paper_per_symbol_notional_krw)

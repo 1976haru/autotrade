@@ -78,6 +78,18 @@ describe("ReferenceHome", () => {
     expect(r2.queryByTestId("refhome-strat-nodata")).toBeNull();
   });
 
+  it("U4: '설정 종목 수' = config 실효값(effective_max_concurrent_positions), 별도 store 값 아님", async () => {
+    backendApi.paperCapitalConfig.mockResolvedValueOnce({
+      max_concurrent_positions: 3,             // 별도 capital-config store(어긋남)
+      effective_max_concurrent_positions: 5,   // 실행이 실제 강제하는 config 값
+      per_symbol_max_krw: 1_000_000,
+    });
+    const { findByTestId } = renderHome();
+    const cell = await findByTestId("refhome-max-symbols");
+    await waitFor(() => expect(cell.textContent).toContain("5개"));
+    expect(cell.textContent).not.toContain("3개");
+  });
+
   it("U3: 성향 카드 숫자 = floor 실효값(확신 60%), 프리셋 원값(40%) 노출 금지", () => {
     const { container } = renderHome();
     // 강조 성향 = config 기준(BALANCED) — 설명에 floor 클램프 적용된 60% 표시.
