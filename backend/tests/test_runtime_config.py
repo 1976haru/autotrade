@@ -316,8 +316,157 @@ def test_lowering_cap_does_not_liquidate_holdings(monkeypatch):
     assert out["broker_order_sent"] is False
 
 
+def test_bot_scan_reads_active_profile_at_council(monkeypatch):
+    # S1: 봇이 council 호출 시 effective_active_profile() 로 활성 성향을 읽는다.
+    import asyncio
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.db.base import Base
+    from app.kis_paper import driver_bridge as dbge
+    from app.agents.agent_council import StrategyMarketInput
+    from app.market_data.kis_realtime import KIS_PRICE_OK, KisRealtimeQuote
+
+    rc.set_runtime_overrides(active_profile="conservative")
+    calls = {"n": 0}
+    real = rc.effective_active_profile
+    monkeypatch.setattr(rc, "effective_active_profile",
+                        lambda: (calls.__setitem__("n", calls["n"] + 1), real())[1])
+
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(eng)
+    Session = sessionmaker(bind=eng)
+
+    async def _mi(symbol, *, client, now, market_is_open, **kw):
+        mi = StrategyMarketInput(
+            symbol=symbol, current_price=100.0, prev_close=100.0, open_price=100.0,
+            vwap=100.0, opening_range_high=101.0, opening_range_low=99.0,
+            recent_closes=(100.0, 100.0, 100.0), current_volume=100.0, avg_volume=100.0,
+            market_regime="SIDEWAYS")
+        return mi, KisRealtimeQuote(symbol=symbol, status=KIS_PRICE_OK, price=100.0, is_stale=False)
+
+    settings = SimpleNamespace(
+        market_data_provider="kis", enable_kis_paper_auto_trading=True,
+        kis_paper_auto_order_dry_run=False, kis_is_paper=True, enable_live_trading=False,
+        kis_paper_auto_max_order_notional=1_000_000, kis_paper_auto_max_orders_per_day=10,
+        kis_paper_auto_order_window_start="00:00", kis_paper_auto_order_window_end="23:59",
+        kis_paper_auto_min_confidence=0.6, kis_paper_auto_min_quality_score=60,
+        kis_paper_smoke_mode=False, kis_paper_smoke_symbol="005930", kis_paper_smoke_qty=1,
+        kis_paper_daily_buy_limit_krw=3_000_000, kis_paper_max_new_positions_per_tick=1,
+        kis_paper_scan_max_symbols=10, kis_app_key="K", kis_app_secret="S",
+        kis_account_no="00000000", kis_product_code="01",
+    )
+
+    class _B:
+        async def get_positions(self):
+            return []
+
+    asyncio.run(dbge.kis_paper_realtime_scan_tick(
+        session_factory=Session, broker=_B(), risk=object(),
+        route_order_fn=(lambda **kw: None), settings=settings, market_input_fn=_mi,
+        universe_symbols=["005930"], client=object(),
+        now=datetime(2026, 5, 22, 5, 0, tzinfo=timezone.utc)))
+    assert calls["n"] >= 1
+
+
 def test_overrides_do_not_touch_safety_flags():
-    # 본 모듈은 안전 플래그를 *읽지도 쓰지도* 않는다 (값 변경 가능 키 화이트리스트).
-    assert set(rc._OVERRIDE_KEYS) == {"max_concurrent_positions", "per_stock_budget"}
+    # 화이트리스트 = 3개(동시진입·종목당·성향)뿐 — 안전 플래그/손절/익절/일일한도/confidence 0.
+    assert set(rc._OVERRIDE_KEYS) == {"max_concurrent_positions", "per_stock_budget", "active_profile"}
     with pytest.raises(TypeError):
         rc.set_runtime_overrides(enable_live_trading=True)  # 받지 않는 인자
+
+
+# ── S1: 성향 런타임 전환 ───────────────────────────────────────────────────────
+
+def test_active_profile_default_and_override():
+    assert rc.effective_active_profile() == "balanced"
+    rc.set_runtime_overrides(active_profile="aggressive")
+    assert rc.effective_active_profile() == "aggressive"
+    cfg = rc.get_runtime_config()
+    assert cfg["active_profile"]["value"] == "aggressive"
+    assert cfg["active_profile"]["source"] == "override"
+
+
+def test_invalid_profile_raises():
+    with pytest.raises(rc.RuntimeConfigValidationError):
+        rc.set_runtime_overrides(active_profile="yolo")
+
+
+def test_profile_restart_restore(_tmp_overrides):
+    rc.set_runtime_overrides(active_profile="conservative")
+    rc._cache = None  # 재시작 모사
+    assert rc.effective_active_profile() == "conservative"
+
+
+def test_api_profile_blocked_when_bot_running(monkeypatch):
+    import app.api.routes_runtime_config as rrc
+    monkeypatch.setattr(rrc, "_bot_is_running", lambda: True)
+    with TestClient(app) as c:
+        r = c.put("/api/runtime-config/profile", json={"profile": "aggressive"})
+    assert r.status_code == 409
+    assert "멈춘" in r.json()["detail"]
+    assert rc.effective_active_profile() == "balanced"   # 저장 안 됨
+
+
+def test_api_profile_clamp_held_when_stopped(monkeypatch):
+    import app.api.routes_runtime_config as rrc
+    from app.db.session import get_db
+    monkeypatch.setattr(rrc, "_bot_is_running", lambda: False)
+    TS = _mem_session()
+
+    def _ov():
+        s = TS()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _ov
+    try:
+        with TestClient(app) as c:
+            r = c.put("/api/runtime-config/profile", json={"profile": "aggressive"})
+        assert r.status_code == 200
+        b = r.json()
+        assert b["active_profile"]["value"] == "aggressive"
+        eff = b["profile_effective"]
+        # ★클램프(e158704): aggressive 프리셋(0.45)이 config floor 밑으로 못 내려감.
+        assert eff["preset_min_confidence"] == 0.45
+        assert eff["effective_min_confidence"] == max(0.45, eff["config_floor"])
+        assert eff["effective_min_confidence"] >= eff["config_floor"]
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+def test_api_profile_invalid_400(monkeypatch):
+    import app.api.routes_runtime_config as rrc
+    monkeypatch.setattr(rrc, "_bot_is_running", lambda: False)
+    with TestClient(app) as c:
+        r = c.put("/api/runtime-config/profile", json={"profile": "x"})
+    assert r.status_code == 400
+
+
+def test_api_profile_records_activity_feed(monkeypatch):
+    import app.api.routes_runtime_config as rrc
+    from app.db.session import get_db
+    from app.auto_paper.decision_log import query_paper_decision_log
+    monkeypatch.setattr(rrc, "_bot_is_running", lambda: False)
+    TS = _mem_session()
+
+    def _ov():
+        s = TS()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _ov
+    try:
+        with TestClient(app) as c:
+            c.put("/api/runtime-config/profile", json={"profile": "aggressive"})
+        with TS() as s:
+            texts = [e.reason for e in query_paper_decision_log(s, limit=10)]
+        assert any("운용 성향을 안정적 → 공격적" in t for t in texts)
+    finally:
+        app.dependency_overrides.pop(get_db, None)

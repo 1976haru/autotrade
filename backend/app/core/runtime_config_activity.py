@@ -24,6 +24,9 @@ def _man_won(v: int) -> str:
     return f"{int(v) // 10_000}만 원"
 
 
+_PROFILE_KO = {"conservative": "보수적", "balanced": "안정적", "aggressive": "공격적"}
+
+
 def _message_ko(change: dict[str, Any]) -> str | None:
     key = change.get("key")
     before = change.get("before")
@@ -34,6 +37,10 @@ def _message_ko(change: dict[str, Any]) -> str | None:
         return f"운영자가 종목당 투자금을 {_man_won(before)} → {_man_won(after)}으로 바꿨어요"
     if key == "max_concurrent_positions":
         return f"운영자가 동시진입 종목 수를 {int(before)}개 → {int(after)}개로 바꿨어요"
+    if key == "active_profile":
+        b = _PROFILE_KO.get(str(before), str(before))
+        a = _PROFILE_KO.get(str(after), str(after))
+        return f"운영자가 운용 성향을 {b} → {a}으로 바꿨어요"
     return None
 
 

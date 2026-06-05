@@ -85,8 +85,12 @@ def build_decision_from_pipeline(
             None,
         )
     market_input = _market_input_from_pipeline(ro.symbol, ro.price)
+    # S1: 활성 성향은 runtime_config(런타임 오버라이드 > 기본)에서 읽는다 — 봇은 매
+    #   사이클 effective getter 를 호출하므로 저장 즉시 다음 판단부터 반영(재시작 불요).
+    #   floor 클램프(e158704)는 그대로: 어떤 프리셋도 config floor 밑으로 못 간다.
+    from app.core.runtime_config import effective_active_profile
     council = run_agent_council(
-        market_input, risk_profile=risk_profile, held_position=False,
+        market_input, risk_profile=effective_active_profile(), held_position=False,
         min_confidence_floor=float(getattr(settings, "kis_paper_auto_min_confidence", 0.6)),
     )
     if council.final_action == CouncilAction.HOLD:
@@ -435,6 +439,7 @@ async def kis_paper_realtime_scan_tick(
     돌아 broker_order_sent=false. SMOKE 모드면 단일 종목 / qty=1.
     """
     from app.agents.agent_council import CouncilAction, run_agent_council
+    from app.core.runtime_config import effective_active_profile
     from app.scheduler.market_clock import MarketPhase, current_market_phase
 
     if now is None:
@@ -520,7 +525,7 @@ async def kis_paper_realtime_scan_tick(
                 continue
 
             council = run_agent_council(
-                mi, risk_profile=risk_profile,
+                mi, risk_profile=effective_active_profile(),  # S1: 런타임 활성 성향
                 held_position=(symbol in held_symbols),
                 min_confidence_floor=float(getattr(settings, "kis_paper_auto_min_confidence", 0.6)),
             )

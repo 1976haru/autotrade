@@ -13,8 +13,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.runtime_config import (
+    VALID_PROFILES,
     RuntimeConfigValidationError,
+    effective_active_profile,
     get_runtime_config,
     set_runtime_overrides,
 )
@@ -29,9 +32,70 @@ class _RuntimeConfigBody(BaseModel):
     per_stock_budget:         int | None = Field(None)
 
 
+class _ProfileBody(BaseModel):
+    profile: str
+
+
+def _profile_effective(profile: str) -> dict:
+    """프리셋 → *클램프 적용 후* 실효값(U3 원칙: 프리셋 원값 표시 금지).
+
+    effective_min_confidence = max(council 프리셋 임계, config floor) — e158704 클램프.
+    어떤 프리셋도 config floor 밑으로 내려가지 못한다.
+    """
+    from app.agents.agent_council import _PROFILE_THRESHOLDS
+    from app.agents.risk_profile import RiskProfile
+    rp = RiskProfile(profile.upper())
+    thr = _PROFILE_THRESHOLDS[rp]
+    floor = float(getattr(get_settings(), "kis_paper_auto_min_confidence", 0.6))
+    return {
+        "profile":                 profile,
+        "preset_min_confidence":   round(float(thr["min_confidence"]), 2),
+        "config_floor":            round(floor, 2),
+        "effective_min_confidence": round(max(float(thr["min_confidence"]), floor), 2),
+        "max_risk_flags":          int(thr["max_risk_flags"]),
+    }
+
+
+def _bot_is_running() -> bool:
+    """봇 실행 여부 — 기존 Auto Paper Loop 상태 소스 재사용(새 상태 추적 0)."""
+    try:
+        from app.auto_paper.loop import get_auto_paper_loop
+        return str(get_auto_paper_loop().status().state).upper() == "RUNNING"
+    except Exception:  # noqa: BLE001 — 상태 조회 실패는 보수적으로 '안 돎' 취급.
+        return False
+
+
 @router.get("/runtime-config")
 def get_runtime_config_endpoint() -> dict:
-    return get_runtime_config()
+    cfg = get_runtime_config()
+    cfg["active_profile"]["effective"] = _profile_effective(effective_active_profile())
+    return cfg
+
+
+@router.put("/runtime-config/profile")
+def put_runtime_profile_endpoint(body: _ProfileBody, db: Session = Depends(get_db)) -> dict:
+    profile = (body.profile or "").strip().lower()
+    if profile not in VALID_PROFILES:
+        raise HTTPException(status_code=400, detail="운용 성향은 보수/안정/공격 중 하나여야 해요.")
+    # ★게이트: 봇 실행 중이면 변경 금지(정지 상태에서만).
+    if _bot_is_running():
+        raise HTTPException(status_code=409, detail="자동매매를 먼저 멈춘 뒤 바꿔주세요.")
+
+    before = effective_active_profile()
+    try:
+        result = set_runtime_overrides(active_profile=profile)
+    except RuntimeConfigValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if before != profile:
+        try:
+            from app.core.runtime_config_activity import record_runtime_config_changes
+            record_runtime_config_changes(db, result.get("changes") or [])
+        except Exception:  # noqa: BLE001
+            pass
+
+    result["profile_effective"] = _profile_effective(profile)
+    return result
 
 
 @router.put("/runtime-config")

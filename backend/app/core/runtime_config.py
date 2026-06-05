@@ -35,11 +35,18 @@ from app.core.config import get_settings
 _log = logging.getLogger("autotrade.runtime_config")
 
 # 이 기능으로 바꿀 수 있는 *유일한* 2개 키 — 화이트리스트(다른 키 저장 거부).
-_OVERRIDE_KEYS = ("max_concurrent_positions", "per_stock_budget")
+_INT_KEYS = ("max_concurrent_positions", "per_stock_budget")
+_PROFILE_KEY = "active_profile"
+# 화이트리스트(이 3개 외 키 저장 거부). 안전 플래그/손절/익절/일일한도/confidence 미포함.
+_OVERRIDE_KEYS = (*_INT_KEYS, _PROFILE_KEY)
 
 # 검증 범위 (서버 측 필수 — 프론트 검증만으로 불충분).
 MAX_CONCURRENT_MIN, MAX_CONCURRENT_MAX = 1, 10
 PER_STOCK_BUDGET_MIN, PER_STOCK_BUDGET_MAX = 100_000, 10_000_000  # 10만 ~ 1,000만 원
+
+# S1: AI 운용 성향 — 런타임 전환 대상(보수/안정/공격).
+VALID_PROFILES = ("conservative", "balanced", "aggressive")
+DEFAULT_PROFILE = "balanced"
 
 _OVERRIDES_FILENAME = "runtime_overrides.json"
 
@@ -81,9 +88,13 @@ def _load() -> dict[str, Any]:
         if not isinstance(raw, dict):
             raise ValueError("runtime_overrides.json is not a JSON object")
         clean: dict[str, Any] = {}
-        for k in _OVERRIDE_KEYS:
+        for k in _INT_KEYS:
             if k in raw and raw[k] is not None:
                 clean[k] = int(raw[k])
+        # active_profile 은 문자열 — 유효값만 수용(그 외 무시 → env 기본값 폴백).
+        prof = raw.get(_PROFILE_KEY)
+        if isinstance(prof, str) and prof.strip().lower() in VALID_PROFILES:
+            clean[_PROFILE_KEY] = prof.strip().lower()
         if "updated_at" in raw and raw["updated_at"]:
             clean["updated_at"] = str(raw["updated_at"])
         _cache = clean
@@ -123,6 +134,15 @@ def effective_per_stock_budget() -> int:
     return int(getattr(get_settings(), "kis_paper_per_symbol_notional_krw", 1_000_000))
 
 
+def effective_active_profile() -> str:
+    """현재 활성 AI 운용 성향 — 런타임 오버라이드 > 기본(balanced). 봇이 매 사이클
+    이 getter 로 읽어 다음 판단부터 반영(재시작 불요)."""
+    ov = _load().get(_PROFILE_KEY)
+    if isinstance(ov, str) and ov in VALID_PROFILES:
+        return ov
+    return DEFAULT_PROFILE
+
+
 def _source(key: str) -> str:
     return "override" if _load().get(key) is not None else "env"
 
@@ -152,13 +172,19 @@ def get_runtime_config() -> dict[str, Any]:
         },
         # 충돌 경고용 — 일일 매수 한도(하드코딩 금지: config 에서 읽음).
         "daily_buy_limit_krw": int(getattr(get_settings(), "kis_paper_daily_buy_limit_krw", 3_000_000)),
+        "active_profile": {
+            "value":  effective_active_profile(),
+            "source": _source(_PROFILE_KEY),
+            "options": list(VALID_PROFILES),
+        },
         "last_changed_at_kst": updated_kst,
         # 안전 invariant — 본 기능은 실거래 권한과 무관.
         "is_live_authorization": False,
     }
 
 
-def _validate(max_concurrent_positions: int | None, per_stock_budget: int | None) -> None:
+def _validate(max_concurrent_positions: int | None, per_stock_budget: int | None,
+              active_profile: str | None = None) -> None:
     if max_concurrent_positions is not None:
         v = int(max_concurrent_positions)
         if not (MAX_CONCURRENT_MIN <= v <= MAX_CONCURRENT_MAX):
@@ -171,31 +197,39 @@ def _validate(max_concurrent_positions: int | None, per_stock_budget: int | None
             raise RuntimeConfigValidationError(
                 "종목당 투자금은 10만 원 ~ 1,000만 원 사이여야 해요."
             )
+    if active_profile is not None:
+        if str(active_profile).strip().lower() not in VALID_PROFILES:
+            raise RuntimeConfigValidationError(
+                "운용 성향은 보수/안정/공격 중 하나여야 해요."
+            )
 
 
 def set_runtime_overrides(
     *,
     max_concurrent_positions: int | None = None,
     per_stock_budget: int | None = None,
+    active_profile: str | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """검증 통과 시 저장(파일 + 캐시). *저장 후 다시 읽은 실효값*(get_runtime_config) 반환.
 
-    변경 전 값도 함께 반환(`changes`) — 활동 피드 기록("100만→50만")에 사용.
+    변경 전 값도 함께 반환(`changes`) — 활동 피드 기록에 사용.
     """
-    _validate(max_concurrent_positions, per_stock_budget)
+    _validate(max_concurrent_positions, per_stock_budget, active_profile)
     now = now or datetime.now(timezone.utc)
     with _lock:
-        # 변경 전 실효값(이력 기록용).
         before = {
             "max_concurrent_positions": effective_max_concurrent_positions(),
             "per_stock_budget": effective_per_stock_budget(),
+            "active_profile": effective_active_profile(),
         }
         cur = dict(_load())
         if max_concurrent_positions is not None:
             cur["max_concurrent_positions"] = int(max_concurrent_positions)
         if per_stock_budget is not None:
             cur["per_stock_budget"] = int(per_stock_budget)
+        if active_profile is not None:
+            cur[_PROFILE_KEY] = str(active_profile).strip().lower()
         cur["updated_at"] = now.isoformat()
         _persist(cur)
         global _cache
@@ -203,9 +237,10 @@ def set_runtime_overrides(
     after = {
         "max_concurrent_positions": effective_max_concurrent_positions(),
         "per_stock_budget": effective_per_stock_budget(),
+        "active_profile": effective_active_profile(),
     }
     changes: list[dict[str, Any]] = []
-    for key in ("max_concurrent_positions", "per_stock_budget"):
+    for key in ("max_concurrent_positions", "per_stock_budget", "active_profile"):
         if before[key] != after[key]:
             changes.append({"key": key, "before": before[key], "after": after[key]})
     out = get_runtime_config()
@@ -231,8 +266,10 @@ __all__ = [
     "MAX_CONCURRENT_MIN", "MAX_CONCURRENT_MAX",
     "PER_STOCK_BUDGET_MIN", "PER_STOCK_BUDGET_MAX",
     "overrides_path",
+    "VALID_PROFILES", "DEFAULT_PROFILE",
     "effective_max_concurrent_positions",
     "effective_per_stock_budget",
+    "effective_active_profile",
     "get_runtime_config",
     "set_runtime_overrides",
     "reset_runtime_overrides_for_tests",
