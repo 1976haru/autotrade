@@ -52,7 +52,8 @@ describe("strategyChips — 항상 4개, 실제 카운트만", () => {
     };
     const chips = strategyChips(report);
     const orb = chips.find((c) => c.key === "ORB");
-    expect(orb.signals).toBe(6);
+    // U5: signals = buy(4)+sell(1) = 5 (실제 신호 수, 평가횟수 decision_count 6 아님).
+    expect(orb.signals).toBe(5);
     expect(orb.verdict).toBe("매수 우세");
     expect(chips.find((c) => c.key === "MOMENTUM").verdict).toBe("관망");
     expect(chips.find((c) => c.key === "GAP").verdict).toBe("매도 우세");

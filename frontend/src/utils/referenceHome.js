@@ -47,7 +47,10 @@ export function strategyChips(report) {
   }
   return CHIP_ORDER.map((key) => {
     const b = byName.get(key);
-    const signals = b?.decision_count || 0;
+    // U5: "신호 수" = 실제 BUY/SELL 신호(buy+sell vote). decision_count 는 *평가 횟수*
+    //   (매 틱 4기법 전부 평가 → 4개가 항상 동일값 = 공유 카운터처럼 보였다). 기법별로
+    //   다른 실제 신호 수를 보여 정직화한다.
+    const signals = (b?.buy_vote_count || 0) + (b?.sell_vote_count || 0);
     return {
       key,
       label: STRATEGY_LABELS[key],

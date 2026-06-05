@@ -70,10 +70,11 @@ describe("ReferenceHome", () => {
     // 데이터 있음 → 신호 N개, nodata 안내 사라짐.
     backendApi.agentStrategyPerformance.mockResolvedValueOnce({
       episodes_analyzed: 12,
-      strategies: [{ strategy: "ORB", decision_count: 5, buy_vote_count: 3, sell_vote_count: 1, hold_vote_count: 1 }],
+      strategies: [{ strategy: "ORB", decision_count: 9, buy_vote_count: 3, sell_vote_count: 1, hold_vote_count: 5 }],
     });
     const r2 = renderHome();
-    await waitFor(() => expect(r2.getByTestId("refhome-strat-ORB").textContent).toContain("신호 5개"));
+    // U5: 신호 = buy(3)+sell(1) = 4 (decision_count 9 = 평가횟수 아님).
+    await waitFor(() => expect(r2.getByTestId("refhome-strat-ORB").textContent).toContain("신호 4개"));
     expect(r2.queryByTestId("refhome-strat-nodata")).toBeNull();
   });
 
