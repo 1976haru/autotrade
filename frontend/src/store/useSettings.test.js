@@ -37,3 +37,12 @@ describe("useSettings · operatorName", () => {
     expect(localStorage.getItem(STORAGE_KEY)).toBe("");
   });
 });
+
+
+describe("useSettings · 기본 브로커 (U8)", () => {
+  it("기본 브로커는 KIS(한국투자증권) — MIRAE 잔재 제거", () => {
+    const { result } = renderHook(() => useSettings());
+    expect(result.current.brokerId).toBe("kis");
+    expect(result.current.broker.short).toBe("KIS");
+  });
+});
