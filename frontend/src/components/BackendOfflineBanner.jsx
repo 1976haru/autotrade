@@ -349,7 +349,8 @@ export function BackendOfflineBanner() {
         ⚠ 백엔드 연결 대기 중입니다
       </div>
       <div style={{ color: "var(--c-text-2)", marginBottom: 8 }}>
-        실데이터를 보려면 backend와 frontend를 함께 실행하세요.
+        실데이터를 보려면 <b>정식 런처</b>로 백엔드를 실행하세요. (개발용 자동 재시작
+        모드는 한글 경로에서 오작동할 수 있어 사용하지 않습니다.)
       </div>
       <pre
         style={{
@@ -365,10 +366,10 @@ export function BackendOfflineBanner() {
         }}
       >
 {`cd backend
-uvicorn app.main:app --reload`}
+python app_desktop_launcher.py`}
       </pre>
       <div style={{ fontSize: "var(--fs-xs)", color: "var(--c-text-3)", marginTop: 6 }}>
-        실행 후 페이지를 새로고침하세요.
+        실행 후 페이지를 새로고침하세요. (데스크톱 앱은 보통 자동으로 실행됩니다.)
       </div>
     </div>
   );

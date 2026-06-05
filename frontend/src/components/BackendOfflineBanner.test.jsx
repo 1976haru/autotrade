@@ -108,13 +108,16 @@ describe("<BackendOfflineBanner>", () => {
     expect(queryByTestId("backend-connected-fallback-banner")).toBeNull();
   });
 
-  it("shows fallback banner with uvicorn hint on error", () => {
+  it("shows fallback banner with launcher hint on error (U1: no uvicorn --reload)", () => {
     _set({ error: "Failed to fetch" });
     const { getByTestId } = render(<BackendOfflineBanner />);
     const banner = getByTestId("backend-offline-banner");
     // 240 (Light-003): friendly copy — raw 'Failed to fetch'는 더 이상 노출 X.
     expect(banner.textContent).toContain("백엔드 연결 대기 중");
-    expect(banner.textContent).toContain("uvicorn app.main:app");
+    // U1: 정식 런처 안내로 교체 — --reload 금지(한글 경로 watchdog 버그).
+    expect(banner.textContent).toContain("app_desktop_launcher.py");
+    expect(banner.textContent).not.toContain("uvicorn app.main:app");
+    expect(banner.textContent).not.toContain("--reload");
     expect(banner.textContent).not.toContain("Failed to fetch");
   });
 
