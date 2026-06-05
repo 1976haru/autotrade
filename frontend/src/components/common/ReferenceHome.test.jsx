@@ -78,6 +78,13 @@ describe("ReferenceHome", () => {
     expect(r2.queryByTestId("refhome-strat-nodata")).toBeNull();
   });
 
+  it("U3: 성향 카드 숫자 = floor 실효값(확신 60%), 프리셋 원값(40%) 노출 금지", () => {
+    const { container } = renderHome();
+    // 강조 성향 = config 기준(BALANCED) — 설명에 floor 클램프 적용된 60% 표시.
+    expect(container.textContent).toContain("확신 60%");
+    expect(container.textContent).not.toContain("확신 기준 40%");
+  });
+
   it("B3: 성향 버튼 — 현재(안정형) 강조 + 다른 성향 탭 시 '준비 중' 안내(조용히 무시 금지)", () => {
     const { getByTestId, queryByTestId } = renderHome();
     // 현재 적용 성향(BALANCED=config 기준)이 강조 + '·적용중' 라벨.
