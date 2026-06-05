@@ -55,7 +55,7 @@ import { backendApi } from "../../services/backend/client";
 const basePortfolio = {
   cash: 38021127, positions: [], invested: 18475210,
   totalAsset: 56496337, totalPnL: -624164, totalPnLPct: -1.52,
-  loading: false, error: "",
+  loading: false, error: "", ready: true,
 };
 
 function renderHome(overrides = {}) {
@@ -200,6 +200,29 @@ describe("ReferenceHome", () => {
     const { getByTestId } = renderHome({ onJumpTab });
     fireEvent.click(getByTestId("refhome-chip-미체결"));
     expect(onJumpTab).toHaveBeenCalledWith("approve");
+  });
+
+  it("G2: 잔고 로딩 중(ready=false, loading) → '불러오는 중', 가짜 0 미표시", () => {
+    const { getByTestId, queryByText } = renderHome({
+      portfolio: { ...basePortfolio, ready: false, loading: true },
+    });
+    expect(getByTestId("refhome-balance-loading").textContent).toContain("불러오는 중");
+    expect(queryByText(/추정자산/)).toBeNull();        // 숫자 칸 자체가 안 뜸(0원 0)
+  });
+
+  it("G2: 재시도 소진 실패(ready=false, !loading) → '불러오지 못했어요'", () => {
+    const { getByTestId } = renderHome({
+      portfolio: { ...basePortfolio, ready: false, loading: false, error: "EGW00133" },
+    });
+    expect(getByTestId("refhome-balance-failed")).toBeTruthy();
+  });
+
+  it("G2: 보유 종목 칩 — ready 전엔 '—'(가짜 0개 금지)", () => {
+    const { getByTestId } = renderHome({
+      portfolio: { ...basePortfolio, ready: false, loading: true, positions: [] },
+    });
+    expect(getByTestId("refhome-chip-보유 종목").textContent).toContain("—");
+    expect(getByTestId("refhome-chip-보유 종목").textContent).not.toContain("0개");
   });
 
   it("계좌정보 큰 숫자 + 손익률(−파랑)", () => {

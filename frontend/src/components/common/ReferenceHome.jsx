@@ -186,17 +186,15 @@ export function ReferenceHome({
   return (
     <div data-testid="reference-home" className={`rh-root${theme === "dark" ? " rh-dark" : ""}`}>
 
-      {/* 우상단 다크/밝기 토글 */}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+      {/* 우상단 네비: [오늘 아침 브리핑](G1 드롭다운) + 다크/밝기 토글 */}
+      <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <BriefingBoard />
         <button type="button" data-testid="refhome-theme-toggle"
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
           style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.text2, borderRadius: 999, padding: "7px 14px", cursor: "pointer", fontFamily: "inherit", fontSize: F.sm, fontWeight: 700 }}>
           {theme === "dark" ? "☀️ 밝게 보기" : "🌙 어둡게 보기"}
         </button>
       </div>
-
-      {/* B3: 아침 브리핑 보드 — 헤더 아래, 카드들 위 한 줄 */}
-      <BriefingBoard />
 
       {/* ⑥ 긴급정지 풀폭 배너 */}
       {emergencyStop && (
@@ -281,7 +279,8 @@ export function ReferenceHome({
         {/* 숫자 칩 바 */}
         <div style={{ gridArea: "chips", display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8 }}>
           {[
-            { k: "보유 종목", v: positions.length, suffix: "개", tab: "audit" },
+            // G2: 잔고 미준비(ready 전)엔 0개가 아니라 "—"(가짜 0 금지).
+            { k: "보유 종목", v: portfolio?.ready ? positions.length : "—", suffix: portfolio?.ready ? "개" : "", tab: "audit" },
             { k: "미체결", v: openCnt, suffix: "건", tab: "approve" },
             { k: "오늘 주문", v: today.orderCount, suffix: "건", tab: "audit" },
             { k: "오늘 체결", v: today.filledCount, suffix: "건", tab: "audit" },
@@ -300,7 +299,12 @@ export function ReferenceHome({
         <div style={{ gridArea: "account", ...card }}>
           <div style={{ fontSize: F.lg, fontWeight: 800, color: C.text }}>{name}님의 계좌정보</div>
           <div style={{ fontSize: F.sm, color: C.text3, margin: "3px 0 16px", letterSpacing: ".04em" }}>{masked || "모의계좌 (KIS Paper)"}</div>
-          {balanceFailed ? (
+          {/* G2: 첫 성공(ready) 전 로딩/재시도 중엔 "불러오는 중"(가짜 0 금지);
+              에러면 "불러오지 못했어요"(옛 숫자 대신 안내 — U 정직성 유지); 숫자는
+              ready+에러없을 때만(0원은 KIS 가 실제 0 을 반환할 때만). */}
+          {!portfolio?.ready && portfolio?.loading ? (
+            <div data-testid="refhome-balance-loading" style={{ fontSize: F.md, fontWeight: 700, color: C.text2 }}>불러오는 중…</div>
+          ) : balanceFailed ? (
             <div data-testid="refhome-balance-failed" style={{ fontSize: F.md, fontWeight: 700, color: UP }}>{moneyFailureLine(lastOkHm)}</div>
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", rowGap: 18, columnGap: 14 }}>

@@ -47,9 +47,37 @@ describe("TechniqueScorecard (S5/S6)", () => {
     await waitFor(() => expect(api.performanceByTechnique).toHaveBeenCalledWith({ period: "weekly" }));
   });
 
-  it("조회 실패 → 정직 표시", async () => {
-    const api = { performanceByTechnique: vi.fn(async () => { throw new Error("x"); }) };
-    const { getByTestId } = render(<TechniqueScorecard api={api} />);
-    await waitFor(() => expect(getByTestId("technique-fail")).toBeTruthy());
+  it("조회 실패(영구) → 정직 표시", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = { performanceByTechnique: vi.fn(async () => { throw new Error("x"); }) };
+      const { getByTestId } = render(<TechniqueScorecard api={api} />);
+      await vi.advanceTimersByTimeAsync(20);
+      expect(getByTestId("technique-fail")).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(12000);   // 재시도 소진(3회)
+      expect(getByTestId("technique-fail")).toBeTruthy();
+      expect(api.performanceByTechnique).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("G3: 로드 시점 실패 → 재시도 후 no_data 로 회복('쌓이는 중', 실패 아님)", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = {
+        performanceByTechnique: vi.fn()
+          .mockRejectedValueOnce(new Error("backend not ready"))   // 1차 실패
+          .mockResolvedValue({ no_data: true, techniques: [], active_profile: "balanced" }),
+      };
+      const { getByTestId, queryByTestId } = render(<TechniqueScorecard api={api} />);
+      await vi.advanceTimersByTimeAsync(20);
+      await vi.advanceTimersByTimeAsync(4000);    // 복구 재시도 → no_data
+      await vi.advanceTimersByTimeAsync(20);
+      expect(getByTestId("technique-nodata")).toBeTruthy();   // 실패 아님
+      expect(queryByTestId("technique-fail")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

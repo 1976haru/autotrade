@@ -19,15 +19,20 @@ export function usePortfolio() {
   const [positions, setPositions] = useState([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState("");
+  const [ready, setReady]         = useState(false);  // G2: 첫 성공 여부(숫자 표시 게이트)
 
-  // B4: 앱 로드 시 1회 조회. ★최초 조회가 실패하면(백엔드 미준비) *첫 성공까지* 복구
-  //   재시도 — 예전엔 deps [] 로 1회만 시도해, 그 1회가 실패하면(그리고 positions 가
-  //   비어 가격 폴링도 안 떠) 새로고침 전까지 영구히 "아직 한 번도 못 불러왔어요"에
-  //   갇혔다. 연속 폴링 아님(성공하면 멈춤). 주말/장전이라도 백엔드만 응답하면 표시.
+  // B4: 앱 로드 시 1회 조회. ★최초 조회가 실패하면(백엔드 미준비) 첫 성공까지 복구
+  //   재시도 — 예전엔 deps [] 로 1회만 시도해, 그 1회가 실패하면 새로고침 전까지 영구히
+  //   "못 불러왔어요"에 갇혔다. 연속 폴링 아님(성공하면 멈춤).
+  // G2: 첫 성공 전엔 loading=true 유지(빈 잔고 0 을 숫자로 그리지 않게) — 계좌카드가
+  //   ready 전에는 "불러오는 중", 재시도 소진(MAX) 후 실패면 "불러오지 못했어요" 표시.
   useEffect(() => {
     let cancelled = false;
     let timer;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 12; // ~60s — KIS 토큰 레이트리밋(EGW00133, 1/min) 창 커버
     const attempt = async () => {
+      attempts += 1;
       try {
         const [balance, raw] = await Promise.all([
           backendApi.brokerBalance(),
@@ -40,12 +45,14 @@ export function usePortfolio() {
         const list = Array.isArray(raw) ? raw : [];
         setPositions(list.map(toFrontPosition));
         setError("");
+        setReady(true);
         setLoading(false);
       } catch (e) {
         if (cancelled) return;
         setError(e.message);
-        setLoading(false);
-        timer = setTimeout(attempt, 5000); // 첫 성공까지만 재시도
+        setLoading(false);                    // 각 시도 종료(loading 무한대 금지 — 가짜 0
+        //   은 ready 게이트로 막는다; loading 은 '최초 시도 진행 중'만 의미).
+        if (attempts < MAX_ATTEMPTS) timer = setTimeout(attempt, 5000); // 첫 성공까지 재시도
       }
     };
     attempt();
@@ -92,6 +99,6 @@ export function usePortfolio() {
   return {
     cash: availableCash, positions,
     invested, totalAsset, equity, totalPnL, totalPnLPct,
-    loading, error,
+    loading, error, ready,
   };
 }

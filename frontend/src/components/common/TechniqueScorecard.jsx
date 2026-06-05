@@ -25,12 +25,28 @@ export function TechniqueScorecard({ api = backendApi }) {
       setData(await api.performanceByTechnique({ period }));
     } catch {
       setFailed(true);
+      throw new Error("fetch failed");
     } finally {
       setLoading(false);
     }
   }, [api, period]);
 
-  useEffect(() => { load(); }, [load]); // 탭 변경 시에만 조회(폴링 아님)
+  // G3: 백엔드는 데이터 없으면 no_data(=성공)를 돌려준다. "불러오기 실패"는 *로드 시점
+  //   백엔드 미준비*로 fetch 가 throw 한 경우뿐 — 그럴 때 첫 성공까지 몇 번 복구 재시도해
+  //   "쌓이는 중"(no_data)으로 자연 회복(연속 폴링 아님, 성공/소진 시 멈춤).
+  useEffect(() => {
+    let cancelled = false;
+    let timer;
+    let attempts = 0;
+    const run = () => {
+      attempts += 1;
+      load().catch(() => {
+        if (!cancelled && attempts < 3) timer = setTimeout(run, 4000);
+      });
+    };
+    run();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [load]);
 
   const noData = data?.no_data;
   const smallSample = data?.small_sample;
