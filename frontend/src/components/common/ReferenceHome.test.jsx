@@ -8,6 +8,16 @@ vi.mock("../../services/backend/client", () => ({
     agentStrategyPerformance: vi.fn(async () => ({ strategies: [] })),
     paperCashState: vi.fn(async () => ({ realized_pnl_krw: 0 })),
     paperCapitalConfig: vi.fn(async () => ({ max_concurrent_positions: 5, per_symbol_max_krw: 1000000 })),
+    runtimeConfigGet: vi.fn(async () => ({
+      max_concurrent_positions: { value: 5, min: 1, max: 10 },
+      per_stock_budget: { value: 1000000, min: 100000, max: 10000000 },
+      daily_buy_limit_krw: 3000000,
+    })),
+    runtimeConfigPut: vi.fn(async (b) => ({
+      max_concurrent_positions: { value: b.max_concurrent_positions ?? 5, min: 1, max: 10 },
+      per_stock_budget: { value: b.per_stock_budget ?? 1000000, min: 100000, max: 10000000 },
+      daily_buy_limit_krw: 3000000,
+    })),
     paperDecisionLog: vi.fn(async () => ({ entries: [] })),
     // 실제 Auto Paper Loop 배선 — 기존 client 함수.
     autoPaperStatus: vi.fn(async () => ({ state: "PAUSED" })),
@@ -50,11 +60,12 @@ describe("ReferenceHome", () => {
   afterEach(() => cleanup());
 
   it("핵심 섹션이 보인다 (히어로 손절/익절, 칩, 계좌정보, 안전고지)", () => {
-    const { getByText, getByTestId } = renderHome();
+    const { getByText, getAllByText, getByTestId } = renderHome();
     expect(getByText("손절")).toBeTruthy();
     expect(getByText("익절")).toBeTruthy();
     expect(getByText("설정 종목 수")).toBeTruthy();
-    expect(getByText("종목당 투자금")).toBeTruthy();
+    // R3: 히어로 요약 + 런타임 설정 카드 둘 다 '종목당 투자금' 라벨을 가질 수 있음.
+    expect(getAllByText("종목당 투자금").length).toBeGreaterThanOrEqual(1);
     expect(getByTestId("refhome-startstop")).toBeTruthy();
     expect(getByText("홍길동님의 계좌정보")).toBeTruthy();
     // U2: 푸터는 일상 한국어 — 환경변수/영문 플래그(KIS_IS_PAPER 등) 노출 금지.

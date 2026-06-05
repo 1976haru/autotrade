@@ -23,6 +23,7 @@ import {
   livePanelLine, groupLiveLines, kstDayLabel, marketClosedLine, miniKpis, dailyProgress,
   strategyChips, FEATURE_SHORTCUTS,
 } from "../../utils/referenceHome";
+import { RuntimeConfigCard } from "./RuntimeConfigCard";
 
 // 등락 색 — 한국식(+빨강 −파랑). 라이트/다크 모두 대비 확보.
 const UP = "#e5443b", DOWN = "#2563eb";
@@ -67,6 +68,7 @@ export function ReferenceHome({
   const [stratReport, setStratReport] = useState(null); // Agent Council 전략별 카운트
   const [lastOkHm, setLastOkHm] = useState(null);
   const [profileNote, setProfileNote] = useState(null); // B3: 성향 변경 준비중 안내
+  const [rtConfig, setRtConfig] = useState(null);        // R3: 런타임 설정(실효값)
   const [theme, setTheme] = usePersistedState("refhome_theme", "light", (v) => v === "light" || v === "dark");
 
   const capital = usePaperCapitalSettings({ api: backendApi });
@@ -98,6 +100,7 @@ export function ReferenceHome({
   useEffect(() => {
     let cancelled = false;
     backendApi.paperCapitalConfig?.().then((c) => { if (!cancelled) setAlloc(c); }).catch(() => {});
+    backendApi.runtimeConfigGet?.().then((c) => { if (!cancelled) setRtConfig(c); }).catch(() => {});
     return () => { cancelled = true; };
   }, []);
 
@@ -150,10 +153,11 @@ export function ReferenceHome({
   const masked = maskAccountNo(accountNo);
   const realized = kpi.realizedRaw;
   const name = operatorName?.trim() ? operatorName.trim() : "운영자";
-  // U4: SSOT — 실행이 실제 강제하는 config 실효값 우선(별도 capital-config store 가
-  //   어긋날 수 있음). effective_* 가 없으면 기존 필드 → fallback 순.
-  const maxSymbols = alloc?.effective_max_concurrent_positions ?? alloc?.max_concurrent_positions ?? PAPER_ALLOC_FALLBACK.maxSymbols;
-  const perSymbolKrw = alloc?.effective_per_symbol_notional_krw ?? alloc?.effective_per_symbol_cap_krw ?? alloc?.per_symbol_max_krw ?? PAPER_ALLOC_FALLBACK.perSymbolKrw;
+  // U4 + R3: SSOT — 히어로 표시와 런타임 설정 카드는 *같은 소스*(runtime-config
+  //   실효값)를 본다. rtConfig(런타임) > capital-config effective > fallback 순.
+  //   같은 화면에 두 숫자가 다르게 뜨는 일을 방지.
+  const maxSymbols = rtConfig?.max_concurrent_positions?.value ?? alloc?.effective_max_concurrent_positions ?? alloc?.max_concurrent_positions ?? PAPER_ALLOC_FALLBACK.maxSymbols;
+  const perSymbolKrw = rtConfig?.per_stock_budget?.value ?? alloc?.effective_per_symbol_notional_krw ?? alloc?.effective_per_symbol_cap_krw ?? alloc?.per_symbol_max_krw ?? PAPER_ALLOC_FALLBACK.perSymbolKrw;
   // U7: 연속 동일 이벤트(동일 종목+동일 사유)는 묶어서 표시(원본은 백엔드 보존, 화면만 압축).
   const liveLines = groupLiveLines(
     (logEntries || []).map((e) => ({ ...livePanelLine(e), day: kstDayLabel(e.timestamp) })).filter((l) => l && l.text)
@@ -237,6 +241,10 @@ export function ReferenceHome({
               <div data-testid="refhome-progress" style={{ width: `${prog.buyPct}%`, height: "100%", background: "#2a1418", borderRadius: 999 }} />
             </div>
           </div>
+          {/* R3: 장중 설정 변경 카드 — 시작/긴급정지 버튼 *위*. 오터치 방지를 위해
+              아래에 충분한 간격 + 구분선으로 긴급정지 버튼과 분리. */}
+          <RuntimeConfigCard config={rtConfig} onSaved={setRtConfig} />
+          <div style={{ height: 1, background: "rgba(42,20,24,.2)", margin: "18px 2px 0" }} />
           {/* ③ 시작 / 긴급정지 — 같은 줄, 같은 크기. 실제 Auto Paper Loop에 배선 */}
           <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
             <button type="button" data-testid="refhome-startstop"
