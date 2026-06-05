@@ -13,6 +13,7 @@ from app.api.routes_auto_paper import router as auto_paper_router
 from app.api.routes_runtime_config import router as runtime_config_router
 from app.api.routes_performance import router as performance_router
 from app.api.routes_positions import router as positions_router
+from app.api.routes_agent_dashboard import router as agent_dashboard_router
 from app.api.routes_ai import router as ai_router
 from app.api.routes_ai_assist import router as ai_assist_router
 from app.api.routes_ai_execution import router as ai_execution_router
@@ -293,6 +294,7 @@ app.include_router(auto_paper_router, prefix="/api")
 app.include_router(runtime_config_router, prefix="/api")
 app.include_router(performance_router, prefix="/api")
 app.include_router(positions_router, prefix="/api")
+app.include_router(agent_dashboard_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(monitoring_router, prefix="/api")
 app.include_router(analytics_router, prefix="/api")
