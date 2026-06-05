@@ -417,7 +417,7 @@ export function ReferenceHome({
 
       {/* 하단 한 줄 */}
       <div style={{ textAlign: "center", fontSize: F.sm, color: C.text3, marginTop: 16, lineHeight: 1.8 }}>
-        모의투자 — 실제 돈이 나가지 않아요 · 실거래 OFF · KIS_IS_PAPER=true<br />
+        모의투자 모드 — 실제 돈이 나가지 않아요 (안전하게 연습 중)<br />
         <button type="button" data-testid="refhome-expert" onClick={onExpert}
           style={{ color: "#2563eb", textDecoration: "underline", background: "none", border: "none", cursor: "pointer", fontSize: F.base, fontFamily: "inherit" }}>
           전문가 보기 (기존 화면 전체) ›

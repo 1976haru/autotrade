@@ -57,7 +57,9 @@ describe("ReferenceHome", () => {
     expect(getByText("종목당 투자금")).toBeTruthy();
     expect(getByTestId("refhome-startstop")).toBeTruthy();
     expect(getByText("홍길동님의 계좌정보")).toBeTruthy();
-    expect(getByText(/모의투자.*실거래 OFF/)).toBeTruthy();
+    // U2: 푸터는 일상 한국어 — 환경변수/영문 플래그(KIS_IS_PAPER 등) 노출 금지.
+    expect(getByText(/모의투자 모드 — 실제 돈이 나가지 않아요/)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/KIS_IS_PAPER|실거래 OFF/);
   });
 
   it("D3: 전략 집계 없음 → '집계 전', 있음 → '신호 N개'(실제 0과 구분)", async () => {
