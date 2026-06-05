@@ -136,6 +136,28 @@ class KisClient:
             raise KisApiError(f"KIS index endpoint returned {r.status_code}: {r.text[:200]}")
         return r.json()
 
+    async def inquire_overseas_index(self, *, excd: str, symb: str) -> dict:
+        """해외 지수 현재가 — read-only, 공유 rate limiter 경유. 주문 0건.
+
+        B1: 밤사이 미국 시세(S&P500/나스닥/다우/SOX)용. ★모의(paper) 호스트에서
+        해외지수 조회가 막힐 수 있음(국내 FHPUP02100000 전례) — 호출자(market_briefing)
+        가 per-instrument graceful-fail 처리.
+        """
+        token = await self._ensure_token()
+        await self._throttle()
+        async with self._client() as client:
+            r = await client.get(
+                "/uapi/overseas-price/v1/quotations/inquire-index-price",
+                params={"FID_COND_MRKT_DIV_CODE": "N", "FID_INPUT_ISCD": symb, "FID_INPUT_ISCD_2": excd},
+                headers={
+                    "authorization": f"Bearer {token}", "appkey": self.app_key,
+                    "appsecret": self.app_secret, "tr_id": "FHKST03030100", "custtype": "P",
+                },
+            )
+        if r.status_code != 200:
+            raise KisApiError(f"KIS overseas index endpoint returned {r.status_code}: {r.text[:200]}")
+        return r.json()
+
     async def inquire_time_dailychartprice(
         self,
         symbol: str,
