@@ -203,6 +203,12 @@ export function marketClosedLine() {
 export function livePanelLine(entry, nameOf = resolveSymbolName) {
   if (!entry) return null;
   const time = _kstHm(entry.timestamp);   // ★UTC→KST 변환 (옛: raw slice = UTC 노출)
+  // R2: 운영자 설정 변경 이벤트 — reason 문구를 그대로 표시(종목 기반 문장 아님).
+  if (String(entry.decision_action || "").toUpperCase() === "CONFIG_CHANGE"
+      || String(entry.reason_code || "").toUpperCase() === "OPERATOR_CONFIG_CHANGE") {
+    const msg = entry.reason || (Array.isArray(entry.reasons) ? entry.reasons[0] : "") || "운영자가 설정을 바꿨어요";
+    return { time, text: msg };
+  }
   const name = nameOf(entry.symbol) || entry.symbol || "어떤 종목";
   const strat = STRAT_KO[String(entry.strategy || "").toUpperCase()] || null;
   const action = String(entry.decision_action || "").toUpperCase();

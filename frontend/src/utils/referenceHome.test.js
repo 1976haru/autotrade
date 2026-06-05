@@ -230,6 +230,25 @@ describe("livePanelLine — U7 보류 사유(reason_code)", () => {
   });
 });
 
+describe("livePanelLine — R2 운영자 설정변경 이벤트", () => {
+  it("CONFIG_CHANGE 이벤트 → reason 문구 그대로(종목 기반 문장 아님)", () => {
+    const r = livePanelLine({
+      decision_action: "CONFIG_CHANGE", symbol: "SYSTEM",
+      reason: "운영자가 종목당 투자금을 100만 원 → 50만 원으로 바꿨어요",
+      timestamp: "2026-06-06T05:32:00Z",
+    });
+    expect(r.text).toBe("운영자가 종목당 투자금을 100만 원 → 50만 원으로 바꿨어요");
+    expect(r.text).not.toContain("신호");
+  });
+  it("reason_code=OPERATOR_CONFIG_CHANGE 로도 인식", () => {
+    const r = livePanelLine({
+      reason_code: "OPERATOR_CONFIG_CHANGE", reason: "운영자가 동시진입 종목 수를 5개 → 3개로 바꿨어요",
+      timestamp: "2026-06-06T05:35:00Z",
+    });
+    expect(r.text).toContain("동시진입 종목 수를 5개 → 3개로 바꿨어요");
+  });
+});
+
 describe("groupLiveLines — U7 연속 동일 이벤트 묶기", () => {
   it("연속 동일 텍스트 count 누적, 다른 텍스트는 분리, 첫 시각 유지", () => {
     const lines = [

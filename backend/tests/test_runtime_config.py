@@ -198,6 +198,67 @@ def test_bot_scan_reads_effective_getters_each_tick(monkeypatch):
     assert calls["bud"] >= 1  # 봇이 종목당 투자금 effective getter 호출
 
 
+def _mem_session():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.db.base import Base
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(eng)
+    return sessionmaker(bind=eng, autoflush=False, autocommit=False, expire_on_commit=False)
+
+
+def test_r2_record_changes_into_activity_feed():
+    # R2: 변경을 활동 피드(AgentDecisionLog/paper decision-log)에 기록 — 기존 경로 재사용.
+    from app.core.runtime_config_activity import record_runtime_config_changes
+    from app.auto_paper.decision_log import query_paper_decision_log
+    TS = _mem_session()
+    with TS() as db:
+        n = record_runtime_config_changes(db, [
+            {"key": "per_stock_budget", "before": 1_000_000, "after": 500_000},
+            {"key": "max_concurrent_positions", "before": 5, "after": 3},
+        ])
+        assert n == 2
+        entries = query_paper_decision_log(db, limit=10)
+        texts = [e.reason for e in entries]
+        assert any("종목당 투자금을 100만 원 → 50만 원으로 바꿨어요" in t for t in texts)
+        assert any("동시진입 종목 수를 5개 → 3개로 바꿨어요" in t for t in texts)
+        assert all(e.decision_action == "CONFIG_CHANGE"
+                   for e in entries if e.agent_name == "Operator")
+
+
+def test_r2_no_change_records_nothing():
+    from app.core.runtime_config_activity import record_runtime_config_changes
+    TS = _mem_session()
+    with TS() as db:
+        assert record_runtime_config_changes(db, []) == 0
+
+
+def test_api_put_records_activity_event():
+    # PUT 성공 → decision-log 에 운영자 변경 항목이 남는다.
+    from app.db.session import get_db
+    from app.auto_paper.decision_log import query_paper_decision_log
+    TS = _mem_session()
+
+    def _ov():
+        s = TS()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _ov
+    try:
+        with TestClient(app) as c:
+            r = c.put("/api/runtime-config", json={"per_stock_budget": 500_000})
+        assert r.status_code == 200
+        with TS() as s:
+            entries = query_paper_decision_log(s, limit=10)
+        assert any("종목당 투자금" in (e.reason or "") for e in entries)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
 def test_overrides_do_not_touch_safety_flags():
     # 본 모듈은 안전 플래그를 *읽지도 쓰지도* 않는다 (값 변경 가능 키 화이트리스트).
     assert set(rc._OVERRIDE_KEYS) == {"max_concurrent_positions", "per_stock_budget"}
