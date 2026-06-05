@@ -10,6 +10,7 @@ from app.api.routes_agents import router as agents_router
 from app.api.routes_notifications import router as notifications_router
 from app.api.routes_auto_trader import router as auto_trader_router
 from app.api.routes_auto_paper import router as auto_paper_router
+from app.api.routes_runtime_config import router as runtime_config_router
 from app.api.routes_ai import router as ai_router
 from app.api.routes_ai_assist import router as ai_assist_router
 from app.api.routes_ai_execution import router as ai_execution_router
@@ -287,6 +288,7 @@ app.include_router(paper_decision_log_router, prefix="/api")
 app.include_router(agent_memory_router, prefix="/api")
 app.include_router(auto_trader_router, prefix="/api")
 app.include_router(auto_paper_router, prefix="/api")
+app.include_router(runtime_config_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(monitoring_router, prefix="/api")
 app.include_router(analytics_router, prefix="/api")

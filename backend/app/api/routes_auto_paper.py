@@ -673,14 +673,17 @@ def get_capital_config_endpoint() -> dict:
     복귀. 영구 저장은 P-16 에서 별도 PR.
     """
     cfg = get_paper_capital_config()
-    _s = get_settings()
+    # U4 + R1: 화면 SSOT — 실행이 *실제로 강제*하는 실효값(런타임 오버라이드 > env).
+    #   히어로 '설정 종목 수'/'종목당 투자금' 과 런타임 설정 카드가 *동일 소스*를
+    #   보도록 runtime_config 의 effective getter 를 사용(같은 화면 두 숫자 불일치 방지).
+    from app.core.runtime_config import (
+        effective_max_concurrent_positions,
+        effective_per_stock_budget,
+    )
     return {
         **cfg.to_dict(),
-        # U4: 화면 SSOT — 실행이 *실제로 강제*하는 값은 config(env-backed) 다.
-        #   capital-config store(별도) 와 어긋날 수 있어, 히어로 '설정 종목 수' /
-        #   '종목당 투자금' 은 아래 실효값을 우선 표시한다.
-        "effective_max_concurrent_positions": int(getattr(_s, "kis_paper_max_concurrent_positions", 5)),
-        "effective_per_symbol_notional_krw":  int(getattr(_s, "kis_paper_per_symbol_notional_krw", 1_000_000)),
+        "effective_max_concurrent_positions": int(effective_max_concurrent_positions()),
+        "effective_per_symbol_notional_krw":  int(effective_per_stock_budget()),
         # P-20: Paper capital ↔ Live capital 분리 안전 flag (read-only).
         "is_paper_capital":             True,
         "is_live_capital":              False,
