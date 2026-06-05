@@ -158,10 +158,18 @@ def test_resolve_period_kst():
                           from_=date(2026, 6, 2), to=date(2026, 6, 4)) == (date(2026, 6, 2), date(2026, 6, 4))
 
 
-def test_api_performance_endpoint():
+def test_api_performance_endpoint(monkeypatch):
     from fastapi.testclient import TestClient
     from app.db.session import get_db
     from app.main import app
+    import app.performance.market_index as mi
+
+    # KIS 실호출 0 — 시장 컨텍스트를 unavailable 로 스텁(엔드포인트 망 호출 방지).
+    async def _fake_ctx(*, start, end, **kw):
+        return {"market": {"available": False, "reason": "MARKET_NOT_FETCHED"},
+                "current_equity_krw": None}
+    monkeypatch.setattr(mi, "get_market_comparison_context", _fake_ctx)
+
     eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(eng)
     TS = sessionmaker(bind=eng, expire_on_commit=False)
@@ -182,5 +190,49 @@ def test_api_performance_endpoint():
         assert b["no_data"] is True          # 빈 DB → 가짜 0% 아님
         assert b["is_live_authorization"] is False
         assert "period_start_kst" in b
+        assert b["market"]["available"] is False   # 시장 실패해도 봇 성과는 정상
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+def test_api_performance_bot_vs_index_comparison(monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.db.session import get_db
+    from app.main import app
+    import app.performance.market_index as mi
+
+    async def _ctx(*, start, end, **kw):
+        return {"market": {"available": True, "kospi_return_pct": 1.2,
+                           "kosdaq_return_pct": 0.9, "fetched_at_kst": "09:05"},
+                "current_equity_krw": 100_000_000}
+    monkeypatch.setattr(mi, "get_market_comparison_context", _ctx)
+
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(eng)
+    TS = sessionmaker(bind=eng, expire_on_commit=False)
+    with TS() as s:
+        now = datetime.now(timezone.utc)
+        _order(s, symbol="K", side="BUY", qty=1, price=1_000_000, at=now)
+        _order(s, symbol="K", side="SELL", qty=1, price=1_100_000, at=now)
+        s.commit()
+
+    def _ov():
+        s = TS()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _ov
+    try:
+        with TestClient(app) as c:
+            r = c.get("/api/performance?period=daily")
+        assert r.status_code == 200
+        b = r.json()
+        assert b["market"]["available"] is True
+        assert b["period_return_pct"] is not None       # 평가자산 기준 봇 수익률
+        assert b["comparison"] is not None
+        assert b["comparison"]["kospi_return_pct"] == 1.2
+        assert b["comparison"]["vs_kospi_pp"] is not None
     finally:
         app.dependency_overrides.pop(get_db, None)

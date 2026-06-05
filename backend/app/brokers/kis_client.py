@@ -109,6 +109,33 @@ class KisClient:
             raise KisApiError(f"KIS quote endpoint returned {r.status_code}: {r.text[:200]}")
         return r.json()
 
+    async def inquire_index_price(self, index_code: str) -> dict:
+        """국내 업종(지수) 현재가 — read-only. KOSPI='0001', KOSDAQ='1001'.
+
+        공유 rate limiter 경유(_throttle). 주문 0건. output 에 bstp_nmix_prpr(지수),
+        bstp_nmix_prdy_ctrt(전일대비율%) 등.
+        """
+        token = await self._ensure_token()
+        await self._throttle()
+        async with self._client() as client:
+            r = await client.get(
+                "/uapi/domestic-stock/v1/quotations/inquire-index-price",
+                params={
+                    "FID_COND_MRKT_DIV_CODE": "U",
+                    "FID_INPUT_ISCD":         index_code,
+                },
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "appkey":        self.app_key,
+                    "appsecret":     self.app_secret,
+                    "tr_id":         "FHPUP02100000",
+                    "custtype":      "P",
+                },
+            )
+        if r.status_code != 200:
+            raise KisApiError(f"KIS index endpoint returned {r.status_code}: {r.text[:200]}")
+        return r.json()
+
     async def inquire_time_dailychartprice(
         self,
         symbol: str,
