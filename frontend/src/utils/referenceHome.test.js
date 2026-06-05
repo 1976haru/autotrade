@@ -168,16 +168,22 @@ describe("miniKpis — 실체결 기준, 추정 금지", () => {
 });
 
 describe("dailyProgress — 매수 사용금액 게이지", () => {
-  it("BUY notional 합산, 거부 제외, % 계산", () => {
+  it("U6: 실체결가(avg_fill_price) 기준 BUY notional 합산, 거부 제외, % 계산", () => {
+    // order-audit row 실제 필드: avg_fill_price / limit_price / latest_price (price 없음).
     const orders = [
-      { side: "BUY", quantity: 2, price: 500000, broker_status: "FILLED", filled_quantity: 2 },
-      { side: "BUY", quantity: 1, price: 200000, decision: "REJECTED" }, // 제외
-      { side: "SELL", quantity: 1, price: 999999 },                       // 매도 제외
+      { side: "BUY", quantity: 2, avg_fill_price: 500000, broker_status: "FILLED", filled_quantity: 2 },
+      { side: "BUY", quantity: 1, limit_price: 200000, decision: "REJECTED" }, // 제외
+      { side: "SELL", quantity: 1, avg_fill_price: 999999 },                   // 매도 제외
     ];
     const p = dailyProgress({ orders, today: { orderCount: 3 }, buyMaxKrw: 3_000_000 });
     expect(p.buyUsedKrw).toBe(1_000_000);
     expect(p.buyMaxKrw).toBe(3_000_000);
     expect(p.buyPct).toBe(33);
+  });
+  it("U6 회귀: price 필드만 있고 avg_fill_price 없으면 0 (옛 버그 재현 방지용 — 실제 row엔 price 없음)", () => {
+    const orders = [{ side: "BUY", quantity: 2, price: 500000, broker_status: "FILLED", filled_quantity: 2 }];
+    // 실제 API row 에는 price 가 없으므로 avg_fill_price 기준이어야 한다(이 합성 row는 0).
+    expect(dailyProgress({ orders, today: { orderCount: 1 } }).buyUsedKrw).toBe(0);
   });
   it("한도 0이면 기본값으로 보정", () => {
     expect(dailyProgress({ orders: [], today: {}, buyMaxKrw: 0 }).buyMaxKrw).toBe(3_000_000);

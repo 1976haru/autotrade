@@ -244,7 +244,11 @@ export function dailyProgress({ orders, today, buyMaxKrw = 3_000_000 } = {}) {
     const dec = String(r.decision || "").toUpperCase();
     if (bs === "REJECTED" || dec === "REJECTED") continue;
     const qty = r.filled_quantity || r.quantity || 0;
-    buyUsed += (r.price || 0) * qty;
+    // U6: order-audit row 에는 `price` 필드가 없다(avg_fill_price / limit_price /
+    //   latest_price). 기존 `r.price` 는 항상 undefined → 매수금액이 0 으로 집계됐다
+    //   (06-05: 체결 14건인데 "매수 0만"). 실체결가 우선(D4/D6 동일 원칙).
+    const px = r.avg_fill_price || r.limit_price || r.latest_price || 0;
+    buyUsed += px * qty;
   }
   const max = buyMaxKrw > 0 ? buyMaxKrw : 3_000_000;
   return {
