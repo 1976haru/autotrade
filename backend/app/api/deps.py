@@ -7,7 +7,7 @@ from app.brokers.kis_client import KisClient
 from app.brokers.mock_broker import MockBrokerAdapter
 from app.core.config import get_settings
 from app.core.modes import OperationMode
-from app.core.rate_limiter import SlidingWindowRateLimiter
+from app.core.rate_limiter import get_kis_rate_limiter
 from app.market.base import MarketDataAdapter
 from app.market.mock import MockMarketData
 from app.risk.risk_manager import RiskManager, RiskPolicy
@@ -25,15 +25,13 @@ def _get_kis_broker() -> KisBrokerAdapter:
         # No credentials yet — return a bare adapter; the first real call
         # raises a clear error. Operator must set KIS_APP_KEY / KIS_APP_SECRET.
         return KisBrokerAdapter()
-    limiter = SlidingWindowRateLimiter(
-        max_calls=settings.kis_rate_limit_calls,
-        window_seconds=settings.kis_rate_limit_window_seconds,
-    )
+    # 계좌 단위 공유 limiter — 모든 KisClient 가 동일 인스턴스를 써야 aggregate
+    # 호출이 KIS 한도 이하로 묶인다(per-instance limiter 는 합산 시 초과 → EGW00201).
     client = KisClient(
         settings.kis_app_key,
         settings.kis_app_secret,
         is_paper=settings.kis_is_paper,
-        rate_limiter=limiter,
+        rate_limiter=get_kis_rate_limiter(),
     )
     return KisBrokerAdapter(client=client)
 

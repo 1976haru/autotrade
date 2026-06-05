@@ -158,7 +158,13 @@ class KisBrokerAdapter(BrokerAdapter):
                 raise RuntimeError(
                     "KIS credentials are not configured; set KIS_APP_KEY / KIS_APP_SECRET"
                 )
-            self._client = KisClient(self.app_key, self.app_secret, self.is_paper)
+            # 계좌 단위 *공유* limiter 주입 — 이 lazy 경로가 무제한 client 를
+            # 만들어 EGW00201 폭주에 기여하던 구멍을 막는다(deps 경로와 동일 limiter).
+            from app.core.rate_limiter import get_kis_rate_limiter
+            self._client = KisClient(
+                self.app_key, self.app_secret, self.is_paper,
+                rate_limiter=get_kis_rate_limiter(),
+            )
         return self._client
 
     async def get_price(self, symbol: str) -> Quote:
