@@ -60,6 +60,21 @@ describe("ReferenceHome", () => {
     expect(getByText(/모의투자.*실거래 OFF/)).toBeTruthy();
   });
 
+  it("D3: 전략 집계 없음 → '집계 전', 있음 → '신호 N개'(실제 0과 구분)", async () => {
+    // 데이터 없음(episodes_analyzed 0/없음) → '집계 전' 안내 노출.
+    const r1 = renderHome();
+    expect(await r1.findByTestId("refhome-strat-nodata")).toBeTruthy();
+    cleanup();
+    // 데이터 있음 → 신호 N개, nodata 안내 사라짐.
+    backendApi.agentStrategyPerformance.mockResolvedValueOnce({
+      episodes_analyzed: 12,
+      strategies: [{ strategy: "ORB", decision_count: 5, buy_vote_count: 3, sell_vote_count: 1, hold_vote_count: 1 }],
+    });
+    const r2 = renderHome();
+    await waitFor(() => expect(r2.getByTestId("refhome-strat-ORB").textContent).toContain("신호 5개"));
+    expect(r2.queryByTestId("refhome-strat-nodata")).toBeNull();
+  });
+
   it("B3: 성향 버튼 — 현재(안정형) 강조 + 다른 성향 탭 시 '준비 중' 안내(조용히 무시 금지)", () => {
     const { getByTestId, queryByTestId } = renderHome();
     // 현재 적용 성향(BALANCED=config 기준)이 강조 + '·적용중' 라벨.

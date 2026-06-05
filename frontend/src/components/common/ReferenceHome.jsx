@@ -140,6 +140,9 @@ export function ReferenceHome({
   // ★전략별 신호 수 = Agent Council 전략별 실제 카운트(strategy-performance).
   //   옛 todayStrategyChips 는 decision-log 의 strategy 필드(빈 값)를 보느라 항상 0이었다.
   const stratChips = strategyChips(stratReport);
+  // D3: 집계된 episode 가 0 이면 "집계 전(데이터 없음)" — EGW00201 등으로 스캔이
+  //   무산돼 신호 0 이 된 경우와 *진짜 0 신호* 를 구분(코스메틱 0 으로 덮지 않음).
+  const stratDataAvailable = Number(stratReport?.episodes_analyzed ?? 0) > 0;
   const kpi = miniKpis({ cashState, today });
   const buyMax = alloc?.daily_buy_limit_krw ?? 3_000_000;
   const prog = dailyProgress({ orders, today, buyMaxKrw: buyMax });
@@ -370,12 +373,19 @@ export function ReferenceHome({
         {/* ③ 매매기법 줄 — Agent Council 전략별 실제 신호 수(최근 누적) */}
         <div style={{ gridArea: "strat", ...card }}>
           <div style={secLabel}>매매기법 · 최근 신호</div>
+          {!stratDataAvailable && (
+            <div data-testid="refhome-strat-nodata" style={{ fontSize: F.sm, color: C.text3, margin: "2px 0 8px" }}>
+              아직 집계 전이에요 (장 시작 전 · 시세 제한 등)
+            </div>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8 }}>
             {stratChips.map((s) => (
               <button key={s.key} type="button" data-testid={`refhome-strat-${s.key}`} onClick={() => onJumpTab?.("signal")}
                 style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 6px", cursor: "pointer", fontFamily: "inherit", textAlign: "center" }}>
                 <div style={{ fontSize: F.md, fontWeight: 800, color: C.text }}>{s.label}</div>
-                <div style={{ fontSize: F.sm, color: C.text2, marginTop: 4 }}>신호 {s.signals}개</div>
+                <div style={{ fontSize: F.sm, color: C.text2, marginTop: 4 }}>
+                  {stratDataAvailable ? `신호 ${s.signals}개` : "집계 전"}
+                </div>
                 <div style={{ fontSize: F.sm, marginTop: 2, color: s.verdict.startsWith("매수") ? UP : s.verdict.startsWith("매도") ? DOWN : C.text3 }}>{s.verdict}</div>
               </button>
             ))}

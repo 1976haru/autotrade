@@ -1634,7 +1634,10 @@ def strategy_performance(
     from app.analytics.strategy_performance import calculate_strategy_performance
     episodes = list_episodes(db, limit=limit)
     report = calculate_strategy_performance(episodes)
-    return report.to_dict()
+    # D3: 집계된 episode 수를 함께 내려, 프론트가 "집계 전(데이터 없음)" 과
+    #   "실제 0 신호" 를 구분하게 한다. EGW00201 등으로 스캔이 무산되면 episode
+    #   가 안 쌓여 decision_count=0 이 되는데, 이는 *진짜 0 신호* 가 아니다.
+    return {**report.to_dict(), "episodes_analyzed": len(episodes)}
 
 
 # ============================================================================
