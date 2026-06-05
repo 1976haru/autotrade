@@ -24,6 +24,7 @@ import {
   strategyChips, FEATURE_SHORTCUTS,
 } from "../../utils/referenceHome";
 import { RuntimeConfigCard } from "./RuntimeConfigCard";
+import { PerformanceCard } from "./PerformanceCard";
 
 // 등락 색 — 한국식(+빨강 −파랑). 라이트/다크 모두 대비 확보.
 const UP = "#e5443b", DOWN = "#2563eb";
@@ -342,6 +343,8 @@ export function ReferenceHome({
                 value={`${(portfolio?.totalPnLPct ?? 0) > 0 ? "+" : ""}${(portfolio?.totalPnLPct ?? 0).toFixed(2)}%`} color={pnlColor(portfolio?.totalPnLPct ?? 0)} />
             </div>
           )}
+          {/* P3: 성과 대시보드 — 계좌정보 카드 하단(승률·손익비·순손익 + 봇 vs 지수) */}
+          <PerformanceCard />
         </div>
 
         {/* ⑥ 미니 KPI 줄 */}

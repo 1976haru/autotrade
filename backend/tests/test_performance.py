@@ -149,6 +149,18 @@ def test_kst_period_boundary_excludes_other_days(db):
     assert yest["closed_count"] == 1
 
 
+def test_performance_modules_are_read_only():
+    # P4 회귀: 성과 기능은 주문 경로 / 주문 실행을 *참조하지 않는다*(읽기 전용).
+    import inspect
+    import app.performance.performance as perf
+    import app.performance.market_index as mi
+    forbidden = ("route_order", "place_order", "RiskManager", "OrderExecutor", "PermissionGate")
+    for mod in (perf, mi):
+        src = inspect.getsource(mod)
+        for f in forbidden:
+            assert f not in src, f"{mod.__name__} 가 {f} 를 참조 — 읽기 전용 위반"
+
+
 def test_resolve_period_kst():
     today = date(2026, 6, 5)  # 금요일
     assert resolve_period("daily", today=today) == (today, today)

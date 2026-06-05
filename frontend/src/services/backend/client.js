@@ -141,6 +141,13 @@ export const backendApi = {
     }),
   // P-01: Paper 시드머니 설정 — Paper 전용, 실전 계좌와 무관.
   paperCapitalConfig:     () => backendFetch("/api/auto-paper/capital-config"),
+  // 성과 대시보드 (읽기 전용 집계). 탭 전환/수동 새로고침 시에만 조회.
+  performanceGet:         ({ period = "daily", from, to } = {}) => {
+    const qs = new URLSearchParams({ period });
+    if (from) qs.set("from", from);
+    if (to) qs.set("to", to);
+    return backendFetch(`/api/performance?${qs.toString()}`);
+  },
   // 장중 런타임 설정 (동시진입 종목 수 / 종목당 투자금) — 2개 전용.
   runtimeConfigGet:       () => backendFetch("/api/runtime-config"),
   runtimeConfigPut:       (body) =>
