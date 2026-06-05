@@ -16,8 +16,10 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+
+from app.db.session import get_db
 
 from app.auto_paper.loop import (
     LoopAlreadyRunningError,
@@ -1126,20 +1128,33 @@ def preview_paper_cash_check_endpoint(body: _CashCheckPreviewBody) -> dict:
 
 
 @_AP.get("/cash-state")
-def get_paper_cash_state_endpoint() -> dict:
+def get_paper_cash_state_endpoint(db=Depends(get_db)) -> dict:
     """현재 Paper 현금 잔고 (CapitalState) snapshot — read-only.
 
     `available_cash_krw` 가 BUY 가능성의 *실제 기준*. broker / 실 계좌와
     *결합 0건* — `is_paper_only=True` carry.
+
+    D4/D6 (2026-06-05): 표시용 `realized_pnl_krw` 는 *실체결(order_audit_log)*
+    기준으로 교정한다. 가상 ledger(CapitalState)는 KIS 실체결과 미동기라 체결이
+    있어도 0 으로 남아 화면에 "거래 시작 전" 이 잘못 떴다. 실현손익은 오늘(KST)
+    FIFO 매칭으로 산출 — best-effort, 실패 시 기존 ledger 값 유지.
     """
     snap = get_capital_state().snapshot()
-    return {
+    out = {
         **snap.to_dict(),
         "notice": (
             "Paper 모의매매 전용 현금 잔고. 실거래 계좌와 무관합니다. "
             "broker / OrderExecutor 호출 0건."
         ),
+        "realized_pnl_source": "capital_state",
     }
+    try:
+        from app.risk.daily_pnl import compute_today_realized_pnl
+        out["realized_pnl_krw"] = int(compute_today_realized_pnl(db))
+        out["realized_pnl_source"] = "order_audit_log"
+    except Exception:  # noqa: BLE001 — 교정 실패는 표시를 막지 않음(ledger 값 유지).
+        pass
+    return out
 
 
 @_AP.post("/cash-state/reset")

@@ -738,3 +738,48 @@ class TestSafetyFlagInvariants:
         # P-07 의 verdict 는 다른 이름으로 carry (혼동 방지).
         assert CashCheckVerdict.INSUFFICIENT_PAPER_CASH.value == "INSUFFICIENT_PAPER_CASH"
         assert CashCheckVerdict.INSUFFICIENT_PAPER_CASH.value != AffordabilityVerdict.INSUFFICIENT_CASH.value
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# D4/D6: cash-state 의 realized_pnl 은 *실체결(order_audit_log)* 에서 교정
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_cash_state_realized_pnl_from_order_audit_log():
+    """체결(BUY→SELL)이 있으면 cash-state 의 realized_pnl_krw 가 실체결 FIFO
+    기준값으로 나온다(가상 ledger 0 이 아니라). '거래 시작 전' 라벨 정직화."""
+    from datetime import datetime, timezone
+    from app.db.models import OrderAuditLog
+
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                        poolclass=StaticPool)
+    Base.metadata.create_all(bind=eng)
+    TS = sessionmaker(bind=eng, autoflush=False, autocommit=False, expire_on_commit=False)
+    now = datetime.now(timezone.utc)
+    s = TS()
+    for side, px in (("BUY", 70_000), ("SELL", 75_000)):
+        s.add(OrderAuditLog(
+            created_at=now, mode="PAPER", requested_by_ai=False,
+            symbol="005930", side=side, quantity=1, order_type="MARKET",
+            decision="APPROVED", executed=True, broker_order_id="X",
+            broker_status="FILLED", filled_quantity=1, avg_fill_price=px,
+            limit_price=px, latest_price=px, trade_reason="kis_paper_auto",
+        ))
+    s.commit(); s.close()
+
+    def _ov():
+        db = TS()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _ov
+    try:
+        with TestClient(app) as c:
+            r = c.get("/api/auto-paper/cash-state")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["realized_pnl_source"] == "order_audit_log"
+        assert body["realized_pnl_krw"] == 5_000   # (75,000 − 70,000) × 1
+    finally:
+        app.dependency_overrides.pop(get_db, None)
