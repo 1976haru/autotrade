@@ -29,6 +29,7 @@ import { LivePositionsCard } from "./LivePositionsCard";
 import { RiskProfileSwitchCard } from "./RiskProfileSwitchCard";
 import { TechniqueScorecard } from "./TechniqueScorecard";
 import { AgentDashboard } from "./AgentDashboard";
+import { BriefingBoard } from "./BriefingBoard";
 
 // 등락 색 — 한국식(+빨강 −파랑). 라이트/다크 모두 대비 확보.
 const UP = "#e5443b", DOWN = "#2563eb";
@@ -193,6 +194,9 @@ export function ReferenceHome({
           {theme === "dark" ? "☀️ 밝게 보기" : "🌙 어둡게 보기"}
         </button>
       </div>
+
+      {/* B3: 아침 브리핑 보드 — 헤더 아래, 카드들 위 한 줄 */}
+      <BriefingBoard />
 
       {/* ⑥ 긴급정지 풀폭 배너 */}
       {emergencyStop && (

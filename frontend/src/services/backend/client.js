@@ -159,6 +159,9 @@ export const backendApi = {
   agentCalibration: ({ period = "daily" } = {}) => backendFetch(`/api/agent/calibration?period=${encodeURIComponent(period)}`),
   agentShadow:      ({ period = "daily" } = {}) => backendFetch(`/api/agent/shadow?period=${encodeURIComponent(period)}`),
   agentLearning:    ({ period = "daily" } = {}) => backendFetch(`/api/agent/learning?period=${encodeURIComponent(period)}`),
+  // B1/B2 아침 브리핑 (읽기 전용).
+  briefingMarkets:   () => backendFetch("/api/briefing/markets"),
+  briefingHeadlines: () => backendFetch("/api/briefing/headlines"),
   // 장중 런타임 설정 (동시진입 종목 수 / 종목당 투자금) — 2개 전용.
   runtimeConfigGet:       () => backendFetch("/api/runtime-config"),
   runtimeConfigPut:       (body) =>

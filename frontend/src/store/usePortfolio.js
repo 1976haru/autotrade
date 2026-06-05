@@ -20,29 +20,36 @@ export function usePortfolio() {
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState("");
 
+  // B4: 앱 로드 시 1회 조회. ★최초 조회가 실패하면(백엔드 미준비) *첫 성공까지* 복구
+  //   재시도 — 예전엔 deps [] 로 1회만 시도해, 그 1회가 실패하면(그리고 positions 가
+  //   비어 가격 폴링도 안 떠) 새로고침 전까지 영구히 "아직 한 번도 못 불러왔어요"에
+  //   갇혔다. 연속 폴링 아님(성공하면 멈춤). 주말/장전이라도 백엔드만 응답하면 표시.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    let timer;
+    const attempt = async () => {
       try {
         const [balance, raw] = await Promise.all([
           backendApi.brokerBalance(),
           backendApi.brokerPositions(),
         ]);
         if (cancelled) return;
-        // 213: balance/positions가 비정상 응답이어도 빈 값으로 정규화해 .reduce/
-        // .map 폭발을 막는다 (Dashboard StatBox가 NaN/undefined를 받지 않도록).
+        // 213: 비정상 응답이어도 빈 값으로 정규화(.reduce/.map 폭발 방지).
         setCash(typeof balance?.cash === "number" ? balance.cash : 0);
         setEquity(typeof balance?.equity === "number" ? balance.equity : 0);
         const list = Array.isArray(raw) ? raw : [];
         setPositions(list.map(toFrontPosition));
         setError("");
+        setLoading(false);
       } catch (e) {
-        if (!cancelled) setError(e.message);
-      } finally {
-        if (!cancelled) setLoading(false);
+        if (cancelled) return;
+        setError(e.message);
+        setLoading(false);
+        timer = setTimeout(attempt, 5000); // 첫 성공까지만 재시도
       }
-    })();
-    return () => { cancelled = true; };
+    };
+    attempt();
+    return () => { cancelled = true; clearTimeout(timer); };
   }, []);
 
   const codesKey = positions.map((p) => p.code).sort().join(",");
