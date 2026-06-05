@@ -77,6 +77,27 @@ def test_all_hold_when_flat():
     assert all(v.signal == CouncilAction.HOLD for v in d.votes)
 
 
+def test_config_min_confidence_floor_overrides_preset():
+    # B(SSOT 정합): config 주문게이트 min_confidence 를 floor 로 주입하면, 어떤
+    #   프리셋도 그보다 관대할 수 없다(council 후보 임계 == 실제 게이트 임계 정합).
+    base = run_agent_council(_buy_input(), risk_profile="BALANCED")
+    assert base.final_action == CouncilAction.BUY
+    conf = float(base.confidence)
+    high = min(1.0, conf + 0.1)
+    low = max(0.0, conf - 0.2)
+    # floor > confidence → config 가 더 엄격 → HOLD 로 강등.
+    floored = run_agent_council(_buy_input(), risk_profile="BALANCED",
+                                min_confidence_floor=high)
+    assert floored.final_action == CouncilAction.HOLD
+    assert "임계" in (floored.reason or "")
+    # floor < confidence → 영향 없음 → BUY 유지.
+    assert run_agent_council(_buy_input(), risk_profile="BALANCED",
+                             min_confidence_floor=low).final_action == CouncilAction.BUY
+    # floor=None → 기존 프리셋 동작 그대로.
+    assert run_agent_council(_buy_input(), risk_profile="BALANCED",
+                             min_confidence_floor=None).final_action == CouncilAction.BUY
+
+
 def test_strong_buy():
     d = run_agent_council(_buy_input(), risk_profile="BALANCED")
     assert d.final_action == CouncilAction.BUY

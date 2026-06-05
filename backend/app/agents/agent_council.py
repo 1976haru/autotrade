@@ -428,6 +428,7 @@ def run_agent_council(
     risk_profile: RiskProfile | str | None = None,
     held_position: bool = False,
     position: "PositionContext | None" = None,
+    min_confidence_floor: float | None = None,
 ) -> AgentCouncilDecision:
     """4 전략 투표 → MarketRegime → RiskOfficer → ChiefTrading → 최종 결정.
 
@@ -444,6 +445,14 @@ def run_agent_council(
         held_position = position.is_sellable
     profile = policy_for(risk_profile).profile
     thr = _PROFILE_THRESHOLDS[profile]
+    # SSOT 정합(2026-06-05): config 의 주문 게이트 min_confidence 가 진실원.
+    #   council 진입 임계는 *프리셋 값과 config floor 중 더 엄격한 값* 으로 클램프
+    #   한다 — 어떤 프리셋도 config 보다 관대할 수 없게 해, council 후보 임계와
+    #   실제 주문 게이트(auto_permission 의 kis_paper_auto_min_confidence)가
+    #   어긋나지 않도록 한다. floor=None(미주입) 이면 기존 프리셋 임계 그대로.
+    entry_min_confidence = float(thr["min_confidence"])
+    if min_confidence_floor is not None:
+        entry_min_confidence = max(entry_min_confidence, float(min_confidence_floor))
     votes = evaluate_all_strategies(inp)
 
     # 1. 가중 투표 집계.
@@ -494,9 +503,9 @@ def run_agent_council(
         if regime_block_buy:
             final = CouncilAction.HOLD
             reasons.append(f"장세({inp.market_regime}/{inp.regime_decision})로 신규 BUY 억제")
-        elif confidence < thr["min_confidence"]:
+        elif confidence < entry_min_confidence:
             final = CouncilAction.HOLD
-            reasons.append(f"confidence {confidence:.2f} < 임계 {thr['min_confidence']:.2f}")
+            reasons.append(f"confidence {confidence:.2f} < 임계 {entry_min_confidence:.2f}")
         elif quality < thr["min_quality"]:
             final = CouncilAction.HOLD
             reasons.append(f"quality_score {quality} < 임계 {int(thr['min_quality'])}")
