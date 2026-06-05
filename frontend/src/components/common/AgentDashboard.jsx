@@ -72,7 +72,7 @@ export function AgentDashboard({ api = backendApi }) {
       {/* 1. 결정 깔때기 */}
       <div data-testid="agent-funnel" style={sec}>
         <div style={secTitle}>결정 깔때기</div>
-        {funnel?.no_data ? <Empty testid="agent-funnel-empty" /> : (funnel?.stages || []).map((s, i) => {
+        {(!funnel || funnel.no_data) ? <Empty testid="agent-funnel-empty" /> : (funnel?.stages || []).map((s, i) => {
           const drop = (funnel?.drops || [])[i - 1];
           return (
             <div key={s.key}>
@@ -94,7 +94,7 @@ export function AgentDashboard({ api = backendApi }) {
       {/* 2. 기법별 순손익 기여 (S4 재사용) */}
       <div data-testid="agent-technique" style={sec}>
         <div style={secTitle}>기법별 기여{tech?.small_sample && !tech?.no_data && <Badge />}</div>
-        {tech?.no_data ? <Empty testid="agent-technique-empty" /> : (tech?.techniques || []).map((t) => (
+        {(!tech || tech.no_data) ? <Empty testid="agent-technique-empty" /> : (tech?.techniques || []).map((t) => (
           <div key={t.technique} data-testid={`agent-tech-${t.technique}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0", fontSize: 12.5 }}>
             <span style={{ width: 52, fontWeight: 700, color: "#2a1418" }}>{TECH_KO[t.technique] || t.technique}</span>
             <span style={{ width: 84, color: "rgba(40,20,24,.65)" }}>찬성 {t.trade_count}{t.win_rate != null && ` · ${Math.round(t.win_rate * 100)}%`}</span>
@@ -107,7 +107,7 @@ export function AgentDashboard({ api = backendApi }) {
       {/* 3. 확신도 보정 */}
       <div data-testid="agent-calibration" style={sec}>
         <div style={secTitle}>확신도 보정 (예측 vs 실제)</div>
-        {cal?.no_data ? <Empty testid="agent-cal-empty" /> : (cal?.buckets || []).map((b) => (
+        {(!cal || cal.no_data) ? <Empty testid="agent-cal-empty" /> : (cal?.buckets || []).map((b) => (
           <div key={b.bucket} data-testid={`agent-cal-${b.bucket}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0", fontSize: 12.5 }}>
             <span style={{ width: 58, fontWeight: 700 }}>{b.bucket}</span>
             <Bar pct={b.win_rate * 100} color="#15a05f" />
@@ -119,7 +119,7 @@ export function AgentDashboard({ api = backendApi }) {
       {/* 4. 그림자 추적 */}
       <div data-testid="agent-shadow" style={sec}>
         <div style={secTitle}>기각 신호 그림자 추적</div>
-        {shadow?.no_data ? (
+        {(!shadow || shadow.no_data) ? (
           <div data-testid="agent-shadow-empty" style={emptyStyle}>
             추적 완료 건이 쌓이면 표시돼요{shadow?.tracking_count > 0 && ` (추적 중 ${shadow.tracking_count}건)`}
           </div>

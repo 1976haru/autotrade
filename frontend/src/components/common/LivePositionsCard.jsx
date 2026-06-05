@@ -33,7 +33,19 @@ export function LivePositionsCard({ data, onChanged, api = backendApi, confirmFn
     }
   };
 
-  if (data && data.available === false) {
+  // F1: data===null = 아직 안 불러옴(로딩). 실패(available=false)·빈보유와 다르게 표시.
+  if (!data) {
+    return (
+      <div data-testid="livepos-card" style={cardStyle}>
+        <div style={titleStyle}>보유 종목</div>
+        <div data-testid="livepos-loading" style={{ fontSize: 13, color: "rgba(40,20,24,.55)", marginTop: 6 }}>
+          불러오는 중…
+        </div>
+      </div>
+    );
+  }
+
+  if (data.available === false) {
     return (
       <div data-testid="livepos-card" style={cardStyle}>
         <div style={titleStyle}>보유 종목</div>

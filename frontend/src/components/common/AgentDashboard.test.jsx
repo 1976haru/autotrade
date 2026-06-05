@@ -46,6 +46,13 @@ const empty = {
 };
 
 describe("AgentDashboard (AG6/AG7)", () => {
+  it("F3: shadow 조회 실패(null) → 빈 템플릿(숫자 빠진 문장) 미생성", async () => {
+    const api = { ...empty, agentShadow: vi.fn(async () => { throw new Error("fail"); }) };
+    const { getByTestId, queryByTestId } = render(<AgentDashboard api={api} />);
+    await waitFor(() => expect(getByTestId("agent-shadow-empty")).toBeTruthy());
+    expect(queryByTestId("agent-shadow-summary")).toBeNull();
+  });
+
   it("5개 섹션 + 깔때기 단계·감소 사유 + 그림자 요약 + 학습 관찰", async () => {
     const { getByTestId } = render(<AgentDashboard api={full} />);
     await waitFor(() => expect(getByTestId("agent-funnel").textContent).toContain("신호 발생"));

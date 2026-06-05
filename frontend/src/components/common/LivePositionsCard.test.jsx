@@ -12,6 +12,26 @@ const pos = (over = {}) => ({
 const data = (positions, over = {}) => ({ available: true, positions, fetched_at_kst: "09:05", ...over });
 
 describe("LivePositionsCard (M3/M4)", () => {
+  it("F1: data=null → '불러오는 중' (실패/빈보유와 다르게)", () => {
+    const { getByTestId, queryByTestId } = render(<LivePositionsCard data={null} api={{}} />);
+    expect(getByTestId("livepos-loading")).toBeTruthy();
+    expect(queryByTestId("livepos-empty")).toBeNull();
+    expect(queryByTestId("livepos-fail")).toBeNull();
+  });
+
+  it("F1: 3분기 구분 — 실패 / 빈보유 / 보유N (가짜 empty 금지)", () => {
+    const fail = render(<LivePositionsCard data={{ available: false }} api={{}} />);
+    expect(fail.getByTestId("livepos-fail")).toBeTruthy();
+    expect(fail.queryByTestId("livepos-empty")).toBeNull();
+    cleanup();
+    const empty = render(<LivePositionsCard data={{ available: true, positions: [] }} api={{}} />);
+    expect(empty.getByTestId("livepos-empty")).toBeTruthy();
+    expect(empty.queryByTestId("livepos-fail")).toBeNull();
+    cleanup();
+    const rows = render(<LivePositionsCard data={{ available: true, positions: [pos()] }} api={{}} />);
+    expect(rows.getByTestId("livepos-sell-005930")).toBeTruthy();
+  });
+
   it("보유 행: 종목명/수량/손익 + [매도] 버튼", () => {
     const { getByTestId } = render(<LivePositionsCard data={data([pos()])} api={{}} />);
     expect(getByTestId("livepos-row-005930").textContent).toContain("삼성전자");

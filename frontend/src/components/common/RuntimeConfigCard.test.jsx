@@ -13,6 +13,19 @@ const cfg = (over = {}) => ({
 afterEach(() => cleanup());
 
 describe("RuntimeConfigCard (R3/R4)", () => {
+  it("F2: config=null → 로딩, 저장 버튼 없음(서버값 모른 채 저장 금지)", () => {
+    const { getByTestId, queryByTestId } = render(<RuntimeConfigCard config={null} api={{}} />);
+    expect(getByTestId("rtcfg-loading")).toBeTruthy();
+    expect(queryByTestId("rtcfg-save")).toBeNull();
+  });
+
+  it("F2: config._failed → 실패 표시 + 저장 버튼 없음(임의값 금지)", () => {
+    const { getByTestId, queryByTestId } = render(<RuntimeConfigCard config={{ _failed: true }} api={{}} />);
+    expect(getByTestId("rtcfg-fail").textContent).toContain("불러오지 못했어요");
+    expect(queryByTestId("rtcfg-save")).toBeNull();
+    expect(queryByTestId("rtcfg-mc-value")).toBeNull();   // 9/300만 같은 임의값 0
+  });
+
   it("스테퍼 초기값 = 서버 실효값", () => {
     const { getByTestId } = render(<RuntimeConfigCard config={cfg()} api={{}} />);
     expect(getByTestId("rtcfg-mc-value").textContent).toContain("5개");

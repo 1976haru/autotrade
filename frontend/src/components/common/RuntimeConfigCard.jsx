@@ -58,11 +58,31 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
   };
   const valBox = { minWidth: 96, textAlign: "center", fontSize: 18, fontWeight: 800, color: "#2a1418" };
   const rowStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 8 };
+  const _card = { background: "rgba(255,255,255,.5)", borderRadius: 12, padding: "12px 14px", marginTop: 12 };
+
+  // F2: 서버값을 *모르는* 상태에선 임의값/기본값을 그리지 않는다(R3 — 서버값만 신뢰).
+  //   null=로딩, _failed=조회 실패. 둘 다 [저장] 비활성(서버값 모른 채 저장 발사 금지).
+  if (!config) {
+    return (
+      <div data-testid="rtcfg-card" style={_card}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: "#2a1418", marginBottom: 2 }}>설정 바꾸기 (장중 가능)</div>
+        <div data-testid="rtcfg-loading" style={{ fontSize: 13, color: "rgba(40,20,24,.55)", marginTop: 6 }}>불러오는 중…</div>
+      </div>
+    );
+  }
+  if (config._failed || !mcMeta || !budMeta) {
+    return (
+      <div data-testid="rtcfg-card" style={_card}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: "#2a1418", marginBottom: 2 }}>설정 바꾸기 (장중 가능)</div>
+        <div data-testid="rtcfg-fail" style={{ fontSize: 13, color: "rgba(40,20,24,.6)", marginTop: 6 }}>
+          설정을 불러오지 못했어요({nowKstHm()})
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div data-testid="rtcfg-card" style={{
-      background: "rgba(255,255,255,.5)", borderRadius: 12, padding: "12px 14px", marginTop: 12,
-    }}>
+    <div data-testid="rtcfg-card" style={_card}>
       <div style={{ fontSize: 13, fontWeight: 800, color: "#2a1418", marginBottom: 2 }}>
         설정 바꾸기 (장중 가능)
       </div>

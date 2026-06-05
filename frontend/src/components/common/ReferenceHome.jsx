@@ -92,7 +92,9 @@ export function ReferenceHome({
   useEffect(() => {
     let cancelled = false;
     backendApi.paperCapitalConfig?.().then((c) => { if (!cancelled) setAlloc(c); }).catch(() => {});
-    backendApi.runtimeConfigGet?.().then((c) => { if (!cancelled) setRtConfig(c); }).catch(() => {});
+    // F2: GET 실패는 _failed 플래그로 — null(로딩)·실패·성공 3상태 구분(카드가 임의값 금지).
+    backendApi.runtimeConfigGet?.().then((c) => { if (!cancelled) setRtConfig(c); })
+      .catch(() => { if (!cancelled) setRtConfig({ _failed: true }); });
     return () => { cancelled = true; };
   }, []);
 
@@ -108,7 +110,9 @@ export function ReferenceHome({
         backendApi.positionsLive?.(),   // M3: 기존 폴링에 편승(신규 폴링 0)
       ]);
       if (cancelled) return;
-      if (pos.status === "fulfilled" && pos.value) setLivePos(pos.value);
+      // F1: 조회 실패(rejected)는 *실패 플래그*로 — null 로 두면 카드가 '보유 0'으로
+      //   둔갑한다(실패 ≠ 빈 목록). available=false 면 카드가 '불러오기 실패' 분기.
+      setLivePos(pos.status === "fulfilled" && pos.value ? pos.value : { available: false, positions: [] });
       if (aud.status === "fulfilled") { const v = aud.value; setOrders(Array.isArray(v) ? v : (v?.items ?? [])); }
       if (dec.status === "fulfilled") setLatestAi(pickLatestChiefDecision(dec.value));
       if (cs.status === "fulfilled") setCashState(cs.value);
