@@ -49,6 +49,32 @@ def test_simulation_small_order_is_approved_and_executed():
         assert result.audit.broker_status == "FILLED"
 
 
+def test_daily_order_cap_applies_to_buy_not_sell():
+    # A(2026-06-05): 일일 주문 횟수 한도는 신규 진입(BUY)에만 적용.
+    #   청산(SELL)은 면제 — cap 사유가 SELL 의 reasons 에 누적되면 안 된다.
+    Session = _session_factory()
+    policy = RiskPolicy(max_orders_per_day=1)
+    with Session() as db:
+        broker = MockBrokerAdapter()
+        r1 = run(route_order(order=_order(1), requested_by_ai=False,
+                 mode=OperationMode.SIMULATION, broker=broker,
+                 risk=RiskManager(policy), db=db))
+        assert r1.decision == RiskDecision.APPROVED      # 1st BUY → today count = 1.
+
+        r2 = run(route_order(order=_order(1), requested_by_ai=False,
+                 mode=OperationMode.SIMULATION, broker=broker,
+                 risk=RiskManager(policy), db=db))
+        assert r2.decision == RiskDecision.REJECTED      # 2nd BUY → 한도 차단.
+        assert any("max_orders_per_day" in x for x in r2.reasons)
+
+        sell = OrderRequest(symbol="005930", side=OrderSide.SELL, quantity=1,
+                            order_type=OrderType.MARKET)
+        r3 = run(route_order(order=sell, requested_by_ai=False,
+                 mode=OperationMode.SIMULATION, broker=broker,
+                 risk=RiskManager(policy), db=db))
+        assert not any("max_orders_per_day" in x for x in r3.reasons)  # SELL 면제.
+
+
 def test_oversized_order_is_rejected_with_audit_only():
     Session = _session_factory()
     with Session() as db:

@@ -237,9 +237,20 @@ def evaluate_kis_paper_order_permission(
             return _block(KisPaperPermReason.KIS_PRICE_STALE)
 
     # 한도.
+    #   notional 1회 한도: 신규 진입(BUY)·청산(SELL) 모두 적용 유지.
     if inp.max_order_notional > 0 and inp.notional_krw > inp.max_order_notional:
         return _block(KisPaperPermReason.KIS_PAPER_NOTIONAL_LIMIT_EXCEEDED)
-    if inp.max_orders_per_day > 0 and inp.daily_order_count >= inp.max_orders_per_day:
+    #   일일 주문 횟수 한도: *신규 진입(BUY)에만* 적용. 청산(SELL: 손절/익절)은
+    #   한도 소진으로 막히면 안 되므로 면제한다 — 단 본 게이트 통과 후에도 주문은
+    #   route_order → RiskManager → PermissionGate → OrderExecutor 를 그대로
+    #   거친다(횟수 한도만 면제, 다른 가드 우회 아님). 회귀 근거: 2026-06-05 첫
+    #   실체결일에 한도(10건) 소진 상태에서 005935 약세 청산 신호 399건이 전송
+    #   차단돼 손실 종목을 못 판 사례.
+    if (
+        side == "BUY"
+        and inp.max_orders_per_day > 0
+        and inp.daily_order_count >= inp.max_orders_per_day
+    ):
         return _block(KisPaperPermReason.KIS_PAPER_ORDER_LIMIT_EXCEEDED)
 
     return KisPaperOrderPermission(

@@ -36,7 +36,7 @@ from app.brokers.kis_client import KisApiError
 from app.brokers.mock_broker import MockBrokerAdapter
 from app.core.config import Settings
 from app.db.base import Base
-from app.db.models import AgentDecisionLog
+from app.db.models import AgentDecisionLog, OrderAuditLog
 from app.execution.paper_trader import NotPaperBrokerError
 from app.kis_paper.auto_executor import (
     KisPaperAutoDecision,
@@ -114,6 +114,30 @@ def test_permission_gate_reason_codes(kw, expected):
 def test_permission_sell_does_not_require_exit_plan():
     res = evaluate_kis_paper_order_permission(_perm_input(side="SELL", has_exit_plan=False))
     assert res.allowed is True
+
+
+@pytest.mark.parametrize("count", [10, 11, 100])
+def test_permission_sell_exempt_from_daily_order_cap(count):
+    # A(2026-06-05 회귀): 일일 주문 횟수 한도는 *신규 진입(BUY)에만* 적용.
+    #   청산(SELL: 손절/익절)은 한도 소진 상태에서도 항상 허용돼야 한다.
+    sell = evaluate_kis_paper_order_permission(
+        _perm_input(side="SELL", has_exit_plan=False, daily_order_count=count))
+    assert sell.allowed is True
+    assert sell.reason_code == _R(KisPaperPermReason.KIS_PAPER_ORDER_ALLOWED)
+    # 대조군: 같은 한도에서 BUY 는 여전히 차단.
+    buy = evaluate_kis_paper_order_permission(
+        _perm_input(side="BUY", daily_order_count=count))
+    assert buy.allowed is False
+    assert buy.reason_code == _R(KisPaperPermReason.KIS_PAPER_ORDER_LIMIT_EXCEEDED)
+
+
+def test_permission_sell_still_blocked_by_notional_cap():
+    # 면제는 *횟수* 한도에 한정 — notional 1회 한도는 SELL 에도 그대로 적용.
+    res = evaluate_kis_paper_order_permission(
+        _perm_input(side="SELL", has_exit_plan=False,
+                    daily_order_count=99, notional_krw=2_000_000))
+    assert res.allowed is False
+    assert res.reason_code == _R(KisPaperPermReason.KIS_PAPER_NOTIONAL_LIMIT_EXCEEDED)
 
 
 def test_permission_input_has_no_secret_fields():
@@ -234,6 +258,45 @@ def test_executor_sell(db):
     r = _run(db, decision=sell, route=_approved_route())
     assert r.reason_code == "KIS_PAPER_SUBMITTED"
     assert r.side == "SELL"
+
+
+def _seed_paper_auto_orders(db, n, *, now):
+    for i in range(n):
+        db.add(OrderAuditLog(
+            created_at=now, mode="PAPER", requested_by_ai=False,
+            symbol="005930", side="BUY", quantity=1, order_type="MARKET",
+            decision="APPROVED", executed=True, broker_order_id=f"X{i}",
+            broker_status="FILLED", filled_quantity=1,
+            limit_price=75_000, latest_price=75_000,
+            trade_reason="kis_paper_auto", strategy="VWAP",
+        ))
+    db.commit()
+
+
+def test_executor_sell_routes_when_daily_cap_reached(db):
+    # A(2026-06-05 회귀): 한도(10) 소진 상태에서
+    #   - 신규 BUY 는 한도로 차단(route_order 호출 0건),
+    #   - 청산 SELL 은 면제돼 route_order 로 전송된다.
+    _seed_paper_auto_orders(db, 10, now=OPEN_TIME)
+
+    buy_calls = {"n": 0}
+
+    async def _buy_route(**kw):
+        buy_calls["n"] += 1
+        return SimpleNamespace(decision=RiskDecision.APPROVED, reasons=[],
+                               audit=SimpleNamespace(id=1))
+
+    rb = _run(db, decision=_DEC, route=_buy_route)
+    assert rb.reason_code == _R(KisPaperPermReason.KIS_PAPER_ORDER_LIMIT_EXCEEDED)
+    assert rb.broker_order_sent is False
+    assert buy_calls["n"] == 0                       # 한도 차단 → 전송 0건.
+
+    sell = KisPaperAutoDecision(symbol="005930", side="SELL", quantity=13,
+                                price=75_000, confidence=0.74, quality_score=82)
+    rs = _run(db, decision=sell, route=_approved_route())
+    assert rs.reason_code == "KIS_PAPER_SUBMITTED"   # 면제 → 정상 전송.
+    assert rs.broker_order_sent is True
+    assert rs.side == "SELL"
 
 
 def test_executor_rejected_by_risk(db):

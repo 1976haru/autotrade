@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.rate_limit import check_global_rate_limit, check_rate_limit
 from app.risk.auto_stop import maybe_trigger_auto_stop
-from app.brokers.base import BrokerAdapter, OrderRequest, OrderResult
+from app.brokers.base import BrokerAdapter, OrderRequest, OrderResult, OrderSide
 from app.core.modes import OperationMode
 from app.db.models import OrderAuditLog, PendingApproval, ShadowTrade
 from app.execution.executor import OrderExecutor
@@ -171,9 +171,11 @@ async def route_order(
         if not within:
             global_rate_violation_count = current_count
 
-    # 183: 일일(KST date) 최대 주문 횟수. decision 무관, 모든 audit row 카운트.
+    # 183: 일일(KST date) 최대 주문 횟수. *신규 진입(BUY)에만* 적용 — 청산(SELL:
+    #  손절/익절/청산)은 한도 소진으로 막히면 안 되므로 면제(auto_permission 게이트와
+    #  동일 정책, 위험 감소 방향). decision 무관, 모든 audit row 카운트.
     daily_order_violation_count: int | None = None
-    if risk.policy.max_orders_per_day > 0:
+    if risk.policy.max_orders_per_day > 0 and order.side == OrderSide.BUY:
         today_count = count_orders_today_kst(db)
         if today_count >= risk.policy.max_orders_per_day:
             daily_order_violation_count = today_count
