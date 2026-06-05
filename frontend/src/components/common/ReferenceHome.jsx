@@ -19,7 +19,7 @@ import { useAutoPaperLoop } from "../../store/useAutoPaperLoop";
 import { usePersistedState } from "../../store/usePersistedState";
 import { RISK_PROFILES, normalizeRiskProfile } from "../AgentRiskProfileSelector";
 import {
-  maskAccountNo, openOrderCount, ACCOUNT_BULLET, resolveSymbolName,
+  maskAccountNo, todayOpenOrderCount, ACCOUNT_BULLET, resolveSymbolName,
   livePanelLine, kstDayLabel, marketClosedLine, miniKpis, dailyProgress,
   strategyChips, FEATURE_SHORTCUTS,
 } from "../../utils/referenceHome";
@@ -136,7 +136,7 @@ export function ReferenceHome({
   // 파생값
   const positions = portfolio?.positions ?? [];
   const today = summarizeTodayOrders(orders);
-  const openCnt = openOrderCount(orders);
+  const openCnt = todayOpenOrderCount(today); // D2: 오늘(KST) 기준 미체결
   // ★전략별 신호 수 = Agent Council 전략별 실제 카운트(strategy-performance).
   //   옛 todayStrategyChips 는 decision-log 의 strategy 필드(빈 값)를 보느라 항상 0이었다.
   const stratChips = strategyChips(stratReport);

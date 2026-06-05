@@ -70,6 +70,20 @@ export function openOrderCount(orders) {
   }).length;
 }
 
+/**
+ * D2: 홈 "미체결" 칩 — *오늘(KST)* 기준 미체결 수.
+ *   = 오늘 주문 − 오늘 체결 − 오늘 거부 (음수면 0).
+ * 전체 목록(openOrderCount)이 과거일 잔여/미동기 주문까지 세어 부풀던 문제(06-05
+ * 화면 "3건" vs 실제 1건)를 today 요약 기준으로 교정한다.
+ * @param {{orderCount, filledCount, rejectedCount}} today  summarizeTodayOrders 결과
+ */
+export function todayOpenOrderCount(today) {
+  const oc = today?.orderCount ?? 0;
+  const fc = today?.filledCount ?? 0;
+  const rc = today?.rejectedCount ?? 0;
+  return Math.max(0, oc - fc - rc);
+}
+
 // ── 종목코드 → 한글명 (전 화면 코드 노출 방지) ───────────────────────────────
 import { KR_STOCK_NAMES, MOCK_STOCKS } from "../config/constants";
 

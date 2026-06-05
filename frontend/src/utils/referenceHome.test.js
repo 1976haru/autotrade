@@ -3,6 +3,7 @@ import {
   maskAccountNo,
   strategyChips,
   openOrderCount,
+  todayOpenOrderCount,
   livePanelLine,
   marketClosedLine,
   miniKpis,
@@ -79,6 +80,18 @@ describe("openOrderCount — 미체결(실체결 기준)", () => {
   it("빈 배열 → 0", () => {
     expect(openOrderCount([])).toBe(0);
     expect(openOrderCount(null)).toBe(0);
+  });
+});
+
+describe("todayOpenOrderCount — D2 (오늘 기준 미체결)", () => {
+  it("오늘 주문 − 체결 − 거부 (06-05: 15−14−0 = 1)", () => {
+    expect(todayOpenOrderCount({ orderCount: 15, filledCount: 14, rejectedCount: 0 })).toBe(1);
+  });
+  it("음수 방지 + 누락 필드 0 처리", () => {
+    expect(todayOpenOrderCount({ orderCount: 2, filledCount: 5, rejectedCount: 0 })).toBe(0);
+    expect(todayOpenOrderCount({ orderCount: 3 })).toBe(3);
+    expect(todayOpenOrderCount(null)).toBe(0);
+    expect(todayOpenOrderCount(undefined)).toBe(0);
   });
 });
 
