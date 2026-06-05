@@ -26,6 +26,7 @@ from app.brokers.kis import KisBrokerAdapter
 from app.db.base import Base
 from app.db.models import OrderAuditLog
 from app.kis_paper.driver_bridge import (
+    _kis_held_symbols,
     _today_kis_paper_buy_state,
     kis_paper_realtime_scan_tick,
 )
@@ -55,6 +56,43 @@ def _add_order(db, *, symbol, side, qty, broker_status="RECEIVED", price=10000):
 
 
 # ───────────────────────── net holding 계산 ─────────────────────────
+
+class _FakePosBroker:
+    def __init__(self, positions=None, raise_error=None):
+        self._positions = positions or []
+        self._raise = raise_error
+
+    async def get_positions(self):
+        if self._raise is not None:
+            raise self._raise
+        return self._positions
+
+
+def test_kis_held_symbols_from_broker_positions():
+    # 보유 = KIS 잔고(브로커 진실). 전일 캐리오버(DB 무관)도 잡는다. qty<=0 제외.
+    broker = _FakePosBroker([
+        SimpleNamespace(symbol="071050", quantity=1),   # orphan/캐리오버
+        SimpleNamespace(symbol="005935", quantity=4),
+        SimpleNamespace(symbol="000270", quantity=0),    # 0 → 제외
+    ])
+    held = asyncio.run(_kis_held_symbols(broker, fallback=set()))
+    assert held == {"071050", "005935"}
+
+
+def test_kis_held_symbols_trusts_empty_kis():
+    # 조회 성공 + 빈 결과 → 실제 무보유로 신뢰 (fallback 무시).
+    assert asyncio.run(_kis_held_symbols(_FakePosBroker([]), fallback={"005930"})) == set()
+
+
+def test_kis_held_symbols_fallback_on_failure():
+    # 조회 실패 → 보수적으로 fallback(오늘 DB net) 사용.
+    broker = _FakePosBroker(raise_error=RuntimeError("no creds"))
+    assert asyncio.run(_kis_held_symbols(broker, fallback={"005930"})) == {"005930"}
+
+
+def test_kis_held_symbols_no_broker_uses_fallback():
+    assert asyncio.run(_kis_held_symbols(None, fallback={"x"})) == {"x"}
+
 
 def test_net_holding_excludes_fully_sold_symbol(engine):
     Session = sessionmaker(bind=engine)
@@ -135,9 +173,9 @@ def _scan_settings(**kw):
 
 def test_sell_with_no_holding_is_skipped_not_sent(engine):
     Session = sessionmaker(bind=engine)
-    # DB 비어있음 → held_symbols 빈 set → 어떤 SELL 도 보유 0.
+    # KIS 잔고 비어있음(get_positions=[]) → held_symbols 빈 set → 어떤 SELL 도 보유 0.
     out = asyncio.run(kis_paper_realtime_scan_tick(
-        session_factory=Session, broker=KisBrokerAdapter(is_paper=True), risk=object(),
+        session_factory=Session, broker=_FakePosBroker([]), risk=object(),
         route_order_fn=_route_should_not_be_called(), settings=_scan_settings(),
         market_input_fn=_sell_input_fn, universe_symbols=["005380"],
         client=object(), now=OPEN_TIME,
@@ -148,3 +186,25 @@ def test_sell_with_no_holding_is_skipped_not_sent(engine):
     codes = {s["reason_code"] for s in out["skipped"]}
     # SELL 후보였다면 SELL_NO_HELD_POSITION, council 이 HOLD 였다면 HOLD_NO_SIGNAL.
     assert codes <= {"SELL_NO_HELD_POSITION", "HOLD_NO_SIGNAL"}
+
+
+def test_carryover_kis_holding_not_blocked_as_no_holding(engine):
+    # ★캐리오버 회귀(2026-06-05): 오늘 DB 주문 0건이어도 KIS 잔고에 005935 보유
+    #   → held 로 인식 → SELL 이 'SELL_NO_HELD_POSITION' 으로 막히지 않는다(청산 가능).
+    Session = sessionmaker(bind=engine)
+
+    async def _permissive_route(**kw):
+        return SimpleNamespace(
+            decision=RiskDecision.APPROVED, reasons=[],
+            audit=SimpleNamespace(id=1, broker_order_id="ODNO-1",
+                                  broker_status="FILLED", filled_quantity=4, executed=True))
+
+    broker = _FakePosBroker([SimpleNamespace(symbol="005935", quantity=4)])
+    out = asyncio.run(kis_paper_realtime_scan_tick(
+        session_factory=Session, broker=broker, risk=object(),
+        route_order_fn=_permissive_route, settings=_scan_settings(),
+        market_input_fn=_sell_input_fn, universe_symbols=["005935"],
+        client=object(), now=OPEN_TIME,
+    ))
+    codes = {s.get("reason_code") for s in out["skipped"]}
+    assert "SELL_NO_HELD_POSITION" not in codes  # KIS 보유 → '보유없음'으로 안 막힘.

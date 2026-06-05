@@ -385,6 +385,32 @@ def _today_kis_paper_buy_state(db: Any, now: datetime) -> tuple[set[str], int]:
     return held, used
 
 
+async def _kis_held_symbols(broker: Any, *, fallback: set[str]) -> set[str]:
+    """현재 보유 종목 = *KIS 잔고(get_positions)* 의 net>0 종목 — 브로커 진실.
+
+    today-only DB net(`_today_kis_paper_buy_state`)은 *전일 캐리오버* 포지션을
+    못 잡아, 다음날 held 가 비어 (1) 보유 청산 불가(SELL_NO_HELD_POSITION),
+    (2) 기존 보유 위에 중복 매수해 max_concurrent 초과를 유발했다(2026-06-05
+    발견: KIS 5종목 보유인데 봇은 0으로 인식). 보유는 브로커 진실에서 읽는다.
+
+    조회 *성공* 시 KIS 를 신뢰한다(빈 결과 = 실제 무보유). 조회 *실패* 시에만
+    보수적으로 fallback(오늘 DB net)으로 — 스캔 자체는 막지 않는다.
+    """
+    try:
+        if broker is None or not hasattr(broker, "get_positions"):
+            return set(fallback)
+        positions = await broker.get_positions()
+    except Exception:  # noqa: BLE001 — 조회 실패는 스캔을 막지 않음 (fallback).
+        return set(fallback)
+    held = {
+        str(getattr(p, "symbol", "") or "")
+        for p in (positions or [])
+        if int(getattr(p, "quantity", 0) or 0) > 0
+    }
+    held.discard("")
+    return held
+
+
 async def kis_paper_realtime_scan_tick(
     *,
     now: datetime | None = None,
@@ -460,7 +486,11 @@ async def kis_paper_realtime_scan_tick(
         rd = evaluate_readiness(settings)
         creds = bool(rd.kis_key_present and rd.kis_secret_present and rd.kis_account_present)
         # 일일 주문 횟수 한도는 executor 의 gate (max_orders_per_day) 가 강제.
-        held_symbols, daily_buy_used = _today_kis_paper_buy_state(db, now)
+        #   daily_buy_used(일일 매수금액 한도용)는 오늘 DB 기준 유지.
+        #   held_symbols(보유)는 *KIS 잔고 = 브로커 진실* 에서 — 전일 캐리오버
+        #   포지션을 봇이 인식해 청산/중복매수 가드가 올바로 작동하게 한다.
+        _db_held, daily_buy_used = _today_kis_paper_buy_state(db, now)
+        held_symbols = await _kis_held_symbols(broker, fallback=_db_held)
 
         if client is None and not _fn_injected:
             # KIS read-only client 가 없으면 실시세 조회 불가 — mock 대체 금지.
