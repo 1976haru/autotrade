@@ -156,7 +156,14 @@ class KisClient:
         return "VTTC8434R" if self.is_paper else "TTTC8434R"
 
     def _daily_ccld_tr_id(self) -> str:
-        return "VTTC8001R" if self.is_paper else "TTTC8001R"
+        # 주식일별주문체결조회 TR id. 구형 VTTC8001R/TTTC8001R 은 KIS 서버에서
+        # rt_cd=0 + "조회할 내역이 없습니다" 빈 결과만 반환한다 (2026-06-05 실측:
+        # 모의 주문이 체결되어 잔고는 바뀌어도 VTTC8001R 로는 0건). KIS 가 NXT
+        # 거래소 도입과 함께 TR id 를 개편한 현행 코드는 VTTC0081R(모의) /
+        # TTTC0081R(실전, 모두 3개월 이내). 신형 TR 로 동일 계좌/파라미터를
+        # 조회하면 체결 row 가 정상 반환된다 — 이 값이 틀리면 fill_poller →
+        # get_order_status 가 영영 FILLED 를 못 보고 filled_quantity=0 에 고정.
+        return "VTTC0081R" if self.is_paper else "TTTC0081R"
 
     def _order_tr_id(self, *, is_buy: bool) -> str:
         if self.is_paper:

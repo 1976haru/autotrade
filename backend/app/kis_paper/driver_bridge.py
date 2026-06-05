@@ -87,6 +87,7 @@ def build_decision_from_pipeline(
     market_input = _market_input_from_pipeline(ro.symbol, ro.price)
     council = run_agent_council(
         market_input, risk_profile=risk_profile, held_position=False,
+        min_confidence_floor=float(getattr(settings, "kis_paper_auto_min_confidence", 0.6)),
     )
     if council.final_action == CouncilAction.HOLD:
         # 2-12: HOLD 도 판단 근거(votes/risk_flags/risk_veto/exit_plan_validation)를
@@ -340,7 +341,14 @@ def _scan_universe_symbols(settings: Any, *, override: list[str] | None) -> list
 
 
 def _today_kis_paper_buy_state(db: Any, now: datetime) -> tuple[set[str], int]:
-    """오늘 체결된 kis_paper_auto BUY 의 보유 종목 + 누적 매수금액 (best-effort)."""
+    """오늘 체결된 kis_paper_auto 주문의 *net 보유* 종목 + 누적 매수금액.
+
+    PART1-4 (2026-06-01 잔고부족 거부 fix):
+      기존엔 BUY 한 종목을 전부 `held` 에 넣고 SELL 청산을 빼지 않아, 청산된
+      종목(005380)이 계속 보유로 잡혀 SELL 신호가 broker 로 가 "잔고부족"
+      거부가 반복됐다. 이제 종목별 BUY 수량 − SELL 수량(REJECTED 제외)을
+      집계해 *net > 0* 인 종목만 `held` 로 본다.
+    """
     held: set[str] = set()
     used = 0
     try:
@@ -353,14 +361,25 @@ def _today_kis_paper_buy_state(db: Any, now: datetime) -> tuple[set[str], int]:
             .filter(OrderAuditLog.executed.is_(True))
             .all()
         )
+        # 종목별 net 수량 (BUY +qty, SELL -qty). broker_status REJECTED 는 제외 —
+        # 거부된 주문은 실제 잔고를 바꾸지 않으므로 보유 계산에 넣지 않는다.
+        net_qty: dict[str, int] = {}
         for r in rows:
             sym = getattr(r, "symbol", None)
+            if not sym:
+                continue
+            bstat = str(getattr(r, "broker_status", "") or "").upper()
+            if bstat == "REJECTED":
+                continue
             side = str(getattr(r, "side", "") or "").upper()
-            if sym and side in ("BUY", "B"):
-                held.add(sym)
-                qty = int(getattr(r, "quantity", 0) or 0)
-                px = int(getattr(r, "avg_fill_price", 0) or getattr(r, "limit_price", 0) or 0)
+            qty = int(getattr(r, "quantity", 0) or 0)
+            px = int(getattr(r, "avg_fill_price", 0) or getattr(r, "limit_price", 0) or 0)
+            if side in ("BUY", "B"):
+                net_qty[sym] = net_qty.get(sym, 0) + qty
                 used += qty * px
+            elif side in ("SELL", "S"):
+                net_qty[sym] = net_qty.get(sym, 0) - qty
+        held = {sym for sym, q in net_qty.items() if q > 0}
     except Exception:  # noqa: BLE001 — 상태 집계 실패는 스캔을 막지 않음 (보수적 0).
         return set(), 0
     return held, used
@@ -465,6 +484,7 @@ async def kis_paper_realtime_scan_tick(
             council = run_agent_council(
                 mi, risk_profile=risk_profile,
                 held_position=(symbol in held_symbols),
+                min_confidence_floor=float(getattr(settings, "kis_paper_auto_min_confidence", 0.6)),
             )
             final = council.final_action
             if final not in (CouncilAction.BUY, CouncilAction.SELL):
@@ -494,6 +514,16 @@ async def kis_paper_realtime_scan_tick(
                 if orders_submitted >= max_new_per_tick:
                     skipped.append({"symbol": symbol, "reason_code": "MAX_NEW_POSITIONS_PER_TICK_REACHED"})
                     continue
+
+            # ── PART1-4: SELL 사전 가드 (보유 0 종목 SELL 차단) ───────────────
+            # SELL 은 *보유 청산만* — net 보유에 없는 종목은 broker 로 보내지
+            # 않는다. (2026-06-01: 청산된 005380 에 SELL 이 반복 전송돼 KIS
+            # "잔고부족" 거부 3건 발생. 보유 0 이면 여기서 skip.)
+            if final == CouncilAction.SELL and symbol not in held_symbols:
+                skipped.append({"symbol": symbol,
+                                "reason_code": "SELL_NO_HELD_POSITION",
+                                "price_source": "kis"})
+                continue
 
             decision = replace(
                 council.to_kis_paper_decision(quantity=int(qty), price=price),

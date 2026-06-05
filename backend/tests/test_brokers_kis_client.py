@@ -231,7 +231,8 @@ def test_inquire_daily_ccld_paper_uses_paper_tr_id():
     raw = run(c.inquire_daily_ccld("12345678", "01"))
     assert raw == _DAILY_CCLD_RESPONSE
     call = [s for s in seen if s["path"].endswith("/inquire-daily-ccld")][0]
-    assert call["headers"]["tr_id"] == "VTTC8001R"
+    # 현행 KIS TR id (구형 VTTC8001R 은 빈 결과만 반환 — 2026-06-05 실측 회귀 가드).
+    assert call["headers"]["tr_id"] == "VTTC0081R"
     assert call["params"]["CANO"] == "12345678"
     assert call["params"]["ACNT_PRDT_CD"] == "01"
     assert call["params"]["INQR_STRT_DT"]
@@ -243,7 +244,7 @@ def test_inquire_daily_ccld_live_uses_live_tr_id():
     c = KisClient("k", "s", is_paper=False, transport=httpx.MockTransport(_ccld_handler(seen)))
     run(c.inquire_daily_ccld("12345678", "01"))
     call = [s for s in seen if s["path"].endswith("/inquire-daily-ccld")][0]
-    assert call["headers"]["tr_id"] == "TTTC8001R"
+    assert call["headers"]["tr_id"] == "TTTC0081R"
 
 
 def test_inquire_daily_ccld_endpoint_failure_raises():

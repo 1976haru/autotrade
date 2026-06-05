@@ -32,6 +32,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -98,6 +99,64 @@ def resolve_env_path() -> Path | None:
         except OSError:
             continue
     return None
+
+
+def _key_fingerprint(value: str) -> str:
+    """Secret 원문 대신 비교/로깅용 지문 (sha256 앞 12hex). 빈 값은 빈 문자열."""
+    v = (value or "").strip()
+    if v.startswith('"') and v.endswith('"') and len(v) >= 2:
+        v = v[1:-1]
+    if not v:
+        return ""
+    return hashlib.sha256(v.encode("utf-8")).hexdigest()[:12]
+
+
+def detect_shadowed_env_conflicts(
+    chosen: Path | None,
+    candidates: list[Path],
+    log: logging.Logger,
+) -> list[dict[str, str]]:
+    """*선택된* .env 가 다른 존재하는 후보 .env 를 가리는데 (shadow) 그 후보의
+    `KIS_APP_KEY` 가 *다르면* 경고한다 — EGW00103 의 실제 원인이었던 footgun.
+
+    운영자가 어느 한 .env (예: 개발용 backend/.env) 의 키를 고쳤지만, 런처가
+    우선순위가 더 높은 *다른* .env (예: 오래된 %APPDATA%\\Autotrade\\.env) 를
+    읽으면 고친 값이 *조용히 무시* 되고 KIS 가 옛 키를 "유효하지 않은 AppKey"
+    (EGW00103) 로 거부한다. 본 함수는 그 상황을 *지문 비교* 로 감지해 경고만
+    낸다 — 어떤 파일도 수정하지 않고, secret 원문도 출력하지 않는다.
+
+    Returns: 충돌 후보 목록 (path/fingerprint). 충돌 없으면 빈 리스트.
+    """
+    conflicts: list[dict[str, str]] = []
+    if chosen is None:
+        return conflicts
+    chosen_fp = _key_fingerprint(load_env_file(chosen).get("KIS_APP_KEY", ""))
+    if not chosen_fp:
+        return conflicts
+    for cand in candidates:
+        try:
+            if not cand.is_file() or cand.resolve() == chosen.resolve():
+                continue
+        except OSError:
+            continue
+        other_fp = _key_fingerprint(load_env_file(cand).get("KIS_APP_KEY", ""))
+        if other_fp and other_fp != chosen_fp:
+            conflicts.append({"path": str(cand), "fingerprint": other_fp})
+
+    if conflicts:
+        log.warning(
+            "env: MULTIPLE .env files with DIFFERENT KIS_APP_KEY detected. The "
+            "launcher is using %s (fp=%s) and IGNORING the others below. If you "
+            "edited one of the ignored files, your fix is NOT taking effect — "
+            "KIS will reject the stale key with EGW00103 '유효하지 않은 AppKey'.",
+            chosen, chosen_fp,
+        )
+        for c in conflicts:
+            log.warning(
+                "env: shadowed .env IGNORED → %s (KIS_APP_KEY fp=%s differs from "
+                "the one in use)", c["path"], c["fingerprint"],
+            )
+    return conflicts
 
 
 def load_env_file(path: Path) -> dict[str, str]:
@@ -460,6 +519,11 @@ def run(argv: list[str] | None = None) -> int:
             parsed = load_env_file(env_path)
             _inject_env_keys(parsed, log)
             env_loaded = bool(parsed)
+    # fix/egw00103-shadowed-env: 여러 .env 가 서로 다른 KIS_APP_KEY 를 가질 때
+    # 운영자가 고친 파일이 우선순위에 가려져 옛(무효) 키가 쓰이면 KIS 가
+    # EGW00103 으로 거부한다. 선택된 .env 와 가려진 후보의 키 지문을 비교해
+    # 경고만 낸다 (파일 수정 0건, secret 원문 0건).
+    detect_shadowed_env_conflicts(env_path, candidate_env_paths(), log)
     _print_safety_snapshot(log, env_path)
     # readiness API 가 본 정보를 carry 할 수 있도록 process env 로 공개.
     # *secret 원문 아님* — 파일 경로 + 로드 성공 여부만.
