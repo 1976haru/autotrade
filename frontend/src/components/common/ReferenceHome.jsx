@@ -17,7 +17,7 @@ import { pickLatestChiefDecision } from "../tabs/AgentLatestTile";
 import { usePaperCapitalSettings } from "../../store/usePaperCapitalSettings";
 import { useAutoPaperLoop } from "../../store/useAutoPaperLoop";
 import { usePersistedState } from "../../store/usePersistedState";
-import { RISK_PROFILES, normalizeRiskProfile } from "../AgentRiskProfileSelector";
+import { normalizeRiskProfile } from "../AgentRiskProfileSelector";
 import {
   maskAccountNo, todayOpenOrderCount, ACCOUNT_BULLET, resolveSymbolName,
   livePanelLine, groupLiveLines, kstDayLabel, marketClosedLine, miniKpis, dailyProgress,
@@ -26,6 +26,8 @@ import {
 import { RuntimeConfigCard } from "./RuntimeConfigCard";
 import { PerformanceCard } from "./PerformanceCard";
 import { LivePositionsCard } from "./LivePositionsCard";
+import { RiskProfileSwitchCard } from "./RiskProfileSwitchCard";
+import { TechniqueScorecard } from "./TechniqueScorecard";
 
 // 등락 색 — 한국식(+빨강 −파랑). 라이트/다크 모두 대비 확보.
 const UP = "#e5443b", DOWN = "#2563eb";
@@ -44,19 +46,6 @@ const signed = (n) => `${n > 0 ? "+" : ""}${fmtKRW(Math.round(n))}`;
 const card = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 18, boxShadow: "0 1px 3px rgba(0,0,0,.06)" };
 const secLabel = { fontSize: F.lg, fontWeight: 800, color: C.text, marginBottom: 12 };
 
-// 성향 설명 — 일상어(영문 confidence/risk_flag 노출 금지).
-const PROFILE_DESC_KO = {
-  CONSERVATIVE: "확신이 높을 때만 매수해요 · 위험 신호가 보이면 건너뛰어요 (안전 우선)",
-  // B(SSOT): 실제 적용값(config) 기준 — 확신 60% / 동시 5종목 / 종목당 100만원.
-  BALANCED: "수익과 위험의 균형 · 확신 60% 이상일 때만 매수 · 동시 최대 5종목 · 종목당 100만원",
-  AGGRESSIVE: "기회를 적극적으로 잡아요 · 확신 기준 40% · 위험 신호 2개까지 허용",
-};
-
-// B3: 현재 실제 운용 성향은 config(.env) 기준 'BALANCED(안정형)' 으로 고정.
-//   성향 *변경*(실행 반영)은 준비 중 — 버튼은 현재 성향을 강조 표시하고, 다른
-//   성향 탭 시 "준비 중" 안내를 띄운다(조용히 무시 금지). 실제 변경은 별도 PR.
-const EFFECTIVE_RISK_PROFILE = "BALANCED";
-
 export function ReferenceHome({
   portfolio, emergencyStop, onEmergencyStop,
   onJumpTab, onExpert, operatorName, accountNo,
@@ -69,7 +58,6 @@ export function ReferenceHome({
   const [logEntries, setLogEntries] = useState(null);
   const [stratReport, setStratReport] = useState(null); // Agent Council 전략별 카운트
   const [lastOkHm, setLastOkHm] = useState(null);
-  const [profileNote, setProfileNote] = useState(null); // B3: 성향 변경 준비중 안내
   const [rtConfig, setRtConfig] = useState(null);        // R3: 런타임 설정(실효값)
   const [livePos, setLivePos] = useState(null);          // M3: 라이브 포지션
   const [theme, setTheme] = usePersistedState("refhome_theme", "light", (v) => v === "light" || v === "dark");
@@ -274,42 +262,11 @@ export function ReferenceHome({
           )}
         </div>
 
-        {/* ⑤ AI 운용 성향 */}
+        {/* ⑤ AI 운용 성향 — S2 실전환(봇 정지 시) + S5 기법 성적표 */}
         <div style={{ gridArea: "profile", ...card }}>
           <div style={secLabel}>AI 운용 성향</div>
-          <div style={{ display: "flex", gap: 8 }}>
-            {RISK_PROFILES.map((p) => {
-              const active = p.value === EFFECTIVE_RISK_PROFILE;
-              return (
-                <button key={p.value} type="button" data-testid={`refhome-profile-${p.value}`}
-                  aria-pressed={active}
-                  onClick={() => setProfileNote(
-                    active ? null
-                      : "성향 변경은 준비 중이에요. 현재는 기본(안정형)으로 운용됩니다.")}
-                  style={{
-                    flex: 1, padding: "13px 4px", borderRadius: 12, cursor: "pointer", fontFamily: "inherit",
-                    fontSize: F.md, fontWeight: 800, minHeight: 50,
-                    border: `2px solid ${active ? "#5b9dff" : C.border}`,
-                    background: active ? "rgba(91,157,255,.16)" : "transparent",
-                    color: active ? "#2563eb" : C.text2,
-                  }}>
-                  {p.label.replace(" (기본값)", "")}{active ? " ·적용중" : ""}
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ fontSize: F.base, color: C.text2, marginTop: 10, lineHeight: 1.5 }}>
-            {PROFILE_DESC_KO[EFFECTIVE_RISK_PROFILE] || PROFILE_DESC_KO.BALANCED}
-          </div>
-          {profileNote && (
-            <div data-testid="refhome-profile-note" style={{
-              marginTop: 8, fontSize: F.sm, fontWeight: 700, lineHeight: 1.45,
-              borderRadius: 10, padding: "9px 11px",
-              background: "rgba(245,170,30,.16)", color: "#7a4a00",
-            }}>
-              🛠️ {profileNote}
-            </div>
-          )}
+          <RiskProfileSwitchCard rtConfig={rtConfig} botRunning={running} onChanged={setRtConfig} />
+          <TechniqueScorecard activeProfile={rtConfig?.active_profile?.value} />
         </div>
 
         {/* 숫자 칩 바 */}

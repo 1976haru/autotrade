@@ -19,7 +19,16 @@ vi.mock("../../services/backend/client", () => ({
       max_concurrent_positions: { value: 5, min: 1, max: 10 },
       per_stock_budget: { value: 1000000, min: 100000, max: 10000000 },
       daily_buy_limit_krw: 3000000,
+      active_profile: { value: "balanced", source: "env", options: ["conservative", "balanced", "aggressive"],
+        effective: { effective_min_confidence: 0.6, max_risk_flags: 1 } },
+      profiles_effective: {
+        conservative: { effective_min_confidence: 0.7, max_risk_flags: 0 },
+        balanced: { effective_min_confidence: 0.6, max_risk_flags: 1 },
+        aggressive: { effective_min_confidence: 0.6, max_risk_flags: 2 },
+      },
     })),
+    runtimeProfilePut: vi.fn(async () => ({ active_profile: { value: "aggressive" } })),
+    performanceByTechnique: vi.fn(async () => ({ no_data: true, techniques: [], active_profile: "balanced" })),
     runtimeConfigPut: vi.fn(async (b) => ({
       max_concurrent_positions: { value: b.max_concurrent_positions ?? 5, min: 1, max: 10 },
       per_stock_budget: { value: b.per_stock_budget ?? 1000000, min: 100000, max: 10000000 },
@@ -108,26 +117,11 @@ describe("ReferenceHome", () => {
     expect(cell.textContent).not.toContain("3개");
   });
 
-  it("U3: 성향 카드 숫자 = floor 실효값(확신 60%), 프리셋 원값(40%) 노출 금지", () => {
-    const { container } = renderHome();
-    // 강조 성향 = config 기준(BALANCED) — 설명에 floor 클램프 적용된 60% 표시.
-    expect(container.textContent).toContain("확신 60%");
-    expect(container.textContent).not.toContain("확신 기준 40%");
-  });
-
-  it("B3: 성향 버튼 — 현재(안정형) 강조 + 다른 성향 탭 시 '준비 중' 안내(조용히 무시 금지)", () => {
-    const { getByTestId, queryByTestId } = renderHome();
-    // 현재 적용 성향(BALANCED=config 기준)이 강조 + '·적용중' 라벨.
-    const bal = getByTestId("refhome-profile-BALANCED");
-    expect(bal.getAttribute("aria-pressed")).toBe("true");
-    expect(bal.textContent).toContain("적용중");
-    const aggr = getByTestId("refhome-profile-AGGRESSIVE");
-    expect(aggr.getAttribute("aria-pressed")).toBe("false");
-    // 변경 전엔 안내 없음.
-    expect(queryByTestId("refhome-profile-note")).toBeNull();
-    // 다른 성향 탭 → '준비 중' 안내(조용히 무시 아님).
-    fireEvent.click(aggr);
-    expect(getByTestId("refhome-profile-note").textContent).toContain("준비 중");
+  it("S2: 성향 전환 카드가 렌더되고 활성 성향(안정형) 강조 — rtConfig 기준", async () => {
+    const { findByTestId } = renderHome();
+    expect(await findByTestId("profile-switch")).toBeTruthy();
+    const bal = await findByTestId("profile-tab-balanced");
+    await waitFor(() => expect(bal.getAttribute("aria-pressed")).toBe("true"));
   });
 
   it("정지 상태: ▶시작이 실제 Auto Paper Loop 시작(autoPaperStart) 호출", async () => {
@@ -232,13 +226,9 @@ describe("ReferenceHome", () => {
     expect(getByTestId("refhome-strat-GAP")).toBeTruthy();
   });
 
-  it("AI 운용 성향 3버튼 + 탭하면 변경", () => {
-    const { getByTestId } = renderHome();
-    expect(getByTestId("refhome-profile-CONSERVATIVE")).toBeTruthy();
-    expect(getByTestId("refhome-profile-BALANCED")).toBeTruthy();
-    const agg = getByTestId("refhome-profile-AGGRESSIVE");
-    fireEvent.click(agg); // 기존 훅 setField 호출 — throw 없이 동작
-    expect(agg).toBeTruthy();
+  it("S5: 기법 성적표 카드가 성향 카드 하단에 렌더된다", async () => {
+    const { findByTestId } = renderHome();
+    expect(await findByTestId("technique-card")).toBeTruthy();
   });
 
   it("실시간 현황판이 있고, 데이터 없으면 안내", async () => {

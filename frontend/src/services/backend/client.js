@@ -152,12 +152,19 @@ export const backendApi = {
     if (to) qs.set("to", to);
     return backendFetch(`/api/performance?${qs.toString()}`);
   },
+  performanceByTechnique: ({ period = "daily" } = {}) =>
+    backendFetch(`/api/performance/by-technique?period=${encodeURIComponent(period)}`),
   // 장중 런타임 설정 (동시진입 종목 수 / 종목당 투자금) — 2개 전용.
   runtimeConfigGet:       () => backendFetch("/api/runtime-config"),
   runtimeConfigPut:       (body) =>
     backendFetch("/api/runtime-config", {
       method: "PUT",
       body: JSON.stringify(body || {}),
+    }),
+  runtimeProfilePut:      (profile) =>
+    backendFetch("/api/runtime-config/profile", {
+      method: "PUT",
+      body: JSON.stringify({ profile }),
     }),
   setPaperCapitalConfig:  ({ initialCash, fallbackToDefault = false } = {}) =>
     backendFetch("/api/auto-paper/capital-config", {
