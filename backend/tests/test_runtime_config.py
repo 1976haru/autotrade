@@ -259,6 +259,63 @@ def test_api_put_records_activity_event():
         app.dependency_overrides.pop(get_db, None)
 
 
+def test_lowering_cap_does_not_liquidate_holdings(monkeypatch):
+    """R1 규칙: 동시진입 종목 수를 낮춰도 *기존 보유는 비접촉*(강제 청산 0).
+    max_concurrent 는 BUY 게이트에서만 쓰이고 SELL/청산을 트리거하지 않는다."""
+    import asyncio
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.db.base import Base
+    from app.kis_paper import driver_bridge as dbge
+    from app.market_data.kis_realtime import KisRealtimeQuote
+
+    rc.set_runtime_overrides(max_concurrent_positions=1, per_stock_budget=300_000)
+
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(eng)
+    Session = sessionmaker(bind=eng)
+
+    async def _hold_fn(symbol, *, client, now, market_is_open, **kw):
+        return None, KisRealtimeQuote(symbol=symbol, status="KIS_PRICE_NODATA", price=0.0, is_stale=False)
+
+    sells = {"n": 0}
+
+    async def _route(**kw):
+        order = kw.get("order")
+        if order is not None and str(getattr(order, "side", "")).upper().endswith("SELL"):
+            sells["n"] += 1
+        return None
+
+    settings = SimpleNamespace(
+        market_data_provider="kis", enable_kis_paper_auto_trading=True,
+        kis_paper_auto_order_dry_run=False, kis_is_paper=True, enable_live_trading=False,
+        kis_paper_auto_max_order_notional=1_000_000, kis_paper_auto_max_orders_per_day=10,
+        kis_paper_auto_order_window_start="00:00", kis_paper_auto_order_window_end="23:59",
+        kis_paper_auto_min_confidence=0.6, kis_paper_auto_min_quality_score=60,
+        kis_paper_smoke_mode=False, kis_paper_smoke_symbol="005930", kis_paper_smoke_qty=1,
+        kis_paper_daily_buy_limit_krw=3_000_000, kis_paper_max_new_positions_per_tick=1,
+        kis_paper_scan_max_symbols=10, kis_app_key="K", kis_app_secret="S",
+        kis_account_no="00000000", kis_product_code="01",
+    )
+
+    class _HeldBroker:  # 3종목 보유 — cap(1) 보다 많음
+        async def get_positions(self):
+            return [SimpleNamespace(symbol=s, quantity=1) for s in ("005930", "000660", "000270")]
+
+    out = asyncio.run(dbge.kis_paper_realtime_scan_tick(
+        session_factory=Session, broker=_HeldBroker(), risk=object(),
+        route_order_fn=_route, settings=settings, market_input_fn=_hold_fn,
+        universe_symbols=["005930", "000660", "000270"],
+        client=object(), now=datetime(2026, 5, 22, 5, 0, tzinfo=timezone.utc),
+    ))
+    # cap 을 1 로 낮췄지만 보유 3종목을 *팔지 않는다*(강제 청산 0).
+    assert sells["n"] == 0
+    assert out["broker_order_sent"] is False
+
+
 def test_overrides_do_not_touch_safety_flags():
     # 본 모듈은 안전 플래그를 *읽지도 쓰지도* 않는다 (값 변경 가능 키 화이트리스트).
     assert set(rc._OVERRIDE_KEYS) == {"max_concurrent_positions", "per_stock_budget"}
