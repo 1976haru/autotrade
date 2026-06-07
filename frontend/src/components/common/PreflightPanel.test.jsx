@@ -60,6 +60,26 @@ describe("PreflightPanel (V8)", () => {
     expect(queryByTestId("preflight-ready")).toBeNull();
   });
 
+  it("①-재시도: 실패 후 ↻ 클릭 → 재fetch → 성공 시 ✅, 호출 2회", async () => {
+    const preflight = vi.fn().mockRejectedValueOnce(new Error("transient")).mockResolvedValue(okData);
+    const { getByTestId } = render(<PreflightPanel api={{ preflight }} />);
+    await waitFor(() => expect(getByTestId("preflight-fail")).toBeTruthy());
+    fireEvent.click(getByTestId("preflight-refresh"));
+    await waitFor(() => expect(getByTestId("preflight-ready")).toBeTruthy());
+    expect(preflight).toHaveBeenCalledTimes(2);   // ↻ 가 실제 재fetch
+  });
+
+  it("①-재시도: 반복 실패해도 누를 때마다 '시도했음'(호출 증가)", async () => {
+    const preflight = vi.fn().mockRejectedValue(new Error("down"));
+    const { getByTestId } = render(<PreflightPanel api={{ preflight }} />);
+    await waitFor(() => expect(getByTestId("preflight-fail")).toBeTruthy());
+    fireEvent.click(getByTestId("preflight-refresh"));
+    await waitFor(() => expect(preflight).toHaveBeenCalledTimes(2));
+    fireEvent.click(getByTestId("preflight-refresh"));
+    await waitFor(() => expect(preflight).toHaveBeenCalledTimes(3));
+    expect(getByTestId("preflight-fail")).toBeTruthy();   // 여전히 실패 정직 표시
+  });
+
   it("②-로딩: 응답 전 '확인 중…'", async () => {
     let resolve;
     const { getByTestId } = render(<PreflightPanel api={{ preflight: () => new Promise((r) => { resolve = r; }) }} />);

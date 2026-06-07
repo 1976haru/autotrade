@@ -14,6 +14,7 @@ export function PreflightPanel({ api = backendApi }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // load()는 성공 여부(boolean)를 반환 — 자동 복구 재시도 루프가 사용.
   const load = useCallback(async () => {
     setLoading(true);
     setFailed(false);
@@ -23,19 +24,37 @@ export function PreflightPanel({ api = backendApi }) {
       //   (프록시 누락으로 SPA HTML/빈 객체가 올 때 등). "0개"로 둔갑 금지 → 실패 처리.
       if (!d || !Array.isArray(d.items) || typeof d.all_ok !== "boolean") {
         setFailed(true); setFailedAt(_hm()); setData(null);
-      } else {
-        setData(d);
+        return false;
       }
+      setData(d);
+      return true;
     } catch {
       setFailed(true);
-      setFailedAt(_hm());
+      setFailedAt(_hm());   // ★재시도/실패마다 시각 갱신 — "시도했음"이 보이게.
       setData(null);
+      return false;
     } finally {
       setLoading(false);
     }
   }, [api]);
 
-  useEffect(() => { load(); }, [load]);
+  // 마운트 시 + 실패 시 *첫 성공까지* 경계된 자동 복구 재시도(2→4→8s, 최대 4회) —
+  //   잔고처럼 일시 실패(백엔드 늦게 뜸 등)가 수동 ↻ 없이 자가 회복되게. 폴링 아님.
+  useEffect(() => {
+    let cancelled = false;
+    let timer;
+    let attempts = 0;
+    const run = () => {
+      attempts += 1;
+      load().then((ok) => {
+        if (!cancelled && !ok && attempts < 4) {
+          timer = setTimeout(run, Math.min(8000, 2000 * attempts));
+        }
+      });
+    };
+    run();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [load]);
 
   // 엄격 분기: all_ok===true 만 OK, all_ok===false 만 FAIL(항목≥1). 그 외(비정상)는 실패.
   const ready = data?.all_ok === true;
