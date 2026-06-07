@@ -39,6 +39,17 @@ describe("usePortfolio B4 — 최초 실패 시 첫 성공까지 복구 재시�
     expect(backendApi.brokerBalance).toHaveBeenCalledTimes(2);
   });
 
+
+  it("B3: balance 실패 + positions 정상 → positions 독립 반영(전염 0)", async () => {
+    vi.useRealTimers();
+    backendApi.brokerBalance.mockRejectedValue(new Error("503"));
+    backendApi.brokerPositions.mockResolvedValue([{ symbol: "005930", quantity: 3, avg_price: 70000, market_price: 75000 }]);
+    const { result } = renderHook(() => usePortfolio());
+    await waitFor(() => expect(result.current.positions.length).toBe(1));
+    expect(result.current.positions[0].code).toBe("005930");  // balance 죽어도 positions 반영
+    expect(result.current.error).toBeTruthy();                 // balance 실패는 정직 표시
+  });
+
   it("T2: stale 잔고 응답 → 숫자 + stale=true + asOf + brokerHealthy=false", async () => {
     vi.useRealTimers();   // 재시도 없는 단발 — 실시계 + waitFor 로 안정 검증
     backendApi.brokerBalance.mockResolvedValue({

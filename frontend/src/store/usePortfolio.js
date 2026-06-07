@@ -36,17 +36,24 @@ export function usePortfolio() {
     const MAX_ATTEMPTS = 12; // ~60s — KIS 토큰 레이트리밋(EGW00133, 1/min) 창 커버
     const attempt = async () => {
       attempts += 1;
-      try {
-        const [balance, raw] = await Promise.all([
-          backendApi.brokerBalance(),
-          backendApi.brokerPositions(),
-        ]);
-        if (cancelled) return;
+      // B3: balance / positions 를 *독립적으로* 처리(Promise.allSettled) — 한쪽이
+      //   죽어도 다른 쪽은 정상 표시(전염 0). 예전 Promise.all 은 balance 503 이면
+      //   positions 까지 통째로 잃었다.
+      const [bRes, pRes] = await Promise.allSettled([
+        backendApi.brokerBalance(),
+        backendApi.brokerPositions(),
+      ]);
+      if (cancelled) return;
+      // positions 는 성공하면 항상 반영(balance 실패와 무관).
+      if (pRes.status === "fulfilled") {
+        const list = Array.isArray(pRes.value) ? pRes.value : [];
+        setPositions(list.map(toFrontPosition));
+      }
+      if (bRes.status === "fulfilled") {
+        const balance = bRes.value;
         // 213: 비정상 응답이어도 빈 값으로 정규화(.reduce/.map 폭발 방지).
         setCash(typeof balance?.cash === "number" ? balance.cash : 0);
         setEquity(typeof balance?.equity === "number" ? balance.equity : 0);
-        const list = Array.isArray(raw) ? raw : [];
-        setPositions(list.map(toFrontPosition));
         setError("");
         setReady(true);
         setLoading(false);
@@ -54,9 +61,9 @@ export function usePortfolio() {
         setStale(!!balance?.stale);
         setAsOf(balance?.as_of_kst || null);
         setBrokerHealthy(balance?.broker_healthy !== false);
-      } catch (e) {
-        if (cancelled) return;
-        setError(e.message);
+      } else {
+        const e = bRes.reason || new Error("balance failed");
+        setError(e.message || String(e));
         setBrokerHealthy(false);              // T3: 조회 실패 = KIS 헬스 불량
         setLoading(false);                    // 각 시도 종료(loading 무한대 금지 — 가짜 0
         //   은 ready 게이트로 막는다; loading 은 '최초 시도 진행 중'만 의미).
