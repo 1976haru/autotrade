@@ -58,7 +58,12 @@ def _load_history() -> dict[str, dict[str, float]]:
 
 
 def _save_close(day: date, quotes: dict[str, Any]) -> None:
-    """조회한 날의 지수 종가를 적재(있으면 갱신). 본 모듈만 write."""
+    """조회한 날의 지수 종가를 적재(있으면 갱신). 본 모듈만 write.
+
+    V2: 휴장일(주말)은 적재하지 않는다 — 직전 세션 값을 휴장일자로 잘못 적재하면
+    다기간 기준일 종가가 오염된다(기준일은 거래일이어야 함)."""
+    if day.weekday() >= 5:  # 토(5)/일(6)
+        return
     hist = _load_history()
     key = day.isoformat()
     for name in INDEX_CODES:
@@ -145,11 +150,16 @@ async def get_market_comparison_context(
 
     today = today_kst()
     hist = _load_history()
+    # V2: 휴장일(주말)엔 prdy_ctrt 가 *직전 세션*(예: 금요일) 변동률이라 '오늘'로 쓰면
+    #   오표기 — 오늘은 거래가 없으니 0%가 정답. (period 의 today 기준으로 판정.)
+    market_closed_today = today.weekday() >= 5  # 토(5)/일(6)
 
     def _ret(name: str) -> float | None:
         q = quotes.get(name) or {}
         if start == end == today:
-            # 당일: 전일대비율(오늘 변동%) 직접 사용 — 과거 이력 불필요.
+            if market_closed_today:
+                return 0.0   # 휴장: 오늘 변동 없음(직전 세션 prdy_ctrt 오표기 방지)
+            # 당일(개장): 전일대비율(오늘 변동%) 직접 사용 — 과거 이력 불필요.
             cp = q.get("change_pct")
             return round(float(cp), 2) if cp is not None else None
         # 다기간: 기간 시작일 종가(적재분) → 최신 지수.
@@ -164,6 +174,7 @@ async def get_market_comparison_context(
             "available": True,
             "kospi_return_pct": _ret("KOSPI"),
             "kosdaq_return_pct": _ret("KOSDAQ"),
+            "market_closed_today": market_closed_today,
             "fetched_at_kst": _fetched_at_kst(),
         },
         "current_equity_krw": _cache.get("equity"),

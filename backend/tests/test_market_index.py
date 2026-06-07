@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import timedelta
+from datetime import date, timedelta
 
 import httpx
 import pytest
@@ -20,6 +20,7 @@ def run(coro):
 @pytest.fixture(autouse=True)
 def _reset_and_tmp(monkeypatch, tmp_path):
     monkeypatch.setattr(mi, "_history_path", lambda: tmp_path / "market_index_closes.json")
+    monkeypatch.setattr(mi, "today_kst", lambda: date(2026, 6, 5))  # 고정 평일(금) — 휴장 분기 결정성
     mi.reset_market_index_cache_for_tests()
     yield
     mi.reset_market_index_cache_for_tests()
@@ -73,7 +74,7 @@ def _fake_fetchers():
 
 def test_cache_avoids_refetch_within_ttl():
     calls, fetch, eq = _fake_fetchers()
-    today = today_kst()
+    today = mi.today_kst()
     for _ in range(3):  # 같은 now_ts 3회 → 실조회 1회.
         run(mi.get_market_comparison_context(start=today, end=today, now_ts=1000.0,
                                              index_fetcher=fetch, equity_fetcher=eq))
@@ -86,7 +87,7 @@ def test_cache_avoids_refetch_within_ttl():
 
 def test_daily_uses_today_change_pct():
     _calls, fetch, eq = _fake_fetchers()
-    today = today_kst()
+    today = mi.today_kst()
     ctx = run(mi.get_market_comparison_context(start=today, end=today, now_ts=1.0,
                                                index_fetcher=fetch, equity_fetcher=eq))
     assert ctx["market"]["available"] is True
@@ -98,7 +99,7 @@ def test_daily_uses_today_change_pct():
 def test_multiday_uses_history_close(tmp_path, monkeypatch):
     hist = tmp_path / "market_index_closes.json"
     monkeypatch.setattr(mi, "_history_path", lambda: hist)
-    today = today_kst()
+    today = mi.today_kst()
     start = today - timedelta(days=3)
     hist.write_text(json.dumps({
         "KOSPI":  {start.isoformat(): 2600.0},
@@ -115,7 +116,7 @@ def test_failure_returns_unavailable_not_exception():
         raise RuntimeError("KIS index down")
     async def eq():
         return None
-    today = today_kst()
+    today = mi.today_kst()
     ctx = run(mi.get_market_comparison_context(start=today, end=today, now_ts=1.0,
                                                index_fetcher=fetch, equity_fetcher=eq))
     assert ctx["market"]["available"] is False
@@ -124,8 +125,30 @@ def test_failure_returns_unavailable_not_exception():
 
 def test_persist_daily_close_written_once_fetched():
     _calls, fetch, eq = _fake_fetchers()
-    today = today_kst()
+    today = mi.today_kst()
     run(mi.get_market_comparison_context(start=today, end=today, now_ts=1.0,
                                          index_fetcher=fetch, equity_fetcher=eq))
     hist = mi._load_history()
     assert hist["KOSPI"][today.isoformat()] == 2700.0
+
+
+# ── V2: 휴장일(주말) 처리 ──────────────────────────────────────────────────────
+
+def test_weekend_daily_returns_zero(monkeypatch):
+    # 토요일 '오늘' 기간 → prdy_ctrt(직전 세션 -5.5%) 대신 0%(오늘 거래 없음).
+    monkeypatch.setattr(mi, "today_kst", lambda: date(2026, 6, 6))  # 토요일
+    _calls, fetch, eq = _fake_fetchers()  # change_pct 1.2 를 줘도
+    today = mi.today_kst()
+    ctx = run(mi.get_market_comparison_context(start=today, end=today, now_ts=1.0,
+                                               index_fetcher=fetch, equity_fetcher=eq))
+    assert ctx["market"]["kospi_return_pct"] == 0.0
+    assert ctx["market"]["kosdaq_return_pct"] == 0.0
+    assert ctx["market"]["market_closed_today"] is True
+
+
+def test_save_close_skips_weekend(tmp_path, monkeypatch):
+    monkeypatch.setattr(mi, "_history_path", lambda: tmp_path / "x.json")
+    mi._save_close(date(2026, 6, 7), {"KOSPI": {"value": 8160.0}})  # 일요일 → 적재 안 함
+    assert mi._load_history() == {}
+    mi._save_close(date(2026, 6, 5), {"KOSPI": {"value": 2700.0}})  # 금요일 → 적재
+    assert mi._load_history()["KOSPI"]["2026-06-05"] == 2700.0

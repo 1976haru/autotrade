@@ -1,5 +1,6 @@
 // ReferenceHome(새 홈 — reference.jpg 스타일) 전용 순수 함수.
 // DOM/시간/네트워크 부작용 0 — 입력→값만. 일상 한국어, 추정치 금지(실체결 기준).
+import { isKstToday } from "./tradingStatus";
 
 // ── 계좌번호 마스킹 (절대원칙 #4: 평문 노출 금지) ──────────────────────────────
 /** "50191162-01" → "5019****-01" 식. 앞 4 + 끝 2만 노출, 가운데 별표.
@@ -295,10 +296,13 @@ export function miniKpis({ cashState, today } = {}) {
  * 오늘(KST 아님 — 전체 목록 기준 BUY notional) 매수 사용금액 vs 일일 한도.
  * @returns {{orderCount, buyUsedKrw, buyMaxKrw, buyPct}}
  */
-export function dailyProgress({ orders, today, buyMaxKrw = 3_000_000 } = {}) {
+export function dailyProgress({ orders, today, buyMaxKrw = 3_000_000, now = new Date() } = {}) {
   let buyUsed = 0;
   for (const r of (orders || [])) {
     if (!r) continue;
+    // V1: 매수 사용금액은 *오늘(KST) 체결*만(D2/D5). 예전엔 전체 누적을 더해
+    //   휴장일에도 "매수 1148만"이 떴다 — 오늘 주문 0이면 0만이 정답.
+    if (!isKstToday(r.created_at, now)) continue;
     if (String(r.side || "").toUpperCase() !== "BUY") continue;
     const bs = String(r.broker_status || "").toUpperCase();
     const dec = String(r.decision || "").toUpperCase();

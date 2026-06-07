@@ -72,6 +72,13 @@ function _kstDateKey(iso) {
   return kst.toISOString().slice(0, 10);
 }
 
+// V1: created_at(UTC ISO)이 *오늘(KST)*인지. dailyProgress 등 당일 집계의 단일 기준.
+export function isKstToday(iso, now = new Date()) {
+  const todayKey = new Date(now.getTime() + (now.getTimezoneOffset() + 540) * 60000)
+    .toISOString().slice(0, 10);
+  return _kstDateKey(iso) === todayKey;
+}
+
 // ── 보유 종목 출처 분류 ────────────────────────────────────────────────────
 // "봇이 매수" = 봇 주문이 *실제 체결된* 종목만(filled_quantity>0). 주문만 내고
 // 미체결이면 봇이 보유를 만든 게 아니므로 "기존 보유"로 본다 → 미체결뿐인 현재
