@@ -41,8 +41,30 @@ describe("PreflightPanel (V8)", () => {
     expect(getByTestId("preflight-item-emergency_stop").textContent).toContain("주문이 차단");
   });
 
-  it("조회 실패 → 정직 표시(빈 상태 아님)", async () => {
-    const { getByTestId } = render(<PreflightPanel api={{ preflight: vi.fn(async () => { throw new Error("x"); }) }} />);
+  it("②-fetch실패: throw → '불러오지 못했어요' + 재시도(빈 상태/0개 아님)", async () => {
+    const { getByTestId, queryByTestId } = render(<PreflightPanel api={{ preflight: vi.fn(async () => { throw new Error("x"); }) }} />);
+    await waitFor(() => expect(getByTestId("preflight-fail").textContent).toContain("불러오지 못했어요"));
+    expect(getByTestId("preflight-fail").textContent).toContain("재시도");
+    expect(queryByTestId("preflight-issues")).toBeNull();   // "0개" 둔갑 금지
+  });
+
+  it.each([
+    ["빈 객체", {}],
+    ["items 없음", { all_ok: true }],
+    ["all_ok 없음(프록시 누락 SPA류)", { items: [{ key: "x", status: "ok" }] }],
+    ["null", null],
+  ])("②-비정상응답(%s) → '불러오지 못했어요'(⚠ 0개 금지)", async (_n, bad) => {
+    const { getByTestId, queryByTestId } = render(<PreflightPanel api={{ preflight: vi.fn(async () => bad) }} />);
     await waitFor(() => expect(getByTestId("preflight-fail")).toBeTruthy());
+    expect(queryByTestId("preflight-issues")).toBeNull();   // ★"확인이 필요한 항목 0개" 안 뜸
+    expect(queryByTestId("preflight-ready")).toBeNull();
+  });
+
+  it("②-로딩: 응답 전 '확인 중…'", async () => {
+    let resolve;
+    const { getByTestId } = render(<PreflightPanel api={{ preflight: () => new Promise((r) => { resolve = r; }) }} />);
+    expect(getByTestId("preflight-loading")).toBeTruthy();
+    resolve(okData);
+    await waitFor(() => expect(getByTestId("preflight-ready")).toBeTruthy());
   });
 });
