@@ -149,7 +149,7 @@ describe("<App> smoke", () => {
     let view;
     await act(async () => { view = render(<App />); });
     await waitFor(() => {
-      expect(view.getByTestId("status-pin-bot")).toBeTruthy();
+      expect(view.getByTestId("reference-home")).toBeTruthy();
     });
     // app-shell은 최외곽 div. querySelector로 추적해 인라인 maxWidth가 더 이상
     // 박혀 있지 않은 것까지 확인.
@@ -159,22 +159,17 @@ describe("<App> smoke", () => {
     const nav = view.container.querySelector(".app-bottomnav");
     expect(nav).toBeTruthy();
     expect(nav.style.maxWidth).toBe("");
-    // Dashboard 본문도 .dashboard-body 클래스로 layout이 옮겨져야 PC에서 grid
-    // 적용이 가능. 인라인 display: flex는 더 이상 박혀 있지 않아야 한다.
-    const body = view.container.querySelector(".dashboard-body");
-    expect(body).toBeTruthy();
-    expect(body.style.display).toBe("");
+    // V7: 기본 홈은 ReferenceHome — 셸/하단 nav 의 layout 클래스만 검증(전문가
+    //   .dashboard-body 는 기본 탭에 없음).
   });
 
   it("renders Dashboard tab content in the empty-data happy path", async () => {
     _activeApi = _emptyApi;
     let view;
     await act(async () => { view = render(<App />); });
-    // Dashboard StatusSummaryCard's pins
+    // V7: 기본 'dash' 탭 = ReferenceHome(전문가 Dashboard 아님). 핵심 영역 렌더 확인.
     await waitFor(() => {
-      expect(view.getByTestId("status-pin-emergency-stop")).toBeTruthy();
-      expect(view.getByTestId("status-pin-pending-approvals")).toBeTruthy();
-      expect(view.getByTestId("status-pin-bot")).toBeTruthy();
+      expect(view.getByTestId("reference-home")).toBeTruthy();
     });
     // 백엔드가 "켜진" 시나리오라 offline banner는 안 떠야 한다.
     expect(view.queryByTestId("backend-offline-banner")).toBeNull();
@@ -185,7 +180,7 @@ describe("<App> smoke", () => {
     let view;
     await act(async () => { view = render(<App />); });
     await waitFor(() => {
-      expect(view.getByTestId("status-pin-bot")).toBeTruthy();
+      expect(view.getByTestId("reference-home")).toBeTruthy();
     });
     // 231 (UI-003): TopNav + BottomNav가 같은 라벨을 둘 다 렌더하므로 단일
     // testid로 클릭 — TopNav 항목이 데스크톱 기본 가시 nav.
@@ -204,7 +199,7 @@ describe("<App> smoke", () => {
     let view;
     await act(async () => { view = render(<App />); });
     await waitFor(() => {
-      expect(view.getByTestId("status-pin-bot")).toBeTruthy();
+      expect(view.getByTestId("reference-home")).toBeTruthy();
     });
     // 의도된 에러는 재현이 까다로워 ErrorBoundary의 회귀는 ErrorBoundary.test.jsx
     // 에서 직접 검증. 여기서는 shell이 깨지지 않는 것만 확인.
@@ -216,7 +211,7 @@ describe("<App> smoke", () => {
   // 시그니처 텍스트로 도착을 검증한다 (탭마다 unique한 SectionLabel 또는
   // testid). Pages demo 사용자가 "어떤 탭에서 흰 화면이 나는가"를 회귀로 잠금.
   const _DEMO_TARGET_TABS = [
-    { tabId: "dash",     signature: { kind: "testid", value: "status-pin-bot" } },
+    { tabId: "dash",     signature: { kind: "testid", value: "reference-home" } },
     { tabId: "strat",    signature: { kind: "text",   value: "백엔드 리스크 정책" } },
     { tabId: "approve",  signature: { kind: "text",   value: /승인/ } },
     { tabId: "audit",    signature: { kind: "text",   value: /이벤트 타임라인/ } },
@@ -233,7 +228,7 @@ describe("<App> smoke", () => {
       let view;
       await act(async () => { view = render(<App />); });
       await waitFor(() => {
-        expect(view.getByTestId("status-pin-bot")).toBeTruthy();
+        expect(view.getByTestId("reference-home")).toBeTruthy();
       });
       if (tabId !== "dash") {
         // 231: TopNav가 데스크톱 기본이라 testid로 단일 매칭.
