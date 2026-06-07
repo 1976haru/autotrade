@@ -18,6 +18,8 @@ def _tmp_overrides(tmp_path, monkeypatch):
     # 실 데이터 디렉토리 대신 tmp 파일로 격리.
     path = tmp_path / "runtime_overrides.json"
     monkeypatch.setattr(rc, "overrides_path", lambda: path)
+    # 레거시 마이그레이션이 *실* ./data 파일을 읽지 않도록 격리(없는 tmp 경로).
+    monkeypatch.setattr(rc, "_legacy_overrides_path", lambda: tmp_path / "legacy_none.json")
     rc.reset_runtime_overrides_for_tests()
     yield path
     rc.reset_runtime_overrides_for_tests()
@@ -483,3 +485,25 @@ def test_overrides_path_is_absolute_cwd_independent(monkeypatch):
     if str(s.database_url or "").startswith("sqlite:///"):
         d = _rc._data_dir()
         assert d.is_absolute(), f"_data_dir must be absolute, got {d}"
+
+
+def test_overrides_dir_prefers_appdata(monkeypatch, tmp_path):
+    # ★override 는 %APPDATA%\Autotrade (.env·토큰 캐시와 동거, CWD 독립).
+    import app.core.runtime_config as _rc
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    assert _rc._overrides_base_dir() == tmp_path / "Autotrade"
+
+
+def test_legacy_override_migrates_to_new_location(monkeypatch, _tmp_overrides, tmp_path):
+    # 신 위치(=_tmp_overrides) 비었고 구 위치(./data)에 있으면 1회 이전(기존 설정 보존).
+    import app.core.runtime_config as _rc
+    legacy = tmp_path / "legacy_overrides.json"
+    legacy.write_text('{"per_stock_budget": 700000}', encoding="utf-8")
+    monkeypatch.setattr(_rc, "_legacy_overrides_path", lambda: legacy)
+    _rc._cache = None
+    _rc._migrate_legacy_override_if_needed()
+    assert _tmp_overrides.exists()
+    assert "700000" in _tmp_overrides.read_text(encoding="utf-8")
+    # 이전 후 effective 도 반영.
+    _rc._cache = None
+    assert _rc.effective_per_stock_budget() == 700000

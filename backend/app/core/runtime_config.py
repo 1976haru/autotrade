@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -75,8 +76,38 @@ def _data_dir() -> Path:
     return Path("./data").resolve()
 
 
-def overrides_path() -> Path:
+def _overrides_base_dir() -> Path:
+    """override 파일 디렉토리. ★%APPDATA%\\Autotrade (.env·토큰 캐시와 동거 — CWD
+    완전 독립). APPDATA 없으면(Linux/CI) DB 데이터 디렉토리(절대)로 폴백."""
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        return Path(appdata) / "Autotrade"
+    return _data_dir()
+
+
+def _legacy_overrides_path() -> Path:
+    """이전 위치(DB 데이터 디렉토리). 마이그레이션 원본."""
     return _data_dir() / _OVERRIDES_FILENAME
+
+
+def overrides_path() -> Path:
+    return _overrides_base_dir() / _OVERRIDES_FILENAME
+
+
+def _migrate_legacy_override_if_needed() -> None:
+    """신 위치(%APPDATA%)에 없고 구 위치(./data)에 있으면 1회 이전 — 기존 설정 보존."""
+    try:
+        new = overrides_path()
+        if new.exists():
+            return
+        old = _legacy_overrides_path()
+        if old.resolve() == new.resolve() or not old.exists():
+            return
+        new.parent.mkdir(parents=True, exist_ok=True)
+        new.write_text(old.read_text(encoding="utf-8"), encoding="utf-8")
+        _log.info("[runtime_config] override 마이그레이션: %s → %s", old, new)
+    except Exception as exc:  # noqa: BLE001 — 마이그레이션 실패는 정상 폴백(env), raise 금지.
+        _log.warning("[runtime_config] override 마이그레이션 실패(무시): %s", exc)
 
 
 def _load() -> dict[str, Any]:
@@ -84,6 +115,7 @@ def _load() -> dict[str, Any]:
     global _cache
     if _cache is not None:
         return _cache
+    _migrate_legacy_override_if_needed()   # 구 ./data 위치 → %APPDATA% 1회 이전
     path = overrides_path()
     if not path.exists():
         _cache = {}
