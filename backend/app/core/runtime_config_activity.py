@@ -44,15 +44,17 @@ def _message_ko(change: dict[str, Any]) -> str | None:
     return None
 
 
-def record_runtime_config_changes(db: Session, changes: list[dict[str, Any]]) -> int:
-    """변경 목록 → AgentDecisionLog row(들). 기록 건수 반환. 변경 0이면 0."""
+def record_runtime_config_changes(db: Session, changes: list[dict[str, Any]],
+                                  source: str = "operator") -> int:
+    """변경 목록 → AgentDecisionLog row(들). 기록 건수 반환. 변경 0이면 0.
+    V6: source(기본 operator) carry — 점검/진단 변경 구분용."""
     n = 0
     for ch in changes or []:
         msg = _message_ko(ch)
         if not msg:
             continue
         _add_operator_event(db, message=msg, action=OPERATOR_CONFIG_CHANGE_ACTION,
-                            reason_code=OPERATOR_CONFIG_CHANGE_REASON_CODE)
+                            reason_code=OPERATOR_CONFIG_CHANGE_REASON_CODE, source=source)
         n += 1
     if n:
         db.commit()
@@ -66,9 +68,13 @@ MANUAL_SELL_REASON_CODE = "OPERATOR_MANUAL_SELL"
 
 
 def _add_operator_event(db: Session, *, message: str, action: str,
-                        reason_code: str, prefix: str = "opev") -> None:
+                        reason_code: str, prefix: str = "opev",
+                        source: str = "operator") -> None:
     """운영자 이벤트 1건을 활동 피드(AgentDecisionLog/paper decision-log)에 적재.
-    commit 은 호출자 책임(여러 건 묶을 수 있게)."""
+    commit 은 호출자 책임(여러 건 묶을 수 있게).
+
+    V6: `source`(기본 'operator')를 meta.event_source 로 남긴다 — 점검/진단 중
+    실기동에 찍힌 변경을 프론트가 '(점검)'으로 구분 표시(이력 삭제 0, 표시 계층)."""
     from app.auto_paper.decision_log import (
         PAPER_DECISION_LOG_MODE,
         PAPER_DECISION_LOG_SOURCE,
@@ -87,6 +93,7 @@ def _add_operator_event(db: Session, *, message: str, action: str,
             "reason_code":   reason_code,
             "decision_id":   f"{prefix}-{uuid.uuid4().hex[:10]}",
             "strategy":      "",
+            "event_source":  source or "operator",
         },
         chain_id=None,
     ))

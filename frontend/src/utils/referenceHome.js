@@ -208,7 +208,9 @@ export function livePanelLine(entry, nameOf = resolveSymbolName) {
   if (["CONFIG_CHANGE", "MANUAL_SELL"].includes(String(entry.decision_action || "").toUpperCase())
       || String(entry.reason_code || "").toUpperCase().startsWith("OPERATOR_")) {
     const msg = entry.reason || (Array.isArray(entry.reasons) ? entry.reasons[0] : "") || "운영자가 설정을 바꿨어요";
-    return { time, text: msg };
+    // V6: 점검/진단 중 실기동에 찍힌 변경은 '(점검)'으로 구분(이력 삭제 0, 표시 계층).
+    const src = String(entry.event_source || "operator").toLowerCase();
+    return { time, text: src && src !== "operator" ? `${msg} (점검)` : msg };
   }
   const name = nameOf(entry.symbol) || entry.symbol || "어떤 종목";
   const strat = STRAT_KO[String(entry.strategy || "").toUpperCase()] || null;

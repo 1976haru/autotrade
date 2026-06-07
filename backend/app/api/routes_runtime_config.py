@@ -9,7 +9,7 @@ PUT  /api/runtime-config → 검증 통과 시 저장, "저장 후 다시 읽은
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -76,7 +76,8 @@ def get_runtime_config_endpoint() -> dict:
 
 
 @router.put("/runtime-config/profile")
-def put_runtime_profile_endpoint(body: _ProfileBody, db: Session = Depends(get_db)) -> dict:
+def put_runtime_profile_endpoint(body: _ProfileBody, db: Session = Depends(get_db),
+                                 x_event_source: str = Header("operator")) -> dict:
     profile = (body.profile or "").strip().lower()
     if profile not in VALID_PROFILES:
         raise HTTPException(status_code=400, detail="운용 성향은 보수/안정/공격 중 하나여야 해요.")
@@ -93,7 +94,7 @@ def put_runtime_profile_endpoint(body: _ProfileBody, db: Session = Depends(get_d
     if before != profile:
         try:
             from app.core.runtime_config_activity import record_runtime_config_changes
-            record_runtime_config_changes(db, result.get("changes") or [])
+            record_runtime_config_changes(db, result.get("changes") or [], source=x_event_source)
         except Exception:  # noqa: BLE001
             pass
 
@@ -105,6 +106,7 @@ def put_runtime_profile_endpoint(body: _ProfileBody, db: Session = Depends(get_d
 def put_runtime_config_endpoint(
     body: _RuntimeConfigBody,
     db: Session = Depends(get_db),
+    x_event_source: str = Header("operator"),
 ) -> dict:
     if body.max_concurrent_positions is None and body.per_stock_budget is None:
         raise HTTPException(
@@ -123,7 +125,7 @@ def put_runtime_config_endpoint(
     # R2: 변경 이력을 활동 피드("오늘 AI가 한 일")에 기록 — best-effort.
     try:
         from app.core.runtime_config_activity import record_runtime_config_changes
-        record_runtime_config_changes(db, result.get("changes") or [])
+        record_runtime_config_changes(db, result.get("changes") or [], source=x_event_source)
     except Exception:  # noqa: BLE001 — 기록 실패가 저장을 무효화하지 않는다.
         pass
 

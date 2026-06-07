@@ -258,6 +258,12 @@ describe("livePanelLine — R2 운영자 설정변경 이벤트", () => {
     });
     expect(r.text).toContain("동시진입 종목 수를 5개 → 3개로 바꿨어요");
   });
+  it("V6: event_source=diagnostic 이면 '(점검)' 꼬리표, operator/없음이면 없음", () => {
+    const base = { decision_action: "CONFIG_CHANGE", reason: "운영자가 성향을 바꿨어요", timestamp: "2026-06-07T01:00:00Z" };
+    expect(livePanelLine({ ...base, event_source: "diagnostic" }).text).toContain("(점검)");
+    expect(livePanelLine({ ...base, event_source: "operator" }).text).not.toContain("(점검)");
+    expect(livePanelLine(base).text).not.toContain("(점검)");
+  });
 });
 
 describe("groupLiveLines — U7 연속 동일 이벤트 묶기", () => {
