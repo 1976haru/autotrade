@@ -82,6 +82,16 @@ def engine():
     return eng
 
 
+def _paper_broker_no_holdings():
+    """실 KisBrokerAdapter(=_broker_is_kis_paper True) + get_positions 스텁(보유 0).
+    held 가드 격리 + 실 KIS 호출 0(P0 테스트 정책) — 잔고조회만 차단, 주문경로는 mock route."""
+    b = KisBrokerAdapter(is_paper=True)
+    async def _no_pos():
+        return []
+    b.get_positions = _no_pos
+    return b
+
+
 def _scan_settings(**kw):
     base = dict(
         market_data_provider="kis", enable_kis_paper_auto_trading=True,
@@ -137,7 +147,7 @@ def _approved_route():
 def test_scan_no_data_no_orders(engine):
     Session = sessionmaker(bind=engine)
     out = asyncio.run(kis_paper_realtime_scan_tick(
-        session_factory=Session, broker=KisBrokerAdapter(is_paper=True), risk=object(),
+        session_factory=Session, broker=_paper_broker_no_holdings(), risk=object(),
         route_order_fn=_approved_route(), settings=_scan_settings(),
         market_input_fn=_no_data_input_fn, universe_symbols=["005930", "000660"],
         client=object(), now=OPEN_TIME,
@@ -153,7 +163,7 @@ def test_scan_no_data_no_orders(engine):
 def test_scan_submits_within_per_tick_limit(engine):
     Session = sessionmaker(bind=engine)
     out = asyncio.run(kis_paper_realtime_scan_tick(
-        session_factory=Session, broker=KisBrokerAdapter(is_paper=True), risk=object(),
+        session_factory=Session, broker=_paper_broker_no_holdings(), risk=object(),
         route_order_fn=_approved_route(), settings=_scan_settings(),
         market_input_fn=_buy_input_fn,
         universe_symbols=["005930", "000660", "035720"],
@@ -176,7 +186,7 @@ def test_scan_respects_daily_buy_limit(engine):
     Session = sessionmaker(bind=engine)
     # 일일 매수 한도를 1주 미만으로 낮추면 BUY 가 막힌다.
     out = asyncio.run(kis_paper_realtime_scan_tick(
-        session_factory=Session, broker=KisBrokerAdapter(is_paper=True), risk=object(),
+        session_factory=Session, broker=_paper_broker_no_holdings(), risk=object(),
         route_order_fn=_approved_route(),
         settings=_scan_settings(kis_paper_daily_buy_limit_krw=1_000),
         market_input_fn=_buy_input_fn, universe_symbols=["005930"],
@@ -198,7 +208,7 @@ def test_scan_smoke_mode_single_symbol_qty_one(engine):
         return SimpleNamespace(decision=RiskDecision.APPROVED, reasons=[], audit=audit)
 
     out = asyncio.run(kis_paper_realtime_scan_tick(
-        session_factory=Session, broker=KisBrokerAdapter(is_paper=True), risk=object(),
+        session_factory=Session, broker=_paper_broker_no_holdings(), risk=object(),
         route_order_fn=_route,
         settings=_scan_settings(kis_paper_smoke_mode=True, kis_paper_smoke_qty=1,
                                 kis_paper_smoke_symbol="005930"),
