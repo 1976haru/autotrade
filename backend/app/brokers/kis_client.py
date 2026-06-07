@@ -1,4 +1,10 @@
+import asyncio
+import hashlib
+import json
+import logging
+import os
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 
@@ -9,14 +15,77 @@ PAPER_HOST = "https://openapivts.koreainvestment.com:29443"
 LIVE_HOST  = "https://openapi.koreainvestment.com:9443"
 
 _TOKEN_REFRESH_MARGIN = timedelta(seconds=60)
+# EGW00133 = "접근토큰 발급 1분당 1회" — 계좌(앱키) 단위 레이트리밋. 재발급 폭격 방지.
+_TOKEN_RATELIMIT_CODE = "EGW00133"
+_TOKEN_RATELIMIT_BACKOFF = timedelta(seconds=60)
+
+_log = logging.getLogger("autotrade.kis_token")
 
 
 class KisAuthError(RuntimeError):
     pass
 
 
+class KisTokenRateLimitedError(KisAuthError):
+    """토큰 발급이 레이트리밋(EGW00133)으로 보호 창 안에 있어 *KIS 를 호출하지 않고*
+    즉시 실패. 호출자는 마지막 정상값(stale)으로 폴백하거나 잠시 후 재시도."""
+
+
 class KisApiError(RuntimeError):
     pass
+
+
+# ── 토큰 디스크 캐시 (이 모듈 단일 reader/writer) ──────────────────────────────
+#   %APPDATA%\Autotrade\kis_token_cache.json. access_token + 만료시각만 저장
+#   (app_secret 미저장). 재기동 시 유효하면 재사용해 발급 자체를 회피.
+def _token_cache_path() -> Path:
+    base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    return Path(base) / "Autotrade" / "kis_token_cache.json"
+
+
+def _token_cache_key(app_key: str, is_paper: bool) -> str:
+    h = hashlib.sha256((app_key or "").encode("utf-8")).hexdigest()[:16]
+    return f"{h}_{'paper' if is_paper else 'live'}"
+
+
+def _load_cached_token(app_key: str, is_paper: bool) -> tuple[str, datetime] | None:
+    try:
+        path = _token_cache_path()
+        if not path.exists():
+            return None
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        entry = (raw or {}).get(_token_cache_key(app_key, is_paper))
+        if not entry:
+            return None
+        tok = entry.get("access_token")
+        exp = entry.get("expires_at")
+        if not tok or not exp:
+            return None
+        dt = datetime.fromisoformat(str(exp))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return tok, dt
+    except Exception as exc:  # noqa: BLE001 — 손상은 폴백(정상 재발급), 절대 raise 안 함.
+        _log.warning("[kis_token] 토큰 캐시 읽기 실패 — 재발급 폴백: %s", exc)
+        return None
+
+
+def _save_cached_token(app_key: str, is_paper: bool, token: str, expires_at: datetime) -> None:
+    try:
+        path = _token_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        raw = {}
+        if path.exists():
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8")) or {}
+            except Exception:  # noqa: BLE001
+                raw = {}
+        raw[_token_cache_key(app_key, is_paper)] = {
+            "access_token": token, "expires_at": expires_at.isoformat(),
+        }
+        path.write_text(json.dumps(raw), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("[kis_token] 토큰 캐시 저장 실패(무시): %s", exc)
 
 
 class KisClient:
@@ -49,6 +118,9 @@ class KisClient:
         self._token: str | None = None
         self._token_expires_at: datetime | None = None
         self._rate_limiter = rate_limiter
+        # T1: 발급 직렬화 락 + EGW00133 백오프 창(이 시각 전엔 KIS 미호출).
+        self._token_lock = asyncio.Lock()
+        self._token_retry_not_before: datetime | None = None
 
     async def _throttle(self) -> None:
         if self._rate_limiter is not None:
@@ -60,31 +132,61 @@ class KisClient:
             kwargs["transport"] = self._transport
         return httpx.AsyncClient(**kwargs)
 
+    def _token_valid(self, now: datetime) -> bool:
+        return bool(self._token and self._token_expires_at and now < self._token_expires_at)
+
     async def _ensure_token(self) -> str:
         now = datetime.now(timezone.utc)
-        if self._token and self._token_expires_at and now < self._token_expires_at:
+        if self._token_valid(now):
             return self._token
 
-        await self._throttle()
-        async with self._client() as client:
-            r = await client.post(
-                "/oauth2/tokenP",
-                json={
-                    "grant_type": "client_credentials",
-                    "appkey":     self.app_key,
-                    "appsecret":  self.app_secret,
-                },
-            )
-        if r.status_code != 200:
-            raise KisAuthError(f"KIS token endpoint returned {r.status_code}: {r.text[:200]}")
-        data = r.json()
-        token = data.get("access_token")
-        if not token:
-            raise KisAuthError(f"KIS token response missing access_token: {data}")
-        self._token = token
-        expires_in = int(data.get("expires_in", 86400))
-        self._token_expires_at = now + timedelta(seconds=expires_in) - _TOKEN_REFRESH_MARGIN
-        return token
+        # T1⒜: 발급을 락으로 직렬화 — 동시/연속 콜드스타트 호출이 발급을 *1회만* 트리거.
+        async with self._token_lock:
+            now = datetime.now(timezone.utc)
+            if self._token_valid(now):
+                return self._token
+
+            # T1⒞: 디스크 캐시에 유효 토큰이 있으면 재사용(발급 자체 회피, 재기동 포함).
+            cached = _load_cached_token(self.app_key, self.is_paper)
+            if cached and now < cached[1]:
+                self._token, self._token_expires_at = cached
+                return self._token
+
+            # T1⒝: 레이트리밋 보호 창 안이면 KIS 를 때리지 않고 즉시 실패(폭격 차단).
+            if self._token_retry_not_before and now < self._token_retry_not_before:
+                raise KisTokenRateLimitedError(
+                    f"KIS token issuance backing off until {self._token_retry_not_before.isoformat()} (EGW00133)"
+                )
+
+            await self._throttle()
+            async with self._client() as client:
+                r = await client.post(
+                    "/oauth2/tokenP",
+                    json={
+                        "grant_type": "client_credentials",
+                        "appkey":     self.app_key,
+                        "appsecret":  self.app_secret,
+                    },
+                )
+            if r.status_code != 200:
+                body = r.text[:200]
+                if _TOKEN_RATELIMIT_CODE in body or r.status_code == 403:
+                    # 발급 1분당 1회 초과 → 60초 백오프 창 기록(그 전 호출은 KIS 무호출).
+                    self._token_retry_not_before = now + _TOKEN_RATELIMIT_BACKOFF
+                    raise KisTokenRateLimitedError(
+                        f"KIS token rate-limited ({_TOKEN_RATELIMIT_CODE}); backing off 60s"
+                    )
+                raise KisAuthError(f"KIS token endpoint returned {r.status_code}: {body}")
+            data = r.json()
+            token = data.get("access_token")
+            if not token:
+                raise KisAuthError(f"KIS token response missing access_token: {data}")
+            self._token = token
+            expires_in = int(data.get("expires_in", 86400))
+            self._token_expires_at = now + timedelta(seconds=expires_in) - _TOKEN_REFRESH_MARGIN
+            self._token_retry_not_before = None  # 성공 → 백오프 해제
+            _save_cached_token(self.app_key, self.is_paper, token, self._token_expires_at)
+            return token
 
     async def get_price(self, symbol: str) -> dict:
         """Returns raw JSON from KIS quote endpoint. Caller extracts fields."""
