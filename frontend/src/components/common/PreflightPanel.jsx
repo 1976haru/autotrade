@@ -19,7 +19,7 @@ export function PreflightPanel({ api = backendApi }) {
     setLoading(true);
     setFailed(false);
     try {
-      const d = await api.preflight();
+      const d = await api.preflightStatus();
       // ★응답 정합 검증 — items 배열 + all_ok boolean 이 아니면 *비정상 응답*
       //   (프록시 누락으로 SPA HTML/빈 객체가 올 때 등). "0개"로 둔갑 금지 → 실패 처리.
       if (!d || !Array.isArray(d.items) || typeof d.all_ok !== "boolean") {

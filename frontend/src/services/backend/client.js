@@ -162,7 +162,10 @@ export const backendApi = {
   // B1/B2 아침 브리핑 (읽기 전용).
   briefingMarkets:   () => backendFetch("/api/briefing/markets"),
   briefingHeadlines: () => backendFetch("/api/briefing/headlines"),
-  preflight:         () => backendFetch("/api/preflight"),
+  // ★key 명을 `preflightStatus` 로 — 아래(#63)에 이미 `preflight:`(/api/system/preflight,
+  //   EXE smoke)가 있어 같은 객체의 중복 키로 *뒤엣것이 이김* → 홈 출발전점검 패널이
+  //   엉뚱한 /api/system/preflight(다른 shape)를 때려 "불러오지 못했어요"에 갇혔다.
+  preflightStatus:   () => backendFetch("/api/preflight"),
   // 장중 런타임 설정 (동시진입 종목 수 / 종목당 투자금) — 2개 전용.
   runtimeConfigGet:       () => backendFetch("/api/runtime-config"),
   runtimeConfigPut:       (body) =>
