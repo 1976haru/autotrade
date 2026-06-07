@@ -4,13 +4,48 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.core import runtime_config as rc
+from app.db.base import Base
+from app.db.session import get_db
 from app.main import app
+
+
+# ★진단/테스트용 공용 클라이언트 — 모든 설정 PUT 은 반드시 이 헬퍼로.
+#   (1) get_db 를 *인메모리* 로 격리 → 피드 기록이 라이브 DB 로 새지 않음(누수 차단).
+#   (2) _diag_put 이 X-Event-Source: diagnostic 헤더를 강제 → operator 오태그 방지.
+@contextlib.contextmanager
+def _diag_app():
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(eng)
+    TS = sessionmaker(bind=eng)
+
+    def _ov():
+        s = TS()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    app.dependency_overrides[get_db] = _ov
+    try:
+        with TestClient(app) as c:
+            yield c, TS   # TS: 인메모리 세션 팩토리(피드 검증용)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+def _diag_put(c, url, **kw):
+    headers = {**(kw.pop("headers", None) or {}), "X-Event-Source": "diagnostic"}
+    return c.put(url, headers=headers, **kw)
 
 
 @pytest.fixture(autouse=True)
@@ -115,8 +150,10 @@ def test_api_get_runtime_config():
 
 
 def test_api_put_valid_returns_reread_effective():
-    with TestClient(app) as c:
-        r = c.put("/api/runtime-config", json={"max_concurrent_positions": 3, "per_stock_budget": 500_000})
+    # ★_diag_app: get_db 인메모리 격리 → 피드 기록이 라이브 DB 로 누수 0(이 테스트가
+    #   예전엔 라이브 SessionLocal 에 CONFIG_CHANGE 를 새겼던 12:47/12:52/12:53 누수원).
+    with _diag_app() as (c, _):
+        r = _diag_put(c, "/api/runtime-config", json={"max_concurrent_positions": 3, "per_stock_budget": 500_000})
     assert r.status_code == 200
     b = r.json()
     assert b["max_concurrent_positions"]["value"] == 3
@@ -131,16 +168,30 @@ def test_api_put_valid_returns_reread_effective():
     ({"per_stock_budget": 20_000_000}, "종목당"),
 ])
 def test_api_put_out_of_range_400(payload, frag):
-    with TestClient(app) as c:
-        r = c.put("/api/runtime-config", json=payload)
+    with _diag_app() as (c, _):
+        r = _diag_put(c, "/api/runtime-config", json=payload)
     assert r.status_code == 400
     assert frag in r.json()["detail"]
 
 
 def test_api_put_empty_body_400():
-    with TestClient(app) as c:
-        r = c.put("/api/runtime-config", json={})
+    with _diag_app() as (c, _):
+        r = _diag_put(c, "/api/runtime-config", json={})
     assert r.status_code == 400
+
+
+def test_no_raw_config_put_without_diagnostic_helper():
+    """★lint 가드: 테스트 파일에서 설정 PUT 은 반드시 _diag_put(헤더+격리) 경유.
+    raw `_diag_put(c, "/api/runtime-config"...)` 가 새로 들어오면 누수 재발 → 즉시 실패."""
+    import pathlib, re
+    here = pathlib.Path(__file__)
+    src = here.read_text(encoding="utf-8")
+    # 헬퍼 정의/호출(_diag_put) 줄을 제외하고, raw c.put 으로 runtime-config 를 PUT 하는 줄 탐지.
+    bad = []
+    for ln in src.splitlines():
+        if "runtime-config" in ln and re.search(r"\.put\(", ln) and "_diag_put" not in ln and "def _diag_put" not in ln:
+            bad.append(ln.strip()[:80])
+    assert not bad, f"raw config PUT without _diag_put (누수 위험): {bad}"
 
 
 # ── 봇 반영 (mock) / 기존 보유 비접촉 ──────────────────────────────────────────
@@ -252,7 +303,7 @@ def test_api_put_records_activity_event():
     app.dependency_overrides[get_db] = _ov
     try:
         with TestClient(app) as c:
-            r = c.put("/api/runtime-config", json={"per_stock_budget": 500_000})
+            r = _diag_put(c, "/api/runtime-config", json={"per_stock_budget": 500_000})
         assert r.status_code == 200
         with TS() as s:
             entries = query_paper_decision_log(s, limit=10)
@@ -406,7 +457,7 @@ def test_api_profile_blocked_when_bot_running(monkeypatch):
     import app.api.routes_runtime_config as rrc
     monkeypatch.setattr(rrc, "_bot_is_running", lambda: True)
     with TestClient(app) as c:
-        r = c.put("/api/runtime-config/profile", json={"profile": "aggressive"})
+        r = _diag_put(c, "/api/runtime-config/profile", json={"profile": "aggressive"})
     assert r.status_code == 409
     assert "멈춘" in r.json()["detail"]
     assert rc.effective_active_profile() == "balanced"   # 저장 안 됨
@@ -428,7 +479,7 @@ def test_api_profile_clamp_held_when_stopped(monkeypatch):
     app.dependency_overrides[get_db] = _ov
     try:
         with TestClient(app) as c:
-            r = c.put("/api/runtime-config/profile", json={"profile": "aggressive"})
+            r = _diag_put(c, "/api/runtime-config/profile", json={"profile": "aggressive"})
         assert r.status_code == 200
         b = r.json()
         assert b["active_profile"]["value"] == "aggressive"
@@ -445,7 +496,7 @@ def test_api_profile_invalid_400(monkeypatch):
     import app.api.routes_runtime_config as rrc
     monkeypatch.setattr(rrc, "_bot_is_running", lambda: False)
     with TestClient(app) as c:
-        r = c.put("/api/runtime-config/profile", json={"profile": "x"})
+        r = _diag_put(c, "/api/runtime-config/profile", json={"profile": "x"})
     assert r.status_code == 400
 
 
@@ -466,7 +517,7 @@ def test_api_profile_records_activity_feed(monkeypatch):
     app.dependency_overrides[get_db] = _ov
     try:
         with TestClient(app) as c:
-            c.put("/api/runtime-config/profile", json={"profile": "aggressive"})
+            _diag_put(c, "/api/runtime-config/profile", json={"profile": "aggressive"})
         with TS() as s:
             texts = [e.reason for e in query_paper_decision_log(s, limit=10)]
         assert any("운용 성향을 안정적 → 공격적" in t for t in texts)
