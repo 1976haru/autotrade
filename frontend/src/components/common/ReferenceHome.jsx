@@ -30,6 +30,7 @@ import { RiskProfileSwitchCard } from "./RiskProfileSwitchCard";
 import { TechniqueScorecard } from "./TechniqueScorecard";
 import { AgentDashboard } from "./AgentDashboard";
 import { BriefingBoard } from "./BriefingBoard";
+import { PreflightPanel } from "./PreflightPanel";
 
 // 등락 색 — 한국식(+빨강 −파랑). 라이트/다크 모두 대비 확보.
 const UP = "#e5443b", DOWN = "#2563eb";
@@ -259,8 +260,10 @@ export function ReferenceHome({
               아래에 충분한 간격 + 구분선으로 긴급정지 버튼과 분리. */}
           <RuntimeConfigCard config={rtConfig} onSaved={setRtConfig} />
           <div style={{ height: 1, background: "rgba(42,20,24,.2)", margin: "18px 2px 0" }} />
+          {/* V8: 출발 전 점검 — 시작 버튼 바로 위 */}
+          <div style={{ marginTop: 14 }}><PreflightPanel /></div>
           {/* ③ 시작 / 긴급정지 — 같은 줄, 같은 크기. 실제 Auto Paper Loop에 배선 */}
-          <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+          <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
             <button type="button" data-testid="refhome-startstop"
               onClick={running ? handleStop : handleStart} disabled={loop.busy}
               style={{ ...bigBtn, opacity: loop.busy ? 0.6 : 1, background: running ? "#475569" : "#15a05f" }}>

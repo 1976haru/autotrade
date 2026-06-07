@@ -33,6 +33,9 @@ vi.mock("../../services/backend/client", () => ({
     agentCalibration: vi.fn(async () => ({ no_data: true, buckets: [] })),
     agentShadow: vi.fn(async () => ({ no_data: true, tracking_count: 0, track_days: 5 })),
     agentLearning: vi.fn(async () => ({ observations: [{ code: "INSUFFICIENT_SAMPLE", text: "아직 표본이 부족해요 — 판단 보류", evidence: {} }], footer: "이 관찰을 바탕으로 한 설정 변경은 운영자 승인으로 진행돼요." })),
+    preflight: vi.fn(async () => ({ all_ok: true, summary: "출발 준비 완료", items: [
+      { key: "kis", label: "증권사(KIS) 연결", status: "ok", detail: "예수금 100,000,000원" },
+    ] })),
     briefingMarkets: vi.fn(async () => ({ markets: [], note: "미국장 마감 기준 · KST" })),
     briefingHeadlines: vi.fn(async () => ({ headlines: [], source: "연합뉴스 경제", asof_kst: "07:00", available: false })),
     runtimeConfigPut: vi.fn(async (b) => ({
