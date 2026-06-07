@@ -217,6 +217,14 @@ describe("ReferenceHome", () => {
     expect(getByTestId("refhome-balance-failed")).toBeTruthy();
   });
 
+  it("T2: stale 잔고 → 숫자 + 기준시각 명시(가짜 0도 실패도 아님)", () => {
+    const { getByTestId, getByText } = renderHome({
+      portfolio: { ...basePortfolio, ready: true, stale: true, asOf: "09:27" },
+    });
+    expect(getByTestId("refhome-balance-stale").textContent).toContain("09:27");
+    expect(getByText(/56,496,337원/)).toBeTruthy();   // 옛값 숫자 그대로
+  });
+
   it("G2: 보유 종목 칩 — ready 전엔 '—'(가짜 0개 금지)", () => {
     const { getByTestId } = renderHome({
       portfolio: { ...basePortfolio, ready: false, loading: true, positions: [] },

@@ -20,6 +20,9 @@ export function usePortfolio() {
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState("");
   const [ready, setReady]         = useState(false);  // G2: 첫 성공 여부(숫자 표시 게이트)
+  const [stale, setStale]         = useState(false);  // T2: 옛 정상값(레이트리밋) 표시중
+  const [asOf, setAsOf]           = useState(null);   // T2: stale 기준시각(KST HH:MM)
+  const [brokerHealthy, setBrokerHealthy] = useState(true); // T3: KIS 헬스(배너 ③ 판정)
 
   // B4: 앱 로드 시 1회 조회. ★최초 조회가 실패하면(백엔드 미준비) 첫 성공까지 복구
   //   재시도 — 예전엔 deps [] 로 1회만 시도해, 그 1회가 실패하면 새로고침 전까지 영구히
@@ -47,12 +50,21 @@ export function usePortfolio() {
         setError("");
         setReady(true);
         setLoading(false);
+        // T2/T3: stale(레이트리밋 옛값)·기준시각·KIS 헬스 반영. stale 도 ready(숫자 있음).
+        setStale(!!balance?.stale);
+        setAsOf(balance?.as_of_kst || null);
+        setBrokerHealthy(balance?.broker_healthy !== false);
       } catch (e) {
         if (cancelled) return;
         setError(e.message);
+        setBrokerHealthy(false);              // T3: 조회 실패 = KIS 헬스 불량
         setLoading(false);                    // 각 시도 종료(loading 무한대 금지 — 가짜 0
         //   은 ready 게이트로 막는다; loading 은 '최초 시도 진행 중'만 의미).
-        if (attempts < MAX_ATTEMPTS) timer = setTimeout(attempt, 5000); // 첫 성공까지 재시도
+        // T2: 고정 5초 → 지수 백오프(5→10→20→40→60 상한). 토큰 백오프(60s)와 박자 분리.
+        if (attempts < MAX_ATTEMPTS) {
+          const delay = Math.min(60000, 5000 * 2 ** (attempts - 1));
+          timer = setTimeout(attempt, delay);
+        }
       }
     };
     attempt();
@@ -99,6 +111,6 @@ export function usePortfolio() {
   return {
     cash: availableCash, positions,
     invested, totalAsset, equity, totalPnL, totalPnLPct,
-    loading, error, ready,
+    loading, error, ready, stale, asOf, brokerHealthy,
   };
 }

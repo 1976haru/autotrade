@@ -92,11 +92,25 @@ export function ReferenceHome({
 
   useEffect(() => {
     let cancelled = false;
-    backendApi.paperCapitalConfig?.().then((c) => { if (!cancelled) setAlloc(c); }).catch(() => {});
-    // F2: GET 실패는 _failed 플래그로 — null(로딩)·실패·성공 3상태 구분(카드가 임의값 금지).
-    backendApi.runtimeConfigGet?.().then((c) => { if (!cancelled) setRtConfig(c); })
-      .catch(() => { if (!cancelled) setRtConfig({ _failed: true }); });
-    return () => { cancelled = true; };
+    let timer;
+    let attempts = 0;
+    // T2: 일회성 fetch도 G3식 경계된 복구 재시도 — "백엔드 늦게 뜸 → 영구 실패 고착" 차단.
+    //   첫 성공까지 지수 백오프(4→8→16, 최대 4회), 소진 시 _failed(임의값 금지).
+    const loadCfg = () => {
+      attempts += 1;
+      backendApi.paperCapitalConfig?.().then((c) => { if (!cancelled) setAlloc(c); }).catch(() => {});
+      backendApi.runtimeConfigGet?.().then((c) => { if (!cancelled) setRtConfig(c); })
+        .catch(() => {
+          if (cancelled) return;
+          if (attempts < 4) {
+            timer = setTimeout(loadCfg, Math.min(16000, 4000 * 2 ** (attempts - 1)));
+          } else {
+            setRtConfig({ _failed: true });
+          }
+        });
+    };
+    loadCfg();
+    return () => { cancelled = true; clearTimeout(timer); };
   }, []);
 
   useEffect(() => {
@@ -307,6 +321,13 @@ export function ReferenceHome({
           ) : balanceFailed ? (
             <div data-testid="refhome-balance-failed" style={{ fontSize: F.md, fontWeight: 700, color: UP }}>{moneyFailureLine(lastOkHm)}</div>
           ) : (
+            <div>
+            {/* T2: stale(레이트리밋 옛값)은 숫자 + 기준시각 명시 — 가짜 0도, 불필요한 실패도 아님. */}
+            {portfolio?.stale && (
+              <div data-testid="refhome-balance-stale" style={{ fontSize: F.sm, fontWeight: 700, color: "#7a4a00", marginBottom: 8 }}>
+                {portfolio?.asOf || ""} 기준 · 증권사 응답 지연으로 옛 값이에요
+              </div>
+            )}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", rowGap: 18, columnGap: 14 }}>
               <AcctItem bullet={ACCOUNT_BULLET.estimatedAsset} label="추정자산" value={`${fmtKRW(portfolio?.totalAsset ?? 0)}원`} />
               <AcctItem bullet={ACCOUNT_BULLET.deposit} label="예수금" value={`${fmtKRW(portfolio?.cash ?? 0)}원`} />
@@ -315,6 +336,7 @@ export function ReferenceHome({
                 value={realized == null ? "거래 시작 전" : `${signed(realized)}원`} color={realized == null ? C.text3 : pnlColor(realized)} />
               <AcctItem bullet={ACCOUNT_BULLET.returnPct} label="손익률"
                 value={`${(portfolio?.totalPnLPct ?? 0) > 0 ? "+" : ""}${(portfolio?.totalPnLPct ?? 0).toFixed(2)}%`} color={pnlColor(portfolio?.totalPnLPct ?? 0)} />
+            </div>
             </div>
           )}
           {/* P3: 성과 대시보드 — 계좌정보 카드 하단(승률·손익비·순손익 + 봇 vs 지수) */}

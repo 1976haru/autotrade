@@ -128,7 +128,7 @@ function AppShell() {
       {/* #63: 네트워크 단절 알림 — BackendOfflineBanner(backend off)와 의미가
           다름. navigator.onLine 감시. */}
       <OfflineBanner />
-      <BackendOfflineBanner />
+      <BackendOfflineBanner brokerHealthy={portfolio.brokerHealthy} brokerAsOf={portfolio.asOf} />
       {/* #63: 홈화면 설치 안내 — standalone/dismiss 세션에선 노출 X. 새 홈(관제판)에서는
           최상단을 차지하지 않도록 숨기고, 설정(config) 탭으로 이동. */}
       {tab === "config" && <PwaInstallHint />}

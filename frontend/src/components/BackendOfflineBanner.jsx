@@ -245,10 +245,24 @@ function _DbPreparingBanner({ status }) {
 }
 
 
-export function BackendOfflineBanner() {
+export function BackendOfflineBanner({ brokerHealthy = true, brokerAsOf = null } = {}) {
   const { status, error, loading, baseUrl, viaFallback, connectionState }
     = useBackendStatus();
   if (loading) return null;
+
+  // T3 ③: 백엔드는 정상(CONNECTED)인데 증권사(KIS) 응답만 실패 — 별도 문구.
+  //   balance 헬스(brokerHealthy)로 판정. 자동 재시도 중임을 명시.
+  if (connectionState === CONNECTION_STATES.CONNECTED && brokerHealthy === false) {
+    return (
+      <div data-testid="backend-kis-unhealthy-banner" style={{
+        padding: "8px 14px", margin: "6px 12px", background: "#fffbeb",
+        border: "1px solid #fde68a", borderRadius: "var(--r-md)", color: "#7a4a00",
+        fontSize: "var(--fs-sm)", fontWeight: 700,
+      }}>
+        ⚠ 증권사(KIS) 연결에 문제가 있어요{brokerAsOf ? ` (${brokerAsOf})` : ""} — 자동으로 다시 시도 중이에요
+      </div>
+    );
+  }
 
   // fix/step1-backend-autoconnect-final: 단일 진실 = connectionState.
   // 기존 `error` boolean 분기는 *backend 가 살아있어도 첫 시도가 실패하면*
@@ -298,7 +312,20 @@ export function BackendOfflineBanner() {
     return <_DbPreparingBanner status={status} />;
   }
 
-  // CONNECTING: 아직 연결 못 함 (계속 재시도 중).
+  // T3 ②: 한 번 연결됐다가(status 존재) 끊긴 경우 — '연결 대기'가 아니라 '연결 끊김'.
+  if (connectionState === CONNECTION_STATES.CONNECTING && status) {
+    return (
+      <div data-testid="backend-disconnected-banner" style={{
+        padding: "10px 14px", margin: "8px 12px", background: "#fef2f2",
+        border: "1px solid #fecaca", borderRadius: "var(--r-md)", color: "#7f1d1d",
+        fontSize: "var(--fs-sm)", fontWeight: 700,
+      }}>
+        ⚠ 백엔드 연결이 끊겼어요 — 자동으로 다시 연결 중이에요
+      </div>
+    );
+  }
+
+  // CONNECTING: 아직 연결 못 함 (계속 재시도 중) — ① 아직 한 번도 연결 안 됨.
   // EXE/Tauri 데스크톱 모드 — sidecar 자동 spawn 흐름. uvicorn 안내 *0건*.
   if (isDesktopApp()) {
     return <DesktopBanner />;
