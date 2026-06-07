@@ -121,7 +121,7 @@ export function ReferenceHome({
         backendApi.aiAgentDecisions(20),
         backendApi.paperCashState(),
         backendApi.paperDecisionLog(12),
-        backendApi.agentStrategyPerformance(),
+        backendApi.agentStrategyPerformance({ period: "daily" }),  // V3: 오늘 신호만(누적 수백 개 아님)
         backendApi.positionsLive?.(),   // M3: 기존 폴링에 편승(신규 폴링 0)
       ]);
       if (cancelled) return;
@@ -403,7 +403,8 @@ export function ReferenceHome({
                 style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 6px", cursor: "pointer", fontFamily: "inherit", textAlign: "center" }}>
                 <div style={{ fontSize: F.md, fontWeight: 800, color: C.text }}>{s.label}</div>
                 <div style={{ fontSize: F.sm, color: C.text2, marginTop: 4 }}>
-                  {stratDataAvailable ? `신호 ${s.signals}개` : "집계 전"}
+                  {/* V3: 휴장일엔 "휴장"(누적 신호 수백 개 오표기 금지), 평일 데이터 있으면 오늘 신호 수. */}
+                  {stratReport?.market_closed_today ? "휴장" : stratDataAvailable ? `신호 ${s.signals}개` : "집계 전"}
                 </div>
                 <div style={{ fontSize: F.sm, marginTop: 2, color: s.verdict.startsWith("매수") ? UP : s.verdict.startsWith("매도") ? DOWN : C.text3 }}>{s.verdict}</div>
               </button>

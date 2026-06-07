@@ -579,8 +579,8 @@ export const backendApi = {
     return backendFetch(`/api/agents/decision-episodes?${qs.toString()}`);
   },
   // P-28: 전략별 성과 대시보드 (read-only, 실 계좌 미사용).
-  agentStrategyPerformance: ({ limit = 500 } = {}) =>
-    backendFetch(`/api/agents/strategy-performance?limit=${limit}`),
+  agentStrategyPerformance: ({ limit = 500, period } = {}) =>
+    backendFetch(`/api/agents/strategy-performance?limit=${limit}${period ? `&period=${encodeURIComponent(period)}` : ""}`),
   // #49 / 6-04: 주문 품질 + 차단 사유 집계 (read-only — 실패율/거절률/부분체결률).
   agentOrderQualityMetrics: ({ limit = 500 } = {}) =>
     backendFetch(`/api/agents/order-quality-metrics?limit=${limit}`),

@@ -1622,6 +1622,7 @@ def review_completed_episodes(
 @router.get("/strategy-performance")
 def strategy_performance(
     limit: int = Query(500, ge=1, le=2000),
+    period: str | None = Query(None),
     db:    _Session = Depends(get_db),
 ) -> dict:
     """ORB / MOMENTUM / GAP / VWAP / Agent Council 전략별 성과 (read-only).
@@ -1629,15 +1630,26 @@ def strategy_performance(
     decision episode(P-21~P-27) 기록의 추정 수익률만 사용 — **실제 계좌 잔고
     미사용**. broker / OrderExecutor / route_order 호출 0건, secret 0건,
     is_live_authorization=False.
+
+    V3: `period=daily` 면 오늘(KST) episode 만 집계 — 홈 '신호 수' 칩이 누적
+    수백 개가 아니라 *오늘* 신호를 보게 한다(휴장일=0). 미지정이면 누적(성과
+    대시보드 호환).
     """
+    from datetime import datetime, timedelta, timezone
     from app.agents.decision_episode import list_episodes
     from app.analytics.strategy_performance import calculate_strategy_performance
-    episodes = list_episodes(db, limit=limit)
+    since = None
+    market_closed_today = False
+    if (period or "").lower() == "daily":
+        kst = timezone(timedelta(hours=9))
+        d = datetime.now(kst).date()
+        market_closed_today = d.weekday() >= 5  # 토/일
+        since = datetime(d.year, d.month, d.day, tzinfo=kst).astimezone(timezone.utc)
+    episodes = list_episodes(db, limit=limit, since=since)
     report = calculate_strategy_performance(episodes)
-    # D3: 집계된 episode 수를 함께 내려, 프론트가 "집계 전(데이터 없음)" 과
-    #   "실제 0 신호" 를 구분하게 한다. EGW00201 등으로 스캔이 무산되면 episode
-    #   가 안 쌓여 decision_count=0 이 되는데, 이는 *진짜 0 신호* 가 아니다.
-    return {**report.to_dict(), "episodes_analyzed": len(episodes)}
+    # D3: 집계 episode 수 → "집계 전(데이터 없음)" vs "실제 0 신호" 구분.
+    return {**report.to_dict(), "episodes_analyzed": len(episodes),
+            "period": period, "market_closed_today": market_closed_today}
 
 
 # ============================================================================

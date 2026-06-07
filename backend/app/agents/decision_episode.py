@@ -343,13 +343,16 @@ def list_episodes(
     limit: int = 20,
     symbol: str | None = None,
     action: str | None = None,
+    since: datetime | None = None,
 ) -> list[dict[str, Any]]:
-    """최근 episode 목록 (최신순). symbol / action AND 필터."""
+    """최근 episode 목록 (최신순). symbol / action / since(created_at>=) AND 필터."""
     stmt = select(AgentDecisionEpisode)
     if symbol:
         stmt = stmt.where(AgentDecisionEpisode.symbol == symbol)
     if action:
         stmt = stmt.where(AgentDecisionEpisode.final_action == action.upper())
+    if since is not None:
+        stmt = stmt.where(AgentDecisionEpisode.created_at >= since)
     stmt = stmt.order_by(AgentDecisionEpisode.created_at.desc()).limit(max(1, int(limit)))
     rows = db.execute(stmt).scalars().all()
     return [episode_to_dict(r) for r in rows]
