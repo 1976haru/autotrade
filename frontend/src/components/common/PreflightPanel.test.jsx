@@ -22,9 +22,16 @@ const issueData = {
 };
 
 describe("PreflightPanel (V8)", () => {
-  it("전부 OK → '출발 준비 완료 ✓'", async () => {
-    const { getByTestId } = render(<PreflightPanel api={{ preflight: vi.fn(async () => okData) }} />);
-    await waitFor(() => expect(getByTestId("preflight-ready")).toBeTruthy());
+  it("P1: all_ok=true → '✅ 출발 준비 완료' (정확 문구), 항목 안내 없음", async () => {
+    const { getByTestId, queryByTestId } = render(<PreflightPanel api={{ preflight: vi.fn(async () => okData) }} />);
+    await waitFor(() => expect(getByTestId("preflight-ready").textContent).toContain("출발 준비 완료"));
+    expect(queryByTestId("preflight-issues")).toBeNull();   // OK면 "확인 필요" 문구 없음
+  });
+
+  it("P1: all_ok=false → '⚠ 확인이 필요한 항목 N개' (N=FAIL/WARN 수)", async () => {
+    const { getByTestId, queryByTestId } = render(<PreflightPanel api={{ preflight: vi.fn(async () => issueData) }} />);
+    await waitFor(() => expect(getByTestId("preflight-issues").textContent).toContain("확인이 필요한 항목 2개"));
+    expect(queryByTestId("preflight-ready")).toBeNull();    // FAIL이면 "준비 완료" 문구 없음
   });
 
   it("FAIL/WARN → 항목별 한국어 안내 자동 표시", async () => {
