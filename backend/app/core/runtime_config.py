@@ -60,14 +60,19 @@ class RuntimeConfigValidationError(ValueError):
 
 
 def _data_dir() -> Path:
-    """sqlite database_url 의 디렉토리 = 데이터 디렉토리. 비-sqlite/파싱 실패 시 ./data."""
+    """sqlite database_url 의 디렉토리 = 데이터 디렉토리. 비-sqlite/파싱 실패 시 ./data.
+
+    ★절대경로로 고정(.resolve()) — database_url 이 CWD-상대(`./data/...`)라 다른 작업
+    디렉토리에서 호출하면 *다른* runtime_overrides.json 을 읽어 effective 가 조용히
+    env 로 원복(피드 기록 없는 상태 변경)되던 구멍을 막는다. DB 파일과 같은 디렉토리."""
     url = str(get_settings().database_url or "")
     if url.startswith("sqlite:///"):
         raw = url[len("sqlite:///"):]
         # sqlite:////abs → '/abs', sqlite:///./data/x.db → './data/x.db'
         p = Path(raw)
-        return (p.parent if p.suffix else p)
-    return Path("./data")
+        d = (p.parent if p.suffix else p)
+        return d.resolve()
+    return Path("./data").resolve()
 
 
 def overrides_path() -> Path:
@@ -232,6 +237,11 @@ def set_runtime_overrides(
             cur[_PROFILE_KEY] = str(active_profile).strip().lower()
         cur["updated_at"] = now.isoformat()
         _persist(cur)
+        # 가시성: override 가 저장된 *절대 경로* 를 로그로 — 다음 기동이 다른 경로를
+        #   읽어 조용히 env 로 원복되면 로그 대조로 즉시 진단 가능.
+        _log.info("[runtime_config] override persisted to %s (mc=%s bud=%s profile=%s)",
+                  overrides_path(), cur.get("max_concurrent_positions"),
+                  cur.get("per_stock_budget"), cur.get(_PROFILE_KEY))
         global _cache
         _cache = cur
     after = {

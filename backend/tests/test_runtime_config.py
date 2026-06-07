@@ -470,3 +470,16 @@ def test_api_profile_records_activity_feed(monkeypatch):
         assert any("운용 성향을 안정적 → 공격적" in t for t in texts)
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+def test_overrides_path_is_absolute_cwd_independent(monkeypatch):
+    # ★CWD-상대 database_url 이라도 overrides_path 는 절대경로(다른 CWD 호출이 다른
+    #   파일을 보지 않게 — 기록 없는 원복 방지).
+    import app.core.runtime_config as _rc
+    from app.core.config import get_settings
+    # _tmp_overrides autouse 가 overrides_path 를 패치하므로 _data_dir 를 직접 검증.
+    monkeypatch.setattr(_rc, "overrides_path", _rc.overrides_path)  # noop(명시)
+    s = get_settings()
+    if str(s.database_url or "").startswith("sqlite:///"):
+        d = _rc._data_dir()
+        assert d.is_absolute(), f"_data_dir must be absolute, got {d}"
