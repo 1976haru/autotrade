@@ -306,3 +306,38 @@ def test_setup_logging_returns_path_or_none(tmp_path, monkeypatch):
     p = launcher._setup_logging()
     # path 가 None 일 수도 (OSError) 정상 path 일 수도. 둘 다 허용.
     assert p is None or isinstance(p, pathlib.Path)
+
+
+# ── A1: DB 경로 절대화(CWD 독립) ──────────────────────────────────────────────
+
+def test_anchor_relative_db_to_absolute(monkeypatch):
+    import logging
+    import app_desktop_launcher as L
+    log = logging.getLogger("t")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(L.sys, "frozen", False, raising=False)
+    L._anchor_relative_db_to_absolute(log)
+    from pathlib import Path
+    url = os.environ.get("DATABASE_URL")
+    assert url and url.startswith("sqlite:///")
+    p = url[len("sqlite:///"):]
+    assert Path(p).is_absolute()                       # 절대경로 고정
+    assert p.replace("\\", "/").endswith("backend/data/auto_trader.db")
+
+
+def test_anchor_skips_already_absolute(monkeypatch):
+    import logging
+    import app_desktop_launcher as L
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///C:/abs/auto_trader.db")
+    monkeypatch.setattr(L.sys, "frozen", False, raising=False)
+    L._anchor_relative_db_to_absolute(logging.getLogger("t"))
+    assert os.environ["DATABASE_URL"] == "sqlite:///C:/abs/auto_trader.db"  # 불변
+
+
+def test_anchor_skips_when_frozen(monkeypatch):
+    import logging
+    import app_desktop_launcher as L
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///./data/auto_trader.db")
+    monkeypatch.setattr(L.sys, "frozen", True, raising=False)
+    L._anchor_relative_db_to_absolute(logging.getLogger("t"))
+    assert os.environ["DATABASE_URL"] == "sqlite:///./data/auto_trader.db"  # frozen 은 건너뜀

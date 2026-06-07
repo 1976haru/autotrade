@@ -101,6 +101,34 @@ def resolve_env_path() -> Path | None:
     return None
 
 
+def _anchor_relative_db_to_absolute(log: logging.Logger) -> None:
+    """★A1: DATABASE_URL 이 *상대* sqlite 경로면 런처 기준 *절대경로* 로 고정한다.
+
+    `sqlite:///./data/auto_trader.db` 는 CWD-상대라, 다른 작업 디렉토리에서 기동하면
+    *다른* DB(피드·보유·episode 분리)를 열게 된다. override·토큰캐시는 이미 %APPDATA%
+    절대경로지만 DB 는 그렇지 않았다(스트레스 A1 발견). 여기서 런처 파일(backend/)
+    기준으로 절대화 → 어느 CWD 에서 기동해도 *같은* DB(backend/data/auto_trader.db).
+    **데이터 이전 0**(파일 그대로, 경로만 절대화). frozen(PyInstaller)은 __file__ 이
+    임시 추출 경로라 건너뛴다(별도 패키징 경로, 이번 범위 밖)."""
+    try:
+        if getattr(sys, "frozen", False):
+            return
+        cur = os.environ.get("DATABASE_URL") or "sqlite:///./data/auto_trader.db"
+        if not cur.startswith("sqlite:///"):
+            return
+        raw = cur[len("sqlite:///"):]
+        if Path(raw).is_absolute():
+            log.info("database already absolute: %s", cur)
+            return
+        base = Path(__file__).resolve().parent  # backend/
+        abs_db = (base / raw).resolve()
+        os.environ["DATABASE_URL"] = "sqlite:///" + abs_db.as_posix()
+        log.info("database anchored (CWD-independent absolute): %s",
+                 os.environ["DATABASE_URL"])
+    except Exception as exc:  # noqa: BLE001 — 실패해도 기존 동작 유지(raise 금지)
+        log.warning("database anchor skipped: %s", exc)
+
+
 def _key_fingerprint(value: str) -> str:
     """Secret 원문 대신 비교/로깅용 지문 (sha256 앞 12hex). 빈 값은 빈 문자열."""
     v = (value or "").strip()
@@ -332,6 +360,10 @@ def load_env_via_dotenv(
                      key, os.environ.get(key, ""), override)
         else:
             log.info("env: loaded key=%s (override=%s)", key, override)
+
+    # ★A1: DB 경로를 절대화(CWD 독립) — cache_clear 직전에 해야 다음 get_settings 가
+    #   절대 DATABASE_URL 을 읽는다.
+    _anchor_relative_db_to_absolute(log)
 
     # Settings cache 강제 invalidate — uvicorn 이 app.main 을 import 하기 *전*
     # 에 호출되어야 함. import 후 lru_cache 가 빈 Settings 를 캐싱하면 endpoint
