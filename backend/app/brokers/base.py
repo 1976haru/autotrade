@@ -33,6 +33,7 @@ class Position(BaseModel):
     quantity: int
     avg_price: int
     market_price: int
+    name: str | None = None   # V4: KIS 잔고 응답의 종목명(prdt_name). 없으면 None.
 
 
 class OrderRequest(BaseModel):

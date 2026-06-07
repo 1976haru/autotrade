@@ -232,6 +232,7 @@ class KisBrokerAdapter(BrokerAdapter):
                 quantity=qty,
                 avg_price=int(float(item.get("pchs_avg_pric", "0") or "0")),
                 market_price=int(item.get("prpr", "0") or "0"),
+                name=(item.get("prdt_name") or "").strip() or None,  # V4: KIS 종목명
             ))
         return positions
 

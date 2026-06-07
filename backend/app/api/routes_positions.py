@@ -95,7 +95,9 @@ async def get_live_positions(
         in_progress = _symbol_has_open_sell_today(db, p.symbol, now)
         out.append({
             "symbol":       p.symbol,
-            "name":         _resolve_name(p.symbol),  # None 이면 프론트가 해석
+            # V4: KIS 잔고 응답의 종목명(prdt_name) 우선 → 정적 맵 → None(프론트 해석).
+            #   지어내기 금지: KIS 가 주면 그 이름, 없으면 코드 유지.
+            "name":         (getattr(p, "name", None) or _resolve_name(p.symbol)),
             "quantity":     qty,
             "avg_price":    avg or None,
             "market_price": mkt or None,

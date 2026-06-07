@@ -94,6 +94,19 @@ def test_live_positions_enriched_and_no_quote_polling():
         _cleanup()
 
 
+def test_live_positions_uses_kis_name_for_unknown_code():
+    # V4: 정적 맵에 없는 071050 도 KIS 종목명(prdt_name)을 그대로 사용(지어내기 금지).
+    p071 = Position(symbol="071050", quantity=1, avg_price=10000, market_price=11000, name="한국금융지주")
+    broker = _FakeBroker([p071])
+    c, _TS, _ = _client(broker)
+    try:
+        r = c.get("/api/positions/live")
+        assert r.status_code == 200
+        assert r.json()["positions"][0]["name"] == "한국금융지주"
+    finally:
+        _cleanup()
+
+
 def test_live_positions_failure_flag_not_empty_list():
     broker = _FakeBroker(raise_positions=True)
     c, _TS, _ = _client(broker)
