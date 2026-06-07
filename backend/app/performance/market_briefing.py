@@ -22,13 +22,14 @@ _log = logging.getLogger("autotrade.briefing")
 _CACHE_TTL_SECONDS = 6 * 3600
 _cache: dict[str, Any] = {"fetched_at": 0.0, "data": None}
 
-# (key, 라벨, KIS 해외 거래소코드 EXCD, 심볼). FX 는 별도 처리(kind=fx).
+# (key, 라벨, yfinance 티커). V5: 소스 = yfinance(운영자 승인) — KIS 해외지수는 모의
+#   호스트에서 차단되어 graceful-fail 만 됐다.
 INSTRUMENTS = [
-    {"key": "sp500",  "label": "S&P500", "kind": "index", "excd": "NAS", "symb": "SPX"},
-    {"key": "nasdaq", "label": "나스닥",  "kind": "index", "excd": "NAS", "symb": "COMP"},
-    {"key": "dow",    "label": "다우",    "kind": "index", "excd": "NYS", "symb": "DJI"},
-    {"key": "sox",    "label": "필라델피아 반도체", "kind": "index", "excd": "NAS", "symb": "SOX"},
-    {"key": "usdkrw", "label": "원달러",  "kind": "fx",    "excd": "",    "symb": "FX@KRW"},
+    {"key": "sp500",  "label": "S&P500", "yf": "^GSPC"},
+    {"key": "nasdaq", "label": "나스닥",  "yf": "^IXIC"},
+    {"key": "dow",    "label": "다우",    "yf": "^DJI"},
+    {"key": "sox",    "label": "필라델피아 반도체", "yf": "^SOX"},
+    {"key": "usdkrw", "label": "원달러",  "yf": "USDKRW=X"},
 ]
 
 
@@ -37,29 +38,31 @@ def _now_hm_kst() -> str:
     return datetime.now(timezone(timedelta(hours=9))).strftime("%H:%M")
 
 
+def _yf_one(ticker: str) -> dict | None:
+    """yfinance fast_info → {value, change_pct}. 동기 호출(스레드에서 실행)."""
+    import yfinance as yf
+    fi = yf.Ticker(ticker).fast_info
+    last = float(getattr(fi, "last_price", None) or fi["lastPrice"])
+    prev = float(getattr(fi, "previous_close", None) or fi["previousClose"])
+    if last and prev:
+        return {"value": last, "change_pct": (last - prev) / prev * 100.0}
+    return None
+
+
 async def _default_fetcher(instruments: list[dict]) -> dict[str, dict]:
-    """KIS 해외지수 per-instrument 조회(공유 limiter 경유). 막히는 칸은 결과에서 누락
-    → 호출자가 available=false 처리. FX/환율 전용 KIS 엔드포인트 미검증 → 현재 누락."""
-    from app.api.deps import get_broker
+    """V5: yfinance per-instrument 조회. 막히는 칸은 결과에서 누락 → available=false."""
+    import asyncio
     out: dict[str, dict] = {}
-    broker = get_broker()
-    client = getattr(broker, "_client", None) or getattr(broker, "client", None)
-    inquire = getattr(client, "inquire_overseas_index", None)
-    if inquire is None:
-        return out
     for ins in instruments:
-        if ins["kind"] != "index":
-            continue  # FX 는 검증된 KIS 엔드포인트 미확보 → graceful-fail
+        ticker = ins.get("yf")
+        if not ticker:
+            continue
         try:
-            raw = await inquire(excd=ins["excd"], symb=ins["symb"])
-            o = (raw or {}).get("output") or {}
-            price = float(o.get("ovrs_nmix_prpr") or o.get("prpr") or 0)
-            chg = float(o.get("prdy_ctrt") or 0)
-            if price:
-                out[ins["key"]] = {"value": price, "change_pct": chg}
+            r = await asyncio.to_thread(_yf_one, ticker)
+            if r:
+                out[ins["key"]] = r
         except Exception as exc:  # noqa: BLE001 — 칸별 격리(전체 실패 아님)
-            _log.warning("[briefing] %s(%s/%s) 해외지수 조회 실패: %s",
-                         ins["key"], ins["excd"], ins["symb"], exc)
+            _log.warning("[briefing] %s(%s) yfinance 조회 실패: %s", ins["key"], ticker, exc)
     return out
 
 
