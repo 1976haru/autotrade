@@ -191,6 +191,16 @@ function _reasonKo(entry) {
   return REASON_KO[code] || null;
 }
 
+// ⑤ 조사 로/으로 — 마지막 글자 받침에 따라. 받침 없음·ㄹ받침 → "로", 그 외 → "으로".
+//   예전엔 항상 "로" 를 붙여 "주문 시간대 아님로"(틀림) 처럼 깨졌다. "한도로"(✓)는 유지.
+function _ro(word) {
+  const ch = String(word || "").slice(-1);
+  const c = ch.charCodeAt(0);
+  if (Number.isNaN(c) || c < 0xac00 || c > 0xd7a3) return "로";
+  const jong = (c - 0xac00) % 28;
+  return jong === 0 || jong === 8 ? "로" : "으로";
+}
+
 /** 장 마감/대기 안내 (현황판 비었을 때). */
 export function marketClosedLine() {
   return "장이 닫혀 있어요 — 다음 장에서 다시 움직여요";
@@ -242,7 +252,7 @@ export function livePanelLine(entry, nameOf = resolveSymbolName) {
     } else {
       // U7: 결정은 났지만 주문 미전송 — *실제 사유* 를 표시(reason_code 매핑).
       //   사유를 모를 때만 "사유 확인 중"(지어내기 금지).
-      const why = reasonKo ? `${reasonKo}로 보류했어요` : "주문은 안 나갔어요 (사유 확인 중)";
+      const why = reasonKo ? `${reasonKo}${_ro(reasonKo)} 보류했어요` : "주문은 안 나갔어요 (사유 확인 중)";
       text = `${name} — ${sig}였지만 ${why}`;
     }
   }

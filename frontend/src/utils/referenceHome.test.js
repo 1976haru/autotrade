@@ -232,6 +232,20 @@ describe("livePanelLine — U7 보류 사유(reason_code)", () => {
     expect(r.text).toContain("일일 주문 한도로 보류했어요");
     expect(r.text).not.toContain("사유 확인 중");
   });
+  it("⑤ 받침 있는 사유 → 조사 '으로'(아님로 깨짐 수정)", () => {
+    const win = livePanelLine({
+      symbol: "005930", decision_action: "SELL", strategy: "MOMENTUM",
+      paper_order_id: null, paper_fill_status: null,
+      reason_code: "KIS_PAPER_ORDER_WINDOW_CLOSED",
+    }, nameOf);
+    expect(win.text).toContain("주문 시간대 아님으로 보류했어요");  // '아님로' 아님
+    expect(win.text).not.toContain("아님로");
+    const closed = livePanelLine({
+      symbol: "005930", decision_action: "SELL", strategy: "MOMENTUM",
+      paper_order_id: null, paper_fill_status: null, reason_code: "MARKET_CLOSED",
+    }, nameOf);
+    expect(closed.text).toContain("장 마감으로 보류했어요");        // 받침 ㅁ → 으로
+  });
   it("주문 미전송 + reason_code 없음 → '사유 확인 중'(지어내기 금지)", () => {
     const r = livePanelLine({
       symbol: "005930", decision_action: "SELL", strategy: "MOMENTUM",
