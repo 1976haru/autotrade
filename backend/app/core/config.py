@@ -196,7 +196,10 @@ class Settings(BaseSettings):
     # 이 1~2 tick 만에 quote 호출 5+회 발사 후 KIS 가 500 응답 → engine 자동중단.
     # 안전 margin 포함 2 req per 1.1s (≈ 1.8 req/s) 로 default 조정. 운영자가
     # 필요 시 KIS_RATE_LIMIT_CALLS / KIS_RATE_LIMIT_WINDOW_SECONDS 로 override.
-    kis_rate_limit_calls:          int   = 2
+    # EGW00201 회귀(2026-06-08, 4,069건): 캡한 1.8/초(2건/1.1s)에서도 KIS 모의가
+    #   거부 → 실한도가 그보다 낮음. 연속 2건 버스트를 없애고(1건/window) ~0.9/초로
+    #   낮춰 모의 실한도 아래로 둔다. (판단로직·주문경로·안전플래그 미접촉.)
+    kis_rate_limit_calls:          int   = 1
     kis_rate_limit_window_seconds: float = 1.1
 
     # EGW00201 후속 (2026-06-02): 다종목 scan 은 동일 tick 안에서 잔고를 종목마다
@@ -206,8 +209,12 @@ class Settings(BaseSettings):
     #   - TTL 은 STALE_PRICE_MAX_AGE_SECONDS(60) 보다 *훨씬* 짧게 둬 시세 신선도를
     #     해치지 않는다(캐시된 Quote 는 원래 조회 timestamp 를 보존 — stale 판정 정직).
     #   - 0 이면 캐싱 비활성(기존 동작). 주문 체결 후에는 balance 캐시를 즉시 무효화.
-    kis_quote_cache_ttl_seconds:   float = 1.5
-    kis_balance_cache_ttl_seconds: float = 5.0
+    #   2026-06-08: TTL(1.5/5s)이 틱 소요시간(~10-20s)보다 짧아 같은 틱 안에서
+    #     만료 → 시세 2.2회/종목·잔고 6.4회/틱 중복 재조회(EGW00201 기여). 틱주기
+    #     (30s)보다는 짧고 stale 가드(60s)보다도 짧은 20s 로 올려 *틱 내* 재조회를
+    #     1회로 묶는다(틱 시작마다 fresh, 다음 틱은 만료되어 다시 fresh).
+    kis_quote_cache_ttl_seconds:   float = 20.0
+    kis_balance_cache_ttl_seconds: float = 20.0
 
     openai_api_key: str = ""
     anthropic_api_key: str = ""
