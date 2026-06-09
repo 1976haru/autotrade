@@ -34,6 +34,10 @@ class Position(BaseModel):
     avg_price: int
     market_price: int
     name: str | None = None   # V4: KIS 잔고 응답의 종목명(prdt_name). 없으면 None.
+    # KIS ord_psbl_qty(주문가능수량). 미결제분 등으로 보유수량(quantity)보다 작을 수
+    # 있다. None=미상(호출자는 quantity 로 간주). 봇 SELL 은 min(quantity, sellable)
+    # 로 캡해 [40240000](주문가능수량 초과)를 피한다.
+    sellable_quantity: int | None = None
 
 
 class OrderRequest(BaseModel):

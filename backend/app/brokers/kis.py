@@ -227,12 +227,20 @@ class KisBrokerAdapter(BrokerAdapter):
             qty = int(item.get("hldg_qty", "0") or "0")
             if qty <= 0:
                 continue
+            # ord_psbl_qty(주문가능수량) — 미결제분 등으로 hldg_qty 보다 작을 수 있다.
+            #   부재/파싱불가 시 None → 호출자는 보유수량으로 간주.
+            _ordp_raw = item.get("ord_psbl_qty")
+            try:
+                ordp = int(_ordp_raw) if _ordp_raw not in (None, "") else None
+            except (TypeError, ValueError):
+                ordp = None
             positions.append(Position(
                 symbol=item.get("pdno", ""),
                 quantity=qty,
                 avg_price=int(float(item.get("pchs_avg_pric", "0") or "0")),
                 market_price=int(item.get("prpr", "0") or "0"),
                 name=(item.get("prdt_name") or "").strip() or None,  # V4: KIS 종목명
+                sellable_quantity=ordp,
             ))
         return positions
 

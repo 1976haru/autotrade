@@ -415,6 +415,32 @@ async def _kis_held_symbols(broker: Any, *, fallback: set[str]) -> set[str]:
     return held
 
 
+async def _kis_held_map(broker: Any, *, fallback: set[str]) -> dict[str, dict[str, int]]:
+    """보유 종목 → {hldg, ord_psbl}. `_kis_held_symbols` 와 동일 소스(get_positions,
+    *단일 호출*)지만 수량을 보존한다 — 봇 SELL 이 보유수량 기준으로 주문하도록.
+
+    조회 실패 시 fallback(오늘 DB net) 심볼만, 수량은 미상(빈 dict) — 이 경우
+    SELL 분기에서 수량 0 으로 간주돼 헛주문 대신 skip 된다(안전). hldg/ord_psbl 은
+    int 로 정규화, ord_psbl 미상(None)이면 hldg 로 간주.
+    """
+    try:
+        if broker is None or not hasattr(broker, "get_positions"):
+            return {s: {} for s in fallback}
+        positions = await broker.get_positions()
+    except Exception:  # noqa: BLE001 — 조회 실패는 스캔을 막지 않음.
+        return {s: {} for s in fallback}
+    out: dict[str, dict[str, int]] = {}
+    for p in (positions or []):
+        sym = str(getattr(p, "symbol", "") or "")
+        hldg = int(getattr(p, "quantity", 0) or 0)
+        if not sym or hldg <= 0:
+            continue
+        _sell = getattr(p, "sellable_quantity", None)
+        ordp = int(_sell) if _sell not in (None, "") else hldg
+        out[sym] = {"hldg": hldg, "ord_psbl": max(0, ordp)}
+    return out
+
+
 async def kis_paper_realtime_scan_tick(
     *,
     now: datetime | None = None,
@@ -503,7 +529,10 @@ async def kis_paper_realtime_scan_tick(
         #   held_symbols(보유)는 *KIS 잔고 = 브로커 진실* 에서 — 전일 캐리오버
         #   포지션을 봇이 인식해 청산/중복매수 가드가 올바로 작동하게 한다.
         _db_held, daily_buy_used = _today_kis_paper_buy_state(db, now)
-        held_symbols = await _kis_held_symbols(broker, fallback=_db_held)
+        # ★보유 *수량* 보존(단일 get_positions). SELL 수량 캡에 사용. held_symbols 는
+        #   기존 set-기반 가드용으로 키에서 파생(중복 get_positions 호출 없음).
+        held_map = await _kis_held_map(broker, fallback=_db_held)
+        held_symbols = set(held_map.keys())
 
         if client is None and not _fn_injected:
             # KIS read-only client 가 없으면 실시세 조회 불가 — mock 대체 금지.
@@ -538,9 +567,16 @@ async def kis_paper_realtime_scan_tick(
 
             price = int(quote.price or 0)
             if final == CouncilAction.BUY:
+                # BUY 무변경 — 예산 ÷ 가격(신규 진입 사이징).
                 qty = smoke_qty if smoke else max(1, per_symbol_notional // max(1, price))
             else:
-                qty = smoke_qty if smoke else max(1, per_symbol_notional // max(1, price))
+                # ★SELL 수량 = KIS 보유 기준(예산 아님). min(보유, 주문가능) — 미결제분
+                #   대비. 예산÷가격으로 보내 보유의 3~4배를 주문하던 [40240000] 버그 수정
+                #   (2026-06-09). 수동 매도(hldg_qty 소스)와 동일 소스로 통일.
+                _info = held_map.get(symbol) or {}
+                _hldg = int(_info.get("hldg", 0) or 0)
+                _ordp = int(_info.get("ord_psbl", _hldg) or 0)
+                qty = smoke_qty if smoke else min(_hldg, _ordp)
             notional = price * qty
 
             # ── bridge 사전 가드 (RiskManager 전, BUY 신규 진입에만) ──────────
@@ -565,6 +601,13 @@ async def kis_paper_realtime_scan_tick(
             if final == CouncilAction.SELL and symbol not in held_symbols:
                 skipped.append({"symbol": symbol,
                                 "reason_code": "SELL_NO_HELD_POSITION",
+                                "price_source": "kis"})
+                continue
+            # ★주문가능수량 0(미결제 등) → 헛주문 방지로 skip. (보유는 있으나 오늘
+            #   팔 수 있는 수량이 0이면 broker 로 보내지 않는다.)
+            if final == CouncilAction.SELL and qty < 1:
+                skipped.append({"symbol": symbol,
+                                "reason_code": "SELL_NOT_ORDERABLE",
                                 "price_source": "kis"})
                 continue
 

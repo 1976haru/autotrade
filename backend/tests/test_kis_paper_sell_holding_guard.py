@@ -26,6 +26,7 @@ from app.brokers.kis import KisBrokerAdapter
 from app.db.base import Base
 from app.db.models import OrderAuditLog
 from app.kis_paper.driver_bridge import (
+    _kis_held_map,
     _kis_held_symbols,
     _today_kis_paper_buy_state,
     kis_paper_realtime_scan_tick,
@@ -208,3 +209,56 @@ def test_carryover_kis_holding_not_blocked_as_no_holding(engine):
     ))
     codes = {s.get("reason_code") for s in out["skipped"]}
     assert "SELL_NO_HELD_POSITION" not in codes  # KIS 보유 → '보유없음'으로 안 막힘.
+
+
+# ── S1: _kis_held_map — 보유 *수량* 보존 (SELL 수량 캡용) ──────────────────────
+
+def test_held_map_preserves_hldg_and_ord_psbl():
+    # sellable_quantity(ord_psbl) 가 hldg 보다 작으면 그대로 보존(미결제분).
+    broker = _FakePosBroker([
+        SimpleNamespace(symbol="005935", quantity=4, sellable_quantity=4),
+        SimpleNamespace(symbol="005380", quantity=10, sellable_quantity=3),  # 7주 미결제
+        SimpleNamespace(symbol="000270", quantity=0, sellable_quantity=0),   # 0 → 제외
+    ])
+    m = asyncio.run(_kis_held_map(broker, fallback=set()))
+    assert m["005935"] == {"hldg": 4, "ord_psbl": 4}
+    assert m["005380"] == {"hldg": 10, "ord_psbl": 3}   # 주문가능 3 만 보존
+    assert "000270" not in m
+
+
+def test_held_map_ord_psbl_none_defaults_to_hldg():
+    # sellable_quantity 미상(None) → hldg 로 간주(비-KIS broker 호환).
+    broker = _FakePosBroker([SimpleNamespace(symbol="005930", quantity=3, sellable_quantity=None)])
+    m = asyncio.run(_kis_held_map(broker, fallback=set()))
+    assert m["005930"] == {"hldg": 3, "ord_psbl": 3}
+
+
+def test_held_map_fallback_on_failure_has_no_quantities():
+    # 조회 실패 → fallback 심볼만, 수량 미상(빈 dict) → SELL 분기에서 qty 0 → skip.
+    broker = _FakePosBroker(raise_error=RuntimeError("kis down"))
+    m = asyncio.run(_kis_held_map(broker, fallback={"005930"}))
+    assert m == {"005930": {}}
+    # 빈 info → SELL qty = min(0,0) = 0 → SELL_NOT_ORDERABLE skip (헛주문 방지).
+    info = m["005930"]
+    assert min(int(info.get("hldg", 0) or 0), int(info.get("ord_psbl", 0) or 0)) == 0
+
+
+# ── S2: SELL 주문수량이 보유 기준으로 캡되는지 (스캔 → route_order spy) ──────────
+
+def test_sell_skipped_when_orderable_qty_zero(engine):
+    """주문가능수량 0(미결제 전량) → 헛주문 대신 SELL_NOT_ORDERABLE skip."""
+    Session = sessionmaker(bind=engine)
+
+    async def _route_must_not_call(**kw):
+        raise AssertionError("ord_psbl=0 이면 route_order 호출 0건이어야 함")
+
+    broker = _FakePosBroker([SimpleNamespace(symbol="005935", quantity=4, sellable_quantity=0)])
+    out = asyncio.run(kis_paper_realtime_scan_tick(
+        session_factory=Session, broker=broker, risk=object(),
+        route_order_fn=_route_must_not_call, settings=_scan_settings(),
+        market_input_fn=_sell_input_fn, universe_symbols=["005935"],
+        client=object(), now=OPEN_TIME,
+    ))
+    codes = {s.get("reason_code") for s in out["skipped"]}
+    assert "SELL_NOT_ORDERABLE" in codes or "HOLD_NO_SIGNAL" in codes
+    assert out["broker_order_sent"] is False
