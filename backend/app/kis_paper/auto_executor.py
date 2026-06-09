@@ -180,7 +180,15 @@ class KisPaperAutoResult:
 
 
 def _today_kis_paper_order_count(db: Session, now: datetime) -> int:
-    """오늘(UTC date) KIS 모의 자동주문(trade_reason='kis_paper_auto') 카운트."""
+    """오늘(UTC date) KIS 모의 자동 *BUY* 주문(trade_reason='kis_paper_auto') 카운트.
+
+    ★일일 주문 *횟수* 한도(max_orders_per_day)는 *신규 진입(BUY)에만* 적용된다
+    (auto_permission 게이트가 side==BUY 에서만 차단). 따라서 카운트도 BUY 만 세야
+    한다 — 예전엔 BUY+SELL 전부 세어, 실패/청산 SELL 이 BUY 횟수 예산을 소진시켜
+    BUY 를 전량 차단했다(2026-06-09: 실패 SELL 250건이 카운트를 10 초과로 부풀려
+    BUY 1,046건 차단). A수정(SELL 한도 면제) 정신과 정합 — SELL 은 횟수 예산을
+    소진하지 않는다.
+    """
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     try:
         return (
@@ -188,6 +196,7 @@ def _today_kis_paper_order_count(db: Session, now: datetime) -> int:
             .filter(OrderAuditLog.trade_reason == "kis_paper_auto")
             .filter(OrderAuditLog.created_at >= start)
             .filter(OrderAuditLog.executed.is_(True))
+            .filter(OrderAuditLog.side == "BUY")   # ★BUY 만 — SELL 은 횟수 면제(A수정 정합)
             .count()
         )
     except Exception:  # noqa: BLE001

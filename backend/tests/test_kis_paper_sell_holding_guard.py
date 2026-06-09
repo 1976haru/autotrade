@@ -262,3 +262,23 @@ def test_sell_skipped_when_orderable_qty_zero(engine):
     codes = {s.get("reason_code") for s in out["skipped"]}
     assert "SELL_NOT_ORDERABLE" in codes or "HOLD_NO_SIGNAL" in codes
     assert out["broker_order_sent"] is False
+
+
+# ── ③: 일일 주문 횟수 카운트는 BUY 만 (SELL 이 BUY 예산 소진 방지) ──────────────
+
+def test_order_count_buy_only_excludes_sell(engine):
+    """★카운트 버그 수정: SELL(실패 포함)은 일일 *횟수* 한도 카운트에서 제외.
+
+    예전엔 BUY+SELL 전부 세어, 실패 SELL 250건이 카운트를 부풀려 BUY 횟수한도(10)를
+    소진→BUY 전량 차단(2026-06-09). 이제 BUY 만 센다(A수정 정신과 정합).
+    """
+    from app.kis_paper.auto_executor import _today_kis_paper_order_count
+    Session = sessionmaker(bind=engine)
+    db = Session()
+    _add_order(db, symbol="005930", side="BUY", qty=1)
+    _add_order(db, symbol="000270", side="BUY", qty=1)
+    _add_order(db, symbol="005935", side="SELL", qty=4)                          # SELL → 제외
+    _add_order(db, symbol="005935", side="SELL", qty=4, broker_status="REJECTED")  # 실패 SELL → 제외
+    db.commit()
+    n = _today_kis_paper_order_count(db, OPEN_TIME)
+    assert n == 2   # BUY 2건만 (SELL 2건은 횟수 예산 소진 안 함)
