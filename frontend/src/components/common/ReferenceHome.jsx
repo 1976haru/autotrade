@@ -58,6 +58,7 @@ export function ReferenceHome({
   const [latestAi, setLatestAi] = useState(null);
   const [cashState, setCashState] = useState(null);
   const [alloc, setAlloc] = useState(null);
+  const [perf, setPerf] = useState(null);   // W1: /api/performance(daily) FIFO 승률 — 미니KPI 단일 소스
   const [logEntries, setLogEntries] = useState(null);
   const [stratReport, setStratReport] = useState(null); // Agent Council 전략별 카운트
   const [lastOkHm, setLastOkHm] = useState(null);
@@ -117,15 +118,17 @@ export function ReferenceHome({
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      const [aud, dec, cs, log, strat, pos] = await Promise.allSettled([
+      const [aud, dec, cs, log, strat, pos, perfRes] = await Promise.allSettled([
         backendApi.listOrderAudits({ limit: 50 }),
         backendApi.aiAgentDecisions(20),
         backendApi.paperCashState(),
         backendApi.paperDecisionLog(12),
         backendApi.agentStrategyPerformance({ period: "daily" }),  // V3: 오늘 신호만(누적 수백 개 아님)
         backendApi.positionsLive?.(),   // M3: 기존 폴링에 편승(신규 폴링 0)
+        backendApi.performanceGet?.({ period: "daily" }),  // W1: 승률 단일 소스(FIFO 청산) — 성과카드와 동일
       ]);
       if (cancelled) return;
+      if (perfRes.status === "fulfilled" && perfRes.value) setPerf(perfRes.value);
       // F1: 조회 실패(rejected)는 *실패 플래그*로 — null 로 두면 카드가 '보유 0'으로
       //   둔갑한다(실패 ≠ 빈 목록). available=false 면 카드가 '불러오기 실패' 분기.
       setLivePos(pos.status === "fulfilled" && pos.value ? pos.value : { available: false, positions: [] });
@@ -160,8 +163,10 @@ export function ReferenceHome({
   // D3: 집계된 episode 가 0 이면 "집계 전(데이터 없음)" — EGW00201 등으로 스캔이
   //   무산돼 신호 0 이 된 경우와 *진짜 0 신호* 를 구분(코스메틱 0 으로 덮지 않음).
   const stratDataAvailable = Number(stratReport?.episodes_analyzed ?? 0) > 0;
-  const kpi = miniKpis({ cashState, today });
-  const buyMax = alloc?.daily_buy_limit_krw ?? 3_000_000;
+  const kpi = miniKpis({ cashState, today, perf });
+  // W2: 일일 매수 한도는 runtime-config 실효값(SSOT, config 에서 읽음) 우선 — 옛
+  //   capital-config(alloc)·하드코딩 3,000,000 폴백은 effective 미로딩 시에만.
+  const buyMax = rtConfig?.daily_buy_limit_krw ?? alloc?.daily_buy_limit_krw ?? 3_000_000;
   const prog = dailyProgress({ orders, today, buyMaxKrw: buyMax });
   const balanceFailed = !!portfolio?.error;
   const masked = maskAccountNo(accountNo);
@@ -338,7 +343,9 @@ export function ReferenceHome({
               <AcctItem bullet={ACCOUNT_BULLET.stockValue} label="주식평가금액" value={`${fmtKRW(portfolio?.invested ?? 0)}원`} />
               <AcctItem bullet={ACCOUNT_BULLET.realized} label="실현손익"
                 value={realized == null ? "거래 시작 전" : `${signed(realized)}원`} color={realized == null ? C.text3 : pnlColor(realized)} />
-              <AcctItem bullet={ACCOUNT_BULLET.returnPct} label="손익률"
+              {/* W4: 이 비율은 *현재 보유* 마크투마켓(평가손익률, 미실현) — 위 '실현손익'
+                  (청산 라운드트립)과 다른 지표라 라벨을 명확히. 부호는 값 그대로. */}
+              <AcctItem bullet={ACCOUNT_BULLET.returnPct} label="평가손익률"
                 value={`${(portfolio?.totalPnLPct ?? 0) > 0 ? "+" : ""}${(portfolio?.totalPnLPct ?? 0).toFixed(2)}%`} color={pnlColor(portfolio?.totalPnLPct ?? 0)} />
             </div>
             </div>

@@ -281,24 +281,35 @@ export function groupLiveLines(lines) {
 
 // ── 미니 KPI (오늘 실현손익 | 승률 | 체결률) — 실체결 기준만 ──────────────────
 /**
- * @param {{cashState, today}} args  cashState=cash-state 응답, today=summarizeTodayOrders
+ * @param {{cashState, today, perf}} args  cashState=cash-state, today=summarizeTodayOrders,
+ *   perf=/api/performance(daily) FIFO 청산 라운드트립 성과(win_count/loss_count/win_rate).
  * @returns {{realizedText, realizedRaw, winRateText, fillRateText}}
  */
-export function miniKpis({ cashState, today } = {}) {
+export function miniKpis({ cashState, today, perf } = {}) {
   const rawRealized = cashState ? (cashState.realized_pnl_krw ?? null) : null;
   const oc = today?.orderCount ?? 0;
   const fc = today?.filledCount ?? 0;
   const hasFills = fc > 0;
   // ★체결이 있으면 '거래 시작 전'이 아니다 — 실현손익(청산손익)을 모르면 0원으로 표기.
   const realizedRaw = rawRealized != null ? rawRealized : (hasFills ? 0 : null);
+  // W1: 승률은 *PerformanceCard 와 동일한* FIFO 청산 라운드트립(/api/performance)에서.
+  //   청산이 1건이라도 있으면 "11% (1승 8패)"(성과카드와 동일 포맷·소스), 0건이면
+  //   '청산 거래 없음'(체결은 있으나 청산 라운드트립 0), 체결 0이면 '거래 시작 전'.
+  const wins = Number(perf?.win_count ?? 0);
+  const losses = Number(perf?.loss_count ?? 0);
+  const closed = wins + losses;
+  let winRateText;
+  if (perf && perf.win_rate != null && closed > 0) {
+    winRateText = `${Math.round(perf.win_rate * 100)}% (${wins}승 ${losses}패)`;
+  } else {
+    winRateText = hasFills ? "청산 거래 없음" : "거래 시작 전";
+  }
   return {
     realizedRaw,
     realizedText: realizedRaw == null
       ? "거래 시작 전"
       : `${realizedRaw > 0 ? "+" : ""}${realizedRaw.toLocaleString("ko-KR")}원`,
-    // ★승률은 청산(매도 체결)로 손익이 확정돼야 계산 가능. 체결은 있으나 청산손익
-    //   데이터가 없으면 '청산 거래 없음'(체결됐으니 '거래 시작 전'은 틀림).
-    winRateText: hasFills ? "청산 거래 없음" : "거래 시작 전",
+    winRateText,
     fillRateText: oc > 0 ? `${Math.round((fc / oc) * 100)}%` : "거래 시작 전",
   };
 }

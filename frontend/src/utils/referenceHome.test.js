@@ -185,6 +185,24 @@ describe("miniKpis — 실체결 기준, 추정 금지", () => {
     expect(k.winRateText).toBe("청산 거래 없음");
     expect(k.fillRateText).toBe("93%");
   });
+
+  it("W1: perf(FIFO 청산) 있으면 성과카드와 동일 포맷 승률 — 단일 소스", () => {
+    // 성과카드 '11% (1승 8패)' 와 동일 — 미니KPI 도 같은 /api/performance 소스.
+    const k = miniKpis({
+      cashState: { realized_pnl_krw: -212551 },
+      today: { orderCount: 9, filledCount: 9 },
+      perf: { win_rate: 1 / 9, win_count: 1, loss_count: 8 },
+    });
+    expect(k.winRateText).toBe("11% (1승 8패)");
+  });
+
+  it("W1: perf 청산 0건이면 '청산 거래 없음'(체결은 있음)", () => {
+    const k = miniKpis({
+      cashState: null, today: { orderCount: 5, filledCount: 5 },
+      perf: { win_rate: null, win_count: 0, loss_count: 0 },
+    });
+    expect(k.winRateText).toBe("청산 거래 없음");
+  });
 });
 
 describe("dailyProgress — 매수 사용금액 게이지", () => {
