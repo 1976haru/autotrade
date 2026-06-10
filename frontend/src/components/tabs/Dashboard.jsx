@@ -33,8 +33,8 @@ import { MonitoringCard } from "./MonitoringCard";
 // 85: Strategy Selection — 4개 단타 전략 vote → 최적 조합 advisory (주문 아님).
 import { StrategySelectionCard } from "./StrategySelectionCard";
 import { useStrategySelection } from "../../store/useStrategySelection";
-// 89: KIS Paper one-click AI auto-trade test — 한투 모의투자 전용. 실거래 0건.
-import { KisPaperOneClickTestCard } from "./KisPaperOneClickTestCard";
+// E2(2026-06-10): KisPaperOneClickTestCard 는 홈 개편으로 Dashboard 에서 빠짐(고아 import
+//   제거). 컴포넌트 파일·자체 테스트는 보존(나중에 다시 배치 가능).
 import { AutoPaperLoopCard } from "./AutoPaperLoopCard";
 import { AgentCouncilVoteCard } from "./AgentCouncilVoteCard";
 import { PortfolioCard } from "../common/PortfolioCard";
