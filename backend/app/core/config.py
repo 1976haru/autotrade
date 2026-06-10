@@ -136,7 +136,10 @@ class Settings(BaseSettings):
     kis_paper_auto_max_order_notional: int = 1_000_000
     # 주문 허용 시간창 (KST "HH:MM"). 장 시작 직후/마감 직전 변동성 회피.
     kis_paper_auto_order_window_start: str = "09:05"
-    kis_paper_auto_order_window_end:   str = "14:50"
+    # E1(2026-06-10): 14:50→15:20 — 동시호가(15:20~30) 직전까지 연속매매 허용(하루 승인).
+    #   auto_permission 윈도 게이트 *코드는 미수정*, 설정값만. 15:20 이후 신규 진입은
+    #   청산 기회가 짧을 수 있음(동시호가/익일) — 설정 성격으로 인지.
+    kis_paper_auto_order_window_end:   str = "15:20"
     # 신호 품질 최소 기준 (자동주문 진입 게이트).
     kis_paper_auto_min_confidence:    float = 0.6   # 0~1
     kis_paper_auto_min_quality_score: int   = 60    # 0~100
