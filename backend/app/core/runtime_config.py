@@ -37,13 +37,17 @@ _log = logging.getLogger("autotrade.runtime_config")
 
 # 이 기능으로 바꿀 수 있는 *유일한* 2개 키 — 화이트리스트(다른 키 저장 거부).
 _INT_KEYS = ("max_concurrent_positions", "per_stock_budget")
+# C1(2026-06-10): 손절/익절 % 도 런타임 오버라이드 대상(양수 magnitude — 손절 2.0=−2%).
+_FLOAT_KEYS = ("stop_loss_pct", "take_profit_pct")
 _PROFILE_KEY = "active_profile"
-# 화이트리스트(이 3개 외 키 저장 거부). 안전 플래그/손절/익절/일일한도/confidence 미포함.
-_OVERRIDE_KEYS = (*_INT_KEYS, _PROFILE_KEY)
+# 화이트리스트(이 키들 외 저장 거부). 안전 플래그/일일한도/confidence 미포함.
+_OVERRIDE_KEYS = (*_INT_KEYS, *_FLOAT_KEYS, _PROFILE_KEY)
 
 # 검증 범위 (서버 측 필수 — 프론트 검증만으로 불충분).
 MAX_CONCURRENT_MIN, MAX_CONCURRENT_MAX = 1, 10
 PER_STOCK_BUDGET_MIN, PER_STOCK_BUDGET_MAX = 100_000, 10_000_000  # 10만 ~ 1,000만 원
+STOP_LOSS_PCT_MIN, STOP_LOSS_PCT_MAX = 0.5, 10.0     # 손절 -0.5% ~ -10% (magnitude)
+TAKE_PROFIT_PCT_MIN, TAKE_PROFIT_PCT_MAX = 0.5, 20.0  # 익절 +0.5% ~ +20%
 
 # S1: AI 운용 성향 — 런타임 전환 대상(보수/안정/공격).
 VALID_PROFILES = ("conservative", "balanced", "aggressive")
@@ -128,6 +132,9 @@ def _load() -> dict[str, Any]:
         for k in _INT_KEYS:
             if k in raw and raw[k] is not None:
                 clean[k] = int(raw[k])
+        for k in _FLOAT_KEYS:
+            if k in raw and raw[k] is not None:
+                clean[k] = float(raw[k])
         # active_profile 은 문자열 — 유효값만 수용(그 외 무시 → env 기본값 폴백).
         prof = raw.get(_PROFILE_KEY)
         if isinstance(prof, str) and prof.strip().lower() in VALID_PROFILES:
@@ -180,6 +187,24 @@ def effective_active_profile() -> str:
     return DEFAULT_PROFILE
 
 
+def effective_stop_loss_pct() -> float:
+    """손절 % (양수 magnitude, 2.0=−2%) — 런타임 오버라이드 > config 기본.
+    ★봇 council 이 *매 사이클* 이 getter 로 읽어 신규 진입 + 보유 포지션 청산
+    판단에 반영(profile 무관 단일 진실, 재시작 불요)."""
+    ov = _load().get("stop_loss_pct")
+    if ov is not None:
+        return float(ov)
+    return float(getattr(get_settings(), "kis_paper_default_stop_loss_pct", 2.0))
+
+
+def effective_take_profit_pct() -> float:
+    """익절 % (양수 magnitude, 3.5=+3.5%) — 런타임 오버라이드 > config 기본."""
+    ov = _load().get("take_profit_pct")
+    if ov is not None:
+        return float(ov)
+    return float(getattr(get_settings(), "kis_paper_default_take_profit_pct", 3.5))
+
+
 def _source(key: str) -> str:
     return "override" if _load().get(key) is not None else "env"
 
@@ -207,6 +232,16 @@ def get_runtime_config() -> dict[str, Any]:
             "source": _source("per_stock_budget"),
             "min":    PER_STOCK_BUDGET_MIN, "max": PER_STOCK_BUDGET_MAX,
         },
+        "stop_loss_pct": {
+            "value":  effective_stop_loss_pct(),
+            "source": _source("stop_loss_pct"),
+            "min":    STOP_LOSS_PCT_MIN, "max": STOP_LOSS_PCT_MAX,
+        },
+        "take_profit_pct": {
+            "value":  effective_take_profit_pct(),
+            "source": _source("take_profit_pct"),
+            "min":    TAKE_PROFIT_PCT_MIN, "max": TAKE_PROFIT_PCT_MAX,
+        },
         # 충돌 경고용 — 일일 매수 한도(하드코딩 금지: config 에서 읽음).
         "daily_buy_limit_krw": int(getattr(get_settings(), "kis_paper_daily_buy_limit_krw", 3_000_000)),
         "active_profile": {
@@ -221,7 +256,9 @@ def get_runtime_config() -> dict[str, Any]:
 
 
 def _validate(max_concurrent_positions: int | None, per_stock_budget: int | None,
-              active_profile: str | None = None) -> None:
+              active_profile: str | None = None,
+              stop_loss_pct: float | None = None,
+              take_profit_pct: float | None = None) -> None:
     if max_concurrent_positions is not None:
         v = int(max_concurrent_positions)
         if not (MAX_CONCURRENT_MIN <= v <= MAX_CONCURRENT_MAX):
@@ -233,6 +270,24 @@ def _validate(max_concurrent_positions: int | None, per_stock_budget: int | None
         if not (PER_STOCK_BUDGET_MIN <= v <= PER_STOCK_BUDGET_MAX):
             raise RuntimeConfigValidationError(
                 "종목당 투자금은 10만 원 ~ 1,000만 원 사이여야 해요."
+            )
+    if stop_loss_pct is not None:
+        try:
+            v = float(stop_loss_pct)
+        except (TypeError, ValueError):
+            raise RuntimeConfigValidationError("손절 %는 숫자여야 해요.")
+        if not (STOP_LOSS_PCT_MIN <= v <= STOP_LOSS_PCT_MAX):
+            raise RuntimeConfigValidationError(
+                "손절은 -0.5% ~ -10% 사이여야 해요."
+            )
+    if take_profit_pct is not None:
+        try:
+            v = float(take_profit_pct)
+        except (TypeError, ValueError):
+            raise RuntimeConfigValidationError("익절 %는 숫자여야 해요.")
+        if not (TAKE_PROFIT_PCT_MIN <= v <= TAKE_PROFIT_PCT_MAX):
+            raise RuntimeConfigValidationError(
+                "익절은 +0.5% ~ +20% 사이여야 해요."
             )
     if active_profile is not None:
         if str(active_profile).strip().lower() not in VALID_PROFILES:
@@ -246,43 +301,56 @@ def set_runtime_overrides(
     max_concurrent_positions: int | None = None,
     per_stock_budget: int | None = None,
     active_profile: str | None = None,
+    stop_loss_pct: float | None = None,
+    take_profit_pct: float | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """검증 통과 시 저장(파일 + 캐시). *저장 후 다시 읽은 실효값*(get_runtime_config) 반환.
 
     변경 전 값도 함께 반환(`changes`) — 활동 피드 기록에 사용.
     """
-    _validate(max_concurrent_positions, per_stock_budget, active_profile)
+    _validate(max_concurrent_positions, per_stock_budget, active_profile,
+              stop_loss_pct, take_profit_pct)
     now = now or datetime.now(timezone.utc)
     with _lock:
         before = {
             "max_concurrent_positions": effective_max_concurrent_positions(),
             "per_stock_budget": effective_per_stock_budget(),
             "active_profile": effective_active_profile(),
+            "stop_loss_pct": effective_stop_loss_pct(),
+            "take_profit_pct": effective_take_profit_pct(),
         }
         cur = dict(_load())
         if max_concurrent_positions is not None:
             cur["max_concurrent_positions"] = int(max_concurrent_positions)
         if per_stock_budget is not None:
             cur["per_stock_budget"] = int(per_stock_budget)
+        if stop_loss_pct is not None:
+            cur["stop_loss_pct"] = float(stop_loss_pct)
+        if take_profit_pct is not None:
+            cur["take_profit_pct"] = float(take_profit_pct)
         if active_profile is not None:
             cur[_PROFILE_KEY] = str(active_profile).strip().lower()
         cur["updated_at"] = now.isoformat()
         _persist(cur)
         # 가시성: override 가 저장된 *절대 경로* 를 로그로 — 다음 기동이 다른 경로를
         #   읽어 조용히 env 로 원복되면 로그 대조로 즉시 진단 가능.
-        _log.info("[runtime_config] override persisted to %s (mc=%s bud=%s profile=%s)",
+        _log.info("[runtime_config] override persisted to %s (mc=%s bud=%s sl=%s tp=%s profile=%s)",
                   overrides_path(), cur.get("max_concurrent_positions"),
-                  cur.get("per_stock_budget"), cur.get(_PROFILE_KEY))
+                  cur.get("per_stock_budget"), cur.get("stop_loss_pct"),
+                  cur.get("take_profit_pct"), cur.get(_PROFILE_KEY))
         global _cache
         _cache = cur
     after = {
         "max_concurrent_positions": effective_max_concurrent_positions(),
         "per_stock_budget": effective_per_stock_budget(),
         "active_profile": effective_active_profile(),
+        "stop_loss_pct": effective_stop_loss_pct(),
+        "take_profit_pct": effective_take_profit_pct(),
     }
     changes: list[dict[str, Any]] = []
-    for key in ("max_concurrent_positions", "per_stock_budget", "active_profile"):
+    for key in ("max_concurrent_positions", "per_stock_budget", "active_profile",
+                "stop_loss_pct", "take_profit_pct"):
         if before[key] != after[key]:
             changes.append({"key": key, "before": before[key], "after": after[key]})
     out = get_runtime_config()

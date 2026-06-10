@@ -27,9 +27,12 @@ router = APIRouter(tags=["runtime-config"])
 
 
 class _RuntimeConfigBody(BaseModel):
-    # 둘 다 optional — 하나만 바꿔도 됨. 서버에서 범위 검증(프론트 검증 불충분).
+    # 모두 optional — 하나만 바꿔도 됨. 서버에서 범위 검증(프론트 검증 불충분).
     max_concurrent_positions: int | None = Field(None)
     per_stock_budget:         int | None = Field(None)
+    # C1(2026-06-10): 손절/익절 % (양수 magnitude — 손절 2.0=−2%).
+    stop_loss_pct:            float | None = Field(None)
+    take_profit_pct:          float | None = Field(None)
 
 
 class _ProfileBody(BaseModel):
@@ -108,15 +111,18 @@ def put_runtime_config_endpoint(
     db: Session = Depends(get_db),
     x_event_source: str = Header("operator"),
 ) -> dict:
-    if body.max_concurrent_positions is None and body.per_stock_budget is None:
+    if (body.max_concurrent_positions is None and body.per_stock_budget is None
+            and body.stop_loss_pct is None and body.take_profit_pct is None):
         raise HTTPException(
             status_code=400,
-            detail="바꿀 값을 하나 이상 보내주세요 (동시진입 종목 수 또는 종목당 투자금).",
+            detail="바꿀 값을 하나 이상 보내주세요 (동시진입 종목 수 / 종목당 투자금 / 손절 / 익절).",
         )
     try:
         result = set_runtime_overrides(
             max_concurrent_positions=body.max_concurrent_positions,
             per_stock_budget=body.per_stock_budget,
+            stop_loss_pct=body.stop_loss_pct,
+            take_profit_pct=body.take_profit_pct,
         )
     except RuntimeConfigValidationError as exc:
         # 일상 한국어 메시지 그대로 400 으로 전달.

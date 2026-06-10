@@ -416,9 +416,12 @@ def evaluate_all_strategies(inp: StrategyMarketInput) -> list[StrategyVote]:
 
 
 def _exit_plan_for(profile: RiskProfile) -> dict[str, Any]:
-    pol = policy_for(profile)
-    sl = round(pol.default_stop_loss_pct * 100, 2)      # % 표기
-    return {"stop_loss_pct": sl, "take_profit_pct": round(sl * 2, 2),
+    # C1(2026-06-10): 손절/익절은 profile 무관 — config + 런타임 오버라이드(effective
+    #   getter, 매 호출 fresh)에서 읽는다. 익절은 손절 2× 가 아니라 독립 값.
+    from app.core.runtime_config import (
+        effective_stop_loss_pct, effective_take_profit_pct)
+    return {"stop_loss_pct": round(effective_stop_loss_pct(), 2),
+            "take_profit_pct": round(effective_take_profit_pct(), 2),
             "trailing_stop": False}
 
 
@@ -541,11 +544,14 @@ def run_agent_council(
     exit_plan: dict[str, Any] = {}
     exit_plan_validation: dict[str, Any] = {}
     if final == CouncilAction.BUY:
-        pol = policy_for(profile)
-        sl_pct = round(pol.default_stop_loss_pct * 100, 2)
+        # C1: 손절/익절 = effective getter(config + 런타임 오버라이드, profile 무관).
+        from app.core.runtime_config import (
+            effective_stop_loss_pct, effective_take_profit_pct)
+        sl_pct = round(effective_stop_loss_pct(), 2)
+        tp_pct = round(effective_take_profit_pct(), 2)
         plan_obj = build_default_exit_plan(
             entry_price=inp.current_price, risk_profile=profile.value,
-            stop_loss_pct=sl_pct, take_profit_pct=round(sl_pct * 2, 2),
+            stop_loss_pct=sl_pct, take_profit_pct=tp_pct,
         )
         vres = validate_exit_plan(
             plan_obj.to_dict() if plan_obj is not None else None,
@@ -563,12 +569,16 @@ def run_agent_council(
     pos_sell_reason: str | None = None
     if position is not None and held_position:
         from app.agents.position_context import infer_position_sell_reason
-        _pol = policy_for(profile)
-        _def_sl_pct = round(_pol.default_stop_loss_pct * 100, 2)
+        # ★C1: 보유 포지션 청산 임계값도 effective getter(매 사이클 fresh) — 손절을
+        #   장중 낮추면 *기존 보유* 도 다음 사이클부터 새 임계값으로 청산 판단된다.
+        from app.core.runtime_config import (
+            effective_stop_loss_pct, effective_take_profit_pct)
+        _sl_pct = round(effective_stop_loss_pct(), 2)
+        _tp_pct = round(effective_take_profit_pct(), 2)
         pos_sell_reason = infer_position_sell_reason(
-            position, default_stop_loss_pct=_def_sl_pct,
-            default_take_profit_pct=round(_def_sl_pct * 2, 2),
-            default_trailing_stop_pct=_def_sl_pct)   # 트레일링 default ≈ stop 폭.
+            position, default_stop_loss_pct=_sl_pct,
+            default_take_profit_pct=_tp_pct,
+            default_trailing_stop_pct=_sl_pct)   # 트레일링 default ≈ stop 폭.
         if pos_sell_reason is not None:
             final = CouncilAction.SELL
             reasons.append(f"보유 포지션 청산 트리거({pos_sell_reason}) — SELL")

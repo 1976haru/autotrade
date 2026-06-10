@@ -425,10 +425,32 @@ def test_bot_scan_reads_active_profile_at_council(monkeypatch):
 
 
 def test_overrides_do_not_touch_safety_flags():
-    # 화이트리스트 = 3개(동시진입·종목당·성향)뿐 — 안전 플래그/손절/익절/일일한도/confidence 0.
-    assert set(rc._OVERRIDE_KEYS) == {"max_concurrent_positions", "per_stock_budget", "active_profile"}
+    # 화이트리스트 = 5개(동시진입·종목당·손절·익절·성향) — C1(2026-06-10)에 손절/익절
+    #   추가. 안전 플래그/일일한도/confidence 는 *여전히* 화이트리스트 밖.
+    assert set(rc._OVERRIDE_KEYS) == {
+        "max_concurrent_positions", "per_stock_budget",
+        "stop_loss_pct", "take_profit_pct", "active_profile",
+    }
+    for flag in ("enable_live_trading", "kis_is_paper", "enable_ai_execution"):
+        assert flag not in rc._OVERRIDE_KEYS
     with pytest.raises(TypeError):
         rc.set_runtime_overrides(enable_live_trading=True)  # 받지 않는 인자
+
+
+def test_stop_take_override_roundtrip_and_validation():
+    # 손절/익절 오버라이드 저장 → effective 반영, 범위 밖 RuntimeConfigValidationError.
+    out = rc.set_runtime_overrides(stop_loss_pct=2.0, take_profit_pct=3.5)
+    assert out["stop_loss_pct"]["value"] == 2.0
+    assert out["stop_loss_pct"]["source"] == "override"
+    assert out["take_profit_pct"]["value"] == 3.5
+    assert rc.effective_stop_loss_pct() == 2.0
+    assert rc.effective_take_profit_pct() == 3.5
+    for bad in (0.1, 10.5, -2.0):
+        with pytest.raises(rc.RuntimeConfigValidationError):
+            rc.set_runtime_overrides(stop_loss_pct=bad)
+    for bad in (0.1, 25.0):
+        with pytest.raises(rc.RuntimeConfigValidationError):
+            rc.set_runtime_overrides(take_profit_pct=bad)
 
 
 # ── S1: 성향 런타임 전환 ───────────────────────────────────────────────────────

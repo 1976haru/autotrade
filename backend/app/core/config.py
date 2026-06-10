@@ -151,6 +151,12 @@ class Settings(BaseSettings):
     kis_paper_max_concurrent_positions: int = 5
     kis_paper_per_symbol_notional_krw:  int = 1_000_000
     kis_paper_daily_buy_limit_krw:      int = 3_000_000
+    # 손절/익절 기본 % (양수 magnitude — 손절 2.0=−2%, 익절 3.5=+3.5%). 런타임
+    #   오버라이드(stop_loss_pct/take_profit_pct, %APPDATA% override)로 장중 변경 가능.
+    #   봇 council 이 *매 사이클* effective getter 로 읽어 신규 진입 + 보유 포지션
+    #   청산 판단에 모두 반영(profile 무관 — 단일 진실). 2026-06-10 기본값 하향.
+    kis_paper_default_stop_loss_pct:    float = 2.0
+    kis_paper_default_take_profit_pct:  float = 3.5
     # 1 tick 당 신규 진입 허용 종목 수 (버스트 방지). 0/음수는 1 로 보정.
     kis_paper_max_new_positions_per_tick: int = 1
     # 1 tick 당 KIS 실시세 조회 종목 수 상한 (rate limit 보호). 0 이면 universe 전체.

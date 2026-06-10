@@ -53,9 +53,10 @@ export const CLAUDE_MAX_TOK = 1000;
  *  주기로 충분(백엔드 quote 캐시 TTL 과도 정합). */
 export const PRICE_TICK_MS  = 15000;
 
-/** 자동매매 exit plan 기본값 (손절/익절 %). 봇이 매수한 종목의 기본 청산 계획.
- *  ReferenceHome 히어로 카드의 "손절/익절" 표시에 사용. 표시는 % 정수. */
-export const EXIT_PLAN_DEFAULTS = { stopLossPct: -3, takeProfitPct: 6 };
+/** 손절/익절 *양수 magnitude* 폴백 (손절 2=−2%, 익절 3.5=+3.5%). C1(2026-06-10):
+ *  히어로/카드는 runtime-config 실효값(SSOT)을 우선 읽고, 미로딩 시에만 이 폴백 사용.
+ *  표시 부호는 컴포넌트가 붙인다(손절 -, 익절 +). config 기본값과 일치 유지. */
+export const EXIT_PLAN_DEFAULTS = { stopLossPct: 2, takeProfitPct: 3.5 };
 
 /** 종목당 투자금 / 설정 종목 수 fallback (capital-config 조회 실패 시). */
 export const PAPER_ALLOC_FALLBACK = { perSymbolKrw: 1_000_000, maxSymbols: 5 };

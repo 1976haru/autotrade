@@ -241,8 +241,9 @@ export function ReferenceHome({
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginTop: 14,
             background: "rgba(42,20,24,.16)", borderRadius: 12, padding: "12px 6px" }}>
-            <StatCell k="손절" v={`${EXIT_PLAN_DEFAULTS.stopLossPct}%`} />
-            <StatCell k="익절" v={`+${EXIT_PLAN_DEFAULTS.takeProfitPct}%`} />
+            {/* C1: 손절/익절은 runtime-config 실효값(SSOT). 미로딩 시 config 기본 폴백. */}
+            <StatCell k="손절" v={`-${rtConfig?.stop_loss_pct?.value ?? EXIT_PLAN_DEFAULTS.stopLossPct}%`} testid="refhome-stop-loss" />
+            <StatCell k="익절" v={`+${rtConfig?.take_profit_pct?.value ?? EXIT_PLAN_DEFAULTS.takeProfitPct}%`} testid="refhome-take-profit" />
             <StatCell k="설정 종목 수" v={`${maxSymbols}개`} testid="refhome-max-symbols" />
             <StatCell k="종목당 투자금" v={`${Math.round(perSymbolKrw / 10000)}만원`} />
           </div>

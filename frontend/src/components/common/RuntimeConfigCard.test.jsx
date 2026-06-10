@@ -86,4 +86,35 @@ describe("RuntimeConfigCard (R3/R4)", () => {
       <RuntimeConfigCard config={cfg({ per_stock_budget: { value: 500_000, min: 100_000, max: 10_000_000 } })} api={{}} />);
     expect(queryByTestId("rtcfg-conflict")).toBeNull();
   });
+
+  // ── C1: 손절/익절 스테퍼 ──────────────────────────────────────────────────
+  const cfgSt = (over = {}) => cfg({
+    stop_loss_pct: { value: 2, min: 0.5, max: 10 },
+    take_profit_pct: { value: 3.5, min: 0.5, max: 20 },
+    ...over,
+  });
+
+  it("C1: 손절/익절 스테퍼 표시 + 부호(-/+)", () => {
+    const { getByTestId } = render(<RuntimeConfigCard config={cfgSt()} api={{}} />);
+    expect(getByTestId("rtcfg-sl-value").textContent).toBe("-2%");
+    expect(getByTestId("rtcfg-tp-value").textContent).toBe("+3.5%");
+  });
+
+  it("C1: 손절 변경 저장 → PUT 에 stop_loss_pct 포함 + 보유 적용 안내", async () => {
+    const put = vi.fn(async () => cfgSt({ stop_loss_pct: { value: 2.5, min: 0.5, max: 10 } }));
+    const { getByTestId } = render(<RuntimeConfigCard config={cfgSt()} api={{ runtimeConfigPut: put }} />);
+    fireEvent.click(getByTestId("rtcfg-sl-inc")); // 2 → 2.5
+    fireEvent.click(getByTestId("rtcfg-save"));
+    await waitFor(() => expect(put).toHaveBeenCalledWith({
+      max_concurrent_positions: 5, per_stock_budget: 1_000_000,
+      stop_loss_pct: 2.5, take_profit_pct: 3.5,
+    }));
+    await waitFor(() => expect(getByTestId("rtcfg-note").textContent).toContain("보유 종목에도 적용"));
+  });
+
+  it("C1: 손절/익절 meta 없으면 스테퍼 미표시(구 백엔드 호환)", () => {
+    const { queryByTestId } = render(<RuntimeConfigCard config={cfg()} api={{}} />);
+    expect(queryByTestId("rtcfg-sl-value")).toBeNull();
+  });
+
 });

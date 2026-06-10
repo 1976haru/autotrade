@@ -41,7 +41,21 @@ def _message_ko(change: dict[str, Any]) -> str | None:
         b = _PROFILE_KO.get(str(before), str(before))
         a = _PROFILE_KO.get(str(after), str(after))
         return f"운영자가 운용 성향을 {b} → {a}으로 바꿨어요"
+    if key == "stop_loss_pct":
+        # 손절은 음수 표기(-2%). 저장은 양수 magnitude.
+        return f"운영자가 손절을 -{_pct(before)} → -{_pct(after)}로 바꿨어요"
+    if key == "take_profit_pct":
+        return f"운영자가 익절을 +{_pct(before)} → +{_pct(after)}로 바꿨어요"
     return None
+
+
+def _pct(v: Any) -> str:
+    """2.0 → '2%', 3.5 → '3.5%' (불필요한 소수점 제거)."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    return f"{f:.1f}".rstrip("0").rstrip(".") + "%"
 
 
 def record_runtime_config_changes(db: Session, changes: list[dict[str, Any]],
