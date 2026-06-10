@@ -378,3 +378,23 @@ describe("FEATURE_SHORTCUTS", () => {
     );
   });
 });
+
+describe("miniKpis — C: 실현손익 단일 소스(FIFO)", () => {
+  it("perf 청산 있으면 실현손익 = FIFO net (cash-state 가상값 아님)", () => {
+    const k = miniKpis({
+      cashState: { realized_pnl_krw: -212551 },   // 가상 ledger (불일치)
+      today: { orderCount: 15, filledCount: 15 },
+      perf: { win_rate: 1 / 9, win_count: 1, loss_count: 8, net_pnl_krw: -265446 },
+    });
+    expect(k.realizedRaw).toBe(-265446);          // ★FIFO net (성과카드와 동일)
+    expect(k.realizedText).toContain("-265,446");
+  });
+  it("perf 청산 0건이면 cash-state 폴백", () => {
+    const k = miniKpis({
+      cashState: { realized_pnl_krw: -100 },
+      today: { orderCount: 3, filledCount: 3 },
+      perf: { win_rate: null, win_count: 0, loss_count: 0, net_pnl_krw: 0 },
+    });
+    expect(k.realizedRaw).toBe(-100);             // 청산 0 → FIFO 미사용, cash-state
+  });
+});

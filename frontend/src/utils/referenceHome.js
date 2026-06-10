@@ -286,18 +286,24 @@ export function groupLiveLines(lines) {
  * @returns {{realizedText, realizedRaw, winRateText, fillRateText}}
  */
 export function miniKpis({ cashState, today, perf } = {}) {
-  const rawRealized = cashState ? (cashState.realized_pnl_krw ?? null) : null;
   const oc = today?.orderCount ?? 0;
   const fc = today?.filledCount ?? 0;
   const hasFills = fc > 0;
-  // ★체결이 있으면 '거래 시작 전'이 아니다 — 실현손익(청산손익)을 모르면 0원으로 표기.
-  const realizedRaw = rawRealized != null ? rawRealized : (hasFills ? 0 : null);
   // W1: 승률은 *PerformanceCard 와 동일한* FIFO 청산 라운드트립(/api/performance)에서.
   //   청산이 1건이라도 있으면 "11% (1승 8패)"(성과카드와 동일 포맷·소스), 0건이면
   //   '청산 거래 없음'(체결은 있으나 청산 라운드트립 0), 체결 0이면 '거래 시작 전'.
   const wins = Number(perf?.win_count ?? 0);
   const losses = Number(perf?.loss_count ?? 0);
   const closed = wins + losses;
+  // C(2026-06-10): 실현손익도 승률과 *동일 FIFO 청산 소스*(perf.net_pnl_krw) 우선 —
+  //   cash-state(가상 ledger, -212,551)와 FIFO(-265,446)가 어긋나던 모순 해소.
+  //   청산 라운드트립이 있을 때만 FIFO net, 없으면 cash-state 폴백(없으면 체결 시 0).
+  const fifoNet = (perf && perf.net_pnl_krw != null && closed > 0) ? Number(perf.net_pnl_krw) : null;
+  const rawRealized = fifoNet != null
+    ? fifoNet
+    : (cashState ? (cashState.realized_pnl_krw ?? null) : null);
+  // ★체결이 있으면 '거래 시작 전'이 아니다 — 청산손익을 모르면 0원으로 표기.
+  const realizedRaw = rawRealized != null ? rawRealized : (hasFills ? 0 : null);
   let winRateText;
   if (perf && perf.win_rate != null && closed > 0) {
     winRateText = `${Math.round(perf.win_rate * 100)}% (${wins}승 ${losses}패)`;

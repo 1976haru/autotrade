@@ -27,15 +27,20 @@ def _today_kst() -> datetime:
     return datetime.now(KST)
 
 
-def _count_egw(log_path: Path, code: str) -> int:
+def _count_egw(log_path: Path, code: str, line_prefix: str | None = None) -> int:
+    """code 출현 줄 수. line_prefix(예: '2026-06-10') 주어지면 그 날짜 줄만(자정 무회전
+    로그에서 오늘분만 누적). 멀티라인 traceback 의 EGW 도 같은 줄에 code 가 있으면 카운트."""
     if not log_path.exists():
         return -1  # 로그 없음 표시
     n = 0
     try:
         with log_path.open("r", encoding="utf-8", errors="ignore") as f:
             for line in f:
-                if code in line:
-                    n += 1
+                if code not in line:
+                    continue
+                if line_prefix and not line.startswith(line_prefix):
+                    continue
+                n += 1
     except OSError:
         return -1
     return n
@@ -82,9 +87,17 @@ def main() -> None:
     now = _today_kst()
     date_str = now.strftime("%Y%m%d")
     appdata = os.environ.get("APPDATA") or str(Path.home())
-    log_path = Path(appdata) / "Autotrade" / "logs" / f"backend-{date_str}.log"
-    egw201 = _count_egw(log_path, "EGW00201")
-    egw133 = _count_egw(log_path, "EGW00133")
+    # D(2026-06-10): 백엔드는 기동 시 연 로그 파일에 *회전 없이* 계속 기록한다(자정
+    #   넘어가도 backend-<기동일>.log). 따라서 backend-<오늘>.log 가 아니라 logs/ 의
+    #   *가장 최근 수정* backend-*.log 를 읽어 오늘 누적 EGW 를 본다.
+    logs_dir = Path(appdata) / "Autotrade" / "logs"
+    cands = sorted(logs_dir.glob("backend-*.log"),
+                   key=lambda p: p.stat().st_mtime, reverse=True) if logs_dir.exists() else []
+    log_path = cands[0] if cands else (logs_dir / f"backend-{date_str}.log")
+    # 오늘(KST) 타임스탬프 줄만 세어 누적(다른 날 로그 혼입 방지).
+    today_prefix = now.strftime("%Y-%m-%d")
+    egw201 = _count_egw(log_path, "EGW00201", line_prefix=today_prefix)
+    egw133 = _count_egw(log_path, "EGW00133", line_prefix=today_prefix)
     try:
         st = _order_stats(now)
     except Exception as exc:  # noqa: BLE001 — 측정 실패해도 기록만, 절대 raise/수정 금지
