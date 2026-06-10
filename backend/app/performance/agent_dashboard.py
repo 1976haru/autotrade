@@ -73,19 +73,39 @@ def compute_funnel(db: Session, *, start: date, end: date) -> dict[str, Any]:
         return [{"reason_code": k, "count": v}
                 for k, v in sorted(dd.items(), key=lambda kv: -kv[1])[:n]]
 
+    # W3(2026-06-10): '주문 제출'·'체결' 은 *order_audit_log 하루 누적*(칩과 동일 소스)
+    #   에서 — AgentDecisionLog meta.broker_order_sent/audit_id 링크가 누락돼도 실제
+    #   broker 접수(broker_order_id 발급)·체결(FILLED)을 정직하게 반영(BUY/SELL 무관).
+    #   예전엔 BUY 결정 링크만 봐서 실제 15건 접수·체결이 깔때기에 0 으로 보였다.
+    audit_submitted = 0
+    audit_filled = 0
+    for r in db.query(OrderAuditLog).filter(
+            OrderAuditLog.trade_reason == "kis_paper_auto").all():
+        if not (start <= _kst_date(r.created_at) <= end):
+            continue
+        # 제출 = broker 로 전송된 주문(executed) — 칩의 '오늘 주문'과 동일 모집단.
+        if bool(getattr(r, "executed", False)):
+            audit_submitted += 1
+        if str(r.broker_status or "").upper() == "FILLED":
+            audit_filled += 1
+    n_signal, n_council = len(signal), len(passed)
+    n_submitted = max(len(submitted), audit_submitted)   # 실제 접수 누락 방지
+    n_filled = max(len(filled), audit_filled)
+    _clamp = lambda x: max(0, x)
+
     return {
         "stages": [
-            {"key": "signal",    "label": "신호 발생",    "count": len(signal)},
-            {"key": "council",   "label": "council 통과", "count": len(passed)},
-            {"key": "submitted", "label": "주문 제출",    "count": len(submitted)},
-            {"key": "filled",    "label": "체결",         "count": len(filled)},
+            {"key": "signal",    "label": "신호 발생",    "count": n_signal},
+            {"key": "council",   "label": "council 통과", "count": n_council},
+            {"key": "submitted", "label": "주문 제출",    "count": n_submitted},
+            {"key": "filled",    "label": "체결",         "count": n_filled},
         ],
         "drops": [
-            {"from": "signal", "to": "council",   "count": len(signal) - len(passed),       "reasons": _top(drop_council)},
-            {"from": "council", "to": "submitted", "count": len(passed) - len(submitted),    "reasons": _top(drop_order)},
-            {"from": "submitted", "to": "filled",  "count": len(submitted) - len(filled),    "reasons": _top(drop_fill)},
+            {"from": "signal", "to": "council",   "count": _clamp(n_signal - n_council),    "reasons": _top(drop_council)},
+            {"from": "council", "to": "submitted", "count": _clamp(n_council - n_submitted), "reasons": _top(drop_order)},
+            {"from": "submitted", "to": "filled",  "count": _clamp(n_submitted - n_filled),  "reasons": _top(drop_fill)},
         ],
-        "no_data": len(signal) == 0,
+        "no_data": n_signal == 0 and n_submitted == 0,
         "period_start_kst": start.isoformat(),
         "period_end_kst":   end.isoformat(),
     }

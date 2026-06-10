@@ -170,3 +170,16 @@ def test_learning_silent_when_conditions_unmet(db, monkeypatch):
     out = ad.compute_learning(db, start=date(2026, 6, 5), end=date(2026, 6, 5))
     codes = {o["code"] for o in out["observations"]}
     assert codes == {"INSUFFICIENT_SAMPLE"}   # 억지 관찰 없음
+
+
+def test_funnel_submitted_filled_from_order_audit_daily(db):
+    # ★W3: AgentDecisionLog 링크가 없어도 실제 order_audit 접수·체결이 깔때기에 반영.
+    #   (예: 15건 SELL 접수·체결인데 BUY 결정 링크 0 → 예전엔 깔때기 0, 칩 15 모순.)
+    for p in range(1000, 1015):       # 15건 SELL 체결 (decision 링크 없음)
+        _sell(db, price=p)
+    db.commit()
+    out = compute_funnel(db, start=date(2026, 6, 5), end=date(2026, 6, 5))
+    counts = {s["key"]: s["count"] for s in out["stages"]}
+    assert counts["submitted"] == 15   # order_audit 하루 누적(칩과 동일)
+    assert counts["filled"] == 15
+    assert out["no_data"] is False     # 접수가 있으면 no_data 아님
