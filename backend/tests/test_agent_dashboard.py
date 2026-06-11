@@ -183,3 +183,20 @@ def test_funnel_submitted_filled_from_order_audit_daily(db):
     assert counts["submitted"] == 15   # order_audit 하루 누적(칩과 동일)
     assert counts["filled"] == 15
     assert out["no_data"] is False     # 접수가 있으면 no_data 아님
+
+
+def test_funnel_no_inversion_sell_decisions_with_orders(db):
+    # ★V2: SELL-final 결정(BUY vote 포함) 다수 + 실제 BUY/SELL 주문 체결 →
+    #   통과 0 < 제출 N 역전이 나지 않는다(신호≥통과≥제출≥체결 단조).
+    for _ in range(3):   # 3 SELL-final 결정 (BUY vote 있음 = 실행가능 신호)
+        _decision(db, final="SELL", votes=[{"strategy": "ORB", "signal": "BUY"}])
+    for p in range(1000, 1005):   # 5 BUY 주문 체결
+        _buy(db, price=p)
+    db.commit()
+    out = compute_funnel(db, start=date(2026, 6, 5), end=date(2026, 6, 5))
+    c = {s["key"]: s["count"] for s in out["stages"]}
+    # 단조성(역전 없음).
+    assert c["signal"] >= c["council"] >= c["submitted"] >= c["filled"]
+    # SELL 결정도 통과로 카운트 + 실주문 floor → 통과 ≥ 제출(5).
+    assert c["submitted"] == 5 and c["filled"] == 5
+    assert c["council"] >= 5     # 역전(통과 0) 아님

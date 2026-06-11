@@ -36,61 +36,64 @@ def _has_buy_vote(meta: dict) -> bool:
     return any(str(v.get("signal", "")).upper() == "BUY" for v in (meta.get("votes") or []))
 
 
+def _has_actionable_signal(meta: dict, final: str) -> bool:
+    """실행 가능 신호 — BUY/SELL vote 또는 final BUY/SELL. (V2: BUY 한정 제거 → 매수+청산
+    전체를 깔때기에 포함, 제출/체결(order_audit, BUY+SELL)과 동일 모집단.)"""
+    if final in ("BUY", "SELL"):
+        return True
+    return any(str(v.get("signal", "")).upper() in ("BUY", "SELL")
+               for v in (meta.get("votes") or []))
+
+
 # ── AG3: 결정 깔때기 ───────────────────────────────────────────────────────────
 
 def compute_funnel(db: Session, *, start: date, end: date) -> dict[str, Any]:
     decisions = _paper_decisions_in_period(db, start, end)
 
-    # 체결 판정용: audit_id → broker_status (연결).
-    audit_status: dict[int, str] = {}
-    for r in db.query(OrderAuditLog).all():
-        audit_status[int(r.id)] = str(r.broker_status or "").upper()
-
-    signal, passed, submitted, filled = [], [], [], []
+    signal, passed = [], []
     drop_council, drop_order, drop_fill = defaultdict(int), defaultdict(int), defaultdict(int)
 
+    # V2(2026-06-11): 4단계 모두 동일 모집단 — 신호/통과는 AgentDecisionLog(실행가능
+    #   BUY+SELL), 제출/체결은 order_audit 하루누적(BUY+SELL). 예전엔 신호/통과가 *BUY
+    #   한정* 이라 청산(SELL) 주문이 많은 날 통과 0 < 제출 20 의 역전이 났다.
     for d in decisions:
         meta = d.meta or {}
         final = str(meta.get("final_action", d.decision) or "").upper()
-        if not _has_buy_vote(meta) and final != "BUY":
-            continue  # BUY 신호와 무관한 결정(순수 SELL/HOLD) — 매수 깔때기 밖.
+        if not _has_actionable_signal(meta, final):
+            continue  # 순수 HOLD/관망 — 깔때기 밖.
         signal.append(d)
-        if final != "BUY":
+        if final not in ("BUY", "SELL"):
             drop_council[str(meta.get("reason_code") or "사유 미기록")] += 1
-            continue
+            continue  # council 에서 HOLD 강등 = 통과 실패.
         passed.append(d)
         if not bool(meta.get("broker_order_sent")):
             drop_order[str(meta.get("reason_code") or "사유 미기록")] += 1
-            continue
-        submitted.append(d)
-        aid = meta.get("audit_id")
-        if aid is not None and audit_status.get(int(aid)) == "FILLED":
-            filled.append(d)
-        else:
-            drop_fill[str(meta.get("reason_code") or "사유 미기록")] += 1
 
     def _top(dd, n=3):
         return [{"reason_code": k, "count": v}
                 for k, v in sorted(dd.items(), key=lambda kv: -kv[1])[:n]]
 
-    # W3(2026-06-10): '주문 제출'·'체결' 은 *order_audit_log 하루 누적*(칩과 동일 소스)
-    #   에서 — AgentDecisionLog meta.broker_order_sent/audit_id 링크가 누락돼도 실제
-    #   broker 접수(broker_order_id 발급)·체결(FILLED)을 정직하게 반영(BUY/SELL 무관).
-    #   예전엔 BUY 결정 링크만 봐서 실제 15건 접수·체결이 깔때기에 0 으로 보였다.
+    # 제출/체결 = order_audit 하루 누적(칩과 동일 소스·윈도). executed=제출, FILLED=체결.
     audit_submitted = 0
     audit_filled = 0
     for r in db.query(OrderAuditLog).filter(
             OrderAuditLog.trade_reason == "kis_paper_auto").all():
         if not (start <= _kst_date(r.created_at) <= end):
             continue
-        # 제출 = broker 로 전송된 주문(executed) — 칩의 '오늘 주문'과 동일 모집단.
         if bool(getattr(r, "executed", False)):
             audit_submitted += 1
         if str(r.broker_status or "").upper() == "FILLED":
             audit_filled += 1
-    n_signal, n_council = len(signal), len(passed)
-    n_submitted = max(len(submitted), audit_submitted)   # 실제 접수 누락 방지
-    n_filled = max(len(filled), audit_filled)
+
+    # ★단조성 — *소스 정합*(클램프 아님): 실주문 1건 = 상위 신호·통과 1건의 *증거*다
+    #   (주문은 신호·council 통과 없이 존재 불가). AgentDecisionLog 는 per-tick chief
+    #   결정이라 per-order audit 보다 적게 기록될 수 있으므로, 신호·통과를 실제 제출
+    #   건수(floor)로 끌어올려 신호≥통과≥제출≥체결을 보장한다. (예: 신호 16 기록 <
+    #   제출 20 실주문 → 신호=20: 20개 주문이 20개 신호의 증거.)
+    n_submitted = audit_submitted
+    n_filled = audit_filled
+    n_council = max(len(passed), n_submitted)
+    n_signal = max(len(signal), n_council)   # 신호 ⊇ 통과 항상 + 제출 floor
     _clamp = lambda x: max(0, x)
 
     return {
