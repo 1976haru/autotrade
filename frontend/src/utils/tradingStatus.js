@@ -72,11 +72,16 @@ function _kstDateKey(iso) {
   return kst.toISOString().slice(0, 10);
 }
 
+// KST(UTC+9) 자정 기준 오늘 날짜 키 — now.getTime()은 *이미 UTC epoch* 이므로 항상 +9h.
+//   (옛 `getTimezoneOffset()+540` 은 UTC 런타임에서만 맞고 KST PC(offset −540)에선 0이 돼
+//    UTC 날짜로 어긋났다 — KST 00:00~09:00 에 '오늘' 오집계. _kstDateKey 와 동일 규칙으로 통일.)
+function _kstTodayKey(now) {
+  return new Date(now.getTime() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
 // V1: created_at(UTC ISO)이 *오늘(KST)*인지. dailyProgress 등 당일 집계의 단일 기준.
 export function isKstToday(iso, now = new Date()) {
-  const todayKey = new Date(now.getTime() + (now.getTimezoneOffset() + 540) * 60000)
-    .toISOString().slice(0, 10);
-  return _kstDateKey(iso) === todayKey;
+  return _kstDateKey(iso) === _kstTodayKey(now);
 }
 
 // ── 보유 종목 출처 분류 ────────────────────────────────────────────────────
@@ -108,9 +113,8 @@ export const POSITION_SOURCE_BADGE = Object.freeze({
  * 않고(null) 호출자가 별도 소스로 주입 — 추정/오기재 방지.
  */
 export function summarizeTodayOrders(orders, now = new Date()) {
-  // now(로컬 시계)를 KST 날짜 키로 환산. UTC+9 = getTimezoneOffset(+분) + 540분.
-  const key = new Date(now.getTime() + (now.getTimezoneOffset() + 540) * 60000)
-    .toISOString().slice(0, 10);
+  // now 를 KST 날짜 키로 환산 — runtime tz 무관(_kstTodayKey: UTC epoch +9h).
+  const key = _kstTodayKey(now);
   const rows = (orders || []).filter((r) => _kstDateKey(r.created_at) === key);
   const filled = rows.filter(
     (r) => (r.filled_quantity || 0) > 0 || r.broker_status === "FILLED",
