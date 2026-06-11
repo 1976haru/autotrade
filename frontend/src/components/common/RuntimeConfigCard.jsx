@@ -138,7 +138,8 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <button type="button" data-testid="rtcfg-sl-dec" style={stepBtn}
               onClick={() => setSl((v) => clampSl(v - PCT_STEP))} disabled={sl <= SL_MIN}>−</button>
-            <span data-testid="rtcfg-sl-value" style={valBox}>-{_round1(sl)}%</span>
+            {/* V1: 스테퍼 버튼 기호(−/+)와 값 부호 겹침 방지 — 값은 양수 %, '손절' 라벨이 손실 방향을 의미. */}
+            <span data-testid="rtcfg-sl-value" style={valBox}>{_round1(sl)}%</span>
             <button type="button" data-testid="rtcfg-sl-inc" style={stepBtn}
               onClick={() => setSl((v) => clampSl(v + PCT_STEP))} disabled={sl >= SL_MAX}>+</button>
           </div>
@@ -152,7 +153,8 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <button type="button" data-testid="rtcfg-tp-dec" style={stepBtn}
               onClick={() => setTp((v) => clampTp(v - PCT_STEP))} disabled={tp <= TP_MIN}>−</button>
-            <span data-testid="rtcfg-tp-value" style={valBox}>+{_round1(tp)}%</span>
+            {/* V1: 값은 양수 %, '익절' 라벨이 이익 방향을 의미(스테퍼 +/− 와 부호 겹침 방지). */}
+            <span data-testid="rtcfg-tp-value" style={valBox}>{_round1(tp)}%</span>
             <button type="button" data-testid="rtcfg-tp-inc" style={stepBtn}
               onClick={() => setTp((v) => clampTp(v + PCT_STEP))} disabled={tp >= TP_MAX}>+</button>
           </div>

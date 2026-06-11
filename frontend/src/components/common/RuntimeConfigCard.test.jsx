@@ -94,10 +94,10 @@ describe("RuntimeConfigCard (R3/R4)", () => {
     ...over,
   });
 
-  it("C1: 손절/익절 스테퍼 표시 + 부호(-/+)", () => {
+  it("V1: 손절/익절 스테퍼 값은 양수 %(스테퍼 +/− 와 부호 겹침 방지)", () => {
     const { getByTestId } = render(<RuntimeConfigCard config={cfgSt()} api={{}} />);
-    expect(getByTestId("rtcfg-sl-value").textContent).toBe("-2%");
-    expect(getByTestId("rtcfg-tp-value").textContent).toBe("+3.5%");
+    expect(getByTestId("rtcfg-sl-value").textContent).toBe("2%");
+    expect(getByTestId("rtcfg-tp-value").textContent).toBe("3.5%");
   });
 
   it("C1: 손절 변경 저장 → PUT 에 stop_loss_pct 포함 + 보유 적용 안내", async () => {
