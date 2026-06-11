@@ -341,11 +341,11 @@ export function ReferenceHome({
               <AcctItem bullet={ACCOUNT_BULLET.estimatedAsset} label="추정자산" value={`${fmtKRW(portfolio?.totalAsset ?? 0)}원`} />
               <AcctItem bullet={ACCOUNT_BULLET.deposit} label="예수금" value={`${fmtKRW(portfolio?.cash ?? 0)}원`} />
               <AcctItem bullet={ACCOUNT_BULLET.stockValue} label="주식평가금액" value={`${fmtKRW(portfolio?.invested ?? 0)}원`} />
-              <AcctItem bullet={ACCOUNT_BULLET.realized} label="실현손익"
+              <AcctItem bullet={ACCOUNT_BULLET.realized} label="실현손익" sub="청산 완료분"
                 value={realized == null ? "거래 시작 전" : `${signed(realized)}원`} color={realized == null ? C.text3 : pnlColor(realized)} />
-              {/* W4: 이 비율은 *현재 보유* 마크투마켓(평가손익률, 미실현) — 위 '실현손익'
-                  (청산 라운드트립)과 다른 지표라 라벨을 명확히. 부호는 값 그대로. */}
-              <AcctItem bullet={ACCOUNT_BULLET.returnPct} label="평가손익률"
+              {/* W4/V3: 이 비율은 *현재 보유* 마크투마켓(평가손익률, 미실현) — 위 '실현손익'
+                  (청산 라운드트립)과 다른 지표라 라벨 + 보조라벨로 명확히. 부호는 값 그대로. */}
+              <AcctItem bullet={ACCOUNT_BULLET.returnPct} label="평가손익률" sub="보유 중"
                 value={`${(portfolio?.totalPnLPct ?? 0) > 0 ? "+" : ""}${(portfolio?.totalPnLPct ?? 0).toFixed(2)}%`} color={pnlColor(portfolio?.totalPnLPct ?? 0)} />
             </div>
             </div>
@@ -462,12 +462,14 @@ export function ReferenceHome({
   );
 }
 
-function AcctItem({ bullet, label, value, color }) {
+function AcctItem({ bullet, label, value, color, sub }) {
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: "var(--fs-base)", color: "var(--c-text-2)", fontWeight: 600 }}>
         <span style={{ width: 9, height: 9, borderRadius: "50%", background: bullet, flex: "none" }} />
         {label}
+        {/* V3: 실현(청산 완료분) vs 평가(보유 중) 혼동 방지 보조 라벨. */}
+        {sub && <span style={{ fontSize: "var(--fs-sm)", color: "var(--c-text-3)", fontWeight: 500 }}>· {sub}</span>}
       </div>
       <div style={{ fontSize: "var(--fs-xl)", fontWeight: 800, color: color || "var(--c-text)", marginTop: 5 }}>{value}</div>
     </div>
