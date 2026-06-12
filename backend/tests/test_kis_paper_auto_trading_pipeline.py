@@ -486,3 +486,60 @@ def test_api_auto_run_once_disabled_by_default(safe_default_flags, client):
     assert j["reason_code"] == "KIS_PAPER_AUTO_DISABLED"
     assert j["broker_order_sent"] is False
     assert j["is_live_authorization"] is False
+
+
+# ── 옵션 A: 위험 청산(손절/익절) 품질/확신 게이트 면제 (2026-06-12 손실방어 구멍 수정) ──
+
+def test_risk_exit_sell_bypasses_quality_confidence_gate():
+    # ★손절/익절 도달 SELL — 낮은 품질/확신이어도 청산 통과(위험 축소, 강제 청산).
+    res = evaluate_kis_paper_order_permission(_perm_input(
+        side="SELL", has_exit_plan=False, confidence=0.05, quality_score=10,
+        is_risk_exit=True))
+    assert res.allowed is True, res.reason_code
+
+
+def test_general_sell_still_blocked_by_quality_gate():
+    # ★역방향 안전: 위험청산 아닌 일반 SELL 은 품질/확신 게이트 *그대로* 적용(면제 누수 0).
+    low_q = evaluate_kis_paper_order_permission(_perm_input(
+        side="SELL", confidence=0.74, quality_score=10, is_risk_exit=False))
+    assert low_q.allowed is False and low_q.reason_code == "LOW_QUALITY_SCORE"
+    low_c = evaluate_kis_paper_order_permission(_perm_input(
+        side="SELL", confidence=0.05, quality_score=82, is_risk_exit=False))
+    assert low_c.allowed is False and low_c.reason_code == "LOW_CONFIDENCE"
+
+
+def test_buy_never_exempt_even_if_flag_set():
+    # BUY 는 위험청산 아님 — 플래그가 어쩌다 켜져도 품질 게이트 적용(BUY 면제 없음).
+    res = evaluate_kis_paper_order_permission(_perm_input(
+        side="BUY", confidence=0.05, quality_score=10, is_risk_exit=True))
+    # ★게이트가 side=SELL 재확인 → BUY 는 플래그 무관 품질/확신 적용 → 차단.
+    assert res.allowed is False and res.reason_code in ("LOW_CONFIDENCE", "LOW_QUALITY_SCORE")
+
+
+def test_risk_exit_still_blocked_by_emergency_stop():
+    # ★긴급정지는 모든 것 위 — 위험청산 면제가 긴급정지를 뚫으면 안 됨.
+    res = evaluate_kis_paper_order_permission(_perm_input(
+        side="SELL", confidence=0.05, quality_score=10, is_risk_exit=True,
+        emergency_stop=True))
+    assert res.allowed is False and res.reason_code == "EMERGENCY_STOP_ENABLED"
+
+
+def test_build_permission_input_sets_is_risk_exit_only_for_stop_take():
+    from app.kis_paper.auto_executor import build_permission_input, KisPaperAutoDecision
+    from types import SimpleNamespace
+    st = SimpleNamespace(enable_kis_paper_auto_trading=True, kis_paper_auto_order_dry_run=False,
+                         kis_is_paper=True, enable_live_trading=False,
+                         kis_paper_auto_max_order_notional=1_000_000,
+                         kis_paper_auto_max_orders_per_day=100,
+                         kis_paper_auto_order_window_start="09:05", kis_paper_auto_order_window_end="15:20",
+                         kis_paper_auto_min_confidence=0.6, kis_paper_auto_min_quality_score=60)
+    def _mk(side, code):
+        return KisPaperAutoDecision(symbol="035420", side=side, quantity=1, price=100,
+                                    confidence=0.1, quality_score=5, sell_reason_code=code)
+    kw = dict(settings=st, broker_is_kis_paper=True, credentials_present=True,
+              emergency_stop=False, daily_order_count=0, now=OPEN_TIME)
+    assert build_permission_input(decision=_mk("SELL", "STOP_LOSS"), **kw).is_risk_exit is True
+    assert build_permission_input(decision=_mk("SELL", "TAKE_PROFIT"), **kw).is_risk_exit is True
+    assert build_permission_input(decision=_mk("SELL", "MARKET_CLOSE_EXIT"), **kw).is_risk_exit is False  # 장마감 미포함
+    assert build_permission_input(decision=_mk("SELL", "MOMENTUM_REVERSAL"), **kw).is_risk_exit is False  # 일반 SELL
+    assert build_permission_input(decision=_mk("BUY", "STOP_LOSS"), **kw).is_risk_exit is False           # BUY

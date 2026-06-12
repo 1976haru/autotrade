@@ -119,6 +119,12 @@ class KisPaperOrderPermissionInput:
     # 품질 임계.
     min_confidence:                float = 0.6
     min_quality_score:             int  = 60
+    # ★위험 청산 면제(옵션 A, 2026-06-12): 손절(STOP_LOSS)·익절(TAKE_PROFIT) 도달로
+    #   강제된 청산 SELL 은 *품질/확신 게이트만* 면제한다(설계 의도 "위험 청산은 강제,
+    #   품질 무관" 부합). 청산은 위험 *축소* 라 votes 가 약해도 나가야 한다. 면제 범위는
+    #   엄격히 손절/익절 청산뿐 — 일반 SELL·BUY 는 그대로. *다른* 게이트(긴급정지·시간창·
+    #   시세출처·notional·일일횟수 등)는 면제 안 됨(품질/확신만).
+    is_risk_exit:                  bool = False
     # V2: 시세 출처 가드 — 실제 전송(not dry_run)은 KIS 실시간 시세만 허용.
     # default "kis" 로 backward-compat (기존 caller 무회귀); bridge/executor 가
     # 결정의 실제 price_source 를 명시 주입한다.
@@ -220,10 +226,17 @@ def evaluate_kis_paper_order_permission(
     side = (inp.side or "").strip().upper()
     if side not in _BUY_SELL:
         return _block(KisPaperPermReason.NO_STRATEGY_SIGNAL)
-    if inp.confidence < inp.min_confidence:
-        return _block(KisPaperPermReason.LOW_CONFIDENCE)
-    if inp.quality_score < inp.min_quality_score:
-        return _block(KisPaperPermReason.LOW_QUALITY_SCORE)
+    # ★위험 청산(손절/익절 도달) SELL 은 품질/확신 게이트 *면제* — 청산은 위험 축소라
+    #   votes 가 약해도 강제돼야 한다(설계 의도). 면제는 *품질/확신만*, 그리고 위 긴급정지·
+    #   시간창은 이미 통과한 뒤다(긴급정지·장 OPEN·시세출처·notional·일일횟수 등은 *유지*).
+    #   ★방어적 범위 강제: 면제는 *SELL* 위험청산에만 — 게이트 단에서도 side 재확인
+    #   (플래그가 어쩌다 BUY 에 켜져도 BUY 는 품질/확신 게이트 적용, 악용/오작동 방지).
+    _quality_exempt = inp.is_risk_exit and side == "SELL"
+    if not _quality_exempt:
+        if inp.confidence < inp.min_confidence:
+            return _block(KisPaperPermReason.LOW_CONFIDENCE)
+        if inp.quality_score < inp.min_quality_score:
+            return _block(KisPaperPermReason.LOW_QUALITY_SCORE)
     # BUY 는 청산 계획 필수 (SELL 은 청산 자체이므로 면제).
     if side == "BUY" and not inp.has_exit_plan:
         return _block(KisPaperPermReason.MISSING_EXIT_PLAN)

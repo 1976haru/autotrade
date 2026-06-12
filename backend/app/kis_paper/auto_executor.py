@@ -234,6 +234,14 @@ def build_permission_input(
         window_end=str(getattr(settings, "kis_paper_auto_order_window_end", "14:50")),
         min_confidence=float(getattr(settings, "kis_paper_auto_min_confidence", 0.6)),
         min_quality_score=int(getattr(settings, "kis_paper_auto_min_quality_score", 60)),
+        # ★옵션 A: 손절/익절 *도달*로 강제된 청산 SELL 만 품질/확신 면제 대상.
+        #   엄격 범위 — SELL + sell_reason_code ∈ {STOP_LOSS, TAKE_PROFIT}. 일반 SELL(전략
+        #   vote 기반)·BUY 는 False(게이트 그대로). 장마감(MARKET_CLOSE_EXIT)은 미포함.
+        is_risk_exit=(
+            str(decision.side).upper() == "SELL"
+            and str(getattr(decision, "sell_reason_code", "") or "").upper()
+            in ("STOP_LOSS", "TAKE_PROFIT")
+        ),
         price_source=str(getattr(decision, "price_source", "kis") or "kis"),
         price_is_stale=bool(getattr(decision, "price_is_stale", False)),
         now=now,
