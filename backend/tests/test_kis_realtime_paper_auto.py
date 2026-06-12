@@ -182,13 +182,17 @@ def test_scan_submits_within_per_tick_limit(engine):
     assert "MAX_NEW_POSITIONS_PER_TICK_REACHED" in codes
 
 
-def test_scan_respects_daily_buy_limit(engine):
+def test_scan_respects_daily_buy_limit(engine, monkeypatch):
     Session = sessionmaker(bind=engine)
+    # T2(2026-06-12): 일일 한도는 이제 effective_daily_buy_limit()(런타임 오버라이드>env,
+    #   R1 패턴 — budget/concurrent 와 동일). 스캔이 그 getter 를 읽는지 검증하려 패치.
+    import app.core.runtime_config as _rc
+    monkeypatch.setattr(_rc, "effective_daily_buy_limit", lambda: 1_000)
     # 일일 매수 한도를 1주 미만으로 낮추면 BUY 가 막힌다.
     out = asyncio.run(kis_paper_realtime_scan_tick(
         session_factory=Session, broker=_paper_broker_no_holdings(), risk=object(),
         route_order_fn=_approved_route(),
-        settings=_scan_settings(kis_paper_daily_buy_limit_krw=1_000),
+        settings=_scan_settings(),
         market_input_fn=_buy_input_fn, universe_symbols=["005930"],
         client=object(), now=OPEN_TIME,
     ))

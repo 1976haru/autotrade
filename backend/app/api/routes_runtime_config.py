@@ -33,6 +33,8 @@ class _RuntimeConfigBody(BaseModel):
     # C1(2026-06-10): 손절/익절 % (양수 magnitude — 손절 2.0=−2%).
     stop_loss_pct:            float | None = Field(None)
     take_profit_pct:          float | None = Field(None)
+    # T2(2026-06-12): 일일 매수금액 한도(원) — 종목수·투자금과 동일 메커니즘.
+    daily_buy_limit_krw:      int | None = Field(None)
 
 
 class _ProfileBody(BaseModel):
@@ -112,10 +114,11 @@ def put_runtime_config_endpoint(
     x_event_source: str = Header("operator"),
 ) -> dict:
     if (body.max_concurrent_positions is None and body.per_stock_budget is None
-            and body.stop_loss_pct is None and body.take_profit_pct is None):
+            and body.stop_loss_pct is None and body.take_profit_pct is None
+            and body.daily_buy_limit_krw is None):
         raise HTTPException(
             status_code=400,
-            detail="바꿀 값을 하나 이상 보내주세요 (동시진입 종목 수 / 종목당 투자금 / 손절 / 익절).",
+            detail="바꿀 값을 하나 이상 보내주세요 (동시진입 종목 수 / 종목당 투자금 / 손절 / 익절 / 일일 매수 한도).",
         )
     try:
         result = set_runtime_overrides(
@@ -123,6 +126,7 @@ def put_runtime_config_endpoint(
             per_stock_budget=body.per_stock_budget,
             stop_loss_pct=body.stop_loss_pct,
             take_profit_pct=body.take_profit_pct,
+            daily_buy_limit_krw=body.daily_buy_limit_krw,
         )
     except RuntimeConfigValidationError as exc:
         # 일상 한국어 메시지 그대로 400 으로 전달.

@@ -166,7 +166,11 @@ export function ReferenceHome({
   const kpi = miniKpis({ cashState, today, perf });
   // W2: 일일 매수 한도는 runtime-config 실효값(SSOT, config 에서 읽음) 우선 — 옛
   //   capital-config(alloc)·하드코딩 3,000,000 폴백은 effective 미로딩 시에만.
-  const buyMax = rtConfig?.daily_buy_limit_krw ?? alloc?.daily_buy_limit_krw ?? 3_000_000;
+  // T2(2026-06-12): runtime-config 의 daily_buy_limit_krw 가 {value,…} 객체로 바뀜
+  //   (스테퍼 meta). 구 평수(plain int)·capital-config 폴백도 호환.
+  const _rtDaily = rtConfig?.daily_buy_limit_krw;
+  const buyMax = (_rtDaily && typeof _rtDaily === "object" ? _rtDaily.value : _rtDaily)
+    ?? alloc?.daily_buy_limit_krw ?? 3_000_000;
   const prog = dailyProgress({ orders, today, buyMaxKrw: buyMax });
   const balanceFailed = !!portfolio?.error;
   const masked = maskAccountNo(accountNo);

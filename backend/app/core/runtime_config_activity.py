@@ -46,6 +46,8 @@ def _message_ko(change: dict[str, Any]) -> str | None:
         return f"운영자가 손절을 -{_pct(before)} → -{_pct(after)}로 바꿨어요"
     if key == "take_profit_pct":
         return f"운영자가 익절을 +{_pct(before)} → +{_pct(after)}로 바꿨어요"
+    if key == "daily_buy_limit_krw":
+        return f"운영자가 일일 매수 한도를 {_man_won(before)} → {_man_won(after)}으로 바꿨어요"
     return None
 
 

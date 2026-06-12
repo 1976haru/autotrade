@@ -146,7 +146,10 @@ def test_api_get_runtime_config():
     b = r.json()
     assert b["max_concurrent_positions"]["source"] == "env"
     assert b["is_live_authorization"] is False
-    assert b["daily_buy_limit_krw"] >= 1  # 하드코딩 아님 — config 에서
+    # T2(2026-06-12): daily_buy_limit_krw 가 {value,min,max,source} 객체로 — 스테퍼 meta.
+    assert b["daily_buy_limit_krw"]["value"] >= 1  # 하드코딩 아님 — config/override 에서
+    assert b["daily_buy_limit_krw"]["min"] == 3_000_000
+    assert b["daily_buy_limit_krw"]["max"] == 300_000_000
 
 
 def test_api_put_valid_returns_reread_effective():
@@ -425,10 +428,10 @@ def test_bot_scan_reads_active_profile_at_council(monkeypatch):
 
 
 def test_overrides_do_not_touch_safety_flags():
-    # 화이트리스트 = 5개(동시진입·종목당·손절·익절·성향) — C1(2026-06-10)에 손절/익절
-    #   추가. 안전 플래그/일일한도/confidence 는 *여전히* 화이트리스트 밖.
+    # 화이트리스트 = 6개(동시진입·종목당·일일한도·손절·익절·성향) — C1(2026-06-10) 손절/익절,
+    #   T2(2026-06-12) 일일 매수 한도 추가. 안전 플래그/confidence 는 *여전히* 화이트리스트 밖.
     assert set(rc._OVERRIDE_KEYS) == {
-        "max_concurrent_positions", "per_stock_budget",
+        "max_concurrent_positions", "per_stock_budget", "daily_buy_limit_krw",
         "stop_loss_pct", "take_profit_pct", "active_profile",
     }
     for flag in ("enable_live_trading", "kis_is_paper", "enable_ai_execution"):
@@ -580,3 +583,35 @@ def test_legacy_override_migrates_to_new_location(monkeypatch, _tmp_overrides, t
     # 이전 후 effective 도 반영.
     _rc._cache = None
     assert _rc.effective_per_stock_budget() == 700000
+
+
+# ── T2(2026-06-12): 일일 매수 한도 런타임 오버라이드 ─────────────────────────────
+
+def test_daily_buy_limit_override_and_effective():
+    rc.reset_runtime_overrides_for_tests()
+    try:
+        out = rc.set_runtime_overrides(daily_buy_limit_krw=50_000_000)
+        assert out["daily_buy_limit_krw"]["value"] == 50_000_000
+        assert out["daily_buy_limit_krw"]["source"] == "override"
+        assert rc.effective_daily_buy_limit() == 50_000_000
+    finally:
+        rc.reset_runtime_overrides_for_tests()
+
+
+def test_daily_buy_limit_range_validation():
+    rc.reset_runtime_overrides_for_tests()
+    with pytest.raises(rc.RuntimeConfigValidationError):
+        rc.set_runtime_overrides(daily_buy_limit_krw=1_000_000)      # < 300만 하한
+    with pytest.raises(rc.RuntimeConfigValidationError):
+        rc.set_runtime_overrides(daily_buy_limit_krw=400_000_000)    # > 3억 상한
+    rc.reset_runtime_overrides_for_tests()
+
+
+def test_driver_bridge_reads_effective_daily_limit():
+    # R1 패턴: 봇 스캔이 settings 직접이 아니라 effective getter 를 읽는지(소스 정합).
+    rc.reset_runtime_overrides_for_tests()
+    try:
+        rc.set_runtime_overrides(daily_buy_limit_krw=7_000_000)
+        assert rc.effective_daily_buy_limit() == 7_000_000
+    finally:
+        rc.reset_runtime_overrides_for_tests()

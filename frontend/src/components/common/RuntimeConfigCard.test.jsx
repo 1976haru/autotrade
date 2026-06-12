@@ -71,20 +71,46 @@ describe("RuntimeConfigCard (R3/R4)", () => {
     expect(getByTestId("rtcfg-note").textContent).not.toContain("적용됐어요");
   });
 
-  it("충돌 경고: 종목당 × 종목수 > 일일 한도 (한도는 config에서)", () => {
-    // 1,000,000 × 5 = 5,000,000 > 3,000,000 → 경고. affordable = floor(3M / 1M) = 3
+  it("정합 표시(충돌): 종목당 × 종목수 > 일일 한도 → 약 N종목 + 한도 모자람 안내", () => {
+    // 1,000,000 × 5 = 5,000,000 > 3,000,000 → affordable = floor(3M / 1M) = 3
     const { getByTestId } = render(<RuntimeConfigCard config={cfg()} api={{}} />);
-    const w = getByTestId("rtcfg-conflict");
+    const w = getByTestId("rtcfg-affordable");
     expect(w.textContent).toContain("3종목");
-    expect(w.textContent).toContain("일일 매수 한도");
     expect(w.textContent).toContain("3,000,000");
+    expect(w.textContent).toContain("모자라요");
   });
 
-  it("충돌 없음: 한도 이내면 경고 미표시", () => {
-    // 500,000 × 5 = 2,500,000 ≤ 3,000,000 → 경고 없음
-    const { queryByTestId } = render(
+  it("정합 표시(충돌 없음): 한도 이내면 약 N종목만 안내(경고 문구 없음)", () => {
+    // 500,000 × 5 = 2,500,000 ≤ 3,000,000 → affordable = floor(3M / 500k) = 6, 모자람 문구 없음
+    const { getByTestId } = render(
       <RuntimeConfigCard config={cfg({ per_stock_budget: { value: 500_000, min: 100_000, max: 10_000_000 } })} api={{}} />);
-    expect(queryByTestId("rtcfg-conflict")).toBeNull();
+    const w = getByTestId("rtcfg-affordable");
+    expect(w.textContent).toContain("6종목");
+    expect(w.textContent).not.toContain("모자라요");
+  });
+
+  // ── T2: 일일 매수 한도 스테퍼 ───────────────────────────────────────────────
+  const cfgDl = (over = {}) => cfg({
+    daily_buy_limit_krw: { value: 3_000_000, min: 3_000_000, max: 300_000_000 },
+    ...over,
+  });
+
+  it("T2: 일일 매수 한도 meta(객체) 있으면 스테퍼 표시 + 값", () => {
+    const { getByTestId } = render(<RuntimeConfigCard config={cfgDl()} api={{}} />);
+    expect(getByTestId("rtcfg-dl-value").textContent).toContain("3,000,000");
+  });
+
+  it("T2: 일일 한도는 평수(구 백엔드)면 스테퍼 미표시(호환)", () => {
+    const { queryByTestId } = render(<RuntimeConfigCard config={cfg()} api={{}} />);
+    expect(queryByTestId("rtcfg-dl-value")).toBeNull();   // cfg()는 plain int
+  });
+
+  it("T2: 일일 한도 변경 저장 → PUT 에 daily_buy_limit_krw 포함", async () => {
+    const put = vi.fn(async () => cfgDl({ daily_buy_limit_krw: { value: 4_000_000, min: 3_000_000, max: 300_000_000 } }));
+    const { getByTestId } = render(<RuntimeConfigCard config={cfgDl()} api={{ runtimeConfigPut: put }} />);
+    fireEvent.click(getByTestId("rtcfg-dl-inc")); // 3,000,000 → 4,000,000 (100만 단위)
+    fireEvent.click(getByTestId("rtcfg-save"));
+    await waitFor(() => expect(put).toHaveBeenCalledWith(expect.objectContaining({ daily_buy_limit_krw: 4_000_000 })));
   });
 
   // ── C1: 손절/익절 스테퍼 ──────────────────────────────────────────────────

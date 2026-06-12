@@ -7,6 +7,7 @@ import { fmtKRW, nowKstHm } from "../../utils/format";
 //   서버가 돌려준 실효값만 신뢰(낙관적 갱신 금지). 저장은 PUT /api/runtime-config.
 const BUDGET_STEP = 100_000; // 10만 단위
 const PCT_STEP = 0.5;        // C1: 손절/익절 0.5% 단위
+const DAILY_STEP = 1_000_000; // T2: 일일 매수 한도 100만 단위
 const _round1 = (v) => Math.round(v * 10) / 10;   // 0.1% 정밀도 보존
 
 export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
@@ -14,21 +15,26 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
   const budMeta = config?.per_stock_budget;
   const slMeta = config?.stop_loss_pct;     // C1: 손절 %
   const tpMeta = config?.take_profit_pct;   // C1: 익절 %
-  const dailyLimit = Number(config?.daily_buy_limit_krw ?? 3_000_000);
+  // T2: 일일 매수 한도 — 신 백엔드는 {value,min,max} 객체, 구 백엔드는 평수(plain int).
+  const dlRaw = config?.daily_buy_limit_krw;
+  const dlMeta = (dlRaw && typeof dlRaw === "object") ? dlRaw : null;
   const effMc = mcMeta?.value;
   const effBud = budMeta?.value;
   const effSl = slMeta?.value;
   const effTp = tpMeta?.value;
+  const effDl = dlMeta ? dlMeta.value : Number(dlRaw ?? 3_000_000);
 
   const MC_MIN = mcMeta?.min ?? 1, MC_MAX = mcMeta?.max ?? 10;
   const BUD_MIN = budMeta?.min ?? 100_000, BUD_MAX = budMeta?.max ?? 10_000_000;
   const SL_MIN = slMeta?.min ?? 0.5, SL_MAX = slMeta?.max ?? 10;
   const TP_MIN = tpMeta?.min ?? 0.5, TP_MAX = tpMeta?.max ?? 20;
+  const DL_MIN = dlMeta?.min ?? 3_000_000, DL_MAX = dlMeta?.max ?? 300_000_000;
 
   const [mc, setMc] = useState(effMc ?? 5);
   const [bud, setBud] = useState(effBud ?? 1_000_000);
   const [sl, setSl] = useState(effSl ?? 2);
   const [tp, setTp] = useState(effTp ?? 3.5);
+  const [dl, setDl] = useState(effDl ?? 3_000_000);
   const [note, setNote] = useState(null); // { kind: "ok"|"err", text }
   const [saving, setSaving] = useState(false);
 
@@ -37,14 +43,19 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
   useEffect(() => { if (effBud != null) setBud(effBud); }, [effBud]);
   useEffect(() => { if (effSl != null) setSl(effSl); }, [effSl]);
   useEffect(() => { if (effTp != null) setTp(effTp); }, [effTp]);
+  useEffect(() => { if (effDl != null) setDl(effDl); }, [effDl]);
 
   const clampMc = (v) => Math.max(MC_MIN, Math.min(MC_MAX, v));
   const clampBud = (v) => Math.max(BUD_MIN, Math.min(BUD_MAX, Math.round(v / BUDGET_STEP) * BUDGET_STEP));
   const clampSl = (v) => Math.max(SL_MIN, Math.min(SL_MAX, _round1(v)));
   const clampTp = (v) => Math.max(TP_MIN, Math.min(TP_MAX, _round1(v)));
+  const clampDl = (v) => Math.max(DL_MIN, Math.min(DL_MAX, Math.round(v / DAILY_STEP) * DAILY_STEP));
 
   const stDirty = effSl != null && effTp != null && (sl !== effSl || tp !== effTp);
-  const dirty = (effMc != null && effBud != null && (mc !== effMc || bud !== effBud)) || stDirty;
+  const dlDirty = dlMeta != null && dl !== effDl;
+  const dirty = (effMc != null && effBud != null && (mc !== effMc || bud !== effBud)) || stDirty || dlDirty;
+  // 일일 매수 한도 — 스테퍼가 있으면 그 값, 없으면 서버 실효값(정합 계산 단일 소스).
+  const dailyLimit = dl;
   // 충돌 경고(저장은 막지 않음): 종목당 금액 × 종목 수 > 일일 매수 한도.
   const conflict = bud * mc > dailyLimit;
   const affordable = Math.max(0, Math.floor(dailyLimit / Math.max(1, bud)));
@@ -55,6 +66,7 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
     try {
       const payload = { max_concurrent_positions: mc, per_stock_budget: bud };
       if (slMeta && tpMeta) { payload.stop_loss_pct = sl; payload.take_profit_pct = tp; }
+      if (dlMeta) { payload.daily_buy_limit_krw = dl; }
       const res = await api.runtimeConfigPut(payload);
       onSaved?.(res); // 서버 재확인 실효값만 신뢰.
       // 손절/익절이 바뀌면 *보유 종목에도* 적용(C1). 그 외(종목수·투자금)는 다음 매수부터.
@@ -161,15 +173,31 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
         </div>
       )}
 
-      {/* 충돌 경고 (저장은 막지 않음) */}
-      {conflict && (
-        <div data-testid="rtcfg-conflict" style={{
-          marginTop: 8, fontSize: 12.5, fontWeight: 700, lineHeight: 1.5,
-          borderRadius: 8, padding: "8px 10px", background: "rgba(245,170,30,.18)", color: "#7a4a00",
-        }}>
-          이 설정이면 하루에 약 {affordable}종목까지만 새로 살 수 있어요 (일일 매수 한도 {fmtKRW(dailyLimit)}원)
+      {/* T2: 일일 매수 한도 스테퍼 (신 백엔드 meta 있을 때만) */}
+      {dlMeta && (
+        <div style={rowStyle}>
+          <span style={{ fontSize: 14, color: "#2a1418", fontWeight: 700 }}>일일 매수 한도</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button type="button" data-testid="rtcfg-dl-dec" style={stepBtn}
+              onClick={() => setDl((v) => clampDl(v - DAILY_STEP))} disabled={dl <= DL_MIN}>−</button>
+            <span data-testid="rtcfg-dl-value" style={valBox}>{fmtKRW(dl)}원</span>
+            <button type="button" data-testid="rtcfg-dl-inc" style={stepBtn}
+              onClick={() => setDl((v) => clampDl(v + DAILY_STEP))} disabled={dl >= DL_MAX}>+</button>
+          </div>
         </div>
       )}
+
+      {/* T2: 정합 표시 — 항상(충돌 여부 무관) "하루 약 N종목" 실시간 안내. */}
+      <div data-testid="rtcfg-affordable" style={{
+        marginTop: 8, fontSize: 12.5, fontWeight: 700, lineHeight: 1.5, borderRadius: 8,
+        padding: "8px 10px",
+        background: conflict ? "rgba(245,170,30,.18)" : "rgba(40,20,24,.06)",
+        color: conflict ? "#7a4a00" : "rgba(40,20,24,.7)",
+      }}>
+        지금 설정이면 하루에 약 <b>{affordable}종목</b>까지 새로 살 수 있어요
+        {" "}(종목당 {fmtKRW(bud)}원 × 한도 {fmtKRW(dailyLimit)}원)
+        {conflict && ` — 동시진입 ${mc}종목엔 한도가 모자라요`}
+      </div>
 
       <button type="button" data-testid="rtcfg-save" onClick={save} disabled={!dirty || saving}
         style={{

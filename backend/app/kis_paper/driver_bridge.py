@@ -546,12 +546,15 @@ async def kis_paper_realtime_scan_tick(
     #   오버라이드 파일을 직접 읽지 않는다. 저장 즉시 다음 신규 매수 판단부터 반영.
     #   (주문 경로 route_order/RiskManager/Gate/Executor 는 미수정.)
     from app.core.runtime_config import (
+        effective_daily_buy_limit,
         effective_max_concurrent_positions,
         effective_per_stock_budget,
     )
     per_symbol_notional = int(effective_per_stock_budget())
     max_concurrent = int(effective_max_concurrent_positions())
-    daily_buy_limit = int(getattr(settings, "kis_paper_daily_buy_limit_krw", 3_000_000))
+    # T2(2026-06-12): 일일 매수 한도도 런타임 오버라이드(R1 패턴 — config-read 계층,
+    #   매 사이클 effective getter. BUY 사전 가드(아래 daily_buy_used 비교)는 무변경).
+    daily_buy_limit = int(effective_daily_buy_limit())
     max_new_per_tick = max(1, int(getattr(settings, "kis_paper_max_new_positions_per_tick", 1) or 1))
     if smoke:
         max_new_per_tick = 1

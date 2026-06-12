@@ -35,12 +35,13 @@ from app.core.config import get_settings
 
 _log = logging.getLogger("autotrade.runtime_config")
 
-# 이 기능으로 바꿀 수 있는 *유일한* 2개 키 — 화이트리스트(다른 키 저장 거부).
-_INT_KEYS = ("max_concurrent_positions", "per_stock_budget")
+# 런타임 오버라이드 정수 키. T2(2026-06-12): daily_buy_limit_krw 추가 — 100종목
+#   확장 대응(종목수·투자금과 동일 메커니즘, 화이트리스트 확장). 안전 플래그 미포함.
+_INT_KEYS = ("max_concurrent_positions", "per_stock_budget", "daily_buy_limit_krw")
 # C1(2026-06-10): 손절/익절 % 도 런타임 오버라이드 대상(양수 magnitude — 손절 2.0=−2%).
 _FLOAT_KEYS = ("stop_loss_pct", "take_profit_pct")
 _PROFILE_KEY = "active_profile"
-# 화이트리스트(이 키들 외 저장 거부). 안전 플래그/일일한도/confidence 미포함.
+# 화이트리스트(이 키들 외 저장 거부). 안전 플래그/confidence 미포함.
 _OVERRIDE_KEYS = (*_INT_KEYS, *_FLOAT_KEYS, _PROFILE_KEY)
 
 # 검증 범위 (서버 측 필수 — 프론트 검증만으로 불충분).
@@ -48,6 +49,8 @@ MAX_CONCURRENT_MIN, MAX_CONCURRENT_MAX = 1, 10
 PER_STOCK_BUDGET_MIN, PER_STOCK_BUDGET_MAX = 100_000, 10_000_000  # 10만 ~ 1,000만 원
 STOP_LOSS_PCT_MIN, STOP_LOSS_PCT_MAX = 0.5, 10.0     # 손절 -0.5% ~ -10% (magnitude)
 TAKE_PROFIT_PCT_MIN, TAKE_PROFIT_PCT_MAX = 0.5, 20.0  # 익절 +0.5% ~ +20%
+# T2: 일일 매수금액 한도 300만 ~ 3억(100종목×300만 수용), 스테퍼 100만 단위.
+DAILY_BUY_LIMIT_MIN, DAILY_BUY_LIMIT_MAX = 3_000_000, 300_000_000
 
 # S1: AI 운용 성향 — 런타임 전환 대상(보수/안정/공격).
 VALID_PROFILES = ("conservative", "balanced", "aggressive")
@@ -178,6 +181,16 @@ def effective_per_stock_budget() -> int:
     return int(getattr(get_settings(), "kis_paper_per_symbol_notional_krw", 1_000_000))
 
 
+def effective_daily_buy_limit() -> int:
+    """일일 매수금액 한도 = kis_paper_daily_buy_limit_krw 의 런타임 오버라이드.
+    ★봇이 매 사이클 이 getter 로 읽어 BUY 사전 가드(driver_bridge)에 반영(R1 패턴,
+    재시작 불요). 주문 경로 route_order/RiskManager/Gate/Executor 는 미접촉."""
+    ov = _load().get("daily_buy_limit_krw")
+    if ov is not None:
+        return int(ov)
+    return int(getattr(get_settings(), "kis_paper_daily_buy_limit_krw", 3_000_000))
+
+
 def effective_active_profile() -> str:
     """현재 활성 AI 운용 성향 — 런타임 오버라이드 > 기본(balanced). 봇이 매 사이클
     이 getter 로 읽어 다음 판단부터 반영(재시작 불요)."""
@@ -242,8 +255,13 @@ def get_runtime_config() -> dict[str, Any]:
             "source": _source("take_profit_pct"),
             "min":    TAKE_PROFIT_PCT_MIN, "max": TAKE_PROFIT_PCT_MAX,
         },
-        # 충돌 경고용 — 일일 매수 한도(하드코딩 금지: config 에서 읽음).
-        "daily_buy_limit_krw": int(getattr(get_settings(), "kis_paper_daily_buy_limit_krw", 3_000_000)),
+        # T2: 일일 매수금액 한도 — 이제 런타임 오버라이드 대상(종목수·투자금과 동일).
+        #   meta(min/max/source) 추가 — UI 스테퍼용. 충돌 경고 계산도 이 value 사용.
+        "daily_buy_limit_krw": {
+            "value":  effective_daily_buy_limit(),
+            "source": _source("daily_buy_limit_krw"),
+            "min":    DAILY_BUY_LIMIT_MIN, "max": DAILY_BUY_LIMIT_MAX,
+        },
         "active_profile": {
             "value":  effective_active_profile(),
             "source": _source(_PROFILE_KEY),
@@ -258,7 +276,8 @@ def get_runtime_config() -> dict[str, Any]:
 def _validate(max_concurrent_positions: int | None, per_stock_budget: int | None,
               active_profile: str | None = None,
               stop_loss_pct: float | None = None,
-              take_profit_pct: float | None = None) -> None:
+              take_profit_pct: float | None = None,
+              daily_buy_limit_krw: int | None = None) -> None:
     if max_concurrent_positions is not None:
         v = int(max_concurrent_positions)
         if not (MAX_CONCURRENT_MIN <= v <= MAX_CONCURRENT_MAX):
@@ -270,6 +289,12 @@ def _validate(max_concurrent_positions: int | None, per_stock_budget: int | None
         if not (PER_STOCK_BUDGET_MIN <= v <= PER_STOCK_BUDGET_MAX):
             raise RuntimeConfigValidationError(
                 "종목당 투자금은 10만 원 ~ 1,000만 원 사이여야 해요."
+            )
+    if daily_buy_limit_krw is not None:
+        v = int(daily_buy_limit_krw)
+        if not (DAILY_BUY_LIMIT_MIN <= v <= DAILY_BUY_LIMIT_MAX):
+            raise RuntimeConfigValidationError(
+                "일일 매수 한도는 300만 원 ~ 3억 원 사이여야 해요."
             )
     if stop_loss_pct is not None:
         try:
@@ -303,6 +328,7 @@ def set_runtime_overrides(
     active_profile: str | None = None,
     stop_loss_pct: float | None = None,
     take_profit_pct: float | None = None,
+    daily_buy_limit_krw: int | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """검증 통과 시 저장(파일 + 캐시). *저장 후 다시 읽은 실효값*(get_runtime_config) 반환.
@@ -310,7 +336,7 @@ def set_runtime_overrides(
     변경 전 값도 함께 반환(`changes`) — 활동 피드 기록에 사용.
     """
     _validate(max_concurrent_positions, per_stock_budget, active_profile,
-              stop_loss_pct, take_profit_pct)
+              stop_loss_pct, take_profit_pct, daily_buy_limit_krw)
     now = now or datetime.now(timezone.utc)
     with _lock:
         before = {
@@ -319,6 +345,7 @@ def set_runtime_overrides(
             "active_profile": effective_active_profile(),
             "stop_loss_pct": effective_stop_loss_pct(),
             "take_profit_pct": effective_take_profit_pct(),
+            "daily_buy_limit_krw": effective_daily_buy_limit(),
         }
         cur = dict(_load())
         if max_concurrent_positions is not None:
@@ -329,15 +356,18 @@ def set_runtime_overrides(
             cur["stop_loss_pct"] = float(stop_loss_pct)
         if take_profit_pct is not None:
             cur["take_profit_pct"] = float(take_profit_pct)
+        if daily_buy_limit_krw is not None:
+            cur["daily_buy_limit_krw"] = int(daily_buy_limit_krw)
         if active_profile is not None:
             cur[_PROFILE_KEY] = str(active_profile).strip().lower()
         cur["updated_at"] = now.isoformat()
         _persist(cur)
         # 가시성: override 가 저장된 *절대 경로* 를 로그로 — 다음 기동이 다른 경로를
         #   읽어 조용히 env 로 원복되면 로그 대조로 즉시 진단 가능.
-        _log.info("[runtime_config] override persisted to %s (mc=%s bud=%s sl=%s tp=%s profile=%s)",
+        _log.info("[runtime_config] override persisted to %s (mc=%s bud=%s daily=%s sl=%s tp=%s profile=%s)",
                   overrides_path(), cur.get("max_concurrent_positions"),
-                  cur.get("per_stock_budget"), cur.get("stop_loss_pct"),
+                  cur.get("per_stock_budget"), cur.get("daily_buy_limit_krw"),
+                  cur.get("stop_loss_pct"),
                   cur.get("take_profit_pct"), cur.get(_PROFILE_KEY))
         global _cache
         _cache = cur
@@ -347,10 +377,11 @@ def set_runtime_overrides(
         "active_profile": effective_active_profile(),
         "stop_loss_pct": effective_stop_loss_pct(),
         "take_profit_pct": effective_take_profit_pct(),
+        "daily_buy_limit_krw": effective_daily_buy_limit(),
     }
     changes: list[dict[str, Any]] = []
     for key in ("max_concurrent_positions", "per_stock_budget", "active_profile",
-                "stop_loss_pct", "take_profit_pct"):
+                "stop_loss_pct", "take_profit_pct", "daily_buy_limit_krw"):
         if before[key] != after[key]:
             changes.append({"key": key, "before": before[key], "after": after[key]})
     out = get_runtime_config()
@@ -375,10 +406,12 @@ __all__ = [
     "RuntimeConfigValidationError",
     "MAX_CONCURRENT_MIN", "MAX_CONCURRENT_MAX",
     "PER_STOCK_BUDGET_MIN", "PER_STOCK_BUDGET_MAX",
+    "DAILY_BUY_LIMIT_MIN", "DAILY_BUY_LIMIT_MAX",
     "overrides_path",
     "VALID_PROFILES", "DEFAULT_PROFILE",
     "effective_max_concurrent_positions",
     "effective_per_stock_budget",
+    "effective_daily_buy_limit",
     "effective_active_profile",
     "get_runtime_config",
     "set_runtime_overrides",
