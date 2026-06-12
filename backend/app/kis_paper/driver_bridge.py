@@ -331,17 +331,39 @@ async def kis_paper_auto_tick(
             pass
 
 
+# T1(2026-06-12): 회전 스캔 오프셋 — 풀 100 을 틱당 cap 슬라이스로 회전 커버.
+_scan_rotation_offset = 0
+
+
+def reset_scan_rotation_for_tests() -> None:
+    """테스트 격리 — 회전 오프셋 초기화."""
+    global _scan_rotation_offset
+    _scan_rotation_offset = 0
+
+
 def _scan_universe_symbols(settings: Any, *, override: list[str] | None) -> list[str]:
-    """스캔 대상 종목 — smoke mode 면 단일, 아니면 universe(상한 적용)."""
+    """스캔 대상 종목 — smoke 면 단일, override 면 그대로, 아니면 universe *회전 윈도우*.
+
+    T1(2026-06-12): 풀 100 으로 확장 — '매 틱 100 전부' 는 KIS 시세 호출 ~10배 →
+    EGW00201 폭증. 대신 틱당 cap(기본 10) 슬라이스를 *오프셋 회전* 으로 반환해
+    ~⌈100/cap⌉ 틱에 100 전체를 커버하고, 틱당 KIS 호출량은 현행 수준으로 유지한다.
+    ★보유 종목 매 틱 스캔(청산 보장)은 *호출부* 에서 held_symbols union 으로 별도 보장.
+    """
     if override is not None:
         return list(override)
     if bool(getattr(settings, "kis_paper_smoke_mode", False)):
         return [str(getattr(settings, "kis_paper_smoke_symbol", "005930"))]
     from app.universe.default_universe import get_default_universe
-    uni = get_default_universe(None)
-    syms = list(uni.symbols)
+    syms = list(get_default_universe(None).symbols)
     cap = int(getattr(settings, "kis_paper_scan_max_symbols", 10) or 0)
-    return syms[:cap] if cap > 0 else syms
+    n = len(syms)
+    if cap <= 0 or cap >= n:
+        return syms
+    global _scan_rotation_offset
+    start = _scan_rotation_offset % n
+    window = [syms[(start + i) % n] for i in range(cap)]   # wrap-around 슬라이스
+    _scan_rotation_offset = (start + cap) % n              # 다음 틱은 다음 슬라이스
+    return window
 
 
 def _today_kis_paper_buy_state(db: Any, now: datetime) -> tuple[set[str], int]:
@@ -590,6 +612,9 @@ async def kis_paper_realtime_scan_tick(
         #   기존 set-기반 가드용으로 키에서 파생(중복 get_positions 호출 없음).
         held_map = await _kis_held_map(broker, fallback=_db_held, now=now)
         held_symbols = set(held_map.keys())
+        # T1(2026-06-12): 회전 스캔이 이번 틱 윈도우에 빠뜨린 *보유* 종목도 항상 스캔
+        #   목록에 union — 익절/손절 청산이 회전 때문에 지연되지 않게(청산 보장).
+        symbols = list(symbols) + [h for h in held_symbols if h not in symbols]
 
         if client is None and not _fn_injected:
             # KIS read-only client 가 없으면 실시세 조회 불가 — mock 대체 금지.

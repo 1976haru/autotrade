@@ -35,7 +35,10 @@ from typing import Any, Iterable
 # (code, 표시명) — 표시명은 UI carry 용. code 가 단일 진실.
 # 50 종목 정확히. 실시간 시총 순위와 다를 수 있음 (정적 목록).
 
-_FALLBACK_TOP50: tuple[tuple[str, str], ...] = (
+# T1(2026-06-12): 풀 50 → 100 확장 (코스피 대형주 + 코스닥 거래량 상위, 유동성 우선).
+#   회전 스캔(driver_bridge)이 100 풀을 ~7~10틱에 커버 — 틱당 KIS 부하는 현행 유지.
+_FALLBACK_TOP100: tuple[tuple[str, str], ...] = (
+    # ── 기존 KOSPI 대형주 50 ──
     ("005930", "삼성전자"),
     ("000660", "SK하이닉스"),
     ("373220", "LG에너지솔루션"),
@@ -86,22 +89,78 @@ _FALLBACK_TOP50: tuple[tuple[str, str], ...] = (
     ("128940", "한미약품"),
     ("271560", "오리온"),
     ("010140", "삼성중공업"),
+    # ── 확장 KOSPI 35 (방산·조선·2차전지 소재·유통·금융·산업재) ──
+    ("012450", "한화에어로스페이스"),
+    ("042660", "한화오션"),
+    ("064350", "현대로템"),
+    ("047810", "한국항공우주"),
+    ("009540", "HD한국조선해양"),
+    ("267260", "HD현대일렉트릭"),
+    ("042700", "한미반도체"),
+    ("011070", "LG이노텍"),
+    ("009830", "한화솔루션"),
+    ("004020", "현대제철"),
+    ("011790", "SKC"),
+    ("010120", "LS ELECTRIC"),
+    ("006260", "LS"),
+    ("008770", "호텔신라"),
+    ("139480", "이마트"),
+    ("023530", "롯데쇼핑"),
+    ("282330", "BGF리테일"),
+    ("069960", "현대백화점"),
+    ("035250", "강원랜드"),
+    ("036570", "엔씨소프트"),
+    ("251270", "넷마블"),
+    ("003490", "대한항공"),
+    ("138040", "메리츠금융지주"),
+    ("071050", "한국금융지주"),
+    ("016360", "삼성증권"),
+    ("006800", "미래에셋증권"),
+    ("039490", "키움증권"),
+    ("011780", "금호석유"),
+    ("000720", "현대건설"),
+    ("001040", "CJ"),
+    ("000150", "두산"),
+    ("241560", "두산밥캣"),
+    ("034220", "LG디스플레이"),
+    ("018880", "한온시스템"),
+    ("326030", "SK바이오팜"),
+    # ── 확장 KOSDAQ 15 (2차전지·바이오·게임·반도체 소부장·엔터) ──
+    ("247540", "에코프로비엠"),
+    ("086520", "에코프로"),
+    ("028300", "HLB"),
+    ("196170", "알테오젠"),
+    ("068760", "셀트리온제약"),
+    ("263750", "펄어비스"),
+    ("293490", "카카오게임즈"),
+    ("112040", "위메이드"),
+    ("357780", "솔브레인"),
+    ("058470", "리노공업"),
+    ("240810", "원익IPS"),
+    ("041510", "에스엠"),
+    ("035900", "JYP Ent."),
+    ("145020", "휴젤"),
+    ("214150", "클래시스"),
 )
 
 
-# 외부에 노출하는 fallback 종목 코드 튜플 — 정확히 50개.
-FALLBACK_MARKET_CAP_TOP50: tuple[str, ...] = tuple(c for c, _ in _FALLBACK_TOP50)
+# 외부에 노출하는 fallback 종목 코드 튜플 — 정확히 100개.
+FALLBACK_MARKET_CAP_TOP100: tuple[str, ...] = tuple(c for c, _ in _FALLBACK_TOP100)
+# code → 표시명 (UI carry 용) — 100종 전체.
+FALLBACK_MARKET_CAP_TOP100_NAMES: dict[str, str] = {c: n for c, n in _FALLBACK_TOP100}
 
-# code → 표시명 (UI carry 용).
-FALLBACK_MARKET_CAP_TOP50_NAMES: dict[str, str] = {c: n for c, n in _FALLBACK_TOP50}
+# 하위호환 alias — 기존 import(news_agent/routes_positions 등) 보존. TOP50 = 앞 50 부분집합,
+#   NAMES 는 100 전체(표시명 lookup 은 superset 이어도 무해·오히려 커버리지↑).
+FALLBACK_MARKET_CAP_TOP50: tuple[str, ...] = FALLBACK_MARKET_CAP_TOP100[:50]
+FALLBACK_MARKET_CAP_TOP50_NAMES: dict[str, str] = FALLBACK_MARKET_CAP_TOP100_NAMES
 
-# 안전 검증 — 정확히 50개 + 중복 0건 (import 시점 self-check).
-assert len(FALLBACK_MARKET_CAP_TOP50) == 50, "fallback universe must be exactly 50"
-assert len(set(FALLBACK_MARKET_CAP_TOP50)) == 50, "fallback universe codes must be unique"
+# 안전 검증 — 정확히 100개 + 중복 0건 (import 시점 self-check).
+assert len(FALLBACK_MARKET_CAP_TOP100) == 100, "fallback universe must be exactly 100"
+assert len(set(FALLBACK_MARKET_CAP_TOP100)) == 100, "fallback universe codes must be unique"
 
 
 _FALLBACK_WARNING_KO = (
-    "관심종목이 비어 있어 시가총액 상위 50개 기본 Universe 를 사용 중입니다. "
+    "관심종목이 비어 있어 시가총액·거래량 상위 100개 기본 Universe 를 사용 중입니다. "
     "이는 PAPER 검증용 후보군이며 *투자 추천 / 주문 신호가 아닙니다*. 정식 "
     "관심종목 등록을 권장합니다."
 )
@@ -111,6 +170,8 @@ class UniverseSource(StrEnum):
     """universe 출처 라벨 — frontend / API / 진단 리포트가 그대로 emit."""
 
     USER_DEFINED            = "USER_DEFINED"
+    FALLBACK_MARKET_CAP_TOP100 = "FALLBACK_MARKET_CAP_TOP100"
+    # 하위호환 — 기존 enum 값 보존(옛 테스트/UI 참조).
     FALLBACK_MARKET_CAP_TOP50 = "FALLBACK_MARKET_CAP_TOP50"
     EMPTY                   = "EMPTY"
 
@@ -202,16 +263,18 @@ def get_default_universe(
             warning_ko="",
         )
     return UniverseResolution(
-        source=UniverseSource.FALLBACK_MARKET_CAP_TOP50,
-        symbols=FALLBACK_MARKET_CAP_TOP50,
-        count=len(FALLBACK_MARKET_CAP_TOP50),
+        source=UniverseSource.FALLBACK_MARKET_CAP_TOP100,
+        symbols=FALLBACK_MARKET_CAP_TOP100,
+        count=len(FALLBACK_MARKET_CAP_TOP100),
         fallback_used=True,
         warning_ko=_FALLBACK_WARNING_KO,
     )
 
 
 __all__ = [
-    "FALLBACK_MARKET_CAP_TOP50",
+    "FALLBACK_MARKET_CAP_TOP100",
+    "FALLBACK_MARKET_CAP_TOP100_NAMES",
+    "FALLBACK_MARKET_CAP_TOP50",          # 하위호환 alias(앞 50)
     "FALLBACK_MARKET_CAP_TOP50_NAMES",
     "UniverseSource",
     "UniverseResolution",

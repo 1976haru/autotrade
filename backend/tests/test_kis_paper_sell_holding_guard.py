@@ -359,3 +359,54 @@ def test_order_count_buy_only_excludes_sell(engine):
     db.commit()
     n = _today_kis_paper_order_count(db, OPEN_TIME)
     assert n == 2   # BUY 2건만 (SELL 2건은 횟수 예산 소진 안 함)
+
+
+# ── T1(2026-06-12): 회전 스캔 — 풀 100 을 틱당 슬라이스로 회전 커버 ──────────────
+
+def test_scan_universe_rotates_offset_window():
+    import app.kis_paper.driver_bridge as b
+    from types import SimpleNamespace
+    b.reset_scan_rotation_for_tests()
+    st = SimpleNamespace(kis_paper_smoke_mode=False, kis_paper_scan_max_symbols=10)
+    w1 = b._scan_universe_symbols(st, override=None)
+    w2 = b._scan_universe_symbols(st, override=None)
+    assert len(w1) == 10 and len(w2) == 10
+    assert w1 != w2                      # 다음 틱은 다른 슬라이스(회전)
+    assert set(w1).isdisjoint(w2)        # 10+10 겹침 0 (오프셋 +10)
+    b.reset_scan_rotation_for_tests()
+
+
+def test_scan_rotation_covers_full_pool_in_ten_ticks():
+    import app.kis_paper.driver_bridge as b
+    from types import SimpleNamespace
+    b.reset_scan_rotation_for_tests()
+    st = SimpleNamespace(kis_paper_smoke_mode=False, kis_paper_scan_max_symbols=10)
+    seen = set()
+    for _ in range(10):                  # 100/10 = 10 틱
+        seen.update(b._scan_universe_symbols(st, override=None))
+    assert len(seen) == 100              # 10 틱에 100 전체 커버
+    b.reset_scan_rotation_for_tests()
+
+
+def test_held_symbols_always_scanned_despite_rotation(engine):
+    """T1: 회전 윈도우에 없는 보유 종목도 매 틱 스캔 목록에 union(청산 보장)."""
+    import app.kis_paper.driver_bridge as b
+    b.reset_scan_rotation_for_tests()
+    Session = sessionmaker(bind=engine)
+    scanned: list[str] = []
+
+    async def _spy_input_fn(symbol, *, client, now, market_is_open, **kw):
+        scanned.append(symbol)
+        return None, KisRealtimeQuote(symbol=symbol, status="X", price=0.0, is_stale=False)
+
+    # 035420 보유(회전 첫 윈도우 앞 10 안에 없음 — NAVER 는 풀 index 9 라 윈도우0 에 포함될 수
+    #   있어, 오프셋을 풀 끝으로 돌려 윈도우에서 확실히 제외).
+    b._scan_rotation_offset = 50
+    broker = _FakePosBroker([SimpleNamespace(symbol="035420", quantity=12, sellable_quantity=12)])
+    asyncio.run(kis_paper_realtime_scan_tick(
+        session_factory=Session, broker=broker, risk=object(),
+        route_order_fn=_route_should_not_be_called(), settings=_scan_settings(),
+        market_input_fn=_spy_input_fn, client=object(), now=OPEN_TIME,
+    ))
+    assert "035420" in scanned           # 보유는 회전과 무관하게 항상 스캔됨
+    b.reset_scan_rotation_for_tests()
