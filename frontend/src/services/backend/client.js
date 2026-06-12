@@ -145,6 +145,13 @@ export const backendApi = {
   positionsLive:          () => backendFetch("/api/positions/live"),
   positionSellAll:        (symbol) =>
     backendFetch(`/api/positions/${encodeURIComponent(symbol)}/sell-all`, { method: "POST" }),
+  // 설계 B 조각 1: 수동 매수(직접 보유) — route_order 경유, trade_reason=manual_buy.
+  manualBuy:              (symbol, quantity) =>
+    backendFetch("/api/positions/manual-buy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol, quantity }),
+    }),
   // 성과 대시보드 (읽기 전용 집계). 탭 전환/수동 새로고침 시에만 조회.
   performanceGet:         ({ period = "daily", from, to } = {}) => {
     const qs = new URLSearchParams({ period });

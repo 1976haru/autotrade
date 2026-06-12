@@ -243,3 +243,54 @@ def test_routes_positions_no_direct_broker_place_order():
     src = inspect.getsource(rp)
     assert "route_order" in src
     assert "place_order" not in src
+
+
+# ── 설계 B 조각 1: POST manual-buy (수동 매수, route_order 경유, manual_buy 태깅) ──
+
+def test_manual_buy_goes_through_route_order_with_manual_buy_tag(monkeypatch):
+    broker = _FakeBroker([])
+    routing = SimpleNamespace(decision=RiskDecision.APPROVED, reasons=[],
+                              audit=SimpleNamespace(broker_order_id="ODNO-BUY-1"), approval=None)
+    c, TS, captured = _client(broker, routing=routing, monkeypatch=monkeypatch)
+    try:
+        r = c.post("/api/positions/manual-buy", json={"symbol": "005930", "quantity": 5})
+        assert r.status_code == 200
+        b = r.json()
+        assert b["status"] == "SUBMITTED" and b["source"] == "MANUAL"
+        assert b["broker_order_no"] == "ODNO-BUY-1"
+        assert "주문을 보냈어요" in b["message"]
+        # ★route_order 경유 + manual_buy 태깅 — broker.place_order 직접 0, council/한도 우회.
+        order = captured["order"]
+        assert order.side == OrderSide.BUY and order.quantity == 5
+        assert order.order_type.value == "MARKET"
+        assert order.trade_reason == "manual_buy"
+        assert order.strategy is None and captured["requested_by_ai"] is False
+        assert broker.place_calls == 0
+    finally:
+        _cleanup()
+
+
+def test_manual_buy_rejected_passes_through_riskmanager(monkeypatch):
+    # ★긴급정지/PAPER/잔고는 route_order 안 RiskManager 가 평가 — REJECTED 면 400(우회 0).
+    broker = _FakeBroker([])
+    routing = SimpleNamespace(decision=RiskDecision.REJECTED,
+                              reasons=["emergency stop active"], audit=None, approval=None)
+    c, TS, captured = _client(broker, routing=routing, monkeypatch=monkeypatch)
+    try:
+        r = c.post("/api/positions/manual-buy", json={"symbol": "005930", "quantity": 5})
+        assert r.status_code == 400
+        assert "긴급정지" in r.json()["detail"]   # RiskManager 거부 사유 그대로 전달
+        # route_order 는 호출됐다(우회 없이 게이트 통과 시도).
+        assert captured["order"].trade_reason == "manual_buy"
+    finally:
+        _cleanup()
+
+
+def test_manual_buy_quantity_validation():
+    broker = _FakeBroker([])
+    c, _TS, _ = _client(broker)
+    try:
+        assert c.post("/api/positions/manual-buy", json={"symbol": "005930", "quantity": 0}).status_code == 422
+        assert c.post("/api/positions/manual-buy", json={"symbol": "", "quantity": 5}).status_code == 400
+    finally:
+        _cleanup()

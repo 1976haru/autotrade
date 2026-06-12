@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_broker, get_risk_manager
@@ -106,7 +107,19 @@ async def get_live_positions(
             "sell_in_progress": in_progress,
             "status":       "sell_in_progress" if in_progress else "sellable",
         })
-    return {"available": True, "positions": out, "fetched_at_kst": _now_hm_kst()}
+    # 설계 B 조각 1: 보유 출처(BOT/MANUAL/UNTAGGED) 분류 부착 — *표시 전용*.
+    #   ★조각 2(봇 격리=_kis_held_map 차감)는 미구현 → bot_isolated=False 안내.
+    from app.positions.holding_source import classify_positions
+    out = classify_positions(db, out)
+    return {
+        "available": True, "positions": out, "fetched_at_kst": _now_hm_kst(),
+        # ★조각 1 경고: 봇이 아직 MANUAL 을 격리 못 함(조각 2 전). UI 가 표시.
+        "bot_isolation_active": False,
+        "manual_isolation_notice": (
+            "봇이 아직 직접 보유(MANUAL)를 격리하지 못합니다 — 수동 보유 기능은 봇 격리 "
+            "검증(조각 2) 후 사용하세요. 지금은 봇 PAUSED 상태에서 표시·태깅만 동작합니다."
+        ),
+    }
 
 
 def _reject_reason_ko(reasons: list[str] | None) -> str:
@@ -179,6 +192,84 @@ async def sell_all(
         "submitted_at_kst": _now_hm_kst(),
         "message": f"{name} {qty}주 전량 매도 주문을 보냈어요. 체결은 잠시 후 확인돼요.",
     }
+
+
+class _ManualBuyBody(BaseModel):
+    symbol:   str
+    quantity: int = Field(..., ge=1, le=100_000)
+
+
+@router.post("/positions/manual-buy")
+async def manual_buy(
+    body: _ManualBuyBody,
+    broker: BrokerAdapter = Depends(get_broker),
+    risk: RiskManager = Depends(get_risk_manager),
+    db: Session = Depends(get_db),
+):
+    """수동 매수(설계 B 조각 1) — 운영자 직접 매수. trade_reason=manual_buy 태깅.
+
+    ★route_order 경유(수동 매도와 대칭) — 주문경로 4파일 *미수정*. 봇의 일일한도/동시진입/
+    Agent Council 은 이 경로에 없으므로 *자연 우회*. 단 RiskManager 의 긴급정지·PAPER 플래그·
+    notional/잔고 게이트는 route_order 안에서 *반드시* 통과한다(우회 0).
+
+    ★조각 1: 봇 격리(MANUAL 차감)는 아직 — 봇 PAUSED 상태에서만 안전. 봇 가동 중엔
+    이 수동 보유를 봇이 청산 대상으로 오인할 수 있음(조각 2 전까지 미사용 권장).
+    """
+    symbol = str(body.symbol or "").strip()
+    if not symbol:
+        raise HTTPException(status_code=400, detail="종목 코드를 입력해주세요.")
+    qty = int(body.quantity)
+    name = _resolve_name(symbol) or symbol
+
+    # route_order 경유 — 시장가 BUY, origin=manual(trade_reason). RiskManager 가
+    #   긴급정지/PAPER/notional 을 평가(우회 없음). 봇 council/한도는 이 경로에 없음.
+    order = OrderRequest(
+        symbol=symbol, side=OrderSide.BUY, quantity=qty,
+        order_type=OrderType.MARKET, trade_reason="manual_buy",
+    )
+    try:
+        routing = await route_order(
+            order=order, requested_by_ai=False,
+            mode=get_settings().default_mode, broker=broker, risk=risk, db=db,
+        )
+    except DuplicateOrderError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    if routing.decision == RiskDecision.REJECTED:
+        reason_ko = _reject_reason_ko(routing.reasons)
+        _record_buy_feed_best_effort(db, submitted=False, name=name, qty=qty, reason_ko=reason_ko)
+        raise HTTPException(status_code=400, detail=reason_ko)
+
+    if routing.decision == RiskDecision.NEEDS_APPROVAL:
+        return JSONResponse(status_code=202, content={
+            "status": "PENDING_APPROVAL",
+            "approval_id": getattr(routing.approval, "id", None),
+            "message": "매수 주문이 승인 대기로 들어갔어요.",
+        })
+
+    _record_buy_feed_best_effort(db, submitted=True, name=name, qty=qty, reason_ko=None)
+    broker_order_no = getattr(getattr(routing, "audit", None), "broker_order_id", None)
+    return {
+        "status": "SUBMITTED",
+        "broker_order_no": broker_order_no,
+        "submitted_at_kst": _now_hm_kst(),
+        "source": "MANUAL",
+        "message": f"{name} {qty}주 직접 매수 주문을 보냈어요. 체결은 잠시 후 확인돼요.",
+    }
+
+
+def _record_buy_feed_best_effort(db, *, submitted: bool, name: str, qty: int, reason_ko: str | None) -> None:
+    try:
+        from app.core.runtime_config_activity import (
+            record_manual_buy_rejected,
+            record_manual_buy_submitted,
+        )
+        if submitted:
+            record_manual_buy_submitted(db, symbol_name=name, quantity=qty)
+        else:
+            record_manual_buy_rejected(db, symbol_name=name, reason_ko=reason_ko or "사유 확인 중")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _record_feed_best_effort(db, *, submitted: bool, name: str, qty: int, reason_ko: str | None) -> None:

@@ -130,6 +130,26 @@ def record_manual_sell_rejected(db: Session, *, symbol_name: str, reason_ko: str
     db.commit()
 
 
+# 설계 B 조각 1 — 수동 매수 피드.
+MANUAL_BUY_ACTION = "MANUAL_BUY"
+MANUAL_BUY_REASON_CODE = "OPERATOR_MANUAL_BUY"
+
+
+def record_manual_buy_submitted(db: Session, *, symbol_name: str, quantity: int) -> None:
+    """수동 매수 제출 기록 — '주문을 보냈어요'(체결 단정 금지)."""
+    _add_operator_event(
+        db, message=f"운영자가 {symbol_name} {int(quantity)}주 직접 매수 주문을 보냈어요",
+        action=MANUAL_BUY_ACTION, reason_code=MANUAL_BUY_REASON_CODE, prefix="opbuy")
+    db.commit()
+
+
+def record_manual_buy_rejected(db: Session, *, symbol_name: str, reason_ko: str) -> None:
+    _add_operator_event(
+        db, message=f"수동 매수가 거절됐어요 — {reason_ko}",
+        action=MANUAL_BUY_ACTION, reason_code=MANUAL_BUY_REASON_CODE, prefix="opbuy")
+    db.commit()
+
+
 __all__ = [
     "OPERATOR_CONFIG_CHANGE_ACTION",
     "OPERATOR_CONFIG_CHANGE_REASON_CODE",
