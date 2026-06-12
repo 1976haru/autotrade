@@ -48,9 +48,17 @@ def _start_backend(cmd: str) -> subprocess.Popen:
     return subprocess.Popen(cmd, shell=True, cwd=str(_BACKEND_DIR))  # noqa: S602
 
 
+def _start_backend_script(script_path: str) -> subprocess.Popen:
+    """2026-06-12: 경로에 공백이 있는 복구 .bat 를 *리스트 형식* 으로 실행 — Windows
+    인자 인용을 Python 이 처리해 cmd 의 중첩따옴표 파싱 문제(=run_watchdog 실패)를 회피."""
+    return subprocess.Popen(["cmd", "/c", script_path], cwd=str(_BACKEND_DIR))  # noqa: S603
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Backend watchdog")
     p.add_argument("--backend-cmd", default="")
+    p.add_argument("--backend-script", default="",
+                   help="복구용 .bat 경로(공백 경로 안전 — 리스트형 실행). backend-cmd 보다 우선.")
     p.add_argument("--health-url", default="http://127.0.0.1:8000/api/health/full")
     p.add_argument("--check-interval", type=float, default=15.0)
     p.add_argument("--stuck-threshold", type=float, default=300.0)
@@ -95,9 +103,10 @@ def main(argv: list[str] | None = None) -> int:
         elif action == WatchdogAction.WARN_TICK_SLOW:
             log.warn("WATCHDOG_CHECK", action=action.value, reason=reason)
         elif action == WatchdogAction.RESTART_BACKEND:
-            if args.dry_run or not args.backend_cmd:
+            _restart_target = args.backend_script or args.backend_cmd
+            if args.dry_run or not _restart_target:
                 log.warn("WATCHDOG_RESTART_BACKEND_SKIPPED", reason=reason,
-                         dry_run=args.dry_run, backend_cmd_present=bool(args.backend_cmd))
+                         dry_run=args.dry_run, backend_cmd_present=bool(_restart_target))
             elif restart_count >= args.max_restarts:
                 log.error("WATCHDOG_MAX_RESTARTS", reason=reason, restart_count=restart_count)
                 return 1
@@ -110,7 +119,8 @@ def main(argv: list[str] | None = None) -> int:
                         proc.terminate()
                 except Exception:  # noqa: BLE001
                     pass
-                proc = _start_backend(args.backend_cmd)
+                proc = (_start_backend_script(args.backend_script) if args.backend_script
+                        else _start_backend(args.backend_cmd))
         elif action == WatchdogAction.RESTART_ENGINE:
             log.error("ENGINE_RESTART_RECOMMENDED", reason=reason)
 
