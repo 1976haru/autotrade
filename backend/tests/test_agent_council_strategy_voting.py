@@ -101,12 +101,12 @@ def test_config_min_confidence_floor_overrides_preset():
 def test_strong_buy():
     d = run_agent_council(_buy_input(), risk_profile="BALANCED")
     assert d.final_action == CouncilAction.BUY
-    assert len(d.votes) == 4
+    assert len(d.votes) == 5   # T3(2026-06-12): CANDLE(양음봉) 5번째 투표자 추가
     assert d.confidence > 0.5
     assert d.quality_score >= 60
     assert d.has_exit_plan is True
     assert d.exit_plan.get("stop_loss_pct", 0) > 0
-    assert set(d.selected_strategies).issubset({"MOMENTUM", "VWAP", "ORB", "GAP"})
+    assert set(d.selected_strategies).issubset({"MOMENTUM", "VWAP", "ORB", "GAP", "CANDLE"})
 
 
 def test_same_signal_conservative_hold_aggressive_buy():
@@ -260,7 +260,7 @@ def test_api_council_evaluate_buy(client):
     assert res.status_code == 200
     j = res.json()
     assert j["final_action"] == "BUY"
-    assert len(j["votes"]) == 4
+    assert len(j["votes"]) == 5   # T3(2026-06-12): CANDLE 5번째 투표자
     assert j["is_live_authorization"] is False
     assert j["has_exit_plan"] is True
 
@@ -274,3 +274,49 @@ def test_api_council_evaluate_hold_when_flat(client):
     })
     assert res.status_code == 200
     assert res.json()["final_action"] == "HOLD"
+
+
+# ── T3(2026-06-12): 양음봉(CANDLE) 5번째 투표자 ──────────────────────────────
+
+def test_candlestick_evaluator_bullish_and_bearish():
+    from app.agents.agent_council import evaluate_candlestick, StrategyMarketInput, CouncilAction
+    # 양봉(시가<현재가) + 아래꼬리 → BUY
+    up = StrategyMarketInput(symbol="005930", open_price=76500, current_price=78000,
+                             opening_range_high=78200, opening_range_low=76000)
+    v = evaluate_candlestick(up)
+    assert v.strategy == "CANDLE" and v.signal == CouncilAction.BUY
+    # 음봉(시가>현재가) + 윗꼬리 → SELL
+    dn = StrategyMarketInput(symbol="005930", open_price=78000, current_price=76500,
+                             opening_range_high=78200, opening_range_low=76300)
+    assert evaluate_candlestick(dn).signal == CouncilAction.SELL
+    # 데이터 없음 → HOLD (silent 실패 0)
+    assert evaluate_candlestick(StrategyMarketInput(symbol="x")).signal == CouncilAction.HOLD
+
+
+def test_candle_is_equal_weight_no_preference():
+    # ★우대 없음 — GAP 과 동급 20. 집계 규칙 불변(가중치 dict 만 1개 추가).
+    from app.agents.agent_council import STRATEGY_WEIGHTS
+    assert STRATEGY_WEIGHTS["CANDLE"] == 20 == STRATEGY_WEIGHTS["GAP"]
+
+
+def test_existing_four_strategies_unchanged():
+    # 기존 4기법 가중치/평가 무변경 (투표자 1명 추가만).
+    from app.agents.agent_council import (
+        STRATEGY_WEIGHTS, evaluate_orb, evaluate_momentum, evaluate_gap, evaluate_vwap,
+        StrategyMarketInput, CouncilAction)
+    assert STRATEGY_WEIGHTS["MOMENTUM"] == 30
+    assert STRATEGY_WEIGHTS["VWAP"] == 25 and STRATEGY_WEIGHTS["ORB"] == 25
+    assert STRATEGY_WEIGHTS["GAP"] == 20
+    # 강한 모멘텀 입력 → MOMENTUM 여전히 BUY (CANDLE 추가가 기존 평가에 영향 0).
+    inp = StrategyMarketInput(symbol="005930", current_price=78000, prev_close=74000,
+                              open_price=74500, vwap=75000,
+                              recent_closes=(72000, 73000, 74000, 75000, 78000))
+    assert evaluate_momentum(inp).signal == CouncilAction.BUY
+
+
+def test_candle_vote_in_snapshot_placeholder():
+    # S3: placeholder/스냅샷에 CANDLE 5번째 행으로 항상 포함.
+    from app.agents.agent_council import placeholder_strategy_votes, STRATEGY_ORDER
+    strats = [v["strategy"] for v in placeholder_strategy_votes()]
+    assert "CANDLE" in strats and len(strats) == 5
+    assert STRATEGY_ORDER == ("ORB", "MOMENTUM", "GAP", "VWAP", "CANDLE")

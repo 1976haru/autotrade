@@ -1,7 +1,7 @@
-"""Agent Council — 4 매매기법 투표 → 단일 BUY/SELL/HOLD 결정 (advisory).
+"""Agent Council — 5 매매기법 투표 → 단일 BUY/SELL/HOLD 결정 (advisory).
 
-ORB Breakout / Momentum / Gap Trading / VWAP 4 전략을 각 종목에 대해 평가해
-`StrategyVote` 를 만들고, 가중 투표 + MarketRegime + RiskOfficer + ChiefTrading
+ORB Breakout / Momentum / Gap Trading / VWAP / Candlestick(양음봉) 5 전략을 각
+종목에 대해 평가해 `StrategyVote` 를 만들고, 가중 투표 + MarketRegime + RiskOfficer + ChiefTrading
 역할을 거쳐 `AgentCouncilDecision` 을 산출한다. risk_profile(보수적/안정적/공격적)
 에 따라 진입 임계가 조정된다.
 
@@ -38,11 +38,14 @@ class CouncilAction(StrEnum):
 
 
 # 전략 ID + 기본 가중치 (사용자 요청서 §2-6).
+# T3(2026-06-12): CANDLE(양음봉) 5번째 추가 — GAP 동급 20(우대 없음, 동등 경쟁자).
+#   집계 루프(run_agent_council)는 이 dict 를 generic 하게 읽어 변경 0줄.
 STRATEGY_WEIGHTS: dict[str, int] = {
     "MOMENTUM": 30,
     "VWAP":     25,
     "ORB":      25,
     "GAP":      20,
+    "CANDLE":   20,
 }
 
 # risk_profile 별 council 임계 (진입 게이트). min_confidence 는 risk_profile
@@ -109,14 +112,15 @@ class StrategyVote:
         }
 
 
-# P-23: 4 전략 canonical 순서 (episode votes 누락 0건 보장 기준).
-STRATEGY_ORDER: tuple[str, ...] = ("ORB", "MOMENTUM", "GAP", "VWAP")
+# P-23: canonical 순서 (episode votes 누락 0건 보장 기준).
+# T3(2026-06-12): CANDLE 추가 — placeholder/S3 스냅샷에 5번째 행으로 항상 기록됨.
+STRATEGY_ORDER: tuple[str, ...] = ("ORB", "MOMENTUM", "GAP", "VWAP", "CANDLE")
 
 
 def placeholder_strategy_votes() -> list[dict[str, Any]]:
-    """전략 평가가 아예 불가능한 경우(후보/시세 없음) 4 전략 placeholder vote.
+    """전략 평가가 아예 불가능한 경우(후보/시세 없음) 5 전략 placeholder vote.
 
-    episode.votes 에 ORB/MOMENTUM/GAP/VWAP 4개가 *항상* 존재하도록 보장한다.
+    episode.votes 에 ORB/MOMENTUM/GAP/VWAP/CANDLE 5개가 *항상* 존재하도록 보장한다.
     실제 평가가 수행되면 caller 가 council.votes 의 to_dict() 를 사용한다.
     """
     out: list[dict[str, Any]] = []
@@ -399,15 +403,51 @@ def evaluate_vwap(inp: StrategyMarketInput) -> StrategyVote:
                         "VWAP 근접 — 방향성 약함", reason_code="VWAP_NEUTRAL")
 
 
+def evaluate_candlestick(inp: StrategyMarketInput) -> StrategyVote:
+    """양음봉(캔들) — 시가 대비 현재가 방향(양봉/음봉) + 꼬리(매수·매도세) 비율.
+
+    T3(2026-06-12): 5번째 투표자. ORB/MOMENTUM/GAP/VWAP 와 *동등 경쟁* (가중치 20,
+    GAP 동급, 우대 없음). 입력 DTO 변경 0 — open_price/current_price/opening_range_*
+    재사용. 데이터 없으면 HOLD + reason_code(silent 실패 0).
+    """
+    o, c = inp.open_price, inp.current_price
+    if o is None or c is None or o <= 0:
+        return StrategyVote("CANDLE", CouncilAction.HOLD, 0.0, 0,
+                            "캔들 데이터 부족(시가/현재가 없음)",
+                            reason_code="INSUFFICIENT_CANDLE_DATA")
+    body = (c - o) / o
+    hi = inp.opening_range_high if inp.opening_range_high is not None else max(o, c)
+    lo = inp.opening_range_low if inp.opening_range_low is not None else min(o, c)
+    rng = max(hi - lo, 1e-9)
+    upper_wick = max(0.0, (hi - max(o, c)) / rng)   # 윗꼬리 비율(매도 압력)
+    lower_wick = max(0.0, (min(o, c) - lo) / rng)   # 아래꼬리 비율(매수 지지)
+    sc = _score_from_magnitude(body, full_at=0.03)
+    # 양봉 + 아래꼬리 우세(매수세 유입) → BUY.
+    if body > 0.005 and lower_wick >= upper_wick:
+        return StrategyVote("CANDLE", CouncilAction.BUY,
+                            _clamp01(0.5 + body * 6 + lower_wick * 0.2), sc,
+                            f"양봉 +{body*100:.1f}% (아래꼬리 매수세)",
+                            risk_flags=_volume_risk_flags(inp))
+    # 음봉 + 윗꼬리 우세(매도세) → SELL.
+    if body < -0.005 and upper_wick >= lower_wick:
+        return StrategyVote("CANDLE", CouncilAction.SELL,
+                            _clamp01(0.5 + abs(body) * 6 + upper_wick * 0.2), sc,
+                            f"음봉 {body*100:.1f}% (윗꼬리 매도세)",
+                            risk_flags=_volume_risk_flags(inp))
+    return StrategyVote("CANDLE", CouncilAction.HOLD, 0.3, 30,
+                        "캔들 방향성 약함(도지/혼조)", reason_code="CANDLE_NEUTRAL")
+
+
 _EVALUATORS = {
     "ORB": evaluate_orb, "MOMENTUM": evaluate_momentum,
     "GAP": evaluate_gap, "VWAP": evaluate_vwap,
+    "CANDLE": evaluate_candlestick,
 }
 
 
 def evaluate_all_strategies(inp: StrategyMarketInput) -> list[StrategyVote]:
-    """4 전략 모두 평가 — 고정 순서(MOMENTUM/VWAP/ORB/GAP, 가중치 순)."""
-    return [_EVALUATORS[s](inp) for s in ("MOMENTUM", "VWAP", "ORB", "GAP")]
+    """5 전략 모두 평가 — 고정 순서(MOMENTUM/VWAP/ORB/GAP/CANDLE, 가중치 순)."""
+    return [_EVALUATORS[s](inp) for s in ("MOMENTUM", "VWAP", "ORB", "GAP", "CANDLE")]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -433,7 +473,7 @@ def run_agent_council(
     position: "PositionContext | None" = None,
     min_confidence_floor: float | None = None,
 ) -> AgentCouncilDecision:
-    """4 전략 투표 → MarketRegime → RiskOfficer → ChiefTrading → 최종 결정.
+    """5 전략 투표 → MarketRegime → RiskOfficer → ChiefTrading → 최종 결정.
 
     held_position=True 면 SELL 판단(청산)을 허용 — 보유 없으면 SELL 은 HOLD 로
     강등(naked SELL 방지). broker 호출 0건.
