@@ -338,3 +338,21 @@ def test_strategy_performance_endpoint_carries_episodes_analyzed():
         assert body["episodes_analyzed"] == 0   # 빈 DB → 집계 전(데이터 없음)
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+# ── T4a(2026-06-12): 스코어카드 데이터주도 일반화 (5번째 CANDLE 자동) ─────────────
+
+def test_scorecard_includes_candle_from_council_ssot():
+    # SINGLE_STRATEGIES 가 council STRATEGY_ORDER(=ORB/MOMENTUM/GAP/VWAP/CANDLE)에서 유도.
+    from app.analytics.strategy_performance import SINGLE_STRATEGIES
+    assert "CANDLE" in SINGLE_STRATEGIES
+    assert {"ORB", "MOMENTUM", "GAP", "VWAP"}.issubset(set(SINGLE_STRATEGIES))
+
+
+def test_scorecard_discovers_strategy_from_votes():
+    # votes 에 등장한 임의 전략(SSOT 에 없어도)도 성적표에 한 행으로 잡힌다(완전 데이터주도).
+    from app.analytics.strategy_performance import _discover_strategies
+    eps = [{"votes": [{"strategy": "CANDLE", "signal": "BUY"},
+                      {"strategy": "EXPERIMENTAL_X", "signal": "SELL"}]}]
+    found = _discover_strategies(eps)
+    assert "CANDLE" in found and "EXPERIMENTAL_X" in found

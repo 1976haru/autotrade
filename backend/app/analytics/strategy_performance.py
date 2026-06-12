@@ -29,9 +29,37 @@ from app.analytics.metrics import (
 )
 
 # 단일 전략 + Agent Council.
-SINGLE_STRATEGIES: tuple[str, ...] = ("ORB", "MOMENTUM", "GAP", "VWAP")
+# T4a(2026-06-12): 기법 수 무관 *데이터주도* — council SSOT(STRATEGY_ORDER)에서 유도해
+#   5번째(CANDLE 양음봉) 등 새 기법이 자동으로 성적표에 포함된다(하드코딩 4 제거).
+def _council_single_strategies() -> tuple[str, ...]:
+    try:
+        from app.agents.agent_council import STRATEGY_ORDER
+        return tuple(str(s).upper() for s in STRATEGY_ORDER)
+    except Exception:  # noqa: BLE001 — import 실패 시 보수적 기본 4.
+        return ("ORB", "MOMENTUM", "GAP", "VWAP")
+
+
+SINGLE_STRATEGIES: tuple[str, ...] = _council_single_strategies()
 AGENT_COUNCIL = "AGENT_COUNCIL"
 DEFAULT_STRATEGY_ORDER: tuple[str, ...] = (*SINGLE_STRATEGIES, AGENT_COUNCIL)
+
+
+def _discover_strategies(episodes: list[dict[str, Any]]) -> tuple[str, ...]:
+    """council SSOT ∪ episode votes 에 실제 등장한 전략명 — 완전 데이터주도.
+
+    SSOT 에 없는(미래/실험) 전략이 votes 에 있어도 성적표에 한 행으로 잡힌다.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for s in SINGLE_STRATEGIES:
+        if s not in seen:
+            seen.add(s); out.append(s)
+    for ep in (episodes or []):
+        for v in _votes(ep):
+            s = str(v.get("strategy", "")).upper()
+            if s and s not in seen:
+                seen.add(s); out.append(s)
+    return tuple(out)
 
 # risk_profile / market_regime / 시간대 버킷.
 RISK_PROFILES: tuple[str, ...] = ("CONSERVATIVE", "BALANCED", "AGGRESSIVE")
@@ -377,7 +405,8 @@ def calculate_strategy_performance(
     episodes = [e for e in (episodes or []) if isinstance(e, dict)]
     total = len(episodes)
     evaluated = sum(1 for e in episodes if episode_return(e) is not None)
-    order = strategy_order or DEFAULT_STRATEGY_ORDER
+    # T4a: 명시 order 없으면 데이터주도(council SSOT ∪ votes) — 5번째(CANDLE) 자동.
+    order = strategy_order or (*_discover_strategies(episodes), AGENT_COUNCIL)
 
     blocks = [_strategy_block(s, episodes) for s in order]
     by_risk = _bucket_block(episodes, _risk_profile)
