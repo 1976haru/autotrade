@@ -415,20 +415,71 @@ async def _kis_held_symbols(broker: Any, *, fallback: set[str]) -> set[str]:
     return held
 
 
-async def _kis_held_map(broker: Any, *, fallback: set[str]) -> dict[str, dict[str, int]]:
+# R-A(2026-06-12): get_positions 가 EGW00201(레이트리밋) 등으로 *실패*하면 보유 수량을
+#   알 수 없어, SELL 청산이 수량 0 → SELL_NOT_ORDERABLE 로 skip 돼 익절/손절이 *끊긴다*
+#   (NAVER +8.69% 미청산 실체). 조회 *성공* 시 보유스냅샷(수량 포함)을 캐시하고, *실패* 시
+#   신선한 스냅샷이 있으면 그 수량으로 fallback 해 레이트리밋 순간에도 청산이 끊기지 않게 한다.
+#   ── 조회/캐시 계층만 수정 — Agent Council/주문경로/bridge 판단부 미접촉.
+#   ── 스냅샷이 TTL 초과(오래됨)면 사용 안 함 → 종전처럼 보수적(수량 미상)으로 떨어진다.
+_HELD_SNAPSHOT: dict[str, dict[str, int]] = {}
+_HELD_SNAPSHOT_AT: datetime | None = None
+_HELD_SNAPSHOT_TTL_SECONDS = 600  # 마지막 *성공* 조회가 10분 이내일 때만 수량 fallback 신뢰
+
+
+def _held_snapshot_fresh(now: datetime | None, ttl_seconds: int) -> bool:
+    """마지막 성공 보유스냅샷이 신선한가 (TTL 이내). 빈 스냅샷/미기록이면 False."""
+    if not _HELD_SNAPSHOT or _HELD_SNAPSHOT_AT is None:
+        return False
+    if now is None:
+        return True  # now 미상이면 보수적으로 사용(스캔 틱 간격은 수십초)
+    try:
+        a, b = _HELD_SNAPSHOT_AT, now
+        if a.tzinfo is None:
+            a = a.replace(tzinfo=timezone.utc)
+        if b.tzinfo is None:
+            b = b.replace(tzinfo=timezone.utc)
+        age = (b - a).total_seconds()
+    except Exception:  # noqa: BLE001
+        return False
+    return 0 <= age <= ttl_seconds
+
+
+def _held_map_fallback(fallback: set[str], *, now: datetime | None,
+                       ttl_seconds: int) -> dict[str, dict[str, int]]:
+    """조회 실패 시 보유맵. 신선한 스냅샷이면 *수량까지 살려* 청산이 끊기지 않게 하고,
+    스냅샷에 없는 today-DB-net 심볼은 수량 미상(빈 dict)으로 종전 보수적 동작을 유지한다."""
+    out: dict[str, dict[str, int]] = {}
+    if _held_snapshot_fresh(now, ttl_seconds):
+        for sym, info in _HELD_SNAPSHOT.items():
+            out[sym] = dict(info)
+        _log.warning(
+            "[kis-paper-bridge] get_positions 실패 → 보유스냅샷 fallback 사용 "
+            "(symbols=%d, snapshot_at=%s) — 청산 유지용",
+            len(out), _HELD_SNAPSHOT_AT,
+        )
+    for s in fallback:
+        out.setdefault(s, {})
+    return out
+
+
+async def _kis_held_map(broker: Any, *, fallback: set[str],
+                        now: datetime | None = None,
+                        ttl_seconds: int = _HELD_SNAPSHOT_TTL_SECONDS,
+                        ) -> dict[str, dict[str, int]]:
     """보유 종목 → {hldg, ord_psbl}. `_kis_held_symbols` 와 동일 소스(get_positions,
     *단일 호출*)지만 수량을 보존한다 — 봇 SELL 이 보유수량 기준으로 주문하도록.
 
-    조회 실패 시 fallback(오늘 DB net) 심볼만, 수량은 미상(빈 dict) — 이 경우
-    SELL 분기에서 수량 0 으로 간주돼 헛주문 대신 skip 된다(안전). hldg/ord_psbl 은
-    int 로 정규화, ord_psbl 미상(None)이면 hldg 로 간주.
+    조회 *성공* 시 보유스냅샷(수량 포함)을 캐시한다. 조회 *실패* 시 신선한 스냅샷이
+    있으면 그 수량으로 fallback(R-A) — 없으면 today-DB-net 심볼만 수량 미상(빈 dict)으로
+    종전 보수적 동작. hldg/ord_psbl 은 int 로 정규화, ord_psbl 미상(None)이면 hldg 로 간주.
     """
+    global _HELD_SNAPSHOT, _HELD_SNAPSHOT_AT
     try:
         if broker is None or not hasattr(broker, "get_positions"):
-            return {s: {} for s in fallback}
+            return _held_map_fallback(fallback, now=now, ttl_seconds=ttl_seconds)
         positions = await broker.get_positions()
     except Exception:  # noqa: BLE001 — 조회 실패는 스캔을 막지 않음.
-        return {s: {} for s in fallback}
+        return _held_map_fallback(fallback, now=now, ttl_seconds=ttl_seconds)
     out: dict[str, dict[str, int]] = {}
     for p in (positions or []):
         sym = str(getattr(p, "symbol", "") or "")
@@ -438,6 +489,9 @@ async def _kis_held_map(broker: Any, *, fallback: set[str]) -> dict[str, dict[st
         _sell = getattr(p, "sellable_quantity", None)
         ordp = int(_sell) if _sell not in (None, "") else hldg
         out[sym] = {"hldg": hldg, "ord_psbl": max(0, ordp)}
+    # 조회 성공 → 스냅샷 갱신(수량 포함). 빈 결과(실제 무보유)도 성공이므로 그대로 반영.
+    _HELD_SNAPSHOT = {s: dict(v) for s, v in out.items()}
+    _HELD_SNAPSHOT_AT = now if now is not None else datetime.now(timezone.utc)
     return out
 
 
@@ -531,7 +585,7 @@ async def kis_paper_realtime_scan_tick(
         _db_held, daily_buy_used = _today_kis_paper_buy_state(db, now)
         # ★보유 *수량* 보존(단일 get_positions). SELL 수량 캡에 사용. held_symbols 는
         #   기존 set-기반 가드용으로 키에서 파생(중복 get_positions 호출 없음).
-        held_map = await _kis_held_map(broker, fallback=_db_held)
+        held_map = await _kis_held_map(broker, fallback=_db_held, now=now)
         held_symbols = set(held_map.keys())
 
         if client is None and not _fn_injected:

@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -21,6 +21,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+import app.kis_paper.driver_bridge as _bridge
 from app.agents.agent_council import StrategyMarketInput
 from app.brokers.kis import KisBrokerAdapter
 from app.db.base import Base
@@ -35,6 +36,16 @@ from app.market_data.kis_realtime import KIS_PRICE_OK, KisRealtimeQuote
 from app.risk.risk_manager import RiskDecision
 
 OPEN_TIME = datetime(2026, 5, 27, 5, 0, 0, tzinfo=timezone.utc)  # 14:00 KST Wed
+
+
+@pytest.fixture(autouse=True)
+def _reset_held_snapshot():
+    # R-A: 보유스냅샷은 모듈 전역 — 테스트 간 누수 방지로 매 테스트 초기화.
+    _bridge._HELD_SNAPSHOT = {}
+    _bridge._HELD_SNAPSHOT_AT = None
+    yield
+    _bridge._HELD_SNAPSHOT = {}
+    _bridge._HELD_SNAPSHOT_AT = None
 
 
 @pytest.fixture
@@ -234,13 +245,79 @@ def test_held_map_ord_psbl_none_defaults_to_hldg():
 
 
 def test_held_map_fallback_on_failure_has_no_quantities():
-    # 조회 실패 → fallback 심볼만, 수량 미상(빈 dict) → SELL 분기에서 qty 0 → skip.
+    # 조회 실패 + *스냅샷 없음* → fallback 심볼만, 수량 미상(빈 dict) → SELL qty 0 → skip.
     broker = _FakePosBroker(raise_error=RuntimeError("kis down"))
     m = asyncio.run(_kis_held_map(broker, fallback={"005930"}))
     assert m == {"005930": {}}
     # 빈 info → SELL qty = min(0,0) = 0 → SELL_NOT_ORDERABLE skip (헛주문 방지).
     info = m["005930"]
     assert min(int(info.get("hldg", 0) or 0), int(info.get("ord_psbl", 0) or 0)) == 0
+
+
+# ── R-A(2026-06-12): 보유스냅샷 fallback — 레이트리밋(EGW00201) 순간에도 청산 유지 ──
+
+def test_held_map_fallback_uses_fresh_snapshot_quantities():
+    # 직전 *성공* 조회로 스냅샷 적재 → 다음 조회 *실패* 시 수량까지 살려 청산 가능.
+    ok = _FakePosBroker([SimpleNamespace(symbol="035420", quantity=12, sellable_quantity=12)])
+    m1 = asyncio.run(_kis_held_map(ok, fallback=set(), now=OPEN_TIME))
+    assert m1["035420"] == {"hldg": 12, "ord_psbl": 12}
+    # EGW00201 시뮬: 조회 실패 + 스냅샷 신선(30초 후) → 보유 수량 보존
+    down = _FakePosBroker(raise_error=RuntimeError("EGW00201"))
+    m2 = asyncio.run(_kis_held_map(down, fallback={"035420"}, now=OPEN_TIME + timedelta(seconds=30)))
+    assert m2["035420"] == {"hldg": 12, "ord_psbl": 12}     # ★수량 살아있음 → 청산 가능
+    assert min(m2["035420"]["hldg"], m2["035420"]["ord_psbl"]) == 12   # SELL_NOT_ORDERABLE 아님
+
+
+def test_held_map_fallback_ignores_stale_snapshot():
+    # 스냅샷이 TTL 초과(오래됨)면 수량 fallback 안 함 → 종전 보수적(빈 dict).
+    ok = _FakePosBroker([SimpleNamespace(symbol="035420", quantity=12, sellable_quantity=12)])
+    asyncio.run(_kis_held_map(ok, fallback=set(), now=OPEN_TIME))
+    down = _FakePosBroker(raise_error=RuntimeError("EGW00201"))
+    stale = OPEN_TIME + timedelta(seconds=_bridge._HELD_SNAPSHOT_TTL_SECONDS + 1)
+    m = asyncio.run(_kis_held_map(down, fallback={"035420"}, now=stale))
+    assert m == {"035420": {}}     # 오래된 스냅샷 → 수량 미상(보수적)
+
+
+def test_held_map_success_empty_does_not_fabricate_holdings():
+    # 조회 성공+빈 결과(실제 무보유)는 스냅샷을 비워, 이후 실패 시 보유를 날조하지 않음.
+    asyncio.run(_kis_held_map(
+        _FakePosBroker([SimpleNamespace(symbol="035420", quantity=12)]), fallback=set(), now=OPEN_TIME))
+    asyncio.run(_kis_held_map(_FakePosBroker([]), fallback=set(), now=OPEN_TIME))  # 무보유 성공
+    m = asyncio.run(_kis_held_map(
+        _FakePosBroker(raise_error=RuntimeError("x")), fallback=set(), now=OPEN_TIME))
+    assert m == {}     # 빈 스냅샷 → 수량 fallback 없음
+
+
+def test_scan_recognizes_held_when_positions_fetch_fails(engine):
+    """R-A E2E: 직전 틱 성공으로 스냅샷 적재 → 이번 틱 get_positions 실패해도 035420 을
+    *보유*로 계속 인식 → 청산 시 SELL_NO_HELD_POSITION/SELL_NOT_ORDERABLE 로 끊기지 않는다.
+    (council 의 SELL 강제 여부는 판단부 — 본 테스트는 '보유 인식·수량 유지'만 가드.)"""
+    Session = sessionmaker(bind=engine)
+
+    async def _route(**kw):
+        return SimpleNamespace(
+            decision=RiskDecision.APPROVED, reasons=[],
+            audit=SimpleNamespace(id=1, broker_order_id="ODNO", broker_status="FILLED",
+                                  filled_quantity=12, executed=True))
+
+    # 1) 성공 틱: 035420 보유 스냅샷 적재 (fake route → DB 주문 안 쌓임 → DB fallback 비어있음)
+    ok = _FakePosBroker([SimpleNamespace(symbol="035420", quantity=12, sellable_quantity=12)])
+    asyncio.run(kis_paper_realtime_scan_tick(
+        session_factory=Session, broker=ok, risk=object(), route_order_fn=_route,
+        settings=_scan_settings(), market_input_fn=_sell_input_fn,
+        universe_symbols=["035420"], client=object(), now=OPEN_TIME))
+
+    # 2) 실패 틱: get_positions raise(EGW00201) → 스냅샷 fallback 으로 보유/수량 유지
+    down = _FakePosBroker(raise_error=RuntimeError("EGW00201"))
+    out = asyncio.run(kis_paper_realtime_scan_tick(
+        session_factory=Session, broker=down, risk=object(), route_order_fn=_route,
+        settings=_scan_settings(), market_input_fn=_sell_input_fn,
+        universe_symbols=["035420"], client=object(), now=OPEN_TIME + timedelta(seconds=30)))
+
+    codes = {s.get("reason_code") for s in out["skipped"]}
+    # ★핵심: get_positions 실패에도 '보유없음/주문불가'로 청산이 차단되지 않는다.
+    assert "SELL_NO_HELD_POSITION" not in codes
+    assert "SELL_NOT_ORDERABLE" not in codes
 
 
 # ── S2: SELL 주문수량이 보유 기준으로 캡되는지 (스캔 → route_order spy) ──────────
