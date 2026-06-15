@@ -64,6 +64,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--stuck-threshold", type=float, default=300.0)
     p.add_argument("--tick-interval", type=float, default=30.0)
     p.add_argument("--max-restarts", type=int, default=10)
+    p.add_argument("--restart-grace", type=float, default=150.0,
+                   help="재시작 후 이 초 동안은 추가 재시작 안 함(기동 중 backend 를 "
+                        "반복 kill 하는 storm 방지 — 기동시간 > check-interval 일 때 필수).")
     p.add_argument("--max-iterations", type=int, default=0, help="0=무한 (테스트는 유한)")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--log", default=str(Path("logs") / "watchdog.jsonl"))
@@ -76,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     proc: subprocess.Popen | None = None
     restart_count = 0
     iterations = 0
+    last_restart_ts: float | None = None   # storm 방지 — 마지막 재시작 monotonic 시각.
 
     while True:
         iterations += 1
@@ -104,7 +108,14 @@ def main(argv: list[str] | None = None) -> int:
             log.warn("WATCHDOG_CHECK", action=action.value, reason=reason)
         elif action == WatchdogAction.RESTART_BACKEND:
             _restart_target = args.backend_script or args.backend_cmd
-            if args.dry_run or not _restart_target:
+            _in_grace = (last_restart_ts is not None
+                         and (time.monotonic() - last_restart_ts) < float(args.restart_grace))
+            if _in_grace:
+                # ★storm 방지: 직전 재시작이 아직 grace 안 — 기동 중일 수 있으므로 재시작 보류.
+                log.warn("WATCHDOG_RESTART_IN_GRACE", reason=reason,
+                         since_restart_sec=round(time.monotonic() - last_restart_ts, 1),
+                         grace_sec=args.restart_grace)
+            elif args.dry_run or not _restart_target:
                 log.warn("WATCHDOG_RESTART_BACKEND_SKIPPED", reason=reason,
                          dry_run=args.dry_run, backend_cmd_present=bool(_restart_target))
             elif restart_count >= args.max_restarts:
@@ -121,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
                     pass
                 proc = (_start_backend_script(args.backend_script) if args.backend_script
                         else _start_backend(args.backend_cmd))
+                last_restart_ts = time.monotonic()   # grace 창 시작(storm 방지).
         elif action == WatchdogAction.RESTART_ENGINE:
             log.error("ENGINE_RESTART_RECOMMENDED", reason=reason)
 
