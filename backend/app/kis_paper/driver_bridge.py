@@ -510,7 +510,11 @@ async def _kis_held_map(broker: Any, *, fallback: set[str],
             continue
         _sell = getattr(p, "sellable_quantity", None)
         ordp = int(_sell) if _sell not in (None, "") else hldg
-        out[sym] = {"hldg": hldg, "ord_psbl": max(0, ordp)}
+        # S1(2026-06-15): 진입가(avg_price) 캡처 — 익절/손절 강제청산용 PositionContext 의
+        #   진입가 소스. R-A 스냅샷에도 자연 carry(아래 dict copy). 없으면 0 → 스캔에서
+        #   position=None(보수적: 진입가 모르면 강제청산 안 함).
+        _avg = int(getattr(p, "avg_price", 0) or 0)
+        out[sym] = {"hldg": hldg, "ord_psbl": max(0, ordp), "avg_price": _avg}
     # 조회 성공 → 스냅샷 갱신(수량 포함). 빈 결과(실제 무보유)도 성공이므로 그대로 반영.
     _HELD_SNAPSHOT = {s: dict(v) for s, v in out.items()}
     _HELD_SNAPSHOT_AT = now if now is not None else datetime.now(timezone.utc)
@@ -635,9 +639,33 @@ async def kis_paper_realtime_scan_tick(
                                 "price_source": "kis"})
                 continue
 
+            # S1(2026-06-15): 보유 종목은 PositionContext 를 구성해 council 에 전달 →
+            #   run_agent_council 의 *기존* stop_loss/take_profit 강제청산 트리거가 비로소
+            #   작동(익절선 초과 상승주가 영원히 안 팔리던 구조적 결함 수정). 익절/손절
+            #   임계는 effective getter(C1 런타임값). ★집계·투표·veto 로직 무수정 — position
+            #   전달만. 진입가(avg_price) 미상이면 position=None(보수적: 강제청산 안 함).
+            _position = None
+            if symbol in held_symbols:
+                _hinfo = held_map.get(symbol) or {}
+                _avg = int(_hinfo.get("avg_price", 0) or 0)
+                _cur = float(quote.price or 0)
+                if _avg > 0 and _cur > 0:
+                    from app.agents.position_context import PositionContext
+                    from app.core.runtime_config import (
+                        effective_stop_loss_pct, effective_take_profit_pct)
+                    _position = PositionContext(
+                        held_position=True, symbol=symbol,
+                        quantity=int(_hinfo.get("hldg", 0) or 0),
+                        available_quantity=int(_hinfo.get("ord_psbl", 0) or 0),
+                        average_entry_price=float(_avg),
+                        current_price=_cur,
+                        stop_loss_pct=round(effective_stop_loss_pct(), 2),
+                        take_profit_pct=round(effective_take_profit_pct(), 2),
+                    )
             council = run_agent_council(
                 mi, risk_profile=effective_active_profile(),  # S1: 런타임 활성 성향
                 held_position=(symbol in held_symbols),
+                position=_position,
                 min_confidence_floor=float(getattr(settings, "kis_paper_auto_min_confidence", 0.6)),
             )
             final = council.final_action

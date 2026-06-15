@@ -232,8 +232,8 @@ def test_held_map_preserves_hldg_and_ord_psbl():
         SimpleNamespace(symbol="000270", quantity=0, sellable_quantity=0),   # 0 → 제외
     ])
     m = asyncio.run(_kis_held_map(broker, fallback=set()))
-    assert m["005935"] == {"hldg": 4, "ord_psbl": 4}
-    assert m["005380"] == {"hldg": 10, "ord_psbl": 3}   # 주문가능 3 만 보존
+    assert m["005935"]["hldg"] == 4 and m["005935"]["ord_psbl"] == 4
+    assert m["005380"]["hldg"] == 10 and m["005380"]["ord_psbl"] == 3   # 주문가능 3 만 보존
     assert "000270" not in m
 
 
@@ -241,7 +241,7 @@ def test_held_map_ord_psbl_none_defaults_to_hldg():
     # sellable_quantity 미상(None) → hldg 로 간주(비-KIS broker 호환).
     broker = _FakePosBroker([SimpleNamespace(symbol="005930", quantity=3, sellable_quantity=None)])
     m = asyncio.run(_kis_held_map(broker, fallback=set()))
-    assert m["005930"] == {"hldg": 3, "ord_psbl": 3}
+    assert m["005930"]["hldg"] == 3 and m["005930"]["ord_psbl"] == 3
 
 
 def test_held_map_fallback_on_failure_has_no_quantities():
@@ -260,11 +260,11 @@ def test_held_map_fallback_uses_fresh_snapshot_quantities():
     # 직전 *성공* 조회로 스냅샷 적재 → 다음 조회 *실패* 시 수량까지 살려 청산 가능.
     ok = _FakePosBroker([SimpleNamespace(symbol="035420", quantity=12, sellable_quantity=12)])
     m1 = asyncio.run(_kis_held_map(ok, fallback=set(), now=OPEN_TIME))
-    assert m1["035420"] == {"hldg": 12, "ord_psbl": 12}
+    assert m1["035420"]["hldg"] == 12 and m1["035420"]["ord_psbl"] == 12
     # EGW00201 시뮬: 조회 실패 + 스냅샷 신선(30초 후) → 보유 수량 보존
     down = _FakePosBroker(raise_error=RuntimeError("EGW00201"))
     m2 = asyncio.run(_kis_held_map(down, fallback={"035420"}, now=OPEN_TIME + timedelta(seconds=30)))
-    assert m2["035420"] == {"hldg": 12, "ord_psbl": 12}     # ★수량 살아있음 → 청산 가능
+    assert m2["035420"]["hldg"] == 12 and m2["035420"]["ord_psbl"] == 12     # ★수량 살아있음
     assert min(m2["035420"]["hldg"], m2["035420"]["ord_psbl"]) == 12   # SELL_NOT_ORDERABLE 아님
 
 
@@ -410,3 +410,107 @@ def test_held_symbols_always_scanned_despite_rotation(engine):
     ))
     assert "035420" in scanned           # 보유는 회전과 무관하게 항상 스캔됨
     b.reset_scan_rotation_for_tests()
+
+
+# ── S1/S2(2026-06-15): 익절/손절 강제청산 = position 전달로 활성화 ──────────────
+#   ★역방향 안전(밴드 내 정상 보유는 안 팔림)이 최대 위험 — 가장 빡빡하게 검증.
+
+from app.brokers.base import OrderSide as _OrderSide
+
+
+def _neutral_quote_fn(price):
+    # 전략 투표가 전부 중립(HOLD)이 되도록 평평한 input — 강제청산만 SELL 을 유발.
+    async def _fn(symbol, *, client, now, market_is_open, **kw):
+        mi = StrategyMarketInput(
+            symbol=symbol, current_price=float(price), prev_close=float(price),
+            open_price=float(price), vwap=float(price),
+            opening_range_high=float(price) * 1.002, opening_range_low=float(price) * 0.998,
+            recent_closes=(float(price),) * 5, current_volume=100.0, avg_volume=100.0,
+            market_regime="SIDEWAYS", regime_decision="ALLOW")
+        return mi, KisRealtimeQuote(symbol=symbol, status=KIS_PRICE_OK, price=float(price), is_stale=False)
+    return _fn
+
+
+def _route_capture():
+    routed = []
+    async def _fn(**kw):
+        routed.append(kw)
+        return SimpleNamespace(decision=RiskDecision.APPROVED, reasons=[],
+            audit=SimpleNamespace(id=1, broker_order_id="ODNO", broker_status="FILLED",
+                                  filled_quantity=10, executed=True))
+    return _fn, routed
+
+
+def _set_thresholds(monkeypatch, *, tp=3.5, sl=2.0):
+    import app.core.runtime_config as rc
+    monkeypatch.setattr(rc, "effective_take_profit_pct", lambda: tp)
+    monkeypatch.setattr(rc, "effective_stop_loss_pct", lambda: sl)
+
+
+# db8fd55 게이트가 *면제해야* 하는 품질/확신 차단 코드(이 코드로 막히면 면제 실패).
+_QUALITY_BLOCKS = {"KIS_PAPER_LOW_QUALITY_SCORE", "KIS_PAPER_LOW_CONFIDENCE",
+                   "LOW_QUALITY_SCORE", "LOW_CONFIDENCE"}
+
+
+def _scan(engine, broker, price):
+    # ★FakeBroker 는 KIS paper 어댑터가 아니라 PaperTrader/게이트 broker 검증에서 멈춘다.
+    #   그래서 *게이트 결과(reason_code)* 로 검증: 위험청산 SELL 이 품질/확신에 안 막히고
+    #   (db8fd55 면제) broker-type 체크(KIS_PAPER_MODE_REQUIRED)에서만 멈추면 = 라이브선 통과.
+    Session = sessionmaker(bind=engine)
+    route, routed = _route_capture()
+    out = asyncio.run(kis_paper_realtime_scan_tick(
+        session_factory=Session, broker=broker, risk=object(), route_order_fn=route,
+        settings=_scan_settings(), market_input_fn=_neutral_quote_fn(price),
+        universe_symbols=["005930"], client=object(), now=OPEN_TIME))
+    return out, routed
+
+
+def _held(avg):
+    return _FakePosBroker([SimpleNamespace(symbol="005930", quantity=10, sellable_quantity=10, avg_price=avg)])
+
+
+def test_take_profit_forced_exit_generated_and_gate_exempt(engine, monkeypatch):
+    # 보유 avg 100,000, 현재가 104,000 = +4% > 익절 +3.5% → 강제 SELL 생성 + 품질게이트 면제.
+    _set_thresholds(monkeypatch, tp=3.5, sl=2.0)
+    out, _ = _scan(engine, _held(100000), 104000)
+    assert out["candidates_found"] == 1, "익절선 초과인데 강제청산 SELL 후보가 안 생김"
+    o = out["orders"][0]
+    # ★db8fd55: 위험청산 SELL 이 저품질(conf 0.3/qual 30)이어도 품질/확신에 안 막힘.
+    assert o["reason_code"] not in _QUALITY_BLOCKS, f"db8fd55 면제 실패 — {o['reason_code']}"
+    assert o["reason_code"] == "KIS_PAPER_MODE_REQUIRED"   # broker-type 체크만(라이브선 통과)
+
+
+def test_stop_loss_forced_exit_generated_and_gate_exempt(engine, monkeypatch):
+    # 보유 avg 100,000, 현재가 97,000 = -3% < 손절 -2% → 강제 SELL_STOP_LOSS + 면제.
+    _set_thresholds(monkeypatch, tp=3.5, sl=2.0)
+    out, _ = _scan(engine, _held(100000), 97000)
+    assert out["candidates_found"] == 1, "손절선 하회인데 강제청산 SELL 후보가 안 생김"
+    o = out["orders"][0]
+    assert o["reason_code"] not in _QUALITY_BLOCKS
+    assert o["reason_code"] == "KIS_PAPER_MODE_REQUIRED"
+
+
+def test_within_bands_not_force_sold(engine, monkeypatch):
+    # ★역방향 안전(최대 위험): avg 100,000, 현재가 101,000 = +1% (익절 +3.5%/손절 -2% 사이)
+    #   → 강제청산 트리거 없음 + 전략 중립 → SELL 후보 0 (멀쩡한 보유를 잘못 팔지 않는다).
+    _set_thresholds(monkeypatch, tp=3.5, sl=2.0)
+    out, routed = _scan(engine, _held(100000), 101000)
+    assert out["candidates_found"] == 0, "밴드 내 정상 보유가 잘못 청산 후보가 됨(역방향 안전 위반)"
+    assert routed == []
+
+
+def test_no_avg_price_no_force_exit(engine, monkeypatch):
+    # 진입가 미상(avg_price=0) → position=None → 강제청산 안 함(보수적 안전).
+    _set_thresholds(monkeypatch, tp=3.5, sl=2.0)
+    out, routed = _scan(engine, _held(0), 104000)
+    assert out["candidates_found"] == 0
+    assert routed == []
+
+
+def test_held_map_carries_avg_price_for_ra_snapshot():
+    # R-A 상호작용: _kis_held_map 이 avg_price 를 담아 스냅샷 fallback 에도 진입가 보존.
+    import app.kis_paper.driver_bridge as b
+    b.reset_scan_rotation_for_tests()
+    ok = _FakePosBroker([SimpleNamespace(symbol="005930", quantity=10, sellable_quantity=10, avg_price=100000)])
+    m = asyncio.run(_kis_held_map(ok, fallback=set(), now=OPEN_TIME))
+    assert m["005930"]["avg_price"] == 100000
