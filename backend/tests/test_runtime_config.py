@@ -99,7 +99,7 @@ def test_changes_carries_before_after():
 
 # ── 검증 (서버 측 필수) ───────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("v", [0, 11, -1, 100])
+@pytest.mark.parametrize("v", [0, 16, -1, 100])   # 2026-06-15: 상한 15 → 16 부터 out-of-range
 def test_max_concurrent_out_of_range_raises(v):
     with pytest.raises(rc.RuntimeConfigValidationError):
         rc.set_runtime_overrides(max_concurrent_positions=v)
@@ -166,7 +166,7 @@ def test_api_put_valid_returns_reread_effective():
 
 @pytest.mark.parametrize("payload,frag", [
     ({"max_concurrent_positions": 0}, "동시진입"),
-    ({"max_concurrent_positions": 11}, "동시진입"),
+    ({"max_concurrent_positions": 16}, "동시진입"),   # 2026-06-15: 상한 15 → 16 거부
     ({"per_stock_budget": 50_000}, "종목당"),
     ({"per_stock_budget": 20_000_000}, "종목당"),
 ])
