@@ -131,6 +131,21 @@ async def _trailing_shadow_tick(now: datetime) -> None:
         db.close()
 
 
+def _label_outcomes_tick(now: datetime) -> None:
+    """청산 round-trip → 진입 episode 에 outcome 라벨링 1틱 — ★거래 동작에 영향 0(집계만).
+
+    학습(설계 A)의 기법별 expectancy 산출이 가능해지도록, 라이브 청산 거래에 사후 성과를
+    붙인다. 멱등 + 최근분만(소급 X). 학습 자동조정은 여전히 0.
+    """
+    from app.analytics.outcome_labeler import label_closed_round_trips
+    from app.db.session import SessionLocal
+    db = SessionLocal()
+    try:
+        label_closed_round_trips(db, now=now)
+    finally:
+        db.close()
+
+
 @dataclass(frozen=True)
 class DriverTickResult:
     """단일 tick 결과 — *advisory*, broker 호출 0건."""
@@ -651,6 +666,11 @@ class BackgroundTickDriver:
         try:
             await _trailing_shadow_tick(now)
         except Exception:  # noqa: BLE001 — 측정 실패는 거래에 영향 0.
+            pass
+        # 학습용 청산 outcome 라벨링(집계) — ★거래 동작에 영향 0(round-trip→진입 episode 기록만).
+        try:
+            _label_outcomes_tick(now)
+        except Exception:  # noqa: BLE001
             pass
         return DriverTickResult(
             executed=True, reason_code=rc, reason_message=self._last_reason_message,
