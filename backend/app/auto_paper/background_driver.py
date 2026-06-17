@@ -110,6 +110,27 @@ def _redact_secret(text: str) -> str:
     return out[:500]
 
 
+async def _trailing_shadow_tick(now: datetime) -> None:
+    """트레일링 1·2단계(측정+섀도) 1틱 — ★거래 동작에 영향 0(관찰만, 매도 0).
+
+    get_positions(브로커 어댑터 *20s 캐시* — 스캔이 직전에 호출했으면 캐시 히트, EGW 부하 ~0)
+    로 보유 종목을 읽어 최고가(hwm) 영속 추적 + "트레일링이었다면 청산했을지" 섀도 로그.
+    driver_bridge/주문경로 미접촉 — 독립 측정 계층.
+    """
+    from app.api.deps import get_broker
+    from app.db.session import SessionLocal
+    from app.positions.high_watermark import update_and_shadow
+    broker = get_broker()
+    if broker is None or not hasattr(broker, "get_positions"):
+        return
+    positions = await broker.get_positions()
+    db = SessionLocal()
+    try:
+        update_and_shadow(db, positions, now=now)
+    finally:
+        db.close()
+
+
 @dataclass(frozen=True)
 class DriverTickResult:
     """단일 tick 결과 — *advisory*, broker 호출 0건."""
@@ -625,6 +646,12 @@ class BackgroundTickDriver:
                      "broker_order_sent": bool(res.get("broker_order_sent")),
                      "is_live_authorization": False},
         )
+        # 트레일링 1·2단계(측정+섀도) — ★봇 매도 결정·거래 동작에 영향 0(hwm 기록 + 섀도 로그만).
+        #   스캔/주문이 모두 끝난 *뒤* 관찰만. 실패해도 tick/거래 불변(try/except 격리).
+        try:
+            await _trailing_shadow_tick(now)
+        except Exception:  # noqa: BLE001 — 측정 실패는 거래에 영향 0.
+            pass
         return DriverTickResult(
             executed=True, reason_code=rc, reason_message=self._last_reason_message,
             cycle_count=cycle, recorded_event=recorded, tick_mode="KIS_PAPER_AUTO",

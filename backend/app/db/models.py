@@ -698,3 +698,40 @@ class LossReasonLog(Base):
     reviewed_by:   Mapped[str | None]    = mapped_column(String(64), nullable=True)
     review_note:   Mapped[str | None]    = mapped_column(String(500), nullable=True)
     reviewed_at:   Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class PositionHighWatermark(Base):
+    """트레일링 스탑 1단계(측정) — 보유 종목의 장중 최고가 추적. *상태 기록 전용*.
+
+    설계 docs/design/trailing_stop.md §2-1. 봇 매도 결정에 *미사용*(측정+섀도 단계) —
+    매 틱 hwm=max(저장값, 현재가) upsert, activated 래칫(+activation 도달 시 True 유지),
+    청산 시 DELETE(재매수 시 깨끗이 재시작). 재시작 복구 폴백 max(현재가, 진입가×1.03).
+    """
+
+    __tablename__ = "position_high_watermark"
+
+    symbol:         Mapped[str]      = mapped_column(String(16), primary_key=True)
+    entry_price:    Mapped[int]      = mapped_column(Integer)
+    high_watermark: Mapped[int]      = mapped_column(Integer)
+    activated:      Mapped[bool]     = mapped_column(Boolean, default=False)
+    updated_at:     Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, index=True)
+
+
+class TrailingShadowOutcome(Base):
+    """트레일링 섀도(2단계) — 청산된 보유의 *최고점 도달* 기록. T3 비교 데이터.
+
+    봇이 고정 익절/손절로 청산할 때, 그 포지션이 보유 중 도달한 최고점(peak_return)을
+    기록한다 → "트레일링이었다면 얼마까지 갔나" vs "고정 익절 +3%" 누적 비교용.
+    측정 전용(주문/판단 0). 설계 docs/design/trailing_stop.md 3단계 전환 판단 근거.
+    """
+
+    __tablename__ = "trailing_shadow_outcome"
+
+    id:               Mapped[int]      = mapped_column(primary_key=True)
+    symbol:           Mapped[str]      = mapped_column(String(16), index=True)
+    entry_price:      Mapped[int]      = mapped_column(Integer)
+    peak_high_watermark: Mapped[int]   = mapped_column(Integer)
+    peak_return_pct:  Mapped[float]    = mapped_column(Float)
+    activated:        Mapped[bool]     = mapped_column(Boolean, default=False)
+    closed_at:        Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
