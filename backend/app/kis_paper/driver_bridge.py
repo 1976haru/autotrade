@@ -544,7 +544,8 @@ async def kis_paper_realtime_scan_tick(
     DRYRUN 모드(`kis_paper_auto_order_dry_run=true`)면 게이트가 dry-run 경로로
     돌아 broker_order_sent=false. SMOKE 모드면 단일 종목 / qty=1.
     """
-    from app.agents.agent_council import CouncilAction, run_agent_council
+    from app.agents.agent_council import (
+        CouncilAction, StrategyMarketInput, run_agent_council)
     from app.core.runtime_config import effective_active_profile
     from app.scheduler.market_clock import MarketPhase, current_market_phase
 
@@ -634,10 +635,21 @@ async def kis_paper_realtime_scan_tick(
                 symbol, client=client, now=now, market_is_open=market_is_open,
             )
             symbols_scanned += 1
+            # ⓑ-fix(2026-06-18 손절 갭): 60분봉 fetch 실패(mi=None)여도 *보유종목 청산평가*는
+            #   실시간 현재가(quote.price)로 계속한다. 청산(infer_position_sell_reason)은
+            #   PositionContext(현재가)만 의존 — mi(60분봉) 무관. 신규 진입만 mi 필요.
+            #   ★집계·투표·리스크·승인·손절임계 로직 무수정 — 청산평가가 *skip 되지 않게* 만 한다.
+            _exit_only = False
             if mi is None:
-                skipped.append({"symbol": symbol, "reason_code": quote.status,
-                                "price_source": "kis"})
-                continue
+                if (symbol in held_symbols) and quote.ok and float(quote.price or 0) > 0:
+                    # 최소 입력(현재가만) — 진입 voter 는 데이터 부족→HOLD, 청산은 position 으로 평가.
+                    mi = StrategyMarketInput(symbol=symbol, current_price=float(quote.price))
+                    _exit_only = True   # 열화 데이터 → 진입(BUY) 금지, 청산(SELL)만 허용
+                else:
+                    # 보유 아님 or 현재가도 없음 → 평가 불가 → skip(다음 틱 재시도, 합성가 안 만듦).
+                    skipped.append({"symbol": symbol, "reason_code": quote.status,
+                                    "price_source": "kis", "exit_eval": "skipped_no_price"})
+                    continue
 
             # S1(2026-06-15): 보유 종목은 PositionContext 를 구성해 council 에 전달 →
             #   run_agent_council 의 *기존* stop_loss/take_profit 강제청산 트리거가 비로소
@@ -669,6 +681,12 @@ async def kis_paper_realtime_scan_tick(
                 min_confidence_floor=float(getattr(settings, "kis_paper_auto_min_confidence", 0.6)),
             )
             final = council.final_action
+            if _exit_only and final != CouncilAction.SELL:
+                # ⓑ-fix: 열화 데이터(60분봉 없음)에선 진입 금지 — 청산(SELL)만 진행.
+                #   재진입은 정상 60분봉 틱에서만. (mi=None 의 BUY 는 부실신호이므로 차단)
+                skipped.append({"symbol": symbol, "reason_code": "EXIT_ONLY_NO_SELL",
+                                "price_source": "kis"})
+                continue
             if final not in (CouncilAction.BUY, CouncilAction.SELL):
                 skipped.append({"symbol": symbol, "reason_code": "HOLD_NO_SIGNAL",
                                 "price_source": "kis"})
