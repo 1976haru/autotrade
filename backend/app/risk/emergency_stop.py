@@ -301,6 +301,33 @@ def apply_kill_switch_to_risk(risk, level: KillSwitchLevel) -> None:
     risk.emergency_stop = (level != KillSwitchLevel.OFF)
 
 
+def restore_kill_switch_from_db(risk, db: Session) -> KillSwitchLevel:
+    """#11 영속화: startup 에서 마지막 EmergencyStopEvent 상태를 RiskManager 에 1회 복원.
+
+    정책(단일·단순): *마지막 명시적 상태 그대로* — 최신 이벤트가 enabled=True 면 그
+    level 로 시작(걸린 정지 보존), enabled=False/이력 없음이면 OFF. 비정상 크래시
+    감지는 하지 않는다(과한 옵션 회피).
+
+    ★기존 차단 로직(evaluate_order hard-reject)·apply_kill_switch_to_risk 매핑은
+    무변경 — 시작 시 *복원* 1회만 추가하는 안전강화. 실패해도 기존 동작(OFF 시작)으로
+    fail-safe(예외를 봇 startup 으로 전파하지 않음).
+    """
+    try:
+        row = db.execute(
+            select(EmergencyStopEvent).order_by(EmergencyStopEvent.id.desc()).limit(1)
+        ).scalar_one_or_none()
+        if row is not None and bool(row.enabled):
+            try:
+                level = KillSwitchLevel(row.level) if row.level else KillSwitchLevel.LEVEL_1
+            except ValueError:
+                level = KillSwitchLevel.LEVEL_1
+            apply_kill_switch_to_risk(risk, level)   # 기존 함수 재사용(차단로직 그대로)
+            return level
+    except Exception:  # noqa: BLE001 — 복원 실패는 기존 OFF 시작으로 안전 폴백.
+        pass
+    return KillSwitchLevel.OFF
+
+
 # ---------- module invariants (코드 단 안전 보장) ----------
 #
 # 본 모듈은 broker.place_order, broker.cancel_order, route_order 어떤 함수도

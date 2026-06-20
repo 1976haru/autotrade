@@ -103,6 +103,19 @@ async def lifespan(_app: FastAPI):
         os.environ["PAPER_CAPITAL_PERSIST"] = "true"
         _startup_logger.info("[startup] paper capital persistence ENABLED")
 
+    # #11: 킬스위치 상태 복원(재기동 시 휘발 방지). 마지막 EmergencyStopEvent 가
+    #   enabled 면 그 level 로 시작 — 기존 차단 로직 무변경, 복원만. 실패는 OFF 폴백.
+    try:
+        from app.api.deps import get_risk_manager
+        from app.db.session import SessionLocal
+        from app.risk.emergency_stop import restore_kill_switch_from_db
+        with SessionLocal() as _ks_db:
+            _ks_lvl = restore_kill_switch_from_db(get_risk_manager(), _ks_db)
+        _startup_logger.info("[startup] kill-switch 복원: %s", _ks_lvl)
+    except Exception as _ks_exc:  # noqa: BLE001 — 복원 실패는 봇 startup 막지 않음(OFF 시작).
+        _startup_logger.warning("[startup] kill-switch 복원 실패(OFF 시작): %s",
+                                type(_ks_exc).__name__)
+
     poller: FillPoller | None = None
     poller_starter_task: asyncio.Task | None = None
 
