@@ -156,6 +156,9 @@ def _extract_snapshot(raw: dict) -> dict[str, float | None]:
         "prev_close": _to_float(out.get("stck_sdpr")),   # 기준가 (전일 종가/기준)
         "volume":     _to_float(out.get("acml_vol")),
         "vwap":       _to_float(out.get("wghn_avrg_stck_prc")),
+        # #9: 거래정지 플래그(Y/N) — KIS inquire-price 에 거래소 타임스탬프가 없어
+        #   stale 를 시각으로 못 재는 대신, 정지종목을 fail-closed 차단하는 근거.
+        "temp_stop_yn": str(out.get("temp_stop_yn") or "").upper(),
     }
 
 
@@ -196,6 +199,13 @@ async def fetch_realtime_quote(
         return KisRealtimeQuote(
             symbol=symbol, status=KIS_PRICE_INVALID, price=price,
             timestamp=ts, reason_message=status_message_ko(KIS_PRICE_INVALID),
+        )
+    # #9 fail-closed: 거래정지(temp_stop_yn=Y) 종목은 시세가 actionable 하지 않다 →
+    #   INVALID 로 차단(caller 가 skip). 정상종목(N/빈값)은 그대로 통과 — 거짓차단 0.
+    if snap.get("temp_stop_yn") == "Y":
+        return KisRealtimeQuote(
+            symbol=symbol, status=KIS_PRICE_INVALID, price=price, timestamp=ts,
+            is_stale=True, reason_message="거래정지 종목 — 판단 보류",
         )
     if not market_is_open:
         return KisRealtimeQuote(
