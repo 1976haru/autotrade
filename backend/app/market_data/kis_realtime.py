@@ -22,8 +22,10 @@ client 는 *주입 가능* — 테스트는 fake client(async `get_price` /
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import time as _time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
@@ -71,6 +73,46 @@ def _redact(text: str) -> str:
     for pat in _SECRET_PATTERNS:
         out = pat.sub("[REDACTED]", out)
     return out[:300]
+
+
+# ── ⓑ 봉주기 신호 모드 (2026-06-18 60분봉 → 2026-06-21 5/30/60 일반화) ─────────
+# 라이브 신호 입력을 1분봉 당일 → BAR_INTERVAL_MINUTES분봉 멀티데이로 전환. 청산(30초
+# 틱·실시간가)은 driver_bridge 가 그대로 — 본 모듈은 *진입 voter 입력*만 N분봉으로 구성.
+# ★봉주기 전환 = 아래 한 줄(BAR_INTERVAL_MINUTES). 5/30/60 = 리샘플 경로, 0 = legacy 1분봉
+#   경로(원 코드 보존, 롤백/하위호환). git checkout 으로도 복귀.
+BAR_INTERVAL_MINUTES = 30   # ← 봉주기(5/30/60) 또는 0=legacy 1분봉. 30분봉 전환(드라이런 검증완료).
+_RECENT_BARS = 30           # momentum/vwap 룩백 *봉 수*(N무관 유지; 실제기간=30×N분)
+_SESSION_MIN = 390          # 장중 09:00~15:30 = 390분
+_ORB_START, _ORB_END = "090000", "093000"   # ORB 레인지 09:00–09:30(봉주기 무관, 1분봉서 계산)
+# 과거일 N분봉 캐시: (symbol, asof_date_kst, N) -> list[dict OHLCV]. 하루 1회만 채움.
+_prior_bars_cache: dict[tuple[str, str, int], list[dict]] = {}
+
+# 5/30/60 = 멀티데이 리샘플 경로, 그 외(0/1) = legacy 1분봉 당일 경로.
+_USE_INTRADAY_RESAMPLE = BAR_INTERVAL_MINUTES in (5, 30, 60)
+
+
+def _bars_per_day() -> int:
+    """장중 1일 N분봉 개수 (60→6, 30→13, 5→78)."""
+    return max(1, _SESSION_MIN // BAR_INTERVAL_MINUTES)
+
+
+def _prior_days() -> int:
+    """룩백 _RECENT_BARS 봉을 채우는 데 필요한 과거 거래일 수 = ceil(30/봉수per일)+1 버퍼."""
+    return max(1, -(-_RECENT_BARS // _bars_per_day()) + 1)
+
+
+def _prior_max_cal() -> int:
+    """과거 거래일 채우기 위한 최대 역행 달력일(주말·공휴일 흡수)."""
+    return _prior_days() * 3
+
+
+def reset_bars_cache() -> None:
+    """테스트/드라이런용 — 과거일 N분봉 캐시 비우기."""
+    _prior_bars_cache.clear()
+
+
+# 하위호환 alias(기존 호출부 보존).
+reset_60m_cache = reset_bars_cache
 
 
 def status_message_ko(code: str) -> str:
@@ -236,6 +278,160 @@ def _parse_intraday_closes(raw: dict) -> list[float]:
     return [c for _, c in closes]
 
 
+# ── ⓑ 60분봉: 분봉 OHLCV 파싱 / 리샘플 / 멀티데이 fetch + 캐시 ────────────────
+def _parse_intraday_ohlcv(raw: dict) -> list[dict]:
+    """inquire-time-dailychartprice output2 → 분봉 OHLCV(시간 오름차순).
+
+    필드: stck_bsop_date(일자) / stck_cntg_hour(HHMMSS) / stck_oprc·hgpr·lwpr·prpr(OHLC) /
+    cntg_vol(체결량). 일부 필드 누락 시 종가(prpr)로 보정.
+    """
+    rows = (raw or {}).get("output2") or []
+    out: list[dict] = []
+    for row in rows:
+        c = _to_float(row.get("stck_prpr"))
+        if c is None or c <= 0:
+            continue
+        out.append({
+            "d": str(row.get("stck_bsop_date") or ""),
+            "t": str(row.get("stck_cntg_hour") or ""),
+            "o": _to_float(row.get("stck_oprc")) or c,
+            "h": _to_float(row.get("stck_hgpr")) or c,
+            "l": _to_float(row.get("stck_lwpr")) or c,
+            "c": c,
+            "v": _to_float(row.get("cntg_vol")) or 0.0,
+        })
+    out.sort(key=lambda b: (b["d"], b["t"]))
+    return out
+
+
+def _resample_bars(minute_bars: list[dict]) -> list[dict]:
+    """1분봉 → BAR_INTERVAL_MINUTES분봉(OHLCV). 버킷=(일자, N분슬롯). 부분봉 최신가 반영.
+
+    N=60 이면 slot=(HH*60+MM)//60=HH → 기존 *시 단위* 버킷과 비트-동일(회귀 보존).
+    """
+    n = BAR_INTERVAL_MINUTES
+    buckets: dict[tuple[str, int], dict] = {}
+    order: list[tuple[str, int]] = []
+    for b in minute_bars:
+        t = b["t"] or "000000"
+        slot = (int(t[:2]) * 60 + int(t[2:4])) // n     # N분 슬롯(60→시단위 동일)
+        key = (b["d"], slot)
+        if key not in buckets:
+            hhmm = f"{(slot * n) // 60:02d}{(slot * n) % 60:02d}00"
+            buckets[key] = {"d": b["d"], "t": hhmm,
+                            "o": b["o"], "h": b["h"], "l": b["l"], "c": b["c"], "v": b["v"]}
+            order.append(key)
+        else:
+            agg = buckets[key]
+            agg["h"] = max(agg["h"], b["h"]); agg["l"] = min(agg["l"], b["l"])
+            agg["c"] = b["c"]; agg["v"] += b["v"]      # close=최신 → 부분봉도 갱신
+    return [buckets[k] for k in order]
+
+
+# ── ⓑ 분봉 fetch 레이트 안전판 (≤2/s + EGW00201 백오프) ──────────────────────
+#   프로브① 실측: KIS 모의 분봉 조회는 ~3/s 에서 EGW00201. 멀티콜 fetch 가 한도를
+#   넘지 않도록 전역 직렬 페이싱 + 초당한도 초과(EGW00201) 시 지수 백오프 재시도.
+_FETCH_MIN_INTERVAL = 0.5            # ≤2/s
+_fetch_lock = asyncio.Lock()
+_last_fetch_ts = [0.0]
+
+
+async def _paced_inquire(client: Any, symbol: str, *, date: str, hour: str) -> dict:
+    """inquire-time-dailychartprice 를 ≤2/s 페이싱 + EGW00201 백오프(최대 4회)로 호출."""
+    for attempt in range(4):
+        async with _fetch_lock:                        # 전역 직렬화(초당한도 보호)
+            gap = _time.perf_counter() - _last_fetch_ts[0]
+            if gap < _FETCH_MIN_INTERVAL:
+                await asyncio.sleep(_FETCH_MIN_INTERVAL - gap)
+            _last_fetch_ts[0] = _time.perf_counter()
+        try:
+            raw = await client.inquire_time_dailychartprice(symbol, date=date, hour=hour)
+            return raw if isinstance(raw, dict) else {}
+        except Exception as exc:  # noqa: BLE001
+            if "EGW00201" in str(exc) and attempt < 3:
+                await asyncio.sleep(0.6 * (attempt + 1))   # 0.6/1.2/1.8s 백오프
+                continue
+            raise
+    return {}
+
+
+async def _fetch_full_day_minutes(client: Any, symbol: str, date: str) -> list[dict]:
+    """하루 전체 분봉 — hour 를 과거로 옮기며 여러 콜로 덮음. ≤2/s 페이싱 + EGW00201 백오프."""
+    seen: dict[str, dict] = {}
+    hour = "153000"
+    for _ in range(5):                                 # 09:00~15:30 커버(여유 5콜)
+        raw = await _paced_inquire(client, symbol, date=date, hour=hour)
+        bars = _parse_intraday_ohlcv(raw if isinstance(raw, dict) else {})
+        if not bars:
+            break
+        for b in bars:
+            seen[b["t"]] = b
+        earliest = min(b["t"] for b in bars)
+        if earliest <= "090100":
+            break
+        hour = f"{earliest[:4]}00"                      # 더 과거 창으로
+    return sorted(seen.values(), key=lambda b: b["t"])
+
+
+async def _prior_days_bars(client: Any, symbol: str, now: datetime) -> list[dict]:
+    """과거 _prior_days() *데이터 있는* 거래일의 N분봉(캐시). 하루 1회만 채움.
+
+    ★달력 캘린더 불필요 — 날짜를 역행하며 분봉이 *실제로 있는 날* 만 카운트(주말·공휴일 자동 skip).
+    캐시 키에 BAR_INTERVAL_MINUTES 포함 → 봉주기 바꾸면 캐시 자동 분리.
+    """
+    from datetime import timedelta
+    asof = to_kst(now)
+    asof_key = asof.strftime("%Y%m%d")
+    ck = (symbol, asof_key, BAR_INTERVAL_MINUTES)
+    if ck in _prior_bars_cache:
+        return _prior_bars_cache[ck]
+    out: list[dict] = []
+    collected = 0
+    need_days = _prior_days()
+    for back in range(1, _prior_max_cal() + 1):
+        if collected >= need_days:
+            break
+        d = (asof - timedelta(days=back)).strftime("%Y%m%d")
+        try:
+            mins = await _fetch_full_day_minutes(client, symbol, d)
+        except Exception as exc:  # noqa: BLE001 — 그 날 실패는 skip, 다른 날로.
+            _log.info("[kis-%dm] prior %s %s unavailable: %s", BAR_INTERVAL_MINUTES, symbol, d, _redact(str(type(exc).__name__)))
+            continue
+        if not mins:                                   # 데이터 없는 날(주말/공휴일) → skip
+            continue
+        out.extend(_resample_bars(mins))
+        collected += 1
+    out.sort(key=lambda b: (b["d"], b["t"]))
+    _prior_bars_cache[ck] = out
+    return out
+
+
+# 하위호환 alias.
+_prior_days_60m = _prior_days_bars
+
+
+async def warmup_bars_cache(symbols: list[str], *, client: Any, now: datetime | None = None) -> dict[str, int]:
+    """개장 전(예: 08:40) 과거일 N분봉 캐시 워밍업. 종목→과거 N분봉 수. 봇 미가동·주문 0.
+
+    ★스케줄러 연결(08:40 트리거)은 background_driver/scheduler 변경이 필요해 *별도 1파일 작업*.
+    미연결 시에도 각 종목 첫 틱에서 lazy 워밍(첫 틱만 느림).
+    """
+    now = now or datetime.now(timezone.utc)
+    result: dict[str, int] = {}
+    for sym in symbols:
+        try:
+            bars = await _prior_days_bars(client, sym, now)
+            result[sym] = len(bars)
+        except Exception as exc:  # noqa: BLE001
+            _log.info("[kis-%dm] warmup %s 실패: %s", BAR_INTERVAL_MINUTES, sym, _redact(str(type(exc).__name__)))
+            result[sym] = 0
+    return result
+
+
+# 하위호환 alias.
+warmup_60m_cache = warmup_bars_cache
+
+
 async def build_kis_market_input(
     symbol: str,
     *,
@@ -259,31 +455,61 @@ async def build_kis_market_input(
     if not quote.ok:
         return None, quote
 
-    closes: list[float] = []
-    try:
+    if _USE_INTRADAY_RESAMPLE:
+        # ── ⓑ N분봉(BAR_INTERVAL_MINUTES) 멀티데이 경로 ──
         date = to_kst(now).strftime("%Y%m%d")
-        raw_bars = await client.inquire_time_dailychartprice(symbol, date=date)
-        closes = _parse_intraday_closes(raw_bars if isinstance(raw_bars, dict) else {})
-    except Exception as exc:  # noqa: BLE001 — 분봉 실패는 스냅샷 기반 최소 구성으로 진행.
-        _log.info("[kis-realtime] intraday bars unavailable for %s: %s",
-                  symbol, _redact(f"{type(exc).__name__}"))
-        closes = []
-
-    if len(closes) >= 5:
-        recent_closes = tuple(closes[-30:])
-        opening = closes[:6] if len(closes) >= 6 else closes
-        orh: float | None = max(opening)
-        orl: float | None = min(opening)
+        try:
+            today_min = await _fetch_full_day_minutes(client, symbol, date)
+            today_60m = _resample_bars(today_min)           # 부분봉 포함
+            prior_60m = await _prior_days_bars(client, symbol, now)  # 캐시(하루 1회)
+        except Exception as exc:  # noqa: BLE001 — N분봉 실패 = skip(임의 매수 금지).
+            _log.info("[kis-%dm] bars unavailable for %s: %s",
+                      BAR_INTERVAL_MINUTES, symbol, _redact(f"{type(exc).__name__}"))
+            return None, quote
+        bars60 = prior_60m + today_60m
+        if len(bars60) < _RECENT_BARS:                      # 데이터 부족 → skip
+            _log.info("[kis-%dm] %s %d분봉 %d개<%d — 신호 skip(진입 금지).",
+                      BAR_INTERVAL_MINUTES, symbol, BAR_INTERVAL_MINUTES, len(bars60), _RECENT_BARS)
+            return None, quote
+        recent_closes = tuple(b["c"] for b in bars60[-_RECENT_BARS:])
+        # ORB = 당일 09:00–09:30 1분봉 레인지(09:30부터 돌파). 없으면 첫 N분봉으로 근사.
+        orb_min = [b for b in today_min if _ORB_START <= b["t"] < _ORB_END]
+        if orb_min:
+            orh: float | None = max(b["h"] for b in orb_min)
+            orl: float | None = min(b["l"] for b in orb_min)
+        elif today_60m:
+            orh = today_60m[0]["h"]; orl = today_60m[0]["l"]
+        else:
+            orh = quote.high; orl = quote.low
         vwap = quote.vwap if quote.vwap else (sum(recent_closes) / len(recent_closes))
         avg_vol = quote.volume
     else:
-        # 분봉 부족 — 스냅샷 필드로 최소 구성. ORB 는 일중 고저로 근사(주석).
-        base = quote.prev_close or quote.open_price or quote.price
-        recent_closes = tuple(x for x in (base, quote.open_price, quote.price) if x)
-        orh = quote.high
-        orl = quote.low
-        vwap = quote.vwap
-        avg_vol = quote.volume
+        # ── legacy 1분봉 당일 경로(BAR_INTERVAL_MINUTES=0/1, 롤백·하위호환 보존) ──
+        closes: list[float] = []
+        try:
+            date = to_kst(now).strftime("%Y%m%d")
+            raw_bars = await client.inquire_time_dailychartprice(symbol, date=date)
+            closes = _parse_intraday_closes(raw_bars if isinstance(raw_bars, dict) else {})
+        except Exception as exc:  # noqa: BLE001 — 분봉 실패는 스냅샷 기반 최소 구성으로 진행.
+            _log.info("[kis-realtime] intraday bars unavailable for %s: %s",
+                      symbol, _redact(f"{type(exc).__name__}"))
+            closes = []
+
+        if len(closes) >= 5:
+            recent_closes = tuple(closes[-30:])
+            opening = closes[:6] if len(closes) >= 6 else closes
+            orh = max(opening)
+            orl = min(opening)
+            vwap = quote.vwap if quote.vwap else (sum(recent_closes) / len(recent_closes))
+            avg_vol = quote.volume
+        else:
+            # 분봉 부족 — 스냅샷 필드로 최소 구성. ORB 는 일중 고저로 근사(주석).
+            base = quote.prev_close or quote.open_price or quote.price
+            recent_closes = tuple(x for x in (base, quote.open_price, quote.price) if x)
+            orh = quote.high
+            orl = quote.low
+            vwap = quote.vwap
+            avg_vol = quote.volume
 
     mi = StrategyMarketInput(
         symbol=symbol,
