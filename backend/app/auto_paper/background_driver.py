@@ -244,6 +244,9 @@ class BackgroundTickDriver:
         # 위해 *주입된 async 콜러블* 로만 KIS 주문 흐름을 호출한다. 미주입 시
         # `app.kis_paper.driver_bridge.kis_paper_auto_tick` 를 lazy import.
         kis_auto_tick_fn:  Optional[Callable[..., Any]] = None,
+        # 개장 전(PRE_OPEN) 1회 universe 캐시 warmup 콜러블 — 미주입 시
+        # driver_bridge.premarket_warmup_tick lazy import(broker import 회피).
+        premarket_warmup_fn: Optional[Callable[..., Any]] = None,
     ):
         self._settings_provider = settings_provider
         self._loop_provider = loop_provider
@@ -255,6 +258,8 @@ class BackgroundTickDriver:
         self._risk_check_builder = risk_check_builder
         self._risk_manager_provider = risk_manager_provider
         self._kis_auto_tick_fn = kis_auto_tick_fn
+        self._premarket_warmup_fn = premarket_warmup_fn
+        self._warmup_date: str | None = None    # 당일 1회 warmup 가드 (KST date)
         # 상태.
         self._task: asyncio.Task | None = None
         self._stop_event: asyncio.Event | None = None
@@ -599,6 +604,32 @@ class BackgroundTickDriver:
         from app.kis_paper.driver_bridge import kis_paper_auto_tick
         return kis_paper_auto_tick
 
+    def _premarket_warmup_callable(self):
+        """주입된 warmup 콜러블 — 미주입 시 bridge lazy import (broker 무관)."""
+        if self._premarket_warmup_fn is not None:
+            return self._premarket_warmup_fn
+        from app.kis_paper.driver_bridge import premarket_warmup_tick
+        return premarket_warmup_tick
+
+    async def _maybe_premarket_warmup(self, now: datetime) -> None:
+        """PRE_OPEN 이고 오늘 아직 안 했으면 universe 캐시 1회 warmup. ★주문 0.
+
+        게이트(MARKET_CLOSED)로 tick 은 미실행이라, warmup 은 그와 별개로 개장 전
+        실행돼 장 초반 콜드 스파이크를 평탄화한다. 실패는 무시(lazy 폴백)."""
+        try:
+            if current_market_phase(now) != MarketPhase.PRE_OPEN:
+                return
+            today = to_kst(now).strftime("%Y-%m-%d")
+            if self._warmup_date == today:
+                return
+            ret = self._premarket_warmup_callable()(now=now)
+            res = (await ret) if asyncio.iscoroutine(ret) else ret
+            self._warmup_date = today
+            _log.info("[bg-tick] premarket warmup 완료: %s", res)
+        except Exception as exc:  # noqa: BLE001 — warmup 실패는 거래 무관.
+            _log.warning("[bg-tick] premarket warmup 실패(무시): %s: %s",
+                         type(exc).__name__, exc)
+
     async def kis_paper_tick(self, now: datetime | None = None) -> DriverTickResult:
         """KIS_PAPER_AUTO 1 tick — 게이트 통과 시 주입 콜러블로 KIS 주문 흐름 위임.
 
@@ -695,6 +726,9 @@ class BackgroundTickDriver:
         _log.info("[bg-tick] driver loop started")
         try:
             while not self._stop_event.is_set():
+                # 개장 전(PRE_OPEN) 당일 1회 universe 캐시 warmup — 콜드 스파이크 평탄화.
+                #   게이트와 무관(주문 0). 실패해도 loop 무영향.
+                await self._maybe_premarket_warmup(self._now_provider())
                 try:
                     if bool(getattr(self._settings(), "enable_kis_paper_auto_trading", False)):
                         await self.kis_paper_tick()

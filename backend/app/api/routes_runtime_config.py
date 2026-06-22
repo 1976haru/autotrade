@@ -35,6 +35,9 @@ class _RuntimeConfigBody(BaseModel):
     take_profit_pct:          float | None = Field(None)
     # T2(2026-06-12): 일일 매수금액 한도(원) — 종목수·투자금과 동일 메커니즘.
     daily_buy_limit_krw:      int | None = Field(None)
+    # 종목 풀 확장 — 단계(100/200/400) + 소스(auto/watchlist). cap 은 미포함(고정).
+    universe_size:            int | None = Field(None)
+    universe_mode:            str | None = Field(None)
 
 
 class _ProfileBody(BaseModel):
@@ -115,10 +118,11 @@ def put_runtime_config_endpoint(
 ) -> dict:
     if (body.max_concurrent_positions is None and body.per_stock_budget is None
             and body.stop_loss_pct is None and body.take_profit_pct is None
-            and body.daily_buy_limit_krw is None):
+            and body.daily_buy_limit_krw is None
+            and body.universe_size is None and body.universe_mode is None):
         raise HTTPException(
             status_code=400,
-            detail="바꿀 값을 하나 이상 보내주세요 (동시진입 종목 수 / 종목당 투자금 / 손절 / 익절 / 일일 매수 한도).",
+            detail="바꿀 값을 하나 이상 보내주세요 (동시진입 종목 수 / 종목당 투자금 / 손절 / 익절 / 일일 매수 한도 / 종목 풀 / 유니버스 소스).",
         )
     try:
         result = set_runtime_overrides(
@@ -127,6 +131,8 @@ def put_runtime_config_endpoint(
             stop_loss_pct=body.stop_loss_pct,
             take_profit_pct=body.take_profit_pct,
             daily_buy_limit_krw=body.daily_buy_limit_krw,
+            universe_size=body.universe_size,
+            universe_mode=body.universe_mode,
         )
     except RuntimeConfigValidationError as exc:
         # 일상 한국어 메시지 그대로 400 으로 전달.

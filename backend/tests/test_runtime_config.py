@@ -428,16 +428,38 @@ def test_bot_scan_reads_active_profile_at_council(monkeypatch):
 
 
 def test_overrides_do_not_touch_safety_flags():
-    # 화이트리스트 = 6개(동시진입·종목당·일일한도·손절·익절·성향) — C1(2026-06-10) 손절/익절,
-    #   T2(2026-06-12) 일일 매수 한도 추가. 안전 플래그/confidence 는 *여전히* 화이트리스트 밖.
+    # 화이트리스트 = 8개(동시진입·종목당·일일한도·손절·익절·성향 + 종목풀 size/mode).
+    #   universe_size/mode 는 종목 풀 확장(0일차) 추가 — *Paper 운용 파라미터*이며
+    #   안전 플래그/cap/confidence 는 *여전히* 화이트리스트 밖.
     assert set(rc._OVERRIDE_KEYS) == {
         "max_concurrent_positions", "per_stock_budget", "daily_buy_limit_krw",
         "stop_loss_pct", "take_profit_pct", "active_profile",
+        "universe_size", "universe_mode",
     }
-    for flag in ("enable_live_trading", "kis_is_paper", "enable_ai_execution"):
+    for flag in ("enable_live_trading", "kis_is_paper", "enable_ai_execution",
+                 "scan_max_symbols", "kis_paper_scan_cap_max"):
         assert flag not in rc._OVERRIDE_KEYS
     with pytest.raises(TypeError):
         rc.set_runtime_overrides(enable_live_trading=True)  # 받지 않는 인자
+
+
+def test_universe_size_mode_override_roundtrip_and_validation():
+    # 종목 풀 확장(0일차): universe_size(100/200/400) + universe_mode(auto/watchlist)
+    #   런타임 오버라이드 저장 → effective 반영, 범위 밖 RuntimeConfigValidationError.
+    assert rc.effective_universe_size() == 100   # 기본(회귀)
+    assert rc.effective_universe_mode() == "auto"
+    out = rc.set_runtime_overrides(universe_size=200, universe_mode="watchlist")
+    assert out["universe_size"]["value"] == 200
+    assert out["universe_size"]["source"] == "override"
+    assert out["universe_mode"]["value"] == "watchlist"
+    assert rc.effective_universe_size() == 200
+    assert rc.effective_universe_mode() == "watchlist"
+    for bad in (150, 0, 500, 99):
+        with pytest.raises(rc.RuntimeConfigValidationError):
+            rc.set_runtime_overrides(universe_size=bad)
+    for bad in ("all", "", "AUTO_X"):
+        with pytest.raises(rc.RuntimeConfigValidationError):
+            rc.set_runtime_overrides(universe_mode=bad)
 
 
 def test_stop_take_override_roundtrip_and_validation():

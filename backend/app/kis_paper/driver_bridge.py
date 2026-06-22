@@ -341,29 +341,88 @@ def reset_scan_rotation_for_tests() -> None:
     _scan_rotation_offset = 0
 
 
+def _full_universe_pool(settings: Any) -> list[str]:
+    """스캔 대상 *전체 풀*(회전 cap 미적용) — universe 소스 단일 해결.
+
+    runtime_config 실효값(런타임 전환): auto=시총 상위 TOP402[:size],
+    watchlist=활성 watchlist 종목(비면 auto 폴백). size=100 이면 TOP402[:100]
+    == 기존 FALLBACK_MARKET_CAP_TOP100 (회귀 보장, default_universe assert).
+    종목 *후보군* 일 뿐 주문 신호 아님 — broker/route_order 미접촉.
+    """
+    from app.core.runtime_config import (
+        effective_universe_mode, effective_universe_size)
+    from app.universe.default_universe import FALLBACK_MARKET_CAP_TOP402
+    if effective_universe_mode() == "watchlist":
+        from app.watchlist.active import get_active_watchlist_symbols
+        wl = get_active_watchlist_symbols()
+        if wl:
+            return list(wl)
+    return list(FALLBACK_MARKET_CAP_TOP402[:effective_universe_size()])
+
+
 def _scan_universe_symbols(settings: Any, *, override: list[str] | None) -> list[str]:
     """스캔 대상 종목 — smoke 면 단일, override 면 그대로, 아니면 universe *회전 윈도우*.
 
-    T1(2026-06-12): 풀 100 으로 확장 — '매 틱 100 전부' 는 KIS 시세 호출 ~10배 →
-    EGW00201 폭증. 대신 틱당 cap(기본 10) 슬라이스를 *오프셋 회전* 으로 반환해
-    ~⌈100/cap⌉ 틱에 100 전체를 커버하고, 틱당 KIS 호출량은 현행 수준으로 유지한다.
+    T1(2026-06-12): 풀 확장 — '매 틱 전부' 는 KIS 시세 호출 폭증(EGW00201). 대신
+    틱당 cap(기본 10) 슬라이스를 *오프셋 회전* 으로 반환해 ~⌈n/cap⌉ 틱에 전체를
+    커버하고, 틱당 KIS 호출량은 현행 수준으로 유지한다. (풀 100→200→400 단계 롤아웃
+    은 회전 주기만 늘림 — 틱당 부하 불변.)
     ★보유 종목 매 틱 스캔(청산 보장)은 *호출부* 에서 held_symbols union 으로 별도 보장.
     """
     if override is not None:
         return list(override)
     if bool(getattr(settings, "kis_paper_smoke_mode", False)):
         return [str(getattr(settings, "kis_paper_smoke_symbol", "005930"))]
-    from app.universe.default_universe import get_default_universe
-    syms = list(get_default_universe(None).symbols)
+    syms = _full_universe_pool(settings)
     cap = int(getattr(settings, "kis_paper_scan_max_symbols", 10) or 0)
+    cap_max = int(getattr(settings, "kis_paper_scan_cap_max", 30) or 30)
+    if cap_max <= 0:
+        cap_max = 30
     n = len(syms)
-    if cap <= 0 or cap >= n:
+    # ★cap=0/음수/과대 가드 — 전종목 스캔(40× 부하 폭주) 차단. 항상 회전 윈도우.
+    if cap <= 0:
+        _log.warning("[kis-scan] scan_max_symbols=%s 무효 → 10 강제(전종목 폭주 방지)", cap)
+        cap = 10
+    cap = min(cap, cap_max)
+    if cap >= n:
+        # 풀이 cap 이하(소형 watchlist 등)일 때만 전체. 대형 풀은 회전.
         return syms
     global _scan_rotation_offset
     start = _scan_rotation_offset % n
     window = [syms[(start + i) % n] for i in range(cap)]   # wrap-around 슬라이스
     _scan_rotation_offset = (start + cap) % n              # 다음 틱은 다음 슬라이스
     return window
+
+
+async def premarket_warmup_tick(now: datetime | None = None) -> dict[str, Any]:
+    """개장 전(PRE_OPEN) 1회 — 전체 universe 분봉 캐시 선채움. ★주문 0·평가 0·판단 0.
+
+    회전 cap 무시: `_prior_days_bars` 캐시(하루 1회/종목)만 채워 장 초반 콜드
+    스파이크(400이면 ~3200콜)를 개장 전으로 이동·평탄화한다. broker.place_order /
+    route_order / council / RiskManager 호출 0건 — read-only 시세 warmup 뿐.
+    실패/미가용해도 예외를 던지지 않는다(장중 lazy 채움으로 자연 폴백).
+    """
+    out: dict[str, Any] = {"warmed": 0, "reason_code": "WARMUP_DONE",
+                           "is_order_signal": False, "broker_order_sent": False}
+    try:
+        from app.api.deps import get_broker
+        from app.core.config import get_settings
+        from app.market_data.kis_realtime import warmup_bars_cache
+        settings = get_settings()
+        syms = _full_universe_pool(settings)
+        broker = get_broker()
+        client = getattr(broker, "client", None) if broker is not None else None
+        if client is None:
+            out["reason_code"] = "WARMUP_NO_CLIENT"
+            return out
+        res = await warmup_bars_cache(syms, client=client, now=now)
+        out["warmed"] = int(len(res or {}))
+        out["pool_size"] = len(syms)
+    except Exception as exc:  # noqa: BLE001 — warmup 실패는 거래 무관(lazy 폴백).
+        _log.warning("[kis-warmup] premarket warmup 실패(무시): %s: %s",
+                     type(exc).__name__, exc)
+        out["reason_code"] = "WARMUP_ERROR"
+    return out
 
 
 def _today_kis_paper_buy_state(db: Any, now: datetime) -> tuple[set[str], int]:

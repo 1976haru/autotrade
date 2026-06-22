@@ -41,8 +41,18 @@ _INT_KEYS = ("max_concurrent_positions", "per_stock_budget", "daily_buy_limit_kr
 # C1(2026-06-10): 손절/익절 % 도 런타임 오버라이드 대상(양수 magnitude — 손절 2.0=−2%).
 _FLOAT_KEYS = ("stop_loss_pct", "take_profit_pct")
 _PROFILE_KEY = "active_profile"
-# 화이트리스트(이 키들 외 저장 거부). 안전 플래그/confidence 미포함.
-_OVERRIDE_KEYS = (*_INT_KEYS, *_FLOAT_KEYS, _PROFILE_KEY)
+# 종목 풀 확장(100→400) 런타임 전환 — universe_size(단계) / universe_mode(auto/watchlist).
+#   ★cap(scan_max_symbols)·안전 플래그는 *여기서 다루지 않는다*(cap 고정).
+_UNIVERSE_SIZE_KEY = "universe_size"
+_UNIVERSE_MODE_KEY = "universe_mode"
+# 화이트리스트(이 키들 외 저장 거부). 안전 플래그/confidence/cap 미포함.
+_OVERRIDE_KEYS = (*_INT_KEYS, *_FLOAT_KEYS, _PROFILE_KEY,
+                  _UNIVERSE_SIZE_KEY, _UNIVERSE_MODE_KEY)
+
+# 종목 풀 단계(롤아웃) + 소스. cap 은 미포함(고정).
+VALID_UNIVERSE_SIZES = (100, 200, 400)
+VALID_UNIVERSE_MODES = ("auto", "watchlist")
+DEFAULT_UNIVERSE_MODE = "auto"
 
 # 검증 범위 (서버 측 필수 — 프론트 검증만으로 불충분).
 # 2026-06-15: 동시진입 상한 10→15 (분산 확대 — 종목당 200만×15=3,000만, 일일한도 내).
@@ -143,6 +153,18 @@ def _load() -> dict[str, Any]:
         prof = raw.get(_PROFILE_KEY)
         if isinstance(prof, str) and prof.strip().lower() in VALID_PROFILES:
             clean[_PROFILE_KEY] = prof.strip().lower()
+        # universe_size — 100/200/400 만 수용(그 외 무시 → env 기본 100 폴백).
+        usz = raw.get(_UNIVERSE_SIZE_KEY)
+        if usz is not None:
+            try:
+                if int(usz) in VALID_UNIVERSE_SIZES:
+                    clean[_UNIVERSE_SIZE_KEY] = int(usz)
+            except (TypeError, ValueError):
+                pass
+        # universe_mode — auto/watchlist 만 수용.
+        umode = raw.get(_UNIVERSE_MODE_KEY)
+        if isinstance(umode, str) and umode.strip().lower() in VALID_UNIVERSE_MODES:
+            clean[_UNIVERSE_MODE_KEY] = umode.strip().lower()
         if "updated_at" in raw and raw["updated_at"]:
             clean["updated_at"] = str(raw["updated_at"])
         _cache = clean
@@ -219,6 +241,25 @@ def effective_take_profit_pct() -> float:
     return float(getattr(get_settings(), "kis_paper_default_take_profit_pct", 3.5))
 
 
+def effective_universe_size() -> int:
+    """종목 풀 크기(100/200/400) — 런타임 오버라이드 > config 기본(100).
+    봇(_scan_universe_symbols)이 매 사이클 읽어 TOP402[:size] 슬라이스. cap 무관."""
+    ov = _load().get(_UNIVERSE_SIZE_KEY)
+    if ov is not None and int(ov) in VALID_UNIVERSE_SIZES:
+        return int(ov)
+    sz = int(getattr(get_settings(), "kis_paper_universe_size", 100) or 100)
+    return sz if sz in VALID_UNIVERSE_SIZES else 100
+
+
+def effective_universe_mode() -> str:
+    """유니버스 소스(auto/watchlist) — 런타임 오버라이드 > config 기본(auto)."""
+    ov = _load().get(_UNIVERSE_MODE_KEY)
+    if isinstance(ov, str) and ov in VALID_UNIVERSE_MODES:
+        return ov
+    m = str(getattr(get_settings(), "kis_paper_universe_mode", "auto") or "auto").lower()
+    return m if m in VALID_UNIVERSE_MODES else DEFAULT_UNIVERSE_MODE
+
+
 def _source(key: str) -> str:
     return "override" if _load().get(key) is not None else "env"
 
@@ -268,6 +309,17 @@ def get_runtime_config() -> dict[str, Any]:
             "source": _source(_PROFILE_KEY),
             "options": list(VALID_PROFILES),
         },
+        # 종목 풀 확장 — 단계(size) + 소스(mode). cap 은 미노출(고정).
+        "universe_size": {
+            "value":  effective_universe_size(),
+            "source": _source(_UNIVERSE_SIZE_KEY),
+            "options": list(VALID_UNIVERSE_SIZES),
+        },
+        "universe_mode": {
+            "value":  effective_universe_mode(),
+            "source": _source(_UNIVERSE_MODE_KEY),
+            "options": list(VALID_UNIVERSE_MODES),
+        },
         "last_changed_at_kst": updated_kst,
         # 안전 invariant — 본 기능은 실거래 권한과 무관.
         "is_live_authorization": False,
@@ -278,7 +330,9 @@ def _validate(max_concurrent_positions: int | None, per_stock_budget: int | None
               active_profile: str | None = None,
               stop_loss_pct: float | None = None,
               take_profit_pct: float | None = None,
-              daily_buy_limit_krw: int | None = None) -> None:
+              daily_buy_limit_krw: int | None = None,
+              universe_size: int | None = None,
+              universe_mode: str | None = None) -> None:
     if max_concurrent_positions is not None:
         v = int(max_concurrent_positions)
         if not (MAX_CONCURRENT_MIN <= v <= MAX_CONCURRENT_MAX):
@@ -320,6 +374,18 @@ def _validate(max_concurrent_positions: int | None, per_stock_budget: int | None
             raise RuntimeConfigValidationError(
                 "운용 성향은 보수/안정/공격 중 하나여야 해요."
             )
+    if universe_size is not None:
+        try:
+            v = int(universe_size)
+        except (TypeError, ValueError):
+            raise RuntimeConfigValidationError("종목 풀 크기는 100/200/400 중 하나여야 해요.")
+        if v not in VALID_UNIVERSE_SIZES:
+            raise RuntimeConfigValidationError("종목 풀 크기는 100/200/400 중 하나여야 해요.")
+    if universe_mode is not None:
+        if str(universe_mode).strip().lower() not in VALID_UNIVERSE_MODES:
+            raise RuntimeConfigValidationError(
+                "유니버스 소스는 자동(auto)/관심종목(watchlist) 중 하나여야 해요."
+            )
 
 
 def set_runtime_overrides(
@@ -330,6 +396,8 @@ def set_runtime_overrides(
     stop_loss_pct: float | None = None,
     take_profit_pct: float | None = None,
     daily_buy_limit_krw: int | None = None,
+    universe_size: int | None = None,
+    universe_mode: str | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """검증 통과 시 저장(파일 + 캐시). *저장 후 다시 읽은 실효값*(get_runtime_config) 반환.
@@ -337,7 +405,8 @@ def set_runtime_overrides(
     변경 전 값도 함께 반환(`changes`) — 활동 피드 기록에 사용.
     """
     _validate(max_concurrent_positions, per_stock_budget, active_profile,
-              stop_loss_pct, take_profit_pct, daily_buy_limit_krw)
+              stop_loss_pct, take_profit_pct, daily_buy_limit_krw,
+              universe_size, universe_mode)
     now = now or datetime.now(timezone.utc)
     with _lock:
         before = {
@@ -347,6 +416,8 @@ def set_runtime_overrides(
             "stop_loss_pct": effective_stop_loss_pct(),
             "take_profit_pct": effective_take_profit_pct(),
             "daily_buy_limit_krw": effective_daily_buy_limit(),
+            "universe_size": effective_universe_size(),
+            "universe_mode": effective_universe_mode(),
         }
         cur = dict(_load())
         if max_concurrent_positions is not None:
@@ -361,6 +432,10 @@ def set_runtime_overrides(
             cur["daily_buy_limit_krw"] = int(daily_buy_limit_krw)
         if active_profile is not None:
             cur[_PROFILE_KEY] = str(active_profile).strip().lower()
+        if universe_size is not None:
+            cur[_UNIVERSE_SIZE_KEY] = int(universe_size)
+        if universe_mode is not None:
+            cur[_UNIVERSE_MODE_KEY] = str(universe_mode).strip().lower()
         cur["updated_at"] = now.isoformat()
         _persist(cur)
         # 가시성: override 가 저장된 *절대 경로* 를 로그로 — 다음 기동이 다른 경로를
@@ -379,10 +454,13 @@ def set_runtime_overrides(
         "stop_loss_pct": effective_stop_loss_pct(),
         "take_profit_pct": effective_take_profit_pct(),
         "daily_buy_limit_krw": effective_daily_buy_limit(),
+        "universe_size": effective_universe_size(),
+        "universe_mode": effective_universe_mode(),
     }
     changes: list[dict[str, Any]] = []
     for key in ("max_concurrent_positions", "per_stock_budget", "active_profile",
-                "stop_loss_pct", "take_profit_pct", "daily_buy_limit_krw"):
+                "stop_loss_pct", "take_profit_pct", "daily_buy_limit_krw",
+                "universe_size", "universe_mode"):
         if before[key] != after[key]:
             changes.append({"key": key, "before": before[key], "after": after[key]})
     out = get_runtime_config()
@@ -410,10 +488,13 @@ __all__ = [
     "DAILY_BUY_LIMIT_MIN", "DAILY_BUY_LIMIT_MAX",
     "overrides_path",
     "VALID_PROFILES", "DEFAULT_PROFILE",
+    "VALID_UNIVERSE_SIZES", "VALID_UNIVERSE_MODES", "DEFAULT_UNIVERSE_MODE",
     "effective_max_concurrent_positions",
     "effective_per_stock_budget",
     "effective_daily_buy_limit",
     "effective_active_profile",
+    "effective_universe_size",
+    "effective_universe_mode",
     "get_runtime_config",
     "set_runtime_overrides",
     "reset_runtime_overrides_for_tests",

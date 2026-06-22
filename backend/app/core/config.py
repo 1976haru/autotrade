@@ -162,8 +162,18 @@ class Settings(BaseSettings):
     kis_paper_default_take_profit_pct:  float = 3.5
     # 1 tick 당 신규 진입 허용 종목 수 (버스트 방지). 0/음수는 1 로 보정.
     kis_paper_max_new_positions_per_tick: int = 1
-    # 1 tick 당 KIS 실시세 조회 종목 수 상한 (rate limit 보호). 0 이면 universe 전체.
+    # 1 tick 당 KIS 실시세 조회 종목 수 상한 (rate limit 보호). 0/과대값은
+    #   _scan_universe_symbols 가 클램프(전종목 폭주 차단) — scan_cap_max 참조.
     kis_paper_scan_max_symbols:         int = 10
+    # 종목 풀 확장(100→400) — 단계 롤아웃. 풀 크기 = TOP402[:size]. 100/200/400 만
+    #   유효(그 외 100 클램프). cap(scan_max_symbols)과 무관 — 스캔 *후보 범위*.
+    #   런타임 변경은 runtime_config(effective_universe_size) 우선.
+    kis_paper_universe_size:            int = 100
+    # 유니버스 소스 — "auto"(시총 상위 TOP402) | "watchlist"(활성 watchlist 종목).
+    #   런타임 변경은 runtime_config(effective_universe_mode) 우선.
+    kis_paper_universe_mode:            str = "auto"
+    # tick당 스캔 *절대 상한* — cap 폭주(전종목 스캔, 40× 부하) 방지 가드.
+    kis_paper_scan_cap_max:             int = 30
     # Smoke mode — *정상 Paper Auto 의 하위 제한 모드*. True 면 단일 종목 / 1주 /
     # 1건만 (최초 안전 확인용). 정상 운용에서는 반드시 false.
     kis_paper_smoke_mode:               bool = False

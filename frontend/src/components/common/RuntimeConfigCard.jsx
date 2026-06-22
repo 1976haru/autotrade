@@ -23,6 +23,14 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
   const effSl = slMeta?.value;
   const effTp = tpMeta?.value;
   const effDl = dlMeta ? dlMeta.value : Number(dlRaw ?? 3_000_000);
+  // 종목 풀 확장 — universe_size(100/200/400) + universe_mode(auto/watchlist).
+  //   meta 없으면(구 백엔드) 컨트롤 미표시(추가 전 동작 무변경).
+  const uszMeta = config?.universe_size;
+  const umMeta = config?.universe_mode;
+  const effUsz = uszMeta?.value;
+  const effUm = umMeta?.value;
+  const USZ_OPTS = uszMeta?.options ?? [100, 200, 400];
+  const UM_OPTS = umMeta?.options ?? ["auto", "watchlist"];
 
   const MC_MIN = mcMeta?.min ?? 1, MC_MAX = mcMeta?.max ?? 10;
   const BUD_MIN = budMeta?.min ?? 100_000, BUD_MAX = budMeta?.max ?? 10_000_000;
@@ -35,6 +43,8 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
   const [sl, setSl] = useState(effSl ?? 2);
   const [tp, setTp] = useState(effTp ?? 3.5);
   const [dl, setDl] = useState(effDl ?? 3_000_000);
+  const [usz, setUsz] = useState(effUsz ?? 100);
+  const [um, setUm] = useState(effUm ?? "auto");
   const [note, setNote] = useState(null); // { kind: "ok"|"err", text }
   const [saving, setSaving] = useState(false);
 
@@ -44,6 +54,8 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
   useEffect(() => { if (effSl != null) setSl(effSl); }, [effSl]);
   useEffect(() => { if (effTp != null) setTp(effTp); }, [effTp]);
   useEffect(() => { if (effDl != null) setDl(effDl); }, [effDl]);
+  useEffect(() => { if (effUsz != null) setUsz(effUsz); }, [effUsz]);
+  useEffect(() => { if (effUm != null) setUm(effUm); }, [effUm]);
 
   const clampMc = (v) => Math.max(MC_MIN, Math.min(MC_MAX, v));
   const clampBud = (v) => Math.max(BUD_MIN, Math.min(BUD_MAX, Math.round(v / BUDGET_STEP) * BUDGET_STEP));
@@ -53,7 +65,8 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
 
   const stDirty = effSl != null && effTp != null && (sl !== effSl || tp !== effTp);
   const dlDirty = dlMeta != null && dl !== effDl;
-  const dirty = (effMc != null && effBud != null && (mc !== effMc || bud !== effBud)) || stDirty || dlDirty;
+  const uniDirty = (uszMeta != null && usz !== effUsz) || (umMeta != null && um !== effUm);
+  const dirty = (effMc != null && effBud != null && (mc !== effMc || bud !== effBud)) || stDirty || dlDirty || uniDirty;
   // 일일 매수 한도 — 스테퍼가 있으면 그 값, 없으면 서버 실효값(정합 계산 단일 소스).
   const dailyLimit = dl;
   // 충돌 경고(저장은 막지 않음): 종목당 금액 × 종목 수 > 일일 매수 한도.
@@ -67,6 +80,8 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
       const payload = { max_concurrent_positions: mc, per_stock_budget: bud };
       if (slMeta && tpMeta) { payload.stop_loss_pct = sl; payload.take_profit_pct = tp; }
       if (dlMeta) { payload.daily_buy_limit_krw = dl; }
+      if (uszMeta) { payload.universe_size = usz; }
+      if (umMeta) { payload.universe_mode = um; }
       const res = await api.runtimeConfigPut(payload);
       onSaved?.(res); // 서버 재확인 실효값만 신뢰.
       // 손절/익절이 바뀌면 *보유 종목에도* 적용(C1). 그 외(종목수·투자금)는 다음 매수부터.
@@ -183,6 +198,46 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
             <span data-testid="rtcfg-dl-value" style={valBox}>{fmtKRW(dl)}원</span>
             <button type="button" data-testid="rtcfg-dl-inc" style={stepBtn}
               onClick={() => setDl((v) => clampDl(v + DAILY_STEP))} disabled={dl >= DL_MAX}>+</button>
+          </div>
+        </div>
+      )}
+
+      {/* 종목 풀 확장 — universe_mode(자동/관심종목) + universe_size(100/200/400). */}
+      {umMeta && (
+        <div style={rowStyle}>
+          <span style={{ fontSize: 14, color: "#2a1418", fontWeight: 700 }}>종목 선택</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {UM_OPTS.map((opt) => (
+              <button key={opt} type="button" data-testid={`rtcfg-um-${opt}`}
+                onClick={() => setUm(opt)}
+                style={{
+                  padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(40,20,24,.25)",
+                  background: um === opt ? "#2a1418" : "rgba(255,255,255,.6)",
+                  color: um === opt ? "#fff" : "#2a1418", fontSize: 13.5, fontWeight: 800,
+                  cursor: "pointer", fontFamily: "inherit",
+                }}>
+                {opt === "auto" ? "자동(시총상위)" : "관심종목"}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {uszMeta && um === "auto" && (
+        <div style={rowStyle}>
+          <span style={{ fontSize: 14, color: "#2a1418", fontWeight: 700 }}>종목 풀 크기</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {USZ_OPTS.map((opt) => (
+              <button key={opt} type="button" data-testid={`rtcfg-usz-${opt}`}
+                onClick={() => setUsz(opt)}
+                style={{
+                  padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(40,20,24,.25)",
+                  background: usz === opt ? "#2a1418" : "rgba(255,255,255,.6)",
+                  color: usz === opt ? "#fff" : "#2a1418", fontSize: 13.5, fontWeight: 800,
+                  cursor: "pointer", fontFamily: "inherit",
+                }}>
+                {opt}종목
+              </button>
+            ))}
           </div>
         </div>
       )}

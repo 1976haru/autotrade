@@ -89,6 +89,44 @@ describe("RuntimeConfigCard (R3/R4)", () => {
     expect(w.textContent).not.toContain("모자라요");
   });
 
+  // ── 종목 풀 확장(0일차): universe_mode / universe_size 토글 ──────────────────
+  const cfgUni = (over = {}) => cfg({
+    universe_size: { value: 100, options: [100, 200, 400], source: "env" },
+    universe_mode: { value: "auto", options: ["auto", "watchlist"], source: "env" },
+    ...over,
+  });
+
+  it("universe meta 없으면 토글 미표시(추가 전 동작 무변경)", () => {
+    const { queryByTestId } = render(<RuntimeConfigCard config={cfg()} api={{}} />);
+    expect(queryByTestId("rtcfg-um-auto")).toBeNull();
+    expect(queryByTestId("rtcfg-usz-100")).toBeNull();
+  });
+
+  it("universe meta 있으면 모드 토글 + 풀 크기(auto) 표시", () => {
+    const { getByTestId } = render(<RuntimeConfigCard config={cfgUni()} api={{}} />);
+    expect(getByTestId("rtcfg-um-auto")).toBeTruthy();
+    expect(getByTestId("rtcfg-um-watchlist")).toBeTruthy();
+    expect(getByTestId("rtcfg-usz-100")).toBeTruthy();
+    expect(getByTestId("rtcfg-usz-400")).toBeTruthy();
+  });
+
+  it("watchlist 모드 선택 시 풀 크기 숨김", () => {
+    const { getByTestId, queryByTestId } = render(<RuntimeConfigCard config={cfgUni()} api={{}} />);
+    fireEvent.click(getByTestId("rtcfg-um-watchlist"));
+    expect(queryByTestId("rtcfg-usz-100")).toBeNull();
+  });
+
+  it("풀 크기 200 선택 후 저장 → PUT 에 universe_size=200 포함", async () => {
+    const put = vi.fn(async () => cfgUni());
+    const { getByTestId } = render(<RuntimeConfigCard config={cfgUni()} api={{ runtimeConfigPut: put }} />);
+    fireEvent.click(getByTestId("rtcfg-usz-200"));
+    fireEvent.click(getByTestId("rtcfg-save"));
+    await waitFor(() => expect(put).toHaveBeenCalled());
+    const payload = put.mock.calls[0][0];
+    expect(payload.universe_size).toBe(200);
+    expect(payload.universe_mode).toBe("auto");
+  });
+
   // ── T2: 일일 매수 한도 스테퍼 ───────────────────────────────────────────────
   const cfgDl = (over = {}) => cfg({
     daily_buy_limit_krw: { value: 3_000_000, min: 3_000_000, max: 300_000_000 },

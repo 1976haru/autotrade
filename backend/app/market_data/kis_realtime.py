@@ -331,7 +331,7 @@ def _resample_bars(minute_bars: list[dict]) -> list[dict]:
 # ── ⓑ 분봉 fetch 레이트 안전판 (≤2/s + EGW00201 백오프) ──────────────────────
 #   프로브① 실측: KIS 모의 분봉 조회는 ~3/s 에서 EGW00201. 멀티콜 fetch 가 한도를
 #   넘지 않도록 전역 직렬 페이싱 + 초당한도 초과(EGW00201) 시 지수 백오프 재시도.
-_FETCH_MIN_INTERVAL = 0.5            # ≤2/s
+_FETCH_MIN_INTERVAL = 0.6            # ≤~1.67/s — EGW00201 여유(풀 확장 전 안전판, 0.5→0.6)
 _fetch_lock = asyncio.Lock()
 _last_fetch_ts = [0.0]
 
