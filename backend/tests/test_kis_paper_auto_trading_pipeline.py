@@ -524,7 +524,11 @@ def test_risk_exit_still_blocked_by_emergency_stop():
     assert res.allowed is False and res.reason_code == "EMERGENCY_STOP_ENABLED"
 
 
-def test_build_permission_input_sets_is_risk_exit_only_for_stop_take():
+def test_build_permission_input_is_risk_exit_for_held_and_risk_exits():
+    # 2026-06-25 결함 B 수정: 보유 청산 SELL 은 리스크 축소 → 진입용 confidence/quality
+    #   게이트 면제. 종전엔 sell_reason∈{STOP_LOSS,TAKE_PROFIT}만 면제해, avg=0 등으로
+    #   강제손절이 죽고 vote(VWAP) 청산만 나올 때 게이트에 막혀 손실 포지션 미청산
+    #   (STOP_LOSS 0건). 이제 held_position 이거나 청산성 reason 이면 면제한다.
     from app.kis_paper.auto_executor import build_permission_input, KisPaperAutoDecision
     from types import SimpleNamespace
     st = SimpleNamespace(enable_kis_paper_auto_trading=True, kis_paper_auto_order_dry_run=False,
@@ -533,13 +537,20 @@ def test_build_permission_input_sets_is_risk_exit_only_for_stop_take():
                          kis_paper_auto_max_orders_per_day=100,
                          kis_paper_auto_order_window_start="09:05", kis_paper_auto_order_window_end="15:20",
                          kis_paper_auto_min_confidence=0.6, kis_paper_auto_min_quality_score=60)
-    def _mk(side, code):
+    def _mk(side, code, held=False):
         return KisPaperAutoDecision(symbol="035420", side=side, quantity=1, price=100,
-                                    confidence=0.1, quality_score=5, sell_reason_code=code)
+                                    confidence=0.1, quality_score=5, sell_reason_code=code,
+                                    held_position=held)
     kw = dict(settings=st, broker_is_kis_paper=True, credentials_present=True,
               emergency_stop=False, daily_order_count=0, now=OPEN_TIME)
+    # 청산성 reason_code (held 무관) → 면제.
     assert build_permission_input(decision=_mk("SELL", "STOP_LOSS"), **kw).is_risk_exit is True
     assert build_permission_input(decision=_mk("SELL", "TAKE_PROFIT"), **kw).is_risk_exit is True
-    assert build_permission_input(decision=_mk("SELL", "MARKET_CLOSE_EXIT"), **kw).is_risk_exit is False  # 장마감 미포함
-    assert build_permission_input(decision=_mk("SELL", "MOMENTUM_REVERSAL"), **kw).is_risk_exit is False  # 일반 SELL
-    assert build_permission_input(decision=_mk("BUY", "STOP_LOSS"), **kw).is_risk_exit is False           # BUY
+    assert build_permission_input(decision=_mk("SELL", "TRAILING_STOP"), **kw).is_risk_exit is True
+    assert build_permission_input(decision=_mk("SELL", "MARKET_CLOSE_EXIT"), **kw).is_risk_exit is True   # 장마감도 청산
+    # 보유 청산 SELL 은 reason 무관 면제(핵심 변경) — vote(VWAP 등) 청산도 안 막힘.
+    assert build_permission_input(decision=_mk("SELL", "MOMENTUM_REVERSAL", held=True), **kw).is_risk_exit is True
+    # 미보유 + 청산성 reason 아님 → 면제 아님(naked 성 일반 SELL).
+    assert build_permission_input(decision=_mk("SELL", "MOMENTUM_REVERSAL", held=False), **kw).is_risk_exit is False
+    # BUY 는 held 여도 절대 면제 아님(진입 게이트 유지).
+    assert build_permission_input(decision=_mk("BUY", "STOP_LOSS", held=True), **kw).is_risk_exit is False

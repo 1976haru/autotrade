@@ -234,13 +234,22 @@ def build_permission_input(
         window_end=str(getattr(settings, "kis_paper_auto_order_window_end", "14:50")),
         min_confidence=float(getattr(settings, "kis_paper_auto_min_confidence", 0.6)),
         min_quality_score=int(getattr(settings, "kis_paper_auto_min_quality_score", 60)),
-        # ★옵션 A: 손절/익절 *도달*로 강제된 청산 SELL 만 품질/확신 면제 대상.
-        #   엄격 범위 — SELL + sell_reason_code ∈ {STOP_LOSS, TAKE_PROFIT}. 일반 SELL(전략
-        #   vote 기반)·BUY 는 False(게이트 그대로). 장마감(MARKET_CLOSE_EXIT)은 미포함.
+        # 결함 B 수정(2026-06-25): *보유 포지션 청산* SELL 은 리스크 *축소* 이므로 진입용
+        #   confidence/quality 게이트를 면제한다. 종전엔 sell_reason ∈ {STOP_LOSS,
+        #   TAKE_PROFIT} 만 면제해, avg=0 등으로 강제손절이 죽고 vote(VWAP_BREAKDOWN)로만
+        #   청산이 나올 때 진입게이트(0.6/60)에 막혀 손실 포지션이 청산되지 않았다
+        #   (06-25 STOP_LOSS 0건). held_position 이거나 청산성 reason_code 면 면제.
+        #   ★naked SELL(미보유 매도)은 council(held_position=False→HOLD) + bridge
+        #   (SELL_NO_HELD_POSITION)에서 이미 차단되므로, 면제는 *실보유 청산*에만 적용된다.
+        #   is_risk_exit 는 auto_permission 에서 confidence/quality *만* 우회 —
+        #   emergency_stop / order-window / notional / daily-cap 은 그대로 적용된다.
         is_risk_exit=(
             str(decision.side).upper() == "SELL"
-            and str(getattr(decision, "sell_reason_code", "") or "").upper()
-            in ("STOP_LOSS", "TAKE_PROFIT")
+            and (
+                bool(getattr(decision, "held_position", False))
+                or str(getattr(decision, "sell_reason_code", "") or "").upper()
+                in ("STOP_LOSS", "TAKE_PROFIT", "TRAILING_STOP", "MARKET_CLOSE_EXIT")
+            )
         ),
         price_source=str(getattr(decision, "price_source", "kis") or "kis"),
         price_is_stale=bool(getattr(decision, "price_is_stale", False)),

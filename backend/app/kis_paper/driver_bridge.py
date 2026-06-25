@@ -573,6 +573,20 @@ async def _kis_held_map(broker: Any, *, fallback: set[str],
         #   진입가 소스. R-A 스냅샷에도 자연 carry(아래 dict copy). 없으면 0 → 스캔에서
         #   position=None(보수적: 진입가 모르면 강제청산 안 함).
         _avg = int(getattr(p, "avg_price", 0) or 0)
+        if _avg <= 0:
+            # 결함 A 수정(2026-06-25): KIS inquire-balance 가 보유분(hldg>0)에
+            #   pchs_avg_pric=0 을 *간헐* 반환하면 PositionContext 가 None 이 되어 강제손절이
+            #   평가조차 안 됐다(06-25 STOP_LOSS 0건, 손실 포지션 미청산). 직전 *성공*
+            #   스냅샷의 비-0 avg = KIS 가 직전에 보고한 *동일 출처* 값(avg 는 거래 전엔
+            #   불변)이므로 복구해 강제손절 평가가 끊기지 않게 한다. churn 으로 stale 해도
+            #   대개 stale-high → 손절이 *더 일찍* = 보수적(손실방어)이라 안전측.
+            #   (DB 체결가 가중평균 fallback + 괴리 가드는 신뢰도가 낮아 2차 패치로 분리.)
+            _snap_avg = int((_HELD_SNAPSHOT.get(sym) or {}).get("avg_price", 0) or 0)
+            if _snap_avg > 0:
+                _log.warning(
+                    "[kis-paper-bridge] %s avg_price=0(KIS) → 직전 스냅샷 avg %d 로 복구 "
+                    "(강제손절 평가 유지)", sym, _snap_avg)
+                _avg = _snap_avg
         out[sym] = {"hldg": hldg, "ord_psbl": max(0, ordp), "avg_price": _avg}
     # 조회 성공 → 스냅샷 갱신(수량 포함). 빈 결과(실제 무보유)도 성공이므로 그대로 반영.
     _HELD_SNAPSHOT = {s: dict(v) for s, v in out.items()}
@@ -724,14 +738,26 @@ async def kis_paper_realtime_scan_tick(
                     from app.agents.position_context import PositionContext
                     from app.core.runtime_config import (
                         effective_stop_loss_pct, effective_take_profit_pct)
+                    _slp = round(effective_stop_loss_pct(), 2)
+                    _tpp = round(effective_take_profit_pct(), 2)
+                    # 결함 C 수정(2026-06-25): effective_*_pct 는 *퍼센트*(1.0=1%) 인데
+                    #   PositionContext._norm_pct 가 v<=1.0 을 *비율*(1.0→100%)로 오해석해
+                    #   손절 ≤1.0% 설정 시 손절가=0 → STOP_LOSS 가 영영 안 떴다(06-25 0건,
+                    #   사용자가 1.5%→1.0% 로 낮춘 직후 발생). 평단 기준 *절대* 손절/익절가를
+                    #   직접 계산해 넘긴다 — resolve_*_price 는 절대가를 우선하므로 _norm_pct
+                    #   모호성을 우회한다(퍼센트 필드는 표시/호환용으로 함께 보존).
+                    _stop_abs = round(float(_avg) * (1.0 - _slp / 100.0), 4)
+                    _take_abs = round(float(_avg) * (1.0 + _tpp / 100.0), 4)
                     _position = PositionContext(
                         held_position=True, symbol=symbol,
                         quantity=int(_hinfo.get("hldg", 0) or 0),
                         available_quantity=int(_hinfo.get("ord_psbl", 0) or 0),
                         average_entry_price=float(_avg),
                         current_price=_cur,
-                        stop_loss_pct=round(effective_stop_loss_pct(), 2),
-                        take_profit_pct=round(effective_take_profit_pct(), 2),
+                        stop_loss=_stop_abs,
+                        take_profit=_take_abs,
+                        stop_loss_pct=_slp,
+                        take_profit_pct=_tpp,
                     )
             council = run_agent_council(
                 mi, risk_profile=effective_active_profile(),  # S1: 런타임 활성 성향
