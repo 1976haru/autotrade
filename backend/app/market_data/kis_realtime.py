@@ -349,7 +349,7 @@ async def _paced_inquire(client: Any, symbol: str, *, date: str, hour: str) -> d
             return raw if isinstance(raw, dict) else {}
         except Exception as exc:  # noqa: BLE001
             if "EGW00201" in str(exc) and attempt < 3:
-                await asyncio.sleep(0.6 * (attempt + 1))   # 0.6/1.2/1.8s 백오프
+                await asyncio.sleep(1.0 * (attempt + 1))   # 1.0/2.0/3.0s 백오프(초당한도 재충돌 완화, 0.6→1.0)
                 continue
             raise
     return {}
@@ -371,6 +371,33 @@ async def _fetch_full_day_minutes(client: Any, symbol: str, date: str) -> list[d
             break
         hour = f"{earliest[:4]}00"                      # 더 과거 창으로
     return sorted(seen.values(), key=lambda b: b["t"])
+
+
+# ── 오늘자 분봉 TTL 캐시 (2026-06-29, dedup) ─────────────────────────────────
+#   목적: 보유 union+회전 스캔이 매 틱 같은 종목의 오늘자 분봉을 재호출해 발생하던
+#   부하(분봉 호출 = 전체 KIS 콜의 ~50%, ConnReset/ReadTimeout 급증의 주원인)를 절감.
+#   ★캐시 대상은 *오늘자 분봉(진입 voter 입력)* 뿐. 30분봉은 30분마다만 확정되므로
+#   180s TTL 동안 partial bar 의 종가만 살짝 stale — 진입 신호엔 무해.
+#   ★★청산/손절 평가는 fetch_realtime_quote(inquire-price)의 *현재가* 만 사용하며
+#   본 캐시를 *전혀 경유하지 않는다* → 손절 신선도 100% 보존(설계 dedup_design.md).
+_TODAY_MIN_TTL_SEC = 180.0
+_today_min_cache: dict[tuple[str, str], tuple[float, list[dict]]] = {}
+
+
+async def _fetch_full_day_minutes_cached(client: Any, symbol: str, date: str) -> list[dict]:
+    """오늘자 분봉 TTL 캐시 래퍼. 같은 (symbol, date) 를 TTL 내 재요청하면 KIS 재호출 0.
+
+    진입 신호 전용 — 청산용 현재가(inquire-price)는 본 경로를 타지 않는다.
+    """
+    ck = (symbol, date)
+    mono = _time.perf_counter()
+    hit = _today_min_cache.get(ck)
+    if hit is not None and (mono - hit[0]) < _TODAY_MIN_TTL_SEC:
+        return hit[1]
+    bars = await _fetch_full_day_minutes(client, symbol, date)
+    if bars:                        # 빈 결과는 캐시 안 함(다음 틱 재시도, 합성 금지)
+        _today_min_cache[ck] = (mono, bars)
+    return bars
 
 
 async def _prior_days_bars(client: Any, symbol: str, now: datetime) -> list[dict]:
@@ -459,7 +486,7 @@ async def build_kis_market_input(
         # ── ⓑ N분봉(BAR_INTERVAL_MINUTES) 멀티데이 경로 ──
         date = to_kst(now).strftime("%Y%m%d")
         try:
-            today_min = await _fetch_full_day_minutes(client, symbol, date)
+            today_min = await _fetch_full_day_minutes_cached(client, symbol, date)
             today_60m = _resample_bars(today_min)           # 부분봉 포함
             prior_60m = await _prior_days_bars(client, symbol, now)  # 캐시(하루 1회)
         except Exception as exc:  # noqa: BLE001 — N분봉 실패 = skip(임의 매수 금지).
