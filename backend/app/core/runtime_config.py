@@ -50,7 +50,7 @@ _OVERRIDE_KEYS = (*_INT_KEYS, *_FLOAT_KEYS, _PROFILE_KEY,
                   _UNIVERSE_SIZE_KEY, _UNIVERSE_MODE_KEY)
 
 # 종목 풀 단계(롤아웃) + 소스. cap 은 미포함(고정).
-VALID_UNIVERSE_SIZES = (100, 200, 400)
+VALID_UNIVERSE_SIZES = (100, 200, 300, 400)
 VALID_UNIVERSE_MODES = ("auto", "watchlist")
 DEFAULT_UNIVERSE_MODE = "auto"
 
