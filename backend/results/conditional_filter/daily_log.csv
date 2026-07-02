@@ -1,0 +1,9 @@
+date,verdict,reasons,sp500_prev_ret,kospi_gap,kospi_prev_close,kospi_ma20,cond_i,cond_ii,cond_iii,n_orders,session_net_ret_pct,recorded_at
+2026-06-22,SKIP,ii,+1.08%,-1.08%,9052,8322,False,True,False,20,-0.9206,2026-07-02T00:00:00Z (retrospective)
+2026-06-23,TRADE,-,-0.37%,-0.34%,9115,8387,False,False,False,12,-0.9409,2026-07-02T00:00:00Z (retrospective)
+2026-06-24,SKIP,iii,-1.44%,+1.86%,8204,8405,False,False,True,28,0.8753,2026-07-02T00:00:00Z (retrospective)
+2026-06-25,TRADE,-,-0.10%,+2.74%,8471,8426,False,False,False,17,-2.809,2026-07-02T00:00:00Z (retrospective)
+2026-06-26,SKIP,ii,-0.01%,-1.31%,8930,8461,False,True,False,43,-0.8351,2026-07-02T00:00:00Z (retrospective)
+2026-06-29,SKIP,iii,-0.05%,-0.20%,8411,8472,False,False,True,41,0.2634,2026-07-02T00:00:00Z (retrospective)
+2026-06-30,SKIP,iii,+1.18%,+0.26%,8395,8468,False,False,True,50,0.9795,2026-07-02T00:00:00Z (retrospective)
+2026-07-01,SKIP,ii,+0.79%,-2.04%,8476,8453,False,True,False,50,-0.2753,2026-07-02T00:00:00Z (retrospective)

@@ -28,6 +28,8 @@ from app.kis_paper.readiness import evaluate_readiness
 
 _log = logging.getLogger("autotrade.kis_paper.bridge")
 
+_UNSET = object()  # sentinel: _bot_owned_override 미주입 구분용
+
 
 def _broker_is_kis_paper(broker) -> bool:
     return (
@@ -470,6 +472,30 @@ def _today_kis_paper_buy_state(db: Any, now: datetime) -> tuple[set[str], int]:
     return held, used
 
 
+def _bot_owned_symbols(db: Any) -> "frozenset[str] | None":
+    """봇(kis_paper_auto)이 BUY 체결한 종목 집합 — 소유권 원장.
+
+    Returns:
+        frozenset[str] : 봇 소유 종목 코드 집합 (비어있어도 frozenset).
+        None           : DB 조회 실패 → 호출자가 fail-open (전부 봇소유 간주, 손절 유지).
+    """
+    try:
+        from app.db.models import OrderAuditLog
+        rows = (
+            db.query(OrderAuditLog.symbol)
+            .filter(OrderAuditLog.trade_reason == "kis_paper_auto")
+            .filter(OrderAuditLog.side == "BUY")
+            .filter(OrderAuditLog.decision == "APPROVED")
+            .filter(OrderAuditLog.filled_quantity > 0)
+            .distinct()
+            .all()
+        )
+        return frozenset(r[0] for r in rows if r[0])
+    except Exception:  # noqa: BLE001
+        _log.error("[ownership-ledger] 원장 조회 실패 — fail-open: 전부 봇소유로 처리(손절 유지)")
+        return None
+
+
 async def _kis_held_symbols(broker: Any, *, fallback: set[str]) -> set[str]:
     """현재 보유 종목 = *KIS 잔고(get_positions)* 의 net>0 종목 — 브로커 진실.
 
@@ -606,6 +632,7 @@ async def kis_paper_realtime_scan_tick(
     universe_symbols: list[str] | None = None,
     client: Any = None,
     risk_profile: Any = None,
+    _bot_owned_override: Any = _UNSET,
 ) -> dict[str, Any]:
     """KIS 실시간 시세 기반 *다종목* 스캔 1 tick.
 
@@ -690,6 +717,13 @@ async def kis_paper_realtime_scan_tick(
         #   기존 set-기반 가드용으로 키에서 파생(중복 get_positions 호출 없음).
         held_map = await _kis_held_map(broker, fallback=_db_held, now=now)
         held_symbols = set(held_map.keys())
+        # 소유권 원장: 봇이 BUY 체결한 종목 집합(루프 밖 1회 쿼리, O(1) 조회).
+        #   _bot_owned=None → fail-open(전부 봇소유 간주) — 원장 조회 실패여도 손절 유지.
+        #   _bot_owned_override: 테스트 전용 주입(frozenset 또는 None).
+        if _bot_owned_override is not _UNSET:
+            _bot_owned: "frozenset[str] | None" = _bot_owned_override
+        else:
+            _bot_owned = _bot_owned_symbols(db)
         # T1(2026-06-12): 회전 스캔이 이번 틱 윈도우에 빠뜨린 *보유* 종목도 항상 스캔
         #   목록에 union — 익절/손절 청산이 회전 때문에 지연되지 않게(청산 보장).
         symbols = list(symbols) + [h for h in held_symbols if h not in symbols]
@@ -731,10 +765,14 @@ async def kis_paper_realtime_scan_tick(
             #   전달만. 진입가(avg_price) 미상이면 position=None(보수적: 강제청산 안 함).
             _position = None
             if symbol in held_symbols:
+                # ★필터 A(2026-07-02): 봇 소유권 원장 확인 — 수동 보유는 PositionContext
+                #   설정 0 → position-based 강제청산(stop/take) 평가 제외.
+                #   fail-open: _bot_owned=None → 원장 조회 실패 → 전부 봇소유(손절 유지).
+                _is_bot_own = (_bot_owned is None) or (symbol in _bot_owned)
                 _hinfo = held_map.get(symbol) or {}
                 _avg = int(_hinfo.get("avg_price", 0) or 0)
                 _cur = float(quote.price or 0)
-                if _avg > 0 and _cur > 0:
+                if _is_bot_own and _avg > 0 and _cur > 0:
                     from app.agents.position_context import PositionContext
                     from app.core.runtime_config import (
                         effective_stop_loss_pct, effective_take_profit_pct)
@@ -816,6 +854,17 @@ async def kis_paper_realtime_scan_tick(
                                 "reason_code": "SELL_NO_HELD_POSITION",
                                 "price_source": "kis"})
                 continue
+            # ★필터 B(2026-07-02): 수동 보유(원장 밖) SELL 완전 차단 — 봇은 자기가
+            #   산 종목만 청산 평가. fail-open: _bot_owned=None → 원장 실패 →
+            #   전부 봇소유 간주 → 통과(손절 유지 우선, 수동 보호 포기).
+            if final == CouncilAction.SELL and symbol in held_symbols:
+                _is_bot_own_b = (_bot_owned is None) or (symbol in _bot_owned)
+                if not _is_bot_own_b:
+                    _log.info("[ownership] %s SELL 차단 — 원장 밖 수동 보유", symbol)
+                    skipped.append({"symbol": symbol,
+                                    "reason_code": "SELL_NOT_BOT_OWNED",
+                                    "price_source": "kis"})
+                    continue
             # ★주문가능수량 0(미결제 등) → 헛주문 방지로 skip. (보유는 있으나 오늘
             #   팔 수 있는 수량이 0이면 broker 로 보내지 않는다.)
             if final == CouncilAction.SELL and qty < 1:

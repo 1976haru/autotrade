@@ -244,7 +244,7 @@ def _recording_route(calls):
     return _fn
 
 
-def _run_scan(kis_avg, seed_snapshot, ret_pct):
+def _run_scan(kis_avg, seed_snapshot, ret_pct, bot_owned=None):
     eng = create_engine("sqlite://", connect_args={"check_same_thread": False},
                         poolclass=StaticPool)
     Base.metadata.create_all(eng)
@@ -253,12 +253,16 @@ def _run_scan(kis_avg, seed_snapshot, ret_pct):
     if seed_snapshot:
         driver_bridge._HELD_SNAPSHOT = {_SYM: {"hldg": 12, "ord_psbl": 12, "avg_price": _AVG}}
         driver_bridge._HELD_SNAPSHOT_AT = _OPEN_NOW
+    # 소유권 원장 주입: 기본값 frozenset([_SYM]) — 봇 소유로 처리(손절 발동 보장).
+    # bot_owned=None → fail-open 테스트용.
+    if bot_owned is None:
+        bot_owned = frozenset([_SYM])
     calls = []
     out = asyncio.run(kis_paper_realtime_scan_tick(
         session_factory=Session, broker=_real_paper_broker(kis_avg), risk=object(),
         route_order_fn=_recording_route(calls), settings=_scan_settings(),
         market_input_fn=_exit_only_input_fn(ret_pct), universe_symbols=[_SYM],
-        client=object(), now=_OPEN_NOW))
+        client=object(), now=_OPEN_NOW, _bot_owned_override=bot_owned))
     sells = [o for o in calls if str(getattr(o, "side", "")).upper().endswith("SELL")]
     return out, sells
 
