@@ -64,6 +64,7 @@ export function ReferenceHome({
   const [lastOkHm, setLastOkHm] = useState(null);
   const [rtConfig, setRtConfig] = useState(null);        // R3: 런타임 설정(실효값)
   const [livePos, setLivePos] = useState(null);          // M3: 라이브 포지션
+  const [shadowFilter, setShadowFilter] = useState(null); // shadow 필터 판정(daily_log.csv 최신)
   const [theme, setTheme] = usePersistedState("refhome_theme", "light", (v) => v === "light" || v === "dark");
 
   const capital = usePaperCapitalSettings({ api: backendApi });
@@ -118,7 +119,7 @@ export function ReferenceHome({
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      const [aud, dec, cs, log, strat, pos, perfRes] = await Promise.allSettled([
+      const [aud, dec, cs, log, strat, pos, perfRes, sf] = await Promise.allSettled([
         backendApi.listOrderAudits({ limit: 50 }),
         backendApi.aiAgentDecisions(20),
         backendApi.paperCashState(),
@@ -126,9 +127,11 @@ export function ReferenceHome({
         backendApi.agentStrategyPerformance({ period: "daily" }),  // V3: 오늘 신호만(누적 수백 개 아님)
         backendApi.positionsLive?.(),   // M3: 기존 폴링에 편승(신규 폴링 0)
         backendApi.performanceGet?.({ period: "daily" }),  // W1: 승률 단일 소스(FIFO 청산) — 성과카드와 동일
+        backendApi.positionsShadowFilter?.(),  // shadow 필터 판정(daily_log.csv)
       ]);
       if (cancelled) return;
       if (perfRes.status === "fulfilled" && perfRes.value) setPerf(perfRes.value);
+      if (sf.status === "fulfilled" && sf.value?.available) setShadowFilter(sf.value);
       // F1: 조회 실패(rejected)는 *실패 플래그*로 — null 로 두면 카드가 '보유 0'으로
       //   둔갑한다(실패 ≠ 빈 목록). available=false 면 카드가 '불러오기 실패' 분기.
       setLivePos(pos.status === "fulfilled" && pos.value ? pos.value : { available: false, positions: [] });
@@ -356,6 +359,22 @@ export function ReferenceHome({
           )}
           {/* P3: 성과 대시보드 — 계좌정보 카드 하단(승률·손익비·순손익 + 봇 vs 지수) */}
           <PerformanceCard />
+          {/* shadow 필터 판정 한 줄 — daily_log.csv 최신 행 */}
+          {shadowFilter?.available && (
+            <div data-testid="refhome-shadow-verdict" style={{
+              display: "flex", alignItems: "center", gap: 6, marginTop: 10,
+              fontSize: 11.5, fontWeight: 700, padding: "6px 10px", borderRadius: 8,
+              background: shadowFilter.verdict === "SKIP" ? "#fef3c733" : "#dcfce733",
+              color: shadowFilter.verdict === "SKIP" ? "#7a4a00" : "#166534",
+            }}>
+              <span>{shadowFilter.verdict === "SKIP" ? "⛔" : "✅"}</span>
+              <span>Shadow 필터 {shadowFilter.verdict}
+                {shadowFilter.reasons && shadowFilter.reasons !== "-" && ` · 조건 ${shadowFilter.reasons}`}
+                {shadowFilter.kospi_gap && ` · KOSPI 갭 ${shadowFilter.kospi_gap}`}
+                {shadowFilter.date && <span style={{ color: "rgba(40,20,24,.45)", marginLeft: 4 }}>({shadowFilter.date})</span>}
+              </span>
+            </div>
+          )}
           {/* M3: 라이브 포지션 상황판 + 종목별 수동 전량 매도 */}
           <LivePositionsCard data={livePos} />
         </div>

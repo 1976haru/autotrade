@@ -143,6 +143,7 @@ export const backendApi = {
   paperCapitalConfig:     () => backendFetch("/api/auto-paper/capital-config"),
   // 라이브 포지션 상황판 + 수동 전량 매도.
   positionsLive:          () => backendFetch("/api/positions/live"),
+  positionsShadowFilter:  () => backendFetch("/api/positions/shadow-filter"),
   positionSellAll:        (symbol) =>
     backendFetch(`/api/positions/${encodeURIComponent(symbol)}/sell-all`, { method: "POST" }),
   // 설계 B 조각 1: 수동 매수(직접 보유) — route_order 경유, trade_reason=manual_buy.

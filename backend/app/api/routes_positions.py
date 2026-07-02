@@ -111,6 +111,8 @@ async def get_live_positions(
     #   ★조각 2(봇 격리=_kis_held_map 차감)는 미구현 → bot_isolated=False 안내.
     from app.positions.holding_source import classify_positions
     out = classify_positions(db, out)
+    for p in out:
+        p['is_bot_owned'] = p.get('source') == 'BOT'
     return {
         "available": True, "positions": out, "fetched_at_kst": _now_hm_kst(),
         # ★조각 1 경고: 봇이 아직 MANUAL 을 격리 못 함(조각 2 전). UI 가 표시.
@@ -270,6 +272,36 @@ def _record_buy_feed_best_effort(db, *, submitted: bool, name: str, qty: int, re
             record_manual_buy_rejected(db, symbol_name=name, reason_ko=reason_ko or "사유 확인 중")
     except Exception:  # noqa: BLE001
         pass
+
+
+@router.get("/positions/shadow-filter")
+def get_shadow_filter_verdict() -> dict:
+    """오늘의 조건부 shadow 필터 판정 — results/conditional_filter/daily_log.csv 최신 행.
+
+    read-only. broker/주문 경로 미접촉.
+    """
+    import csv
+    import os
+    log_path = os.path.normpath(os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        '..', '..', 'results', 'conditional_filter', 'daily_log.csv',
+    ))
+    try:
+        with open(log_path, encoding='utf-8', newline='') as f:
+            rows = list(csv.DictReader(f))
+        if not rows:
+            return {"available": False}
+        latest = rows[-1]
+        return {
+            "available": True,
+            "date": latest.get("date"),
+            "verdict": latest.get("verdict"),
+            "reasons": latest.get("reasons"),
+            "kospi_gap": latest.get("kospi_gap"),
+            "sp500_prev_ret": latest.get("sp500_prev_ret"),
+        }
+    except Exception:  # noqa: BLE001
+        return {"available": False}
 
 
 def _record_feed_best_effort(db, *, submitted: bool, name: str, qty: int, reason_ko: str | None) -> None:
