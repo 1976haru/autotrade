@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 
 import { backendApi } from "../../services/backend/client";
 import { fmtKRW } from "../../utils/format";
@@ -47,6 +47,26 @@ export function ManualHoldingsCard({ live, api = backendApi, onDone, confirmFn }
   const { bot, manual } = splitHoldingsBySource(positions);
   const isolated = live?.bot_isolation_active === true;
 
+  // ── 종목 자동완성 ─────────────────────────────────────────
+  const [universe, setUniverse] = useState([]); // [{code, name}]
+  const [showDrop, setShowDrop] = useState(false);
+  const dropRef = useRef(null);
+
+  useEffect(() => {
+    api.manualOrderUniverse?.().then((data) => {
+      if (Array.isArray(data)) setUniverse(data);
+    }).catch(() => {});
+  }, [api]);
+
+  // 외부 클릭 시 드롭다운 닫기
+  useEffect(() => {
+    const handler = (e) => {
+      if (dropRef.current && !dropRef.current.contains(e.target)) setShowDrop(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
   // ── 매수 폼 상태 ──────────────────────────────────────────
   const [symbol, setSymbol] = useState("");
   const [qty, setQty] = useState(1);
@@ -60,6 +80,27 @@ export function ManualHoldingsCard({ live, api = backendApi, onDone, confirmFn }
 
   const _confirm = confirmFn
     || ((msg) => (typeof window !== "undefined" && typeof window.confirm === "function" ? window.confirm(msg) : true));
+
+  // 자동완성 필터 — 코드 또는 이름에 입력값 포함 (대소문자 무시, 2글자 이상)
+  const filtered = symbol.length >= 2
+    ? universe.filter((u) => {
+        const q = symbol.toLowerCase();
+        return u.code.includes(q) || u.name.toLowerCase().includes(q);
+      }).slice(0, 8)
+    : [];
+
+  const selectStock = (code, name) => {
+    setSymbol(code);
+    setQuote(null);
+    setBuyNote(null);
+    setShowDrop(false);
+    // 선택 즉시 현재가 자동 조회
+    setQuoting(true);
+    api.manualOrderQuote?.(code)
+      .then((q) => setQuote(q))
+      .catch((e) => setBuyNote({ kind: "err", text: `시세 조회 실패 — ${e?.message || "다시 시도해주세요"}` }))
+      .finally(() => setQuoting(false));
+  };
 
   // ── 현재가 조회 ────────────────────────────────────────────
   const lookupQuote = async () => {
@@ -202,9 +243,44 @@ export function ManualHoldingsCard({ live, api = backendApi, onDone, confirmFn }
       {/* 직접 매수 폼 */}
       <div style={{ marginTop: 12, borderTop: "1px solid rgba(40,20,24,.12)", paddingTop: 10 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: "#2a1418", marginBottom: 6 }}>직접 매수 (👤)</div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-          <input data-testid="mh-symbol" style={{ ..._inp, width: 120 }} placeholder="종목코드"
-            value={symbol} onChange={(e) => { setSymbol(e.target.value); setQuote(null); }} />
+        <div style={{ display: "flex", gap: 6, alignItems: "flex-start", flexWrap: "wrap" }}>
+          {/* 자동완성 wrapper */}
+          <div ref={dropRef} style={{ position: "relative" }}>
+            <input data-testid="mh-symbol" style={{ ..._inp, width: 160 }}
+              placeholder="종목명 또는 코드 (예: 삼성)"
+              value={symbol}
+              onChange={(e) => {
+                setSymbol(e.target.value);
+                setQuote(null);
+                setShowDrop(true);
+              }}
+              onFocus={() => symbol.length >= 2 && setShowDrop(true)}
+              onKeyDown={(e) => e.key === "Escape" && setShowDrop(false)}
+            />
+            {showDrop && filtered.length > 0 && (
+              <div data-testid="mh-autocomplete" style={{
+                position: "absolute", top: "100%", left: 0, zIndex: 999, width: 220,
+                background: "#fff", border: "1px solid rgba(40,20,24,.22)", borderRadius: 8,
+                boxShadow: "0 4px 16px rgba(0,0,0,.12)", marginTop: 2, overflow: "hidden",
+              }}>
+                {filtered.map((u) => (
+                  <div key={u.code} data-testid={`mh-ac-${u.code}`}
+                    onMouseDown={() => selectStock(u.code, u.name)}
+                    style={{
+                      padding: "7px 12px", cursor: "pointer", fontSize: 13,
+                      display: "flex", justifyContent: "space-between", alignItems: "center",
+                      borderBottom: "1px solid rgba(40,20,24,.07)",
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(59,130,246,.09)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = ""; }}
+                  >
+                    <span style={{ fontWeight: 700, color: "#2a1418" }}>{u.name}</span>
+                    <span style={{ color: "rgba(40,20,24,.45)", fontSize: 11.5, marginLeft: 8 }}>{u.code}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           <button data-testid="mh-quote" type="button" onClick={lookupQuote} disabled={quoting}
             style={{
               padding: "9px 12px", borderRadius: 8, border: "1px solid rgba(40,20,24,.25)",

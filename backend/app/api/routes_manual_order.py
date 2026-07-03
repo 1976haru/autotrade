@@ -28,7 +28,10 @@ from app.core.config import get_settings
 from app.db.session import get_db
 from app.execution.order_router import DuplicateOrderError, route_order
 from app.risk.risk_manager import RiskDecision, RiskManager
-from app.universe.default_universe import FALLBACK_MARKET_CAP_TOP50_NAMES
+from app.universe.default_universe import (
+    FALLBACK_MARKET_CAP_TOP50_NAMES,
+    _FALLBACK_TOP100,
+)
 
 router = APIRouter(prefix="/manual-order", tags=["manual-order"])
 
@@ -153,6 +156,12 @@ async def manual_order_quote(symbol: str, broker: BrokerAdapter = Depends(get_br
         "price": int(getattr(quote, "price", 0) or 0),
         "fetched_at_kst": _now_hm_kst(),
     }
+
+
+@router.get("/universe")
+def manual_order_universe():
+    """자동완성용 종목 목록 — (code, name) 100개. DB/KIS 호출 0건(정적 목록)."""
+    return [{"code": c, "name": n} for c, n in _FALLBACK_TOP100]
 
 
 def _reject_reason_ko(reasons: list[str] | None) -> str:

@@ -77,13 +77,52 @@ describe("ManualHoldingsCard (설계 B)", () => {
 
   it("조회 버튼 → manualOrderQuote 호출 + 가격 표시", async () => {
     const manualOrderQuote = vi.fn(async () => ({ symbol: "033780", name: "KT&G", price: 84000, fetched_at_kst: "15:00" }));
-    const { getByTestId, getByText } = render(
+    const { getByTestId } = render(
       <ManualHoldingsCard live={live()} api={{ manualOrderQuote }} confirmFn={_confirmYes} />
     );
     fireEvent.change(getByTestId("mh-symbol"), { target: { value: "033780" } });
     fireEvent.click(getByTestId("mh-quote"));
     await waitFor(() => expect(manualOrderQuote).toHaveBeenCalledWith("033780"));
     await waitFor(() => expect(getByTestId("mh-quote-display")).toBeTruthy());
+  });
+
+  // ── 자동완성 ─────────────────────────────────────────────
+
+  it("universe 로드 후 '삼성' 입력 → 드롭다운 표시", async () => {
+    const manualOrderUniverse = vi.fn(async () => [
+      { code: "005930", name: "삼성전자" },
+      { code: "000810", name: "삼성화재" },
+      { code: "033780", name: "KT&G" },
+    ]);
+    const { getByTestId, findByTestId } = render(
+      <ManualHoldingsCard live={live()} api={{ manualOrderUniverse }} confirmFn={_confirmYes} />
+    );
+    // universe 로드 대기
+    await waitFor(() => expect(manualOrderUniverse).toHaveBeenCalled());
+    // 검색어 입력
+    fireEvent.change(getByTestId("mh-symbol"), { target: { value: "삼성" } });
+    const drop = await findByTestId("mh-autocomplete");
+    expect(drop.textContent).toContain("삼성전자");
+    expect(drop.textContent).toContain("삼성화재");
+    expect(drop.textContent).not.toContain("KT&G");
+  });
+
+  it("드롭다운 항목 선택 → 코드 설정 + 자동 시세 조회", async () => {
+    const manualOrderUniverse = vi.fn(async () => [
+      { code: "005930", name: "삼성전자" },
+    ]);
+    const manualOrderQuote = vi.fn(async () => ({ symbol: "005930", name: "삼성전자", price: 75000, fetched_at_kst: "15:00" }));
+    const { getByTestId, findByTestId } = render(
+      <ManualHoldingsCard live={live()} api={{ manualOrderUniverse, manualOrderQuote }} confirmFn={_confirmYes} />
+    );
+    await waitFor(() => expect(manualOrderUniverse).toHaveBeenCalled());
+    fireEvent.change(getByTestId("mh-symbol"), { target: { value: "삼성" } });
+    const item = await findByTestId("mh-ac-005930");
+    fireEvent.mouseDown(item);
+    // 코드가 input에 설정됨
+    await waitFor(() => expect(getByTestId("mh-symbol").value).toBe("005930"));
+    // 시세 자동 조회
+    await waitFor(() => expect(manualOrderQuote).toHaveBeenCalledWith("005930"));
   });
 
   // ── 직접 보유 행 매도 ─────────────────────────────────────
