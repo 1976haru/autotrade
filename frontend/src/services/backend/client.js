@@ -153,6 +153,15 @@ export const backendApi = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ symbol, quantity }),
     }),
+  // Task D: 수동 매매 통합 엔드포인트 (BUY/SELL) — /api/manual-order 경유.
+  manualOrder:            ({ symbol, side, quantity }) =>
+    backendFetch("/api/manual-order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol, side, quantity }),
+    }),
+  manualOrderQuote:       (symbol) =>
+    backendFetch(`/api/manual-order/quote/${encodeURIComponent(symbol)}`),
   // 성과 대시보드 (읽기 전용 집계). 탭 전환/수동 새로고침 시에만 조회.
   performanceGet:         ({ period = "daily", from, to } = {}) => {
     const qs = new URLSearchParams({ period });
