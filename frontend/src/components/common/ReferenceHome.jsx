@@ -27,6 +27,7 @@ import { RuntimeConfigCard } from "./RuntimeConfigCard";
 import { PerformanceCard } from "./PerformanceCard";
 import { LivePositionsCard } from "./LivePositionsCard";
 import { ManualHoldingsCard } from "./ManualHoldingsCard";
+import { ManualPortfolioCard } from "./ManualPortfolioCard";
 import { RiskProfileSwitchCard } from "./RiskProfileSwitchCard";
 import { TechniqueScorecard } from "./TechniqueScorecard";
 import { AgentDashboard } from "./AgentDashboard";
@@ -380,6 +381,8 @@ export function ReferenceHome({
           <LivePositionsCard data={livePos} />
           {/* Task D: 직접 매매 패널 — 봇/직접 분리 + 직접 매수/매도 */}
           <ManualHoldingsCard live={livePos} />
+          {/* 자산관리 2차: 직접 보유 FIFO P&L + 기간 손익 + 부분 매도 */}
+          <ManualPortfolioCard api={backendApi} />
         </div>
 
         {/* ⑥ 미니 KPI 줄 */}

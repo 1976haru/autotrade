@@ -163,6 +163,13 @@ export const backendApi = {
   manualOrderQuote:       (symbol) =>
     backendFetch(`/api/manual-order/quote/${encodeURIComponent(symbol)}`),
   manualOrderUniverse:    () => backendFetch("/api/manual-order/universe"),
+  // 수동 포트폴리오 — 직접 보유 현황 + 기간 손익 (read-only).
+  manualPortfolioSummary: ({ period = "today", from, to } = {}) => {
+    const qs = new URLSearchParams({ period });
+    if (from) qs.set("from", from);
+    if (to)   qs.set("to", to);
+    return backendFetch(`/api/manual-portfolio/summary?${qs}`);
+  },
   // 성과 대시보드 (읽기 전용 집계). 탭 전환/수동 새로고침 시에만 조회.
   performanceGet:         ({ period = "daily", from, to } = {}) => {
     const qs = new URLSearchParams({ period });
