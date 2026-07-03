@@ -88,12 +88,29 @@ def _kst_date(dt: datetime) -> date:
     return dt.astimezone(KST).date()
 
 
-def _rejected_signals(db) -> list[dict[str, Any]]:
+def _rejected_signals(
+    db,
+    *,
+    since: date | None = None,
+    until: date | None = None,
+) -> list[dict[str, Any]]:
     """council BUY 신호였으나 미진입(broker_order_sent=False)인 기각 결정.
 
-    AG1 의 signal_price(기각 시점 가격) 보유분만(없으면 가상손익 불가 → 제외)."""
+    AG1 의 signal_price(기각 시점 가격) 보유분만(없으면 가상손익 불가 → 제외).
+
+    since/until: SQL 레벨 pre-filter (KST date → UTC 1일 버퍼). Python 레벨
+    정밀 필터는 compute_shadow 가 담당. DB 세션 홀드 최소화(전체 스캔 방지).
+    """
+    q = db.query(AgentDecisionLog).filter(AgentDecisionLog.meta.isnot(None))
+    if since is not None:
+        # KST→UTC 오프셋(-9h) 보정: 1일 여유를 두어 경계 누락 방지.
+        since_utc = datetime.combine(since - timedelta(days=1), datetime.min.time(), tzinfo=timezone.utc)
+        q = q.filter(AgentDecisionLog.created_at >= since_utc)
+    if until is not None:
+        until_utc = datetime.combine(until + timedelta(days=1), datetime.max.time(), tzinfo=timezone.utc)
+        q = q.filter(AgentDecisionLog.created_at <= until_utc)
+    rows = q.limit(5000).all()  # safety cap — 전체 스캔으로 풀 고갈 방지
     out = []
-    rows = db.query(AgentDecisionLog).filter(AgentDecisionLog.meta.isnot(None)).all()
     for r in rows:
         meta = r.meta or {}
         final = str(meta.get("final_action", "") or "").upper()
@@ -139,7 +156,9 @@ async def refresh_shadow_prices(
         return  # 캐시 — 매 요청 실조회 금지(최초 1회는 적재)
     today = today_kst()
     active = set()
-    for sig in _rejected_signals(db):
+    # track_days 영업일 = 최대 track_days*2+10 달력일. SQL pre-filter로 세션 홀드 단축.
+    window_start = today - timedelta(days=track_days * 2 + 10)
+    for sig in _rejected_signals(db, since=window_start):
         if sig["rejected_date"] <= today <= _add_business_days(sig["rejected_date"], track_days):
             active.add(sig["symbol"])
     if not active:
@@ -158,7 +177,7 @@ def compute_shadow(db, *, start: date, end: date, today: date | None = None,
     hist = _load_history()
     budget = int(effective_per_stock_budget())
 
-    rejected = [s for s in _rejected_signals(db) if start <= s["rejected_date"] <= end]
+    rejected = [s for s in _rejected_signals(db, since=start, until=end) if start <= s["rejected_date"] <= end]
     tracking = 0
     price_unavailable = 0
     completed = []  # virtual_pnl 목록
