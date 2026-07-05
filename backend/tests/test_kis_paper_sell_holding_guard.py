@@ -23,7 +23,6 @@ from sqlalchemy.pool import StaticPool
 
 import app.kis_paper.driver_bridge as _bridge
 from app.agents.agent_council import StrategyMarketInput
-from app.brokers.kis import KisBrokerAdapter
 from app.db.base import Base
 from app.db.models import OrderAuditLog
 from app.kis_paper.driver_bridge import (
@@ -335,6 +334,7 @@ def test_sell_skipped_when_orderable_qty_zero(engine):
         route_order_fn=_route_must_not_call, settings=_scan_settings(),
         market_input_fn=_sell_input_fn, universe_symbols=["005935"],
         client=object(), now=OPEN_TIME,
+        _bot_owned_override=frozenset({"005935"}),
     ))
     codes = {s.get("reason_code") for s in out["skipped"]}
     assert "SELL_NOT_ORDERABLE" in codes or "HOLD_NO_SIGNAL" in codes
@@ -388,6 +388,32 @@ def test_scan_rotation_covers_full_pool_in_ten_ticks():
     b.reset_scan_rotation_for_tests()
 
 
+def test_theme_off_removes_semiconductor_from_new_entry_scan(monkeypatch):
+    """dry-run (a): 반도체 OFF면 미보유 반도체는 신규 스캔 후보에서 빠진다."""
+    import app.core.runtime_config as rc
+    import app.kis_paper.driver_bridge as b
+
+    monkeypatch.setattr(rc, "effective_disabled_theme_ids", lambda now=None: {"semiconductor"})
+    st = _scan_settings()
+    out = b._scan_universe_symbols(
+        st, override=["005930", "000660", "005380"], now=OPEN_TIME
+    )
+    assert out == ["005380"]
+
+
+def test_theme_on_restores_semiconductor_to_new_entry_scan(monkeypatch):
+    """dry-run (c): 반도체 ON 복귀 시 다시 신규 스캔 후보가 된다."""
+    import app.core.runtime_config as rc
+    import app.kis_paper.driver_bridge as b
+
+    monkeypatch.setattr(rc, "effective_disabled_theme_ids", lambda now=None: set())
+    st = _scan_settings()
+    out = b._scan_universe_symbols(
+        st, override=["005930", "000660", "005380"], now=OPEN_TIME
+    )
+    assert out == ["005930", "000660", "005380"]
+
+
 def test_held_symbols_always_scanned_despite_rotation(engine):
     """T1: 회전 윈도우에 없는 보유 종목도 매 틱 스캔 목록에 union(청산 보장)."""
     import app.kis_paper.driver_bridge as b
@@ -414,9 +440,6 @@ def test_held_symbols_always_scanned_despite_rotation(engine):
 
 # ── S1/S2(2026-06-15): 익절/손절 강제청산 = position 전달로 활성화 ──────────────
 #   ★역방향 안전(밴드 내 정상 보유는 안 팔림)이 최대 위험 — 가장 빡빡하게 검증.
-
-from app.brokers.base import OrderSide as _OrderSide
-
 
 def _neutral_quote_fn(price):
     # 전략 투표가 전부 중립(HOLD)이 되도록 평평한 input — 강제청산만 SELL 을 유발.
@@ -461,7 +484,8 @@ def _scan(engine, broker, price):
     out = asyncio.run(kis_paper_realtime_scan_tick(
         session_factory=Session, broker=broker, risk=object(), route_order_fn=route,
         settings=_scan_settings(), market_input_fn=_neutral_quote_fn(price),
-        universe_symbols=["005930"], client=object(), now=OPEN_TIME))
+        universe_symbols=["005930"], client=object(), now=OPEN_TIME,
+        _bot_owned_override=frozenset({"005930"})))
     return out, routed
 
 
@@ -488,6 +512,19 @@ def test_stop_loss_forced_exit_generated_and_gate_exempt(engine, monkeypatch):
     o = out["orders"][0]
     assert o["reason_code"] not in _QUALITY_BLOCKS
     assert o["reason_code"] == "KIS_PAPER_MODE_REQUIRED"
+
+
+def test_theme_off_held_semiconductor_still_stop_loss_exits(engine, monkeypatch):
+    """dry-run (b): OFF 필터 뒤 held union으로 삼성전자 -2% 손절 평가가 유지된다."""
+    import app.core.runtime_config as rc
+
+    monkeypatch.setattr(rc, "effective_disabled_theme_ids", lambda now=None: {"semiconductor"})
+    _set_thresholds(monkeypatch, tp=3.5, sl=2.0)
+    out, _ = _scan(engine, _held(100000), 97000)
+    assert out["symbols_scanned"] == 1
+    assert out["candidates_found"] == 1
+    assert out["orders"][0]["reason_code"] == "KIS_PAPER_MODE_REQUIRED"
+    assert out["orders"][0]["reason_code"] not in _QUALITY_BLOCKS
 
 
 def test_within_bands_not_force_sold(engine, monkeypatch):

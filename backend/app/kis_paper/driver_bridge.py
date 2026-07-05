@@ -362,8 +362,13 @@ def _full_universe_pool(settings: Any) -> list[str]:
     return list(FALLBACK_MARKET_CAP_TOP402[:effective_universe_size()])
 
 
-def _scan_universe_symbols(settings: Any, *, override: list[str] | None) -> list[str]:
-    """스캔 대상 종목 — smoke 면 단일, override 면 그대로, 아니면 universe *회전 윈도우*.
+def _scan_universe_symbols(
+    settings: Any,
+    *,
+    override: list[str] | None,
+    now: datetime | None = None,
+) -> list[str]:
+    """스캔 대상 종목 — OFF 테마 신규 후보 제외 후 universe 회전.
 
     T1(2026-06-12): 풀 확장 — '매 틱 전부' 는 KIS 시세 호출 폭증(EGW00201). 대신
     틱당 cap(기본 10) 슬라이스를 *오프셋 회전* 으로 반환해 ~⌈n/cap⌉ 틱에 전체를
@@ -371,11 +376,17 @@ def _scan_universe_symbols(settings: Any, *, override: list[str] | None) -> list
     은 회전 주기만 늘림 — 틱당 부하 불변.)
     ★보유 종목 매 틱 스캔(청산 보장)은 *호출부* 에서 held_symbols union 으로 별도 보장.
     """
-    if override is not None:
-        return list(override)
     if bool(getattr(settings, "kis_paper_smoke_mode", False)):
+        # smoke 는 주문 파이프라인 진단이므로 테마 제외와 무관하게 지정 종목을 검사.
         return [str(getattr(settings, "kis_paper_smoke_symbol", "005930"))]
-    syms = _full_universe_pool(settings)
+    from app.core.runtime_config import effective_disabled_theme_ids
+    from app.theme_filter.catalog import filter_new_entry_symbols
+
+    disabled = effective_disabled_theme_ids(now)
+    if override is not None:
+        # 명시 override 의 기존 cap 우회 의미는 유지하고 테마 필터만 적용.
+        return filter_new_entry_symbols(override, disabled)
+    syms = filter_new_entry_symbols(_full_universe_pool(settings), disabled)
     cap = int(getattr(settings, "kis_paper_scan_max_symbols", 10) or 0)
     cap_max = int(getattr(settings, "kis_paper_scan_cap_max", 30) or 30)
     if cap_max <= 0:
@@ -687,7 +698,7 @@ async def kis_paper_realtime_scan_tick(
         max_new_per_tick = 1
     smoke_qty = max(1, int(getattr(settings, "kis_paper_smoke_qty", 1) or 1))
 
-    symbols = _scan_universe_symbols(settings, override=universe_symbols)
+    symbols = _scan_universe_symbols(settings, override=universe_symbols, now=now)
 
     db = session_factory()
     out_orders: list[dict[str, Any]] = []

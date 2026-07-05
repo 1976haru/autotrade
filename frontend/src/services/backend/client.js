@@ -203,6 +203,12 @@ export const backendApi = {
       method: "PUT",
       body: JSON.stringify({ profile }),
     }),
+  themeFilterGet:         () => backendFetch("/api/theme-filter"),
+  themeFilterPatch:       (themeId, body) =>
+    backendFetch(`/api/theme-filter/${encodeURIComponent(themeId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body || {}),
+    }),
   setPaperCapitalConfig:  ({ initialCash, fallbackToDefault = false } = {}) =>
     backendFetch("/api/auto-paper/capital-config", {
       method: "POST",

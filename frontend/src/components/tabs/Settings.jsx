@@ -21,6 +21,7 @@ import { AppVersionCard } from "../common/AppVersionCard";
 import { PreflightSmokeCard } from "../common/PreflightSmokeCard";
 import { RuntimeEventLogViewer } from "../common/RuntimeEventLogViewer";
 import { UniverseStatusCard } from "../common/UniverseStatusCard";
+import { ThemeFilterCard } from "../common/ThemeFilterCard";
 import { LiveSafetyStatusCard } from "../common/LiveSafetyStatusCard";
 import { ProgramIntegrityGateCard } from "../common/ProgramIntegrityGateCard";
 import { PremarketReadinessGateCard } from "../common/PremarketReadinessGateCard";
@@ -272,6 +273,9 @@ export function Settings({ settings }) {
       {/* #54 / 7-02: 기본 Universe 50개 상태 — 사용자 관심종목 없으면 기본 50개
           fallback, source/count/preview/사유 표시. read-only, 주문 기능 아님. */}
       <UniverseStatusCard />
+
+      {/* 테마 기능 3a: 신규 진입 후보만 제외. 보유 union/청산 경로는 유지. */}
+      <ThemeFilterCard />
 
       {/* #56 / 7-04: 통합 오류/이벤트 로그 뷰어 — RuntimeEvent / AI 판단 /
           KIS 주문 이벤트를 최근 100건 한 화면에서 확인. source/severity/검색

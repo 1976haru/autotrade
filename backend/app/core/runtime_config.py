@@ -45,6 +45,7 @@ _PROFILE_KEY = "active_profile"
 #   ★cap(scan_max_symbols)·안전 플래그는 *여기서 다루지 않는다*(cap 고정).
 _UNIVERSE_SIZE_KEY = "universe_size"
 _UNIVERSE_MODE_KEY = "universe_mode"
+_THEME_EXCLUSIONS_KEY = "theme_exclusions"
 # 화이트리스트(이 키들 외 저장 거부). 안전 플래그/confidence/cap 미포함.
 _OVERRIDE_KEYS = (*_INT_KEYS, *_FLOAT_KEYS, _PROFILE_KEY,
                   _UNIVERSE_SIZE_KEY, _UNIVERSE_MODE_KEY)
@@ -165,6 +166,23 @@ def _load() -> dict[str, Any]:
         umode = raw.get(_UNIVERSE_MODE_KEY)
         if isinstance(umode, str) and umode.strip().lower() in VALID_UNIVERSE_MODES:
             clean[_UNIVERSE_MODE_KEY] = umode.strip().lower()
+        exclusions = raw.get(_THEME_EXCLUSIONS_KEY)
+        if isinstance(exclusions, dict):
+            clean_exclusions: dict[str, dict[str, Any]] = {}
+            for theme_id, state in exclusions.items():
+                if not isinstance(theme_id, str) or not isinstance(state, dict):
+                    continue
+                duration = str(state.get("duration") or "")
+                if duration not in ("today", "until_enabled"):
+                    continue
+                clean_exclusions[theme_id] = {
+                    "duration": duration,
+                    "disabled_at": str(state.get("disabled_at") or ""),
+                    "expires_at": (
+                        str(state["expires_at"]) if state.get("expires_at") else None
+                    ),
+                }
+            clean[_THEME_EXCLUSIONS_KEY] = clean_exclusions
         if "updated_at" in raw and raw["updated_at"]:
             clean["updated_at"] = str(raw["updated_at"])
         _cache = clean
@@ -181,7 +199,9 @@ def _persist(cache: dict[str, Any]) -> None:
     path = overrides_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp = path.with_name(f"{path.name}.tmp")
+        tmp.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
     except Exception as exc:  # noqa: BLE001
         _log.warning("[runtime_config] %s 저장 실패: %s", path, exc)
         raise
@@ -258,6 +278,85 @@ def effective_universe_mode() -> str:
         return ov
     m = str(getattr(get_settings(), "kis_paper_universe_mode", "auto") or "auto").lower()
     return m if m in VALID_UNIVERSE_MODES else DEFAULT_UNIVERSE_MODE
+
+
+def _as_utc(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return (dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt).astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def effective_theme_exclusions(now: datetime | None = None) -> dict[str, dict[str, Any]]:
+    """현재 유효한 OFF 테마. 만료 판단은 서버 시각으로 하며 저장 파일은 건드리지 않는다."""
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    raw = _load().get(_THEME_EXCLUSIONS_KEY)
+    if not isinstance(raw, dict):
+        return {}
+    active: dict[str, dict[str, Any]] = {}
+    for theme_id, state in raw.items():
+        if not isinstance(state, dict):
+            continue
+        duration = str(state.get("duration") or "")
+        expires = _as_utc(state.get("expires_at"))
+        if duration == "today" and (expires is None or expires <= now_utc):
+            continue
+        if duration not in ("today", "until_enabled"):
+            continue
+        active[str(theme_id)] = dict(state)
+    return active
+
+
+def effective_disabled_theme_ids(now: datetime | None = None) -> frozenset[str]:
+    return frozenset(effective_theme_exclusions(now))
+
+
+def set_theme_enabled(
+    theme_id: str,
+    *,
+    enabled: bool,
+    duration: str | None = None,
+    now: datetime | None = None,
+) -> dict[str, dict[str, Any]]:
+    """테마 ON/OFF를 기존 runtime override 파일에 부분 갱신한다."""
+    from app.theme_filter.catalog import get_theme_catalog
+
+    theme_id = str(theme_id or "").strip()
+    if theme_id not in get_theme_catalog().theme_ids:
+        raise KeyError(theme_id)
+    if not enabled and duration not in ("today", "until_enabled"):
+        raise RuntimeConfigValidationError("OFF 기간은 오늘만(today) 또는 해제까지(until_enabled)여야 해요.")
+
+    now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    expires_at: str | None = None
+    if not enabled and duration == "today":
+        kst = timezone(timedelta(hours=9))
+        local = now_utc.astimezone(kst)
+        next_midnight = (local + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        expires_at = next_midnight.astimezone(timezone.utc).isoformat()
+
+    global _cache
+    with _lock:
+        cur = dict(_load())
+        exclusions = dict(cur.get(_THEME_EXCLUSIONS_KEY) or {})
+        if enabled:
+            exclusions.pop(theme_id, None)
+        else:
+            exclusions[theme_id] = {
+                "duration": duration,
+                "disabled_at": now_utc.isoformat(),
+                "expires_at": expires_at,
+            }
+        cur[_THEME_EXCLUSIONS_KEY] = exclusions
+        cur["updated_at"] = now_utc.isoformat()
+        _persist(cur)
+        _cache = cur
+    return effective_theme_exclusions(now_utc)
 
 
 def _source(key: str) -> str:
@@ -495,6 +594,9 @@ __all__ = [
     "effective_active_profile",
     "effective_universe_size",
     "effective_universe_mode",
+    "effective_theme_exclusions",
+    "effective_disabled_theme_ids",
+    "set_theme_enabled",
     "get_runtime_config",
     "set_runtime_overrides",
     "reset_runtime_overrides_for_tests",
