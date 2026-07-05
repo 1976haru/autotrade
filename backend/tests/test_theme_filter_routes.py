@@ -23,6 +23,9 @@ def test_theme_toggle_api_off_and_on_without_restart(client):
     before = client.get("/api/theme-filter")
     assert before.status_code == 200
     assert before.json()["restart_required"] is False
+    assert before.json()["catalog_version"] == "kr-theme-v2"
+    assert len(before.json()["themes"]) == 20
+    assert "other" not in {row["id"] for row in before.json()["themes"]}
 
     off = client.patch(
         "/api/theme-filter/semiconductor",

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "universe": "TOP402",
   "universe_as_of": "2026-07-03",
-  "taxonomy_version": "kr-theme-v1",
+  "taxonomy_version": "kr-theme-v2",
   "themes": [
     {
       "id": "semiconductor",
@@ -11,12 +11,12 @@
     },
     {
       "id": "bio",
-      "label": "바이오",
+      "label": "바이오·제약",
       "order": 20
     },
     {
       "id": "automobile",
-      "label": "자동차",
+      "label": "자동차·부품",
       "order": 30
     },
     {
@@ -31,43 +31,83 @@
     },
     {
       "id": "internet",
-      "label": "인터넷",
+      "label": "인터넷·플랫폼",
       "order": 60
     },
     {
       "id": "defense",
-      "label": "방산",
+      "label": "방산·항공우주",
       "order": 70
     },
     {
       "id": "shipbuilding",
-      "label": "조선",
+      "label": "조선·기자재",
       "order": 80
+    },
+    {
+      "id": "power_nuclear",
+      "label": "원자력·전력·전선",
+      "order": 90
+    },
+    {
+      "id": "entertainment_media",
+      "label": "엔터·미디어",
+      "order": 100
+    },
+    {
+      "id": "cosmetics",
+      "label": "화장품",
+      "order": 110
+    },
+    {
+      "id": "food_beverage",
+      "label": "음식료",
+      "order": 120
+    },
+    {
+      "id": "steel_materials",
+      "label": "철강·비철·소재",
+      "order": 130
+    },
+    {
+      "id": "construction_infra",
+      "label": "건설·인프라",
+      "order": 140
+    },
+    {
+      "id": "telecom_network",
+      "label": "통신·네트워크",
+      "order": 150
+    },
+    {
+      "id": "gaming",
+      "label": "게임",
+      "order": 160
+    },
+    {
+      "id": "robot_ai",
+      "label": "로봇·AI·자동화",
+      "order": 170
+    },
+    {
+      "id": "retail_consumer",
+      "label": "유통·소비",
+      "order": 180
     },
     {
       "id": "energy_chemical",
       "label": "에너지·화학",
-      "order": 90
+      "order": 190
     },
     {
-      "id": "industrial",
-      "label": "산업재",
-      "order": 100
-    },
-    {
-      "id": "consumer",
-      "label": "소비재",
-      "order": 110
-    },
-    {
-      "id": "entertainment",
-      "label": "엔터테인먼트",
-      "order": 120
+      "id": "transport_logistics",
+      "label": "운송·물류·여행",
+      "order": 200
     },
     {
       "id": "other",
       "label": "기타",
-      "order": 130
+      "order": 210
     }
   ],
   "symbols": {
@@ -107,17 +147,17 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "005935": {
       "name": "삼성전자우",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -127,7 +167,7 @@
       "themes": [
         "automobile"
       ],
-      "krx_industry": "자동차",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -137,7 +177,7 @@
       "themes": [
         "automobile"
       ],
-      "krx_industry": "자동차",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -147,17 +187,17 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "005490": {
       "name": "POSCO홀딩스",
-      "primary_theme": "industrial",
+      "primary_theme": "steel_materials",
       "themes": [
-        "industrial"
+        "steel_materials"
       ],
-      "krx_industry": "산업재",
+      "krx_industry": "철강·비철·소재",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -167,7 +207,7 @@
       "themes": [
         "internet"
       ],
-      "krx_industry": "인터넷",
+      "krx_industry": "인터넷·플랫폼",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -187,17 +227,17 @@
       "themes": [
         "automobile"
       ],
-      "krx_industry": "자동차",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "028260": {
       "name": "삼성물산",
-      "primary_theme": "other",
+      "primary_theme": "construction_infra",
       "themes": [
-        "other"
+        "construction_infra"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "건설·인프라",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -217,7 +257,7 @@
       "themes": [
         "internet"
       ],
-      "krx_industry": "인터넷",
+      "krx_industry": "인터넷·플랫폼",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -264,11 +304,11 @@
     },
     "015760": {
       "name": "한국전력",
-      "primary_theme": "other",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "other"
+        "power_nuclear"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "원자력·전력·전선",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -294,21 +334,21 @@
     },
     "033780": {
       "name": "KT&G",
-      "primary_theme": "other",
+      "primary_theme": "food_beverage",
       "themes": [
-        "other"
+        "food_beverage"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "음식료",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "066570": {
       "name": "LG전자",
-      "primary_theme": "other",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "other"
+        "retail_consumer"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -324,11 +364,11 @@
     },
     "017670": {
       "name": "SK텔레콤",
-      "primary_theme": "other",
+      "primary_theme": "telecom_network",
       "themes": [
-        "other"
+        "telecom_network"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "통신·네트워크",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -364,41 +404,41 @@
     },
     "011200": {
       "name": "HMM",
-      "primary_theme": "other",
+      "primary_theme": "transport_logistics",
       "themes": [
-        "other"
+        "transport_logistics"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "운송·물류·여행",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "030200": {
       "name": "KT",
-      "primary_theme": "other",
+      "primary_theme": "telecom_network",
       "themes": [
-        "other"
+        "telecom_network"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "통신·네트워크",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "010130": {
       "name": "고려아연",
-      "primary_theme": "other",
+      "primary_theme": "steel_materials",
       "themes": [
-        "other"
+        "steel_materials"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "철강·비철·소재",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "259960": {
       "name": "크래프톤",
-      "primary_theme": "other",
+      "primary_theme": "gaming",
       "themes": [
-        "other"
+        "gaming"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "게임",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -434,41 +474,41 @@
     },
     "018260": {
       "name": "삼성에스디에스",
-      "primary_theme": "other",
+      "primary_theme": "internet",
       "themes": [
-        "other"
+        "internet"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "인터넷·플랫폼",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "051900": {
       "name": "LG생활건강",
-      "primary_theme": "consumer",
+      "primary_theme": "cosmetics",
       "themes": [
-        "consumer"
+        "cosmetics"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "화장품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "090430": {
       "name": "아모레퍼시픽",
-      "primary_theme": "consumer",
+      "primary_theme": "cosmetics",
       "themes": [
-        "consumer"
+        "cosmetics"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "화장품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "047050": {
       "name": "포스코인터내셔널",
-      "primary_theme": "other",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "other"
+        "retail_consumer"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -488,27 +528,27 @@
       "themes": [
         "automobile"
       ],
-      "krx_industry": "자동차",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "097950": {
       "name": "CJ제일제당",
-      "primary_theme": "consumer",
+      "primary_theme": "food_beverage",
       "themes": [
-        "consumer"
+        "food_beverage"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "음식료",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "078930": {
       "name": "GS",
-      "primary_theme": "other",
+      "primary_theme": "energy_chemical",
       "themes": [
-        "other"
+        "energy_chemical"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "에너지·화학",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -528,7 +568,7 @@
       "themes": [
         "automobile"
       ],
-      "krx_industry": "자동차",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -538,7 +578,7 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -548,17 +588,17 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "271560": {
       "name": "오리온",
-      "primary_theme": "consumer",
+      "primary_theme": "food_beverage",
       "themes": [
-        "consumer"
+        "food_beverage"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "음식료",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -568,7 +608,7 @@
       "themes": [
         "shipbuilding"
       ],
-      "krx_industry": "조선",
+      "krx_industry": "조선·기자재",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -578,7 +618,7 @@
       "themes": [
         "defense"
       ],
-      "krx_industry": "방산",
+      "krx_industry": "방산·항공우주",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -586,22 +626,20 @@
       "name": "한화오션",
       "primary_theme": "shipbuilding",
       "themes": [
-        "shipbuilding",
-        "industrial"
+        "shipbuilding"
       ],
-      "krx_industry": "조선",
-      "source": "krx_snapshot+manual_overlay",
+      "krx_industry": "조선·기자재",
+      "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "064350": {
       "name": "현대로템",
       "primary_theme": "defense",
       "themes": [
-        "defense",
-        "industrial"
+        "defense"
       ],
-      "krx_industry": "방산",
-      "source": "krx_snapshot+manual_overlay",
+      "krx_industry": "방산·항공우주",
+      "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "047810": {
@@ -610,7 +648,7 @@
       "themes": [
         "defense"
       ],
-      "krx_industry": "방산",
+      "krx_industry": "방산·항공우주",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -618,20 +656,19 @@
       "name": "HD한국조선해양",
       "primary_theme": "shipbuilding",
       "themes": [
-        "shipbuilding",
-        "industrial"
+        "shipbuilding"
       ],
-      "krx_industry": "조선",
-      "source": "krx_snapshot+manual_overlay",
+      "krx_industry": "조선·기자재",
+      "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "267260": {
       "name": "HD현대일렉트릭",
-      "primary_theme": "industrial",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "industrial"
+        "power_nuclear"
       ],
-      "krx_industry": "산업재",
+      "krx_industry": "원자력·전력·전선",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -668,11 +705,11 @@
     },
     "004020": {
       "name": "현대제철",
-      "primary_theme": "industrial",
+      "primary_theme": "steel_materials",
       "themes": [
-        "industrial"
+        "steel_materials"
       ],
-      "krx_industry": "산업재",
+      "krx_industry": "철강·비철·소재",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -691,9 +728,9 @@
       "primary_theme": "shipbuilding",
       "themes": [
         "shipbuilding",
-        "industrial"
+        "power_nuclear"
       ],
-      "krx_industry": "조선",
+      "krx_industry": "조선·기자재",
       "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
@@ -702,69 +739,69 @@
       "primary_theme": "defense",
       "themes": [
         "defense",
-        "industrial"
+        "power_nuclear"
       ],
-      "krx_industry": "방산",
+      "krx_industry": "방산·항공우주",
       "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "008770": {
       "name": "호텔신라",
-      "primary_theme": "consumer",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "consumer"
+        "retail_consumer"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "139480": {
       "name": "이마트",
-      "primary_theme": "consumer",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "consumer"
+        "retail_consumer"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "023530": {
       "name": "롯데쇼핑",
-      "primary_theme": "consumer",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "consumer"
+        "retail_consumer"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "282330": {
       "name": "BGF리테일",
-      "primary_theme": "consumer",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "consumer"
+        "retail_consumer"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "069960": {
       "name": "현대백화점",
-      "primary_theme": "consumer",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "consumer"
+        "retail_consumer"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "035250": {
       "name": "강원랜드",
-      "primary_theme": "consumer",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "consumer"
+        "retail_consumer"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -772,10 +809,11 @@
       "name": "엔씨소프트",
       "primary_theme": "internet",
       "themes": [
-        "internet"
+        "internet",
+        "gaming"
       ],
-      "krx_industry": "인터넷",
-      "source": "krx_snapshot",
+      "krx_industry": "인터넷·플랫폼",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "251270": {
@@ -783,19 +821,20 @@
       "primary_theme": "internet",
       "themes": [
         "internet",
-        "entertainment"
+        "entertainment_media",
+        "gaming"
       ],
-      "krx_industry": "인터넷",
+      "krx_industry": "인터넷·플랫폼",
       "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "003490": {
       "name": "대한항공",
-      "primary_theme": "other",
+      "primary_theme": "transport_logistics",
       "themes": [
-        "other"
+        "transport_logistics"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "운송·물류·여행",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -861,51 +900,51 @@
     },
     "000720": {
       "name": "현대건설",
-      "primary_theme": "industrial",
+      "primary_theme": "construction_infra",
       "themes": [
-        "industrial"
+        "construction_infra"
       ],
-      "krx_industry": "산업재",
+      "krx_industry": "건설·인프라",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "001040": {
       "name": "CJ",
-      "primary_theme": "other",
+      "primary_theme": "food_beverage",
       "themes": [
-        "other"
+        "food_beverage"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "음식료",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "000150": {
       "name": "두산",
-      "primary_theme": "industrial",
-      "themes": [
-        "industrial"
-      ],
-      "krx_industry": "산업재",
-      "source": "krx_snapshot",
-      "reviewed_at": "2026-07-05"
-    },
-    "241560": {
-      "name": "두산밥캣",
-      "primary_theme": "industrial",
-      "themes": [
-        "industrial"
-      ],
-      "krx_industry": "산업재",
-      "source": "krx_snapshot",
-      "reviewed_at": "2026-07-05"
-    },
-    "034220": {
-      "name": "LG디스플레이",
       "primary_theme": "other",
       "themes": [
         "other"
       ],
       "krx_industry": "기타",
+      "source": "krx_snapshot",
+      "reviewed_at": "2026-07-05"
+    },
+    "241560": {
+      "name": "두산밥캣",
+      "primary_theme": "construction_infra",
+      "themes": [
+        "construction_infra"
+      ],
+      "krx_industry": "건설·인프라",
+      "source": "krx_snapshot",
+      "reviewed_at": "2026-07-05"
+    },
+    "034220": {
+      "name": "LG디스플레이",
+      "primary_theme": "semiconductor",
+      "themes": [
+        "semiconductor"
+      ],
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -915,7 +954,7 @@
       "themes": [
         "automobile"
       ],
-      "krx_industry": "자동차",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -925,7 +964,7 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -955,7 +994,7 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -965,7 +1004,7 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -975,7 +1014,7 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -984,9 +1023,9 @@
       "primary_theme": "internet",
       "themes": [
         "internet",
-        "entertainment"
+        "entertainment_media"
       ],
-      "krx_industry": "인터넷",
+      "krx_industry": "인터넷·플랫폼",
       "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
@@ -995,9 +1034,9 @@
       "primary_theme": "internet",
       "themes": [
         "internet",
-        "entertainment"
+        "entertainment_media"
       ],
-      "krx_industry": "인터넷",
+      "krx_industry": "인터넷·플랫폼",
       "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
@@ -1006,19 +1045,19 @@
       "primary_theme": "internet",
       "themes": [
         "internet",
-        "entertainment"
+        "entertainment_media"
       ],
-      "krx_industry": "인터넷",
+      "krx_industry": "인터넷·플랫폼",
       "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "357780": {
       "name": "솔브레인",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1044,21 +1083,21 @@
     },
     "041510": {
       "name": "에스엠",
-      "primary_theme": "entertainment",
+      "primary_theme": "entertainment_media",
       "themes": [
-        "entertainment"
+        "entertainment_media"
       ],
-      "krx_industry": "엔터테인먼트",
+      "krx_industry": "엔터·미디어",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "035900": {
       "name": "JYP Ent.",
-      "primary_theme": "entertainment",
+      "primary_theme": "entertainment_media",
       "themes": [
-        "entertainment"
+        "entertainment_media"
       ],
-      "krx_industry": "엔터테인먼트",
+      "krx_industry": "엔터·미디어",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1068,7 +1107,7 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1078,37 +1117,37 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "402340": {
       "name": "SK스퀘어",
-      "primary_theme": "other",
+      "primary_theme": "internet",
       "themes": [
-        "other"
+        "internet"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "인터넷·플랫폼",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "329180": {
       "name": "HD현대중공업",
-      "primary_theme": "other",
+      "primary_theme": "shipbuilding",
       "themes": [
-        "other"
+        "shipbuilding"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "조선·기자재",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "034020": {
       "name": "두산에너빌리티",
-      "primary_theme": "industrial",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "industrial"
+        "power_nuclear"
       ],
-      "krx_industry": "산업재",
+      "krx_industry": "원자력·전력·전선",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1116,11 +1155,10 @@
       "name": "효성중공업",
       "primary_theme": "defense",
       "themes": [
-        "defense",
-        "industrial"
+        "defense"
       ],
-      "krx_industry": "방산",
-      "source": "krx_snapshot+manual_overlay",
+      "krx_industry": "방산·항공우주",
+      "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "079550": {
@@ -1129,7 +1167,7 @@
       "themes": [
         "defense"
       ],
-      "krx_industry": "방산",
+      "krx_industry": "방산·항공우주",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1139,18 +1177,19 @@
       "themes": [
         "shipbuilding"
       ],
-      "krx_industry": "조선",
+      "krx_industry": "조선·기자재",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "307950": {
       "name": "현대오토에버",
-      "primary_theme": "other",
+      "primary_theme": "internet",
       "themes": [
-        "other"
+        "internet",
+        "robot_ai"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "인터넷·플랫폼",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "272210": {
@@ -1159,7 +1198,7 @@
       "themes": [
         "defense"
       ],
-      "krx_industry": "방산",
+      "krx_industry": "방산·항공우주",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1175,11 +1214,11 @@
     },
     "277810": {
       "name": "레인보우로보틱스",
-      "primary_theme": "other",
+      "primary_theme": "robot_ai",
       "themes": [
-        "other"
+        "robot_ai"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "로봇·AI·자동화",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1206,11 +1245,11 @@
     },
     "028050": {
       "name": "삼성E&A",
-      "primary_theme": "industrial",
+      "primary_theme": "construction_infra",
       "themes": [
-        "industrial"
+        "construction_infra"
       ],
-      "krx_industry": "산업재",
+      "krx_industry": "건설·인프라",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1218,11 +1257,10 @@
       "name": "HD현대마린솔루션",
       "primary_theme": "shipbuilding",
       "themes": [
-        "shipbuilding",
-        "industrial"
+        "shipbuilding"
       ],
-      "krx_industry": "조선",
-      "source": "krx_snapshot+manual_overlay",
+      "krx_industry": "조선·기자재",
+      "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "005830": {
@@ -1247,11 +1285,11 @@
     },
     "352820": {
       "name": "하이브",
-      "primary_theme": "entertainment",
+      "primary_theme": "entertainment_media",
       "themes": [
-        "entertainment"
+        "entertainment_media"
       ],
-      "krx_industry": "엔터테인먼트",
+      "krx_industry": "엔터·미디어",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1260,9 +1298,9 @@
       "primary_theme": "defense",
       "themes": [
         "defense",
-        "industrial"
+        "construction_infra"
       ],
-      "krx_industry": "방산",
+      "krx_industry": "방산·항공우주",
       "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
@@ -1278,61 +1316,61 @@
     },
     "007660": {
       "name": "이수페타시스",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "950160": {
       "name": "코오롱티슈진",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "003230": {
       "name": "삼양식품",
-      "primary_theme": "consumer",
+      "primary_theme": "food_beverage",
       "themes": [
-        "consumer"
+        "food_beverage"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "음식료",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "000880": {
       "name": "한화",
-      "primary_theme": "other",
+      "primary_theme": "defense",
       "themes": [
-        "other"
+        "defense"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "방산·항공우주",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "353200": {
       "name": "대덕전자",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "180640": {
       "name": "한진칼",
-      "primary_theme": "other",
+      "primary_theme": "transport_logistics",
       "themes": [
-        "other"
+        "transport_logistics"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "운송·물류·여행",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1348,41 +1386,41 @@
     },
     "001440": {
       "name": "대한전선",
-      "primary_theme": "other",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "other"
+        "power_nuclear"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "원자력·전력·전선",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "062040": {
       "name": "산일전기",
-      "primary_theme": "other",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "other"
+        "power_nuclear"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "원자력·전력·전선",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "004170": {
       "name": "신세계",
-      "primary_theme": "consumer",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "consumer"
+        "retail_consumer"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "454910": {
       "name": "두산로보틱스",
-      "primary_theme": "other",
+      "primary_theme": "robot_ai",
       "themes": [
-        "other"
+        "robot_ai"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "로봇·AI·자동화",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1401,39 +1439,40 @@
       "primary_theme": "shipbuilding",
       "themes": [
         "shipbuilding",
-        "industrial"
+        "power_nuclear",
+        "construction_infra"
       ],
-      "krx_industry": "조선",
+      "krx_industry": "조선·기자재",
       "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "032640": {
       "name": "LG유플러스",
-      "primary_theme": "other",
+      "primary_theme": "telecom_network",
       "themes": [
-        "other"
+        "telecom_network"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "통신·네트워크",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "021240": {
       "name": "코웨이",
-      "primary_theme": "consumer",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "consumer"
+        "retail_consumer"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "440110": {
       "name": "파두",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1450,31 +1489,31 @@
     },
     "000250": {
       "name": "삼천당제약",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "000500": {
       "name": "가온전선",
-      "primary_theme": "other",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "other"
+        "power_nuclear"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "원자력·전력·전선",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "298380": {
       "name": "에이비엘바이오",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1490,22 +1529,23 @@
     },
     "319660": {
       "name": "피에스케이",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "088980": {
       "name": "맥쿼리인프라",
-      "primary_theme": "other",
+      "primary_theme": "finance",
       "themes": [
-        "other"
+        "finance",
+        "construction_infra"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "금융",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "066970": {
@@ -1520,11 +1560,11 @@
     },
     "222800": {
       "name": "심텍",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1534,7 +1574,7 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1550,11 +1590,11 @@
     },
     "087010": {
       "name": "펩트론",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1574,7 +1614,7 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1584,7 +1624,7 @@
       "themes": [
         "shipbuilding"
       ],
-      "krx_industry": "조선",
+      "krx_industry": "조선·기자재",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1610,23 +1650,23 @@
     },
     "002380": {
       "name": "KCC",
-      "primary_theme": "other",
+      "primary_theme": "steel_materials",
       "themes": [
-        "other"
+        "steel_materials",
+        "construction_infra"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "철강·비철·소재",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "052690": {
       "name": "한전기술",
       "primary_theme": "defense",
       "themes": [
-        "defense",
-        "industrial"
+        "defense"
       ],
-      "krx_industry": "방산",
-      "source": "krx_snapshot+manual_overlay",
+      "krx_industry": "방산·항공우주",
+      "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "088350": {
@@ -1651,22 +1691,23 @@
     },
     "108490": {
       "name": "로보티즈",
-      "primary_theme": "other",
+      "primary_theme": "robot_ai",
       "themes": [
-        "other"
+        "robot_ai"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "로봇·AI·자동화",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "178320": {
       "name": "서진시스템",
-      "primary_theme": "other",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "other"
+        "power_nuclear",
+        "telecom_network"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "원자력·전력·전선",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "095340": {
@@ -1681,11 +1722,11 @@
     },
     "336260": {
       "name": "두산퓨얼셀",
-      "primary_theme": "other",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "other"
+        "power_nuclear"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "원자력·전력·전선",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1695,28 +1736,29 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "103590": {
       "name": "일진전기",
-      "primary_theme": "other",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "other"
+        "power_nuclear"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "원자력·전력·전선",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "022100": {
       "name": "포스코DX",
-      "primary_theme": "other",
+      "primary_theme": "internet",
       "themes": [
-        "other"
+        "internet",
+        "robot_ai"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "인터넷·플랫폼",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "067310": {
@@ -1732,51 +1774,52 @@
     },
     "310210": {
       "name": "보로노이",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "450080": {
       "name": "에코프로머티",
-      "primary_theme": "other",
+      "primary_theme": "secondary_battery",
       "themes": [
-        "other"
+        "secondary_battery",
+        "steel_materials"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "2차전지",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "095610": {
       "name": "테스",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "012510": {
       "name": "더존비즈온",
-      "primary_theme": "other",
+      "primary_theme": "internet",
       "themes": [
-        "other"
+        "internet"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "인터넷·플랫폼",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "319400": {
       "name": "현대무벡스",
-      "primary_theme": "other",
+      "primary_theme": "robot_ai",
       "themes": [
-        "other"
+        "robot_ai"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "로봇·AI·자동화",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1786,17 +1829,17 @@
       "themes": [
         "defense"
       ],
-      "krx_industry": "방산",
+      "krx_industry": "방산·항공우주",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "085620": {
       "name": "미래에셋생명",
-      "primary_theme": "other",
+      "primary_theme": "finance",
       "themes": [
-        "other"
+        "finance"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "금융",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1812,11 +1855,11 @@
     },
     "111770": {
       "name": "영원무역",
-      "primary_theme": "other",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "other"
+        "retail_consumer"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1842,32 +1885,33 @@
     },
     "004800": {
       "name": "효성",
-      "primary_theme": "other",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "other"
+        "power_nuclear"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "원자력·전력·전선",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "036460": {
       "name": "한국가스공사",
-      "primary_theme": "industrial",
+      "primary_theme": "energy_chemical",
       "themes": [
-        "industrial"
+        "energy_chemical"
       ],
-      "krx_industry": "산업재",
+      "krx_industry": "에너지·화학",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "214450": {
       "name": "파마리서치",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio",
+        "cosmetics"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "바이오·제약",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "031210": {
@@ -1892,21 +1936,21 @@
     },
     "005850": {
       "name": "에스엘",
-      "primary_theme": "other",
+      "primary_theme": "automobile",
       "themes": [
-        "other"
+        "automobile"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "017800": {
       "name": "현대엘리베이터",
-      "primary_theme": "other",
+      "primary_theme": "construction_infra",
       "themes": [
-        "other"
+        "construction_infra"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "건설·인프라",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1916,27 +1960,27 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "383220": {
       "name": "F&F",
-      "primary_theme": "consumer",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "consumer"
+        "retail_consumer"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "131290": {
       "name": "티에스이",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1962,21 +2006,21 @@
     },
     "007810": {
       "name": "코리아써키트",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "031980": {
       "name": "피에스케이홀딩스",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -1996,17 +2040,17 @@
       "themes": [
         "automobile"
       ],
-      "krx_industry": "자동차",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "226950": {
       "name": "올릭스",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -2022,71 +2066,71 @@
     },
     "012750": {
       "name": "에스원",
-      "primary_theme": "other",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "other"
+        "retail_consumer"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "028670": {
       "name": "팬오션",
-      "primary_theme": "industrial",
+      "primary_theme": "transport_logistics",
       "themes": [
-        "industrial"
+        "transport_logistics"
       ],
-      "krx_industry": "산업재",
+      "krx_industry": "운송·물류·여행",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "043260": {
       "name": "성호전자",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "009420": {
       "name": "한올바이오파마",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "279570": {
       "name": "케이뱅크",
-      "primary_theme": "other",
+      "primary_theme": "finance",
       "themes": [
-        "other"
+        "finance"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "금융",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "089970": {
       "name": "브이엠",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "483650": {
       "name": "달바글로벌",
-      "primary_theme": "other",
+      "primary_theme": "cosmetics",
       "themes": [
-        "other"
+        "cosmetics"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "화장품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -2113,11 +2157,11 @@
     },
     "237690": {
       "name": "에스티팜",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -2133,21 +2177,21 @@
     },
     "032820": {
       "name": "우리기술",
-      "primary_theme": "other",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "other"
+        "power_nuclear"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "원자력·전력·전선",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "026960": {
       "name": "동서",
-      "primary_theme": "other",
+      "primary_theme": "food_beverage",
       "themes": [
-        "other"
+        "food_beverage"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "음식료",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -2157,18 +2201,19 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "457190": {
       "name": "이수스페셜티케미컬",
-      "primary_theme": "other",
+      "primary_theme": "secondary_battery",
       "themes": [
-        "other"
+        "secondary_battery",
+        "energy_chemical"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "2차전지",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "007340": {
@@ -2177,47 +2222,47 @@
       "themes": [
         "automobile"
       ],
-      "krx_industry": "자동차",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "006360": {
       "name": "GS건설",
-      "primary_theme": "industrial",
+      "primary_theme": "construction_infra",
       "themes": [
-        "industrial"
+        "construction_infra"
       ],
-      "krx_industry": "산업재",
+      "krx_industry": "건설·인프라",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "000240": {
       "name": "한국앤컴퍼니",
-      "primary_theme": "industrial",
+      "primary_theme": "automobile",
       "themes": [
-        "industrial"
+        "automobile"
       ],
-      "krx_industry": "산업재",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "098460": {
       "name": "고영",
-      "primary_theme": "other",
+      "primary_theme": "robot_ai",
       "themes": [
-        "other"
+        "robot_ai"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "로봇·AI·자동화",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "257720": {
       "name": "실리콘투",
-      "primary_theme": "other",
+      "primary_theme": "cosmetics",
       "themes": [
-        "other"
+        "cosmetics"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "화장품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -2233,21 +2278,21 @@
     },
     "003690": {
       "name": "코리안리",
-      "primary_theme": "other",
+      "primary_theme": "finance",
       "themes": [
-        "other"
+        "finance"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "금융",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "183300": {
       "name": "코미코",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -2255,150 +2300,151 @@
       "name": "HD현대마린엔진",
       "primary_theme": "shipbuilding",
       "themes": [
-        "shipbuilding",
-        "industrial"
+        "shipbuilding"
       ],
-      "krx_industry": "조선",
-      "source": "krx_snapshot+manual_overlay",
+      "krx_industry": "조선·기자재",
+      "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "439260": {
       "name": "대한조선",
-      "primary_theme": "other",
+      "primary_theme": "shipbuilding",
       "themes": [
-        "other"
+        "shipbuilding",
+        "transport_logistics"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "조선·기자재",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "009970": {
       "name": "영원무역홀딩스",
-      "primary_theme": "other",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "other"
+        "retail_consumer"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "030000": {
       "name": "제일기획",
-      "primary_theme": "other",
+      "primary_theme": "entertainment_media",
       "themes": [
-        "other"
+        "entertainment_media"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "엔터·미디어",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "051600": {
       "name": "한전KPS",
-      "primary_theme": "other",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "other"
+        "power_nuclear"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "원자력·전력·전선",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "004370": {
       "name": "농심",
-      "primary_theme": "consumer",
+      "primary_theme": "food_beverage",
       "themes": [
-        "consumer"
+        "food_beverage"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "음식료",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "005440": {
       "name": "현대지에프홀딩스",
-      "primary_theme": "other",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "other"
+        "retail_consumer"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "001740": {
       "name": "SK네트웍스",
-      "primary_theme": "other",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "other"
+        "retail_consumer"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "081660": {
       "name": "미스토홀딩스",
-      "primary_theme": "other",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "other"
+        "retail_consumer"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "161890": {
       "name": "한국콜마",
-      "primary_theme": "other",
+      "primary_theme": "cosmetics",
       "themes": [
-        "other"
+        "cosmetics"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "화장품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "420770": {
       "name": "기가비스",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "093370": {
       "name": "후성",
-      "primary_theme": "other",
+      "primary_theme": "secondary_battery",
       "themes": [
-        "other"
+        "secondary_battery",
+        "energy_chemical"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "2차전지",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "218410": {
       "name": "RFHIC",
-      "primary_theme": "other",
+      "primary_theme": "telecom_network",
       "themes": [
-        "other"
+        "telecom_network"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "통신·네트워크",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "082920": {
       "name": "비츠로셀",
-      "primary_theme": "bio",
+      "primary_theme": "secondary_battery",
       "themes": [
-        "bio"
+        "secondary_battery"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "2차전지",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "008930": {
       "name": "한미사이언스",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -2408,17 +2454,17 @@
       "themes": [
         "defense"
       ],
-      "krx_industry": "방산",
+      "krx_industry": "방산·항공우주",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "097230": {
       "name": "HJ중공업",
-      "primary_theme": "other",
+      "primary_theme": "shipbuilding",
       "themes": [
-        "other"
+        "shipbuilding"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "조선·기자재",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -2434,11 +2480,11 @@
     },
     "018670": {
       "name": "SK가스",
-      "primary_theme": "other",
+      "primary_theme": "energy_chemical",
       "themes": [
-        "other"
+        "energy_chemical"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "에너지·화학",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -2464,252 +2510,257 @@
     },
     "462870": {
       "name": "시프트업",
-      "primary_theme": "other",
+      "primary_theme": "gaming",
       "themes": [
-        "other"
+        "gaming"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "게임",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "011210": {
       "name": "현대위아",
-      "primary_theme": "other",
+      "primary_theme": "automobile",
       "themes": [
-        "other"
+        "automobile"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "083650": {
       "name": "비에이치아이",
-      "primary_theme": "other",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "other"
+        "power_nuclear"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "원자력·전력·전선",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "281820": {
       "name": "케이씨텍",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "007070": {
       "name": "GS리테일",
-      "primary_theme": "other",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "other"
+        "retail_consumer"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "112610": {
       "name": "씨에스윈드",
-      "primary_theme": "other",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "other"
+        "power_nuclear",
+        "energy_chemical"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "원자력·전력·전선",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "140410": {
       "name": "메지온",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "140860": {
       "name": "파크시스템스",
-      "primary_theme": "other",
+      "primary_theme": "robot_ai",
       "themes": [
-        "other"
+        "robot_ai"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "로봇·AI·자동화",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "078600": {
       "name": "대주전자재료",
-      "primary_theme": "other",
+      "primary_theme": "secondary_battery",
       "themes": [
-        "other"
+        "secondary_battery",
+        "steel_materials"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "2차전지",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "229640": {
       "name": "LS에코에너지",
-      "primary_theme": "other",
+      "primary_theme": "secondary_battery",
       "themes": [
-        "other"
+        "secondary_battery",
+        "power_nuclear"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "2차전지",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "007390": {
       "name": "네이처셀",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "192820": {
       "name": "코스맥스",
-      "primary_theme": "consumer",
+      "primary_theme": "cosmetics",
       "themes": [
-        "consumer"
+        "cosmetics"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "화장품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "000120": {
       "name": "CJ대한통운",
-      "primary_theme": "industrial",
+      "primary_theme": "transport_logistics",
       "themes": [
-        "industrial"
+        "transport_logistics"
       ],
-      "krx_industry": "산업재",
+      "krx_industry": "운송·물류·여행",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "001820": {
       "name": "삼화콘덴서",
-      "primary_theme": "other",
+      "primary_theme": "secondary_battery",
       "themes": [
-        "other"
+        "secondary_battery"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "2차전지",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "002790": {
       "name": "아모레퍼시픽홀딩스",
-      "primary_theme": "consumer",
+      "primary_theme": "cosmetics",
       "themes": [
-        "consumer"
+        "cosmetics"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "화장품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "323280": {
       "name": "태성",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "031330": {
       "name": "에스에이엠티",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "023590": {
       "name": "다우기술",
-      "primary_theme": "other",
+      "primary_theme": "internet",
       "themes": [
-        "other"
+        "internet"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "인터넷·플랫폼",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "001800": {
       "name": "오리온홀딩스",
-      "primary_theme": "other",
+      "primary_theme": "food_beverage",
       "themes": [
-        "other"
+        "food_beverage"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "음식료",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "017960": {
       "name": "한국카본",
-      "primary_theme": "other",
+      "primary_theme": "steel_materials",
       "themes": [
-        "other"
+        "steel_materials"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "철강·비철·소재",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "322000": {
       "name": "HD현대에너지솔루션",
-      "primary_theme": "other",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "other"
+        "power_nuclear",
+        "energy_chemical"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "원자력·전력·전선",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "020560": {
       "name": "아시아나항공",
-      "primary_theme": "other",
+      "primary_theme": "transport_logistics",
       "themes": [
-        "other"
+        "transport_logistics"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "운송·물류·여행",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "361610": {
       "name": "SK아이이테크놀로지",
-      "primary_theme": "other",
+      "primary_theme": "secondary_battery",
       "themes": [
-        "other"
+        "secondary_battery"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "2차전지",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "195870": {
       "name": "해성디에스",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "060370": {
       "name": "LS마린솔루션",
-      "primary_theme": "other",
+      "primary_theme": "telecom_network",
       "themes": [
-        "other"
+        "telecom_network",
+        "transport_logistics"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "통신·네트워크",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "006280": {
@@ -2718,7 +2769,7 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -2728,17 +2779,17 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "001430": {
       "name": "세아베스틸지주",
-      "primary_theme": "other",
+      "primary_theme": "steel_materials",
       "themes": [
-        "other"
+        "steel_materials"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "철강·비철·소재",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -2754,41 +2805,43 @@
     },
     "039200": {
       "name": "오스코텍",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "005070": {
       "name": "코스모신소재",
-      "primary_theme": "other",
+      "primary_theme": "secondary_battery",
       "themes": [
-        "other"
+        "secondary_battery",
+        "steel_materials"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "2차전지",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "006040": {
       "name": "동원산업",
-      "primary_theme": "other",
+      "primary_theme": "food_beverage",
       "themes": [
-        "other"
+        "food_beverage",
+        "transport_logistics"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "음식료",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "001120": {
       "name": "LX인터내셔널",
-      "primary_theme": "industrial",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "industrial"
+        "retail_consumer"
       ],
-      "krx_industry": "산업재",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -2804,31 +2857,31 @@
     },
     "192080": {
       "name": "더블유게임즈",
-      "primary_theme": "other",
+      "primary_theme": "gaming",
       "themes": [
-        "other"
+        "gaming"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "게임",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "166090": {
       "name": "하나머티리얼즈",
-      "primary_theme": "bio",
+      "primary_theme": "semiconductor",
       "themes": [
-        "bio"
+        "semiconductor"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "437730": {
       "name": "삼현",
-      "primary_theme": "other",
+      "primary_theme": "automobile",
       "themes": [
-        "other"
+        "automobile"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -2838,17 +2891,17 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "204270": {
       "name": "제이앤티씨",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -2858,38 +2911,39 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "077970": {
       "name": "STX엔진",
-      "primary_theme": "other",
+      "primary_theme": "defense",
       "themes": [
-        "other"
+        "defense"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "방산·항공우주",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "073240": {
       "name": "금호타이어",
-      "primary_theme": "other",
+      "primary_theme": "automobile",
       "themes": [
-        "other"
+        "automobile"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "003570": {
       "name": "SNT다이내믹스",
-      "primary_theme": "other",
+      "primary_theme": "automobile",
       "themes": [
-        "other"
+        "automobile",
+        "defense"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "자동차·부품",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "101490": {
@@ -2904,51 +2958,53 @@
     },
     "034230": {
       "name": "파라다이스",
-      "primary_theme": "other",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "other"
+        "retail_consumer"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "032350": {
       "name": "롯데관광개발",
-      "primary_theme": "other",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "other"
+        "retail_consumer",
+        "transport_logistics"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "유통·소비",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "294870": {
       "name": "IPARK현대산업개발",
-      "primary_theme": "other",
+      "primary_theme": "construction_infra",
       "themes": [
-        "other"
+        "construction_infra"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "건설·인프라",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "181710": {
       "name": "NHN",
-      "primary_theme": "other",
+      "primary_theme": "internet",
       "themes": [
-        "other"
+        "internet",
+        "gaming"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "인터넷·플랫폼",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "476830": {
       "name": "알지노믹스",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -2964,91 +3020,91 @@
     },
     "007310": {
       "name": "오뚜기",
-      "primary_theme": "consumer",
+      "primary_theme": "food_beverage",
       "themes": [
-        "consumer"
+        "food_beverage"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "음식료",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "127120": {
       "name": "제이에스링크",
-      "primary_theme": "other",
+      "primary_theme": "steel_materials",
       "themes": [
-        "other"
+        "steel_materials"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "철강·비철·소재",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "415640": {
       "name": "KB발해인프라",
-      "primary_theme": "other",
+      "primary_theme": "construction_infra",
       "themes": [
-        "other"
+        "construction_infra"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "건설·인프라",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "232140": {
       "name": "와이씨",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "012630": {
       "name": "HDC",
-      "primary_theme": "other",
+      "primary_theme": "construction_infra",
       "themes": [
-        "other"
+        "construction_infra"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "건설·인프라",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "082640": {
       "name": "동양생명",
-      "primary_theme": "other",
+      "primary_theme": "finance",
       "themes": [
-        "other"
+        "finance"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "금융",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "100790": {
       "name": "미래에셋벤처투자",
-      "primary_theme": "industrial",
+      "primary_theme": "finance",
       "themes": [
-        "industrial"
+        "finance"
       ],
-      "krx_industry": "산업재",
+      "krx_industry": "금융",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "030610": {
       "name": "교보증권",
-      "primary_theme": "industrial",
+      "primary_theme": "finance",
       "themes": [
-        "industrial"
+        "finance"
       ],
-      "krx_industry": "산업재",
+      "krx_industry": "금융",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "458870": {
       "name": "씨어스",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -3064,11 +3120,11 @@
     },
     "036540": {
       "name": "SFA반도체",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -3084,52 +3140,53 @@
     },
     "099320": {
       "name": "쎄트렉아이",
-      "primary_theme": "other",
+      "primary_theme": "defense",
       "themes": [
-        "other"
+        "defense"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "방산·항공우주",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "090710": {
       "name": "휴림로봇",
-      "primary_theme": "other",
+      "primary_theme": "robot_ai",
       "themes": [
-        "other"
+        "robot_ai"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "로봇·AI·자동화",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "347700": {
       "name": "스피어",
-      "primary_theme": "other",
+      "primary_theme": "defense",
       "themes": [
-        "other"
+        "defense"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "방산·항공우주",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "003380": {
       "name": "하림지주",
-      "primary_theme": "other",
+      "primary_theme": "food_beverage",
       "themes": [
-        "other"
+        "food_beverage"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "음식료",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "417200": {
       "name": "LS머트리얼즈",
-      "primary_theme": "other",
+      "primary_theme": "secondary_battery",
       "themes": [
-        "other"
+        "secondary_battery",
+        "steel_materials"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "2차전지",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "195940": {
@@ -3138,7 +3195,7 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -3148,7 +3205,7 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -3158,47 +3215,48 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "000080": {
       "name": "하이트진로",
-      "primary_theme": "consumer",
+      "primary_theme": "food_beverage",
       "themes": [
-        "consumer"
+        "food_beverage"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "음식료",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "089860": {
       "name": "롯데렌탈",
-      "primary_theme": "consumer",
+      "primary_theme": "automobile",
       "themes": [
-        "consumer"
+        "automobile",
+        "transport_logistics"
       ],
-      "krx_industry": "소비재",
-      "source": "krx_snapshot",
+      "krx_industry": "자동차·부품",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "083450": {
       "name": "GST",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "074600": {
       "name": "원익QnC",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -3208,47 +3266,49 @@
       "themes": [
         "bio"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "000210": {
       "name": "DL",
-      "primary_theme": "other",
+      "primary_theme": "energy_chemical",
       "themes": [
-        "other"
+        "energy_chemical"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "에너지·화학",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "038500": {
       "name": "삼표시멘트",
-      "primary_theme": "other",
+      "primary_theme": "steel_materials",
       "themes": [
-        "other"
+        "steel_materials",
+        "construction_infra"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "철강·비철·소재",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "300720": {
       "name": "한일시멘트",
-      "primary_theme": "other",
+      "primary_theme": "steel_materials",
       "themes": [
-        "other"
+        "steel_materials",
+        "construction_infra"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "철강·비철·소재",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "388210": {
       "name": "씨엠티엑스",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -3264,271 +3324,272 @@
     },
     "100090": {
       "name": "SK오션플랜트",
-      "primary_theme": "other",
+      "primary_theme": "shipbuilding",
       "themes": [
-        "other"
+        "shipbuilding"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "조선·기자재",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "189300": {
       "name": "인텔리안테크",
-      "primary_theme": "other",
+      "primary_theme": "telecom_network",
       "themes": [
-        "other"
+        "telecom_network"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "통신·네트워크",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "003240": {
       "name": "태광산업",
-      "primary_theme": "consumer",
+      "primary_theme": "steel_materials",
       "themes": [
-        "consumer"
+        "steel_materials",
+        "energy_chemical"
       ],
-      "krx_industry": "소비재",
-      "source": "krx_snapshot",
+      "krx_industry": "철강·비철·소재",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "032500": {
       "name": "케이엠더블유",
-      "primary_theme": "other",
+      "primary_theme": "telecom_network",
       "themes": [
-        "other"
+        "telecom_network"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "통신·네트워크",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "161580": {
       "name": "필옵틱스",
-      "primary_theme": "other",
+      "primary_theme": "secondary_battery",
       "themes": [
-        "other"
+        "secondary_battery"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "2차전지",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "090360": {
       "name": "로보스타",
-      "primary_theme": "other",
+      "primary_theme": "robot_ai",
       "themes": [
-        "other"
+        "robot_ai"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "로봇·AI·자동화",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "057050": {
       "name": "현대홈쇼핑",
-      "primary_theme": "other",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "other"
+        "retail_consumer"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "137400": {
       "name": "피엔티",
-      "primary_theme": "other",
+      "primary_theme": "secondary_battery",
       "themes": [
-        "other"
+        "secondary_battery"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "2차전지",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "185750": {
       "name": "종근당",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "009450": {
       "name": "경동나비엔",
-      "primary_theme": "other",
+      "primary_theme": "construction_infra",
       "themes": [
-        "other"
+        "construction_infra"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "건설·인프라",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "491000": {
       "name": "리브스메드",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "056190": {
       "name": "SFA",
-      "primary_theme": "other",
+      "primary_theme": "robot_ai",
       "themes": [
-        "other"
+        "robot_ai"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "로봇·AI·자동화",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "003470": {
       "name": "유안타증권",
-      "primary_theme": "other",
+      "primary_theme": "finance",
       "themes": [
-        "other"
+        "finance"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "금융",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "328130": {
       "name": "루닛",
-      "primary_theme": "other",
+      "primary_theme": "robot_ai",
       "themes": [
-        "other"
+        "robot_ai"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "로봇·AI·자동화",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "005300": {
       "name": "롯데칠성",
-      "primary_theme": "consumer",
+      "primary_theme": "food_beverage",
       "themes": [
-        "consumer"
+        "food_beverage"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "음식료",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "388720": {
       "name": "유일로보틱스",
-      "primary_theme": "other",
+      "primary_theme": "robot_ai",
       "themes": [
-        "other"
+        "robot_ai"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "로봇·AI·자동화",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "456040": {
       "name": "OCI",
-      "primary_theme": "other",
+      "primary_theme": "energy_chemical",
       "themes": [
-        "other"
+        "energy_chemical"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "에너지·화학",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "252990": {
       "name": "샘씨엔에스",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "280360": {
       "name": "롯데웰푸드",
-      "primary_theme": "other",
+      "primary_theme": "food_beverage",
       "themes": [
-        "other"
+        "food_beverage"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "음식료",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "090460": {
       "name": "비에이치",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "213420": {
       "name": "덕산네오룩스",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "192400": {
       "name": "쿠쿠홀딩스",
-      "primary_theme": "other",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "other"
+        "retail_consumer"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "248070": {
       "name": "솔루엠",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "445680": {
       "name": "큐리옥스바이오시스템즈",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "466100": {
       "name": "클로봇",
-      "primary_theme": "other",
+      "primary_theme": "robot_ai",
       "themes": [
-        "other"
+        "robot_ai"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "로봇·AI·자동화",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "356860": {
       "name": "티엘비",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "397030": {
       "name": "에이프릴바이오",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -3544,31 +3605,31 @@
     },
     "086450": {
       "name": "동국제약",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "490470": {
       "name": "세미파이브",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "122640": {
       "name": "예스티",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -3578,7 +3639,7 @@
       "themes": [
         "automobile"
       ],
-      "krx_industry": "자동차",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -3587,79 +3648,79 @@
       "primary_theme": "automobile",
       "themes": [
         "automobile",
-        "entertainment"
+        "entertainment_media"
       ],
-      "krx_industry": "자동차",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "048410": {
       "name": "현대바이오",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "115180": {
       "name": "큐리언트",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "036530": {
       "name": "SNT홀딩스",
-      "primary_theme": "other",
+      "primary_theme": "defense",
       "themes": [
-        "other"
+        "defense"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "방산·항공우주",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "033100": {
       "name": "제룡전기",
-      "primary_theme": "other",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "other"
+        "power_nuclear"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "원자력·전력·전선",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "075580": {
       "name": "세진중공업",
-      "primary_theme": "other",
+      "primary_theme": "shipbuilding",
       "themes": [
-        "other"
+        "shipbuilding"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "조선·기자재",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "006340": {
       "name": "대원전선",
-      "primary_theme": "industrial",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "industrial"
+        "power_nuclear"
       ],
-      "krx_industry": "산업재",
+      "krx_industry": "원자력·전력·전선",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "014620": {
       "name": "성광벤드",
-      "primary_theme": "other",
+      "primary_theme": "shipbuilding",
       "themes": [
-        "other"
+        "shipbuilding"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "조선·기자재",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -3669,57 +3730,57 @@
       "themes": [
         "internet"
       ],
-      "krx_industry": "인터넷",
+      "krx_industry": "인터넷·플랫폼",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "005690": {
       "name": "파미셀",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "003160": {
       "name": "디아이",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "033640": {
       "name": "네패스",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "071320": {
       "name": "지역난방공사",
-      "primary_theme": "other",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "other"
+        "power_nuclear"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "원자력·전력·전선",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "499790": {
       "name": "GS피앤엘",
-      "primary_theme": "other",
+      "primary_theme": "energy_chemical",
       "themes": [
-        "other"
+        "energy_chemical"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "에너지·화학",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -3745,21 +3806,22 @@
     },
     "137310": {
       "name": "에스디바이오센서",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor",
+        "bio"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "반도체",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "019210": {
       "name": "와이지-원",
-      "primary_theme": "other",
+      "primary_theme": "steel_materials",
       "themes": [
-        "other"
+        "steel_materials"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "철강·비철·소재",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -3775,32 +3837,33 @@
     },
     "222080": {
       "name": "SFA넥셀",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "009240": {
       "name": "한샘",
-      "primary_theme": "other",
+      "primary_theme": "construction_infra",
       "themes": [
-        "other"
+        "construction_infra"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "건설·인프라",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "126340": {
       "name": "비나텍",
-      "primary_theme": "other",
+      "primary_theme": "power_nuclear",
       "themes": [
-        "other"
+        "power_nuclear",
+        "energy_chemical"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "원자력·전력·전선",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "003850": {
@@ -3810,7 +3873,7 @@
         "bio",
         "secondary_battery"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
@@ -3839,29 +3902,29 @@
       "primary_theme": "internet",
       "themes": [
         "internet",
-        "entertainment"
+        "entertainment_media"
       ],
-      "krx_industry": "인터넷",
+      "krx_industry": "인터넷·플랫폼",
       "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "214320": {
       "name": "이노션",
-      "primary_theme": "other",
+      "primary_theme": "entertainment_media",
       "themes": [
-        "other"
+        "entertainment_media"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "엔터·미디어",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "160190": {
       "name": "하이젠알앤엠",
-      "primary_theme": "other",
+      "primary_theme": "robot_ai",
       "themes": [
-        "other"
+        "robot_ai"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "로봇·AI·자동화",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -3871,47 +3934,48 @@
       "themes": [
         "automobile"
       ],
-      "krx_industry": "자동차",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "079160": {
       "name": "CJ CGV",
-      "primary_theme": "other",
+      "primary_theme": "entertainment_media",
       "themes": [
-        "other"
+        "entertainment_media"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "엔터·미디어",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "336370": {
       "name": "솔루스첨단소재",
-      "primary_theme": "other",
+      "primary_theme": "secondary_battery",
       "themes": [
-        "other"
+        "secondary_battery",
+        "steel_materials"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "2차전지",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "004490": {
       "name": "세방전지",
-      "primary_theme": "industrial",
+      "primary_theme": "secondary_battery",
       "themes": [
-        "industrial"
+        "secondary_battery"
       ],
-      "krx_industry": "산업재",
+      "krx_industry": "2차전지",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "023160": {
       "name": "태광",
-      "primary_theme": "other",
+      "primary_theme": "shipbuilding",
       "themes": [
-        "other"
+        "shipbuilding"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "조선·기자재",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -3921,28 +3985,29 @@
       "themes": [
         "internet"
       ],
-      "krx_industry": "인터넷",
+      "krx_industry": "인터넷·플랫폼",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "484870": {
       "name": "엠앤씨솔루션",
-      "primary_theme": "other",
+      "primary_theme": "defense",
       "themes": [
-        "other"
+        "defense"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "방산·항공우주",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "102710": {
       "name": "이엔에프테크놀로지",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor",
+        "energy_chemical"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "반도체",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "108320": {
@@ -3957,91 +4022,92 @@
     },
     "010780": {
       "name": "아이에스동서",
-      "primary_theme": "other",
+      "primary_theme": "construction_infra",
       "themes": [
-        "other"
+        "construction_infra"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "건설·인프라",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "027360": {
       "name": "아주IB투자",
-      "primary_theme": "other",
+      "primary_theme": "finance",
       "themes": [
-        "other"
+        "finance"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "금융",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "046890": {
       "name": "서울반도체",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "000370": {
       "name": "한화손해보험",
-      "primary_theme": "other",
+      "primary_theme": "finance",
       "themes": [
-        "other"
+        "finance"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "금융",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "358570": {
       "name": "지아이이노베이션",
-      "primary_theme": "other",
+      "primary_theme": "bio",
       "themes": [
-        "other"
+        "bio"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "295310": {
       "name": "에이치브이엠",
-      "primary_theme": "other",
+      "primary_theme": "defense",
       "themes": [
-        "other"
+        "defense",
+        "steel_materials"
       ],
-      "krx_industry": "기타",
-      "source": "krx_snapshot",
+      "krx_industry": "방산·항공우주",
+      "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
     "094170": {
       "name": "동운아나텍",
-      "primary_theme": "other",
+      "primary_theme": "semiconductor",
       "themes": [
-        "other"
+        "semiconductor"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "반도체",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "032190": {
       "name": "다우데이타",
-      "primary_theme": "other",
+      "primary_theme": "internet",
       "themes": [
-        "other"
+        "internet"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "인터넷·플랫폼",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "114090": {
       "name": "GKL",
-      "primary_theme": "other",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "other"
+        "retail_consumer"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -4051,27 +4117,27 @@
       "themes": [
         "automobile"
       ],
-      "krx_industry": "자동차",
+      "krx_industry": "자동차·부품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "241710": {
       "name": "코스메카코리아",
-      "primary_theme": "consumer",
+      "primary_theme": "cosmetics",
       "themes": [
-        "consumer"
+        "cosmetics"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "화장품",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
     "050890": {
       "name": "쏠리드",
-      "primary_theme": "other",
+      "primary_theme": "telecom_network",
       "themes": [
-        "other"
+        "telecom_network"
       ],
-      "krx_industry": "기타",
+      "krx_industry": "통신·네트워크",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     },
@@ -4083,7 +4149,7 @@
         "secondary_battery",
         "energy_chemical"
       ],
-      "krx_industry": "바이오",
+      "krx_industry": "바이오·제약",
       "source": "krx_snapshot+manual_overlay",
       "reviewed_at": "2026-07-05"
     },
@@ -4110,11 +4176,11 @@
     },
     "033790": {
       "name": "피노",
-      "primary_theme": "consumer",
+      "primary_theme": "retail_consumer",
       "themes": [
-        "consumer"
+        "retail_consumer"
       ],
-      "krx_industry": "소비재",
+      "krx_industry": "유통·소비",
       "source": "krx_snapshot",
       "reviewed_at": "2026-07-05"
     }

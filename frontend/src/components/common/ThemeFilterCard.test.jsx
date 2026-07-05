@@ -20,6 +20,22 @@ const payload = (enabled = true) => ({
 
 
 describe("<ThemeFilterCard>", () => {
+  it("taxonomy v2의 20개 테마 스위치를 모두 표시", async () => {
+    const themes = Array.from({ length: 20 }, (_, i) => ({
+      id: `theme_${i}`, label: `테마 ${i}`, enabled: true,
+      duration: null, expires_at_kst: null, mapped_symbol_count: i + 1,
+    }));
+    const api = {
+      themeFilterGet: vi.fn(async () => ({
+        ...payload(), catalog_version: "kr-theme-v2", themes,
+      })),
+      themeFilterPatch: vi.fn(),
+    };
+    render(<ThemeFilterCard apiClient={api} />);
+    await screen.findByTestId("theme-toggle-theme_0");
+    expect(screen.getAllByRole("switch")).toHaveLength(20);
+  });
+
   it("신규 진입만 차단하고 청산은 유지한다는 안내를 표시", async () => {
     const api = { themeFilterGet: vi.fn(async () => payload()), themeFilterPatch: vi.fn() };
     render(<ThemeFilterCard apiClient={api} />);

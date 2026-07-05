@@ -401,6 +401,18 @@ def test_theme_off_removes_semiconductor_from_new_entry_scan(monkeypatch):
     assert out == ["005380"]
 
 
+def test_new_defense_theme_off_removes_new_entry_scan(monkeypatch):
+    """taxonomy dry-run (a): 방산 OFF면 미보유 방산 종목은 신규 후보에서 빠진다."""
+    import app.core.runtime_config as rc
+    import app.kis_paper.driver_bridge as b
+
+    monkeypatch.setattr(rc, "effective_disabled_theme_ids", lambda now=None: {"defense"})
+    out = b._scan_universe_symbols(
+        _scan_settings(), override=["012450", "005380"], now=OPEN_TIME
+    )
+    assert out == ["005380"]
+
+
 def test_theme_on_restores_semiconductor_to_new_entry_scan(monkeypatch):
     """dry-run (c): 반도체 ON 복귀 시 다시 신규 스캔 후보가 된다."""
     import app.core.runtime_config as rc
@@ -475,7 +487,7 @@ _QUALITY_BLOCKS = {"KIS_PAPER_LOW_QUALITY_SCORE", "KIS_PAPER_LOW_CONFIDENCE",
                    "LOW_QUALITY_SCORE", "LOW_CONFIDENCE"}
 
 
-def _scan(engine, broker, price):
+def _scan(engine, broker, price, *, symbol="005930"):
     # ★FakeBroker 는 KIS paper 어댑터가 아니라 PaperTrader/게이트 broker 검증에서 멈춘다.
     #   그래서 *게이트 결과(reason_code)* 로 검증: 위험청산 SELL 이 품질/확신에 안 막히고
     #   (db8fd55 면제) broker-type 체크(KIS_PAPER_MODE_REQUIRED)에서만 멈추면 = 라이브선 통과.
@@ -484,13 +496,17 @@ def _scan(engine, broker, price):
     out = asyncio.run(kis_paper_realtime_scan_tick(
         session_factory=Session, broker=broker, risk=object(), route_order_fn=route,
         settings=_scan_settings(), market_input_fn=_neutral_quote_fn(price),
-        universe_symbols=["005930"], client=object(), now=OPEN_TIME,
-        _bot_owned_override=frozenset({"005930"})))
+        universe_symbols=[symbol], client=object(), now=OPEN_TIME,
+        _bot_owned_override=frozenset({symbol})))
     return out, routed
 
 
-def _held(avg):
-    return _FakePosBroker([SimpleNamespace(symbol="005930", quantity=10, sellable_quantity=10, avg_price=avg)])
+def _held(avg, *, symbol="005930"):
+    return _FakePosBroker([
+        SimpleNamespace(
+            symbol=symbol, quantity=10, sellable_quantity=10, avg_price=avg
+        )
+    ])
 
 
 def test_take_profit_forced_exit_generated_and_gate_exempt(engine, monkeypatch):
@@ -521,6 +537,22 @@ def test_theme_off_held_semiconductor_still_stop_loss_exits(engine, monkeypatch)
     monkeypatch.setattr(rc, "effective_disabled_theme_ids", lambda now=None: {"semiconductor"})
     _set_thresholds(monkeypatch, tp=3.5, sl=2.0)
     out, _ = _scan(engine, _held(100000), 97000)
+    assert out["symbols_scanned"] == 1
+    assert out["candidates_found"] == 1
+    assert out["orders"][0]["reason_code"] == "KIS_PAPER_MODE_REQUIRED"
+    assert out["orders"][0]["reason_code"] not in _QUALITY_BLOCKS
+
+
+def test_defense_off_held_defense_symbol_still_stop_loss_exits(engine, monkeypatch):
+    """taxonomy dry-run (b): 방산 OFF여도 보유 방산주는 held union 후 손절한다."""
+    import app.core.runtime_config as rc
+
+    monkeypatch.setattr(rc, "effective_disabled_theme_ids", lambda now=None: {"defense"})
+    _set_thresholds(monkeypatch, tp=3.5, sl=2.0)
+    symbol = "012450"  # 한화에어로스페이스
+    out, _ = _scan(
+        engine, _held(100000, symbol=symbol), 97000, symbol=symbol
+    )
     assert out["symbols_scanned"] == 1
     assert out["candidates_found"] == 1
     assert out["orders"][0]["reason_code"] == "KIS_PAPER_MODE_REQUIRED"

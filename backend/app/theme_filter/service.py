@@ -35,6 +35,9 @@ def theme_filter_status(now: datetime | None = None) -> dict[str, Any]:
     }
     rows = []
     for definition in catalog.themes:
+        # `other`는 분류 coverage용 잔여 bucket이며 운영 토글 대상은 아니다.
+        if definition.id == "other":
+            continue
         state = active.get(definition.id)
         rows.append({
             "id": definition.id,
