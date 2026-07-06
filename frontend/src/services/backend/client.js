@@ -187,6 +187,8 @@ export const backendApi = {
   // B1/B2 아침 브리핑 (읽기 전용).
   briefingMarkets:   () => backendFetch("/api/briefing/markets"),
   briefingHeadlines: () => backendFetch("/api/briefing/headlines"),
+  // 테마 브리핑 2단계: 전일 미국 테마 ETF/지수 등락률(정보 표시 전용, 자동 토글 없음).
+  briefingThemes:    () => backendFetch("/api/briefing/themes"),
   // ★key 명을 `preflightStatus` 로 — 아래(#63)에 이미 `preflight:`(/api/system/preflight,
   //   EXE smoke)가 있어 같은 객체의 중복 키로 *뒤엣것이 이김* → 홈 출발전점검 패널이
   //   엉뚱한 /api/system/preflight(다른 shape)를 때려 "불러오지 못했어요"에 갇혔다.

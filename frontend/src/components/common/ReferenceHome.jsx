@@ -8,6 +8,7 @@ import "./ReferenceHome.css";
 import { backendApi } from "../../services/backend/client";
 import {
   APP_NAME, EXIT_PLAN_DEFAULTS, PAPER_ALLOC_FALLBACK, PRICE_TICK_MS,
+  THEME_BRIEFING_REFRESH_MS,
 } from "../../config/constants";
 import { computeTradingStatus, summarizeTodayOrders } from "../../utils/tradingStatus";
 import { isMarketOpen, currentMarketPhase } from "../../utils/marketHours";
@@ -33,6 +34,8 @@ import { TechniqueScorecard } from "./TechniqueScorecard";
 import { AgentDashboard } from "./AgentDashboard";
 import { BriefingBoard } from "./BriefingBoard";
 import { PreflightPanel } from "./PreflightPanel";
+import { ThemeFilterCard } from "./ThemeFilterCard";
+import { themeBriefingById } from "../../utils/themeBriefing";
 
 // 등락 색 — 한국식(+빨강 −파랑). 라이트/다크 모두 대비 확보.
 const UP = "#e5443b", DOWN = "#2563eb";
@@ -67,6 +70,7 @@ export function ReferenceHome({
   const [rtConfig, setRtConfig] = useState(null);        // R3: 런타임 설정(실효값)
   const [livePos, setLivePos] = useState(null);          // M3: 라이브 포지션
   const [shadowFilter, setShadowFilter] = useState(null); // shadow 필터 판정(daily_log.csv 최신)
+  const [themeBriefing, setThemeBriefing] = useState(null); // 테마 브리핑 2단계: 전일 미국 테마 ETF 등락(정보 표시 전용)
   const [theme, setTheme] = usePersistedState("refhome_theme", "light", (v) => v === "light" || v === "dark");
 
   const capital = usePaperCapitalSettings({ api: backendApi });
@@ -149,6 +153,23 @@ export function ReferenceHome({
     };
     load();
     const t = setInterval(load, Math.max(PRICE_TICK_MS, 7000));
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+
+  // 테마 브리핑 2단계: 전일 미국 테마 ETF 등락(정보 표시 전용) — 서버가 12h TTL
+  //   캐시라 위 실시간 폴링(≥7s)에 얹지 않고 저빈도로만 재조회. 마운트 시 1회 +
+  //   THEME_BRIEFING_REFRESH_MS 주기 재조회 → 브라우저 탭을 안 닫아도(수동
+  //   새로고침 없이) 미국장 마감 후 최신 등락으로 자동 반영된다. ★fetch만 —
+  //   테마 ON/OFF는 이 응답으로 절대 건드리지 않는다(ThemeFilterCard는 read-only prop).
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      backendApi.briefingThemes?.()
+        .then((v) => { if (!cancelled && v) setThemeBriefing(themeBriefingById(v)); })
+        .catch(() => {});
+    };
+    load();
+    const t = setInterval(load, THEME_BRIEFING_REFRESH_MS);
     return () => { cancelled = true; clearInterval(t); };
   }, []);
 
@@ -242,8 +263,11 @@ export function ReferenceHome({
 
       <div className="rh-grid">
 
+      {/* 좌측 컬럼 — 자동매매 묶음: 단타 자동매매(히어로) + AI 운용 성향 */}
+      <div className="rh-col rh-col-left">
+
         {/* ① 히어로 카드 + 진행률 + ③ 시작/긴급정지 동일 크기 버튼 */}
-        <div style={{ gridArea: "hero", borderRadius: 18, padding: "18px 18px 16px",
+        <div style={{ borderRadius: 18, padding: "18px 18px 16px",
           background: "linear-gradient(135deg, #f7a8b0 0%, #ef8a86 45%, #e87a6d 100%)", boxShadow: "0 4px 16px rgba(232,122,109,.3)" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
             <div>
@@ -301,34 +325,33 @@ export function ReferenceHome({
           )}
         </div>
 
-        {/* ⑤ AI 운용 성향 — S2 실전환(봇 정지 시) + S5 기법 성적표 */}
-        <div style={{ gridArea: "profile", ...card }}>
+        {/* ⑤ AI 운용 성향 — S2 실전환(봇 정지 시) + S5 기법 성적표. 히어로 바로 아래
+            (자동매매끼리 묶기) */}
+        <div style={card}>
           <div style={secLabel}>AI 운용 성향</div>
           <RiskProfileSwitchCard rtConfig={rtConfig} botRunning={running} onChanged={setRtConfig} />
           <TechniqueScorecard activeProfile={rtConfig?.active_profile?.value} />
         </div>
 
-        {/* 숫자 칩 바 */}
-        <div style={{ gridArea: "chips", display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8 }}>
-          {[
-            // G2: 잔고 미준비(ready 전)엔 0개가 아니라 "—"(가짜 0 금지).
-            { k: "보유 종목", v: portfolio?.ready ? positions.length : "—", suffix: portfolio?.ready ? "개" : "", tab: "audit" },
-            { k: "미체결", v: openCnt, suffix: "건", tab: "approve" },
-            { k: "오늘 주문", v: today.orderCount, suffix: "건", tab: "audit" },
-            { k: "오늘 체결", v: today.filledCount, suffix: "건", tab: "audit" },
-          ].map((c) => (
-            <button key={c.k} type="button" data-testid={`refhome-chip-${c.k}`} onClick={() => onJumpTab?.(c.tab)}
-              style={{ ...card, padding: "14px 6px", cursor: "pointer", fontFamily: "inherit", textAlign: "center" }}>
-              <div style={{ fontSize: F.sm, color: C.text3, fontWeight: 600 }}>{c.k}</div>
-              <div style={{ fontSize: F.xxl, fontWeight: 800, color: C.text, marginTop: 4 }}>
-                {c.v}<span style={{ fontSize: F.sm, fontWeight: 600, color: C.text3 }}>{c.suffix}</span>
-              </div>
-            </button>
-          ))}
-        </div>
+        {/* 오늘의 테마 필터 — 봇이 오늘 어떤 테마를 거래할지 = 자동매매 설정이라
+            좌측(자동매매 설정 묶음) 맨 아래로 이동. 기본 펼침 + 접기 가능(홈 길이 방어).
+            헤더는 ThemeFilterCard 자체 SectionLabel이 표시하므로 summary는 접기/펼치기만. */}
+        <details data-testid="refhome-theme-filter" open>
+          <summary style={{ cursor: "pointer", fontSize: F.sm, fontWeight: 700, color: C.text3 }}>
+            접기 / 펼치기
+          </summary>
+          <div style={{ marginTop: 10 }}>
+            <ThemeFilterCard briefing={themeBriefing} />
+          </div>
+        </details>
+
+      </div>
+
+      {/* 중앙 컬럼 — 모니터링 묶음: 계좌정보 + 통계 + 실시간 현황 + 매매기법 + 에이전트 */}
+      <div className="rh-col rh-col-center">
 
         {/* ⑤ 계좌정보 — 중앙 최상단(내 돈 먼저) */}
-        <div style={{ gridArea: "account", ...card }}>
+        <div style={card}>
           <div style={{ fontSize: F.lg, fontWeight: 800, color: C.text }}>{name}님의 계좌정보</div>
           <div style={{ fontSize: F.sm, color: C.text3, margin: "3px 0 16px", letterSpacing: ".04em" }}>{masked || "모의계좌 (KIS Paper)"}</div>
           {/* G2: 첫 성공(ready) 전 로딩/재시도 중엔 "불러오는 중"(가짜 0 금지);
@@ -377,16 +400,29 @@ export function ReferenceHome({
               </span>
             </div>
           )}
-          {/* M3: 라이브 포지션 상황판 + 종목별 수동 전량 매도 */}
-          <LivePositionsCard data={livePos} />
-          {/* Task D: 직접 매매 패널 — 봇/직접 분리 + 직접 매수/매도 */}
-          <ManualHoldingsCard live={livePos} />
-          {/* 자산관리 2차: 직접 보유 FIFO P&L + 기간 손익 + 부분 매도 */}
-          <ManualPortfolioCard api={backendApi} />
+        </div>
+
+        {/* 숫자 칩 바 */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8 }}>
+          {[
+            // G2: 잔고 미준비(ready 전)엔 0개가 아니라 "—"(가짜 0 금지).
+            { k: "보유 종목", v: portfolio?.ready ? positions.length : "—", suffix: portfolio?.ready ? "개" : "", tab: "audit" },
+            { k: "미체결", v: openCnt, suffix: "건", tab: "approve" },
+            { k: "오늘 주문", v: today.orderCount, suffix: "건", tab: "audit" },
+            { k: "오늘 체결", v: today.filledCount, suffix: "건", tab: "audit" },
+          ].map((c) => (
+            <button key={c.k} type="button" data-testid={`refhome-chip-${c.k}`} onClick={() => onJumpTab?.(c.tab)}
+              style={{ ...card, padding: "14px 6px", cursor: "pointer", fontFamily: "inherit", textAlign: "center" }}>
+              <div style={{ fontSize: F.sm, color: C.text3, fontWeight: 600 }}>{c.k}</div>
+              <div style={{ fontSize: F.xxl, fontWeight: 800, color: C.text, marginTop: 4 }}>
+                {c.v}<span style={{ fontSize: F.sm, fontWeight: 600, color: C.text3 }}>{c.suffix}</span>
+              </div>
+            </button>
+          ))}
         </div>
 
         {/* ⑥ 미니 KPI 줄 */}
-        <div style={{ gridArea: "kpi", ...card, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
+        <div style={{ ...card, display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
           {[
             { k: "오늘 실현손익", v: kpi.realizedText, c: realized == null ? C.text3 : pnlColor(realized) },
             { k: "승률", v: kpi.winRateText, c: C.text3 },
@@ -400,7 +436,7 @@ export function ReferenceHome({
         </div>
 
         {/* ④ 실시간 현황판 */}
-        <div style={{ gridArea: "live", ...card }}>
+        <div style={card}>
           <div style={{ ...secLabel, display: "flex", alignItems: "center", gap: 7 }}>
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: running && marketOpen ? "#22c55e" : C.text3,
               boxShadow: running && marketOpen ? "0 0 0 3px #22c55e33" : "none" }} />
@@ -429,8 +465,8 @@ export function ReferenceHome({
           )}
         </div>
 
-        {/* ③ 매매기법 줄 — Agent Council 전략별 실제 신호 수(최근 누적) */}
-        <div style={{ gridArea: "strat", ...card }}>
+        {/* ③ 매매기법 줄 — Agent Council 전략별 실제 신호 수(최근 누적). 중앙 하단 */}
+        <div style={card}>
           <div style={secLabel}>매매기법 · 최근 신호</div>
           {!stratDataAvailable && (
             <div data-testid="refhome-strat-nodata" style={{ fontSize: F.sm, color: C.text3, margin: "2px 0 8px" }}>
@@ -452,9 +488,9 @@ export function ReferenceHome({
           </div>
         </div>
 
-        {/* ④ 에이전트 한 줄 */}
+        {/* ④ 에이전트 한 줄 — 중앙 하단(컬럼의 마지막 카드) */}
         {/* AG6: 에이전트 전용 섹션 (한 줄 → 대시보드로 확장) */}
-        <div style={{ gridArea: "agent", ...card }}>
+        <div style={card}>
           <button type="button" data-testid="refhome-agent" onClick={() => onJumpTab?.("signal")}
             style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: "inherit", textAlign: "left", display: "flex", flexDirection: "column", gap: 6, width: "100%" }}>
             <span style={secLabel}>에이전트 ›</span>
@@ -463,8 +499,24 @@ export function ReferenceHome({
           <AgentDashboard />
         </div>
 
+      </div>
+
+      {/* 우측 컬럼 — 수동관리 묶음: 자산관리(직접매수/보유) + 테마필터 + 바로가기 */}
+      <div className="rh-col rh-col-right">
+
+        {/* 자산관리 — 우측 상단(눈에 띄는 곳). 직접 매수/직접 보유/자산관리 P&L. */}
+        <div style={card}>
+          <div style={{ fontSize: F.lg, fontWeight: 800, color: C.text, marginBottom: 4 }}>자산관리</div>
+          {/* M3: 라이브 포지션 상황판 + 종목별 수동 전량 매도 */}
+          <LivePositionsCard data={livePos} />
+          {/* Task D: 직접 매매 패널 — 봇/직접 분리 + 직접 매수/매도 */}
+          <ManualHoldingsCard live={livePos} />
+          {/* 자산관리 2차: 직접 보유 FIFO P&L + 기간 손익 + 부분 매도 */}
+          <ManualPortfolioCard api={backendApi} />
+        </div>
+
         {/* ②③ 주요 기능 바로가기 */}
-        <div style={{ gridArea: "shortcuts", ...card }}>
+        <div style={card}>
           <div style={secLabel}>주요 기능</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
             {FEATURE_SHORTCUTS.map((f) => (
@@ -476,6 +528,8 @@ export function ReferenceHome({
             ))}
           </div>
         </div>
+
+      </div>
 
       </div>
 

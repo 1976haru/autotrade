@@ -75,4 +75,61 @@ describe("<ThemeFilterCard>", () => {
       2, "semiconductor", { enabled: true },
     ));
   });
+
+  it("briefing prop 미전달 시 브리핑 줄을 렌더하지 않는다(기존 동작 불변)", async () => {
+    const api = { themeFilterGet: vi.fn(async () => payload()), themeFilterPatch: vi.fn() };
+    render(<ThemeFilterCard apiClient={api} />);
+    await screen.findByTestId("theme-row-semiconductor");
+    expect(screen.queryByTestId("theme-briefing-semiconductor")).toBeNull();
+  });
+
+  it("briefing prop 전달 시 전일 미국 테마 ETF 등락을 표시(추천 문구 없음)", async () => {
+    const api = { themeFilterGet: vi.fn(async () => payload()), themeFilterPatch: vi.fn() };
+    const briefing = {
+      sessionDateUs: "2026-07-03",
+      byId: { semiconductor: { mapping_quality: "DIRECT", proxies: [{ ticker: "^SOX", change_pct: -3.2, status: "OK" }] } },
+    };
+    render(<ThemeFilterCard apiClient={api} briefing={briefing} />);
+    const line = await screen.findByTestId("theme-briefing-semiconductor");
+    expect(line.textContent).toBe("전일 ^SOX -3.2% ↓ (07-03 기준)");
+    for (const banned of ["추천", "매수", "제외", "쉬세요", "유망"]) {
+      expect(line.textContent).not.toContain(banned);
+    }
+  });
+
+  it("briefing.stale=false(정상)면 갱신실패 안내를 렌더하지 않는다", async () => {
+    const api = { themeFilterGet: vi.fn(async () => payload()), themeFilterPatch: vi.fn() };
+    const briefing = { sessionDateUs: "2026-07-03", byId: {}, stale: false };
+    render(<ThemeFilterCard apiClient={api} briefing={briefing} />);
+    await screen.findByTestId("theme-row-semiconductor");
+    expect(screen.queryByTestId("theme-briefing-stale-note")).toBeNull();
+  });
+
+  it("briefing.stale=true면 '갱신 실패 · 이전 기준' 안내를 렌더(이전 등락 값은 그대로 표시)", async () => {
+    const api = { themeFilterGet: vi.fn(async () => payload()), themeFilterPatch: vi.fn() };
+    const briefing = {
+      sessionDateUs: "2026-07-03", stale: true, staleReason: "FETCH_FAILED",
+      byId: { semiconductor: { mapping_quality: "DIRECT", proxies: [{ ticker: "^SOX", change_pct: -3.2, status: "OK" }] } },
+    };
+    render(<ThemeFilterCard apiClient={api} briefing={briefing} />);
+    const note = await screen.findByTestId("theme-briefing-stale-note");
+    expect(note.textContent).toContain("갱신 실패");
+    // 이전에 받아둔 값(등락률)은 stale이어도 그대로 화면에 남아있어야 함(지워지지 않음).
+    const line = await screen.findByTestId("theme-briefing-semiconductor");
+    expect(line.textContent).toBe("전일 ^SOX -3.2% ↓ (07-03 기준)");
+  });
+
+  it("★테마 토글은 briefing/stale과 무관하게 자동으로 절대 안 바뀐다", async () => {
+    const patch = vi.fn();
+    const api = { themeFilterGet: vi.fn(async () => payload()), themeFilterPatch: patch };
+    const briefing = {
+      sessionDateUs: "2026-07-03", stale: true,
+      byId: { semiconductor: { mapping_quality: "DIRECT", proxies: [{ ticker: "^SOX", change_pct: -6.0, status: "OK" }] } },
+    };
+    render(<ThemeFilterCard apiClient={api} briefing={briefing} />);
+    await screen.findByTestId("theme-briefing-stale-note");
+    // 큰 하락(-6%)이 있어도, stale이어도 사용자가 직접 누르기 전엔 patch가 호출되면 안 됨.
+    expect(patch).not.toHaveBeenCalled();
+    expect(screen.getByTestId("theme-toggle-semiconductor").textContent).toBe("ON");
+  });
 });

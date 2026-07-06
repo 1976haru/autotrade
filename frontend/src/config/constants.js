@@ -53,6 +53,12 @@ export const CLAUDE_MAX_TOK = 1000;
  *  주기로 충분(백엔드 quote 캐시 TTL 과도 정합). */
 export const PRICE_TICK_MS  = 15000;
 
+/** 테마 브리핑(전일 미국 테마 ETF 등락) 재조회 주기 (ms). 하루 1회만 값이
+ *  바뀌는 데이터라 PRICE_TICK_MS급 폴링은 과함 — 30분이면 미국장 마감(~06:00
+ *  KST) 이후 개장(09:00) 전까지 화면이 자동 갱신되기에 충분. 서버 12h TTL
+ *  캐시가 실외부 호출 비용을 흡수하므로 이 주기로 때려도 yfinance 남용 아님. */
+export const THEME_BRIEFING_REFRESH_MS = 30 * 60 * 1000;
+
 /** 손절/익절 *양수 magnitude* 폴백 (손절 2=−2%, 익절 3.5=+3.5%). C1(2026-06-10):
  *  히어로/카드는 runtime-config 실효값(SSOT)을 우선 읽고, 미로딩 시에만 이 폴백 사용.
  *  표시 부호는 컴포넌트가 붙인다(손절 -, 익절 +). config 기본값과 일치 유지. */

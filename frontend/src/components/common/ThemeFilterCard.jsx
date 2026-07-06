@@ -2,9 +2,12 @@ import { useEffect, useState } from "react";
 
 import { backendApi } from "../../services/backend/client";
 import { Card, SectionLabel } from "./index";
+import { formatThemeBriefingLine, themeBriefingStaleNote } from "../../utils/themeBriefing";
 
 
-export function ThemeFilterCard({ apiClient = backendApi }) {
+// briefing: 테마 브리핑 2단계(전일 미국 테마 ETF 등락) — 선택적, 정보 표시만.
+//   미전달(undefined) 시 기존 동작과 완전히 동일(신규 fetch·렌더 0).
+export function ThemeFilterCard({ apiClient = backendApi, briefing = null }) {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -59,6 +62,15 @@ export function ThemeFilterCard({ apiClient = backendApi }) {
         OFF는 신규 진입만 차단합니다. 이미 보유한 종목의 손절·익절·청산은 계속됩니다.
       </div>
 
+      {themeBriefingStaleNote(briefing) && (
+        <div data-testid="theme-briefing-stale-note" style={{
+          marginTop: 8, padding: "6px 10px", borderRadius: 8, background: "#fef3c7",
+          color: "#7a4a00", fontSize: 11, fontWeight: 700,
+        }}>
+          ⚠️ {themeBriefingStaleNote(briefing)}
+        </div>
+      )}
+
       {loading && <div data-testid="theme-filter-loading" style={{ marginTop: 10 }}>불러오는 중…</div>}
       {error && <div data-testid="theme-filter-error" style={{
         marginTop: 10, color: "var(--c-danger)", fontSize: 12,
@@ -87,6 +99,11 @@ export function ThemeFilterCard({ apiClient = backendApi }) {
                       ? ` · 오늘만 (${theme.expires_at_kst.slice(11, 16)} 해제)` : ""}
                     {!theme.enabled && theme.duration === "until_enabled" ? " · 해제까지" : ""}
                   </div>
+                  {briefing && (
+                    <div data-testid={`theme-briefing-${theme.id}`} style={{ fontSize: 10, color: "var(--c-text-3)", marginTop: 2 }}>
+                      {formatThemeBriefingLine(briefing.byId[theme.id], briefing.sessionDateUs)}
+                    </div>
+                  )}
                 </div>
                 <select
                   data-testid={`theme-duration-${theme.id}`}

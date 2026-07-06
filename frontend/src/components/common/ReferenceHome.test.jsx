@@ -48,12 +48,18 @@ vi.mock("../../services/backend/client", () => ({
     autoPaperStatus: vi.fn(async () => ({ state: "PAUSED" })),
     autoPaperStart: vi.fn(async () => ({ ok: true })),
     autoPaperStop: vi.fn(async () => ({ ok: true })),
+    // 홈에 배치된 ThemeFilterCard용.
+    themeFilterGet: vi.fn(async () => ({
+      catalog_version: "kr-theme-v2", effective_blocked_symbol_count: 0, unmapped_symbol_count: 0, themes: [],
+    })),
+    themeFilterPatch: vi.fn(),
     // usePaperCapitalSettings가 함수면 backend 로드 시도 — 없으면 LOCAL fallback.
   },
 }));
 
 import { ReferenceHome } from "./ReferenceHome";
 import { backendApi } from "../../services/backend/client";
+import { THEME_BRIEFING_REFRESH_MS } from "../../config/constants";
 
 const basePortfolio = {
   cash: 38021127, positions: [], invested: 18475210,
@@ -269,6 +275,61 @@ describe("ReferenceHome", () => {
   it("S5: 기법 성적표 카드가 성향 카드 하단에 렌더된다", async () => {
     const { findByTestId } = renderHome();
     expect(await findByTestId("technique-card")).toBeTruthy();
+  });
+
+  it("오늘의 테마 필터가 좌측 컬럼(AI 운용 성향 아래, 자동매매 설정 묶음)에 있다", async () => {
+    const { getByTestId, getByText } = renderHome();
+    const themeFilter = await waitFor(() => getByTestId("refhome-theme-filter"));
+    const riskProfileLabel = getByText("AI 운용 성향");
+    // DOM 순서: "AI 운용 성향"이 테마 필터보다 앞서야 함(같은 좌측 컬럼, 그 아래 배치).
+    expect(
+      riskProfileLabel.compareDocumentPosition(themeFilter) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // 우측 컬럼("주요 기능")보다는 앞서 나온다 — 우측으로 옮겨간 게 아님을 방증.
+    const featureShortcuts = getByText("주요 기능");
+    expect(
+      themeFilter.compareDocumentPosition(featureShortcuts) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  describe("테마 브리핑 자동 갱신", () => {
+    afterEach(() => {
+      delete backendApi.briefingThemes;
+      vi.useRealTimers();
+    });
+
+    it("마운트 시 1회 조회 + 주기적 재조회하되, 테마 ON/OFF는 자동으로 절대 안 건드린다", async () => {
+      vi.useFakeTimers();
+      backendApi.briefingThemes = vi.fn(async () => ({
+        session_date_us: "2026-07-06",
+        themes: [{
+          theme_id: "semiconductor", label: "반도체", mapping_quality: "DIRECT",
+          proxies: [{ ticker: "^SOX", change_pct: 1.0, status: "OK" }], status: "OK",
+        }],
+      }));
+
+      renderHome();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(backendApi.briefingThemes).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(THEME_BRIEFING_REFRESH_MS);
+      expect(backendApi.briefingThemes).toHaveBeenCalledTimes(2);
+
+      // ★핵심 불변식: 브리핑 자동 재조회는 fetch만 — 테마 토글(themeFilterPatch)은
+      //   사용자가 직접 누르기 전까진 절대 호출되지 않는다.
+      expect(backendApi.themeFilterPatch).not.toHaveBeenCalled();
+    });
+
+    it("브리핑 fetch가 실패해도 크래시 없이 유지된다(자동 토글도 여전히 없음)", async () => {
+      vi.useFakeTimers();
+      backendApi.briefingThemes = vi.fn(async () => { throw new Error("network down"); });
+
+      const { getByTestId } = renderHome();
+      await vi.advanceTimersByTimeAsync(0);
+      // 테마 필터 카드 자체는 여전히 정상 렌더(브리핑 실패가 카드 전체를 깨지 않음).
+      expect(getByTestId("refhome-theme-filter")).toBeTruthy();
+      expect(backendApi.themeFilterPatch).not.toHaveBeenCalled();
+    });
   });
 
   it("실시간 현황판이 있고, 데이터 없으면 안내", async () => {
