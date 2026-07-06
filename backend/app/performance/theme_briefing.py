@@ -6,20 +6,37 @@
 
 ★전체 fetch 실패(네트워크 등) 시 이전 성공 데이터를 유지한다(`stale=True`) —
 과거엔 실패 시 전 종목 FETCH_ERROR로 덮어써 어제자 유효한 값까지 지웠다.
+
+★2026-07-07 "07-02 고착" 사고: 순수 경과시간 TTL(12h)만으로는 재시작 시각이
+불규칙하면 실제 미국장 마감(~05:00 KST 여름/06:00 겨울) 이후에도 몇 시간씩
+그대로 어제자 값을 "정상"으로 반환했다(재시작 20:21 → 12h TTL 만료가 다음날
+08:21, 그 사이엔 마감 지난 지 몰라도 캐시가 안 갱신됨). 수정: KST 캘린더
+날짜가 바뀌고 `_KST_REFRESH_CUTOFF_HOUR` 시각을 지났으면 TTL 잔여와 무관하게
+강제 재조회한다(하루 한 번은 반드시 새로 시도).
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 
 from app.theme_filter.catalog import get_theme_catalog
 
 _log = logging.getLogger("autotrade.briefing")
 
-_CACHE_TTL_SECONDS = 12 * 3600
+_CACHE_TTL_SECONDS = 6 * 3600  # market_briefing.py(B1)와 동일 컨벤션 — 하루 1~2회 실조회.
 _cache: dict[str, Any] = {"fetched_at": 0.0, "data": None}
+
+_KST = timezone(timedelta(hours=9))
+# 미국장 마감은 KST 기준 여름(EDT) ~05:00, 겨울(EST) ~06:00 — 이보다 이른 05시를
+# 컷오프로 잡아 "이르게 한 번 더 시도"가 나도록(늦어서 갱신을 놓치는 것보다 안전).
+_KST_REFRESH_CUTOFF_HOUR = 5
+
+
+def _kst_date(ts: float):
+    return datetime.fromtimestamp(ts, tz=_KST).date()
 
 # theme_id -> (mapping_quality, [ticker, ...]). 매핑 없음은 빈 리스트 + "NONE".
 THEME_PROXIES: dict[str, tuple[str, list[str]]] = {
@@ -98,7 +115,18 @@ async def get_theme_briefing(
 ) -> dict[str, Any]:
     now_ts = time.time() if now_ts is None else now_ts
     cached = _cache.get("data")
-    if cached is not None and (now_ts - float(_cache.get("fetched_at", 0))) <= _CACHE_TTL_SECONDS:
+    fetched_at = float(_cache.get("fetched_at", 0))
+    within_ttl = cached is not None and (now_ts - fetched_at) <= _CACHE_TTL_SECONDS
+    # ★날짜 롤오버 강제 재조회: KST 캘린더 날짜가 바뀌고 컷오프 시각을 지났으면
+    #   TTL 잔여시간과 무관하게 새로 시도한다(경과시간 TTL만으로는 재시작 시각이
+    #   불규칙할 때 마감 이후에도 몇 시간씩 어제자 값이 "정상"으로 남는 결함 방지).
+    now_kst = datetime.fromtimestamp(now_ts, tz=_KST)
+    day_rolled_over = (
+        cached is not None
+        and _kst_date(fetched_at) != now_kst.date()
+        and now_kst.hour >= _KST_REFRESH_CUTOFF_HOUR
+    )
+    if within_ttl and not day_rolled_over:
         return cached
 
     fetch = fetcher or _default_fetcher
@@ -111,7 +139,7 @@ async def get_theme_briefing(
     if not fetched and cached is not None:
         # ★전체 fetch 실패(네트워크 등) + 이전 성공 데이터 있음 → 이전 값 유지.
         #   캐시(_cache)는 갱신하지 않는다 — fetched_at을 그대로 둬서 다음 호출에서
-        #   다시 시도하게 한다(실패 상태로 12h TTL 내내 고착되는 것 방지).
+        #   다시 시도하게 한다(실패 상태로 TTL 내내 고착되는 것 방지).
         _log.error("[theme-briefing] 전체 fetch 실패 — 이전 데이터 유지(stale)")
         return {**cached, "stale": True, "stale_reason": "FETCH_FAILED"}
 

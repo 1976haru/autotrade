@@ -148,8 +148,57 @@ def test_ttl_cache_single_fetch():
         return {"^SOX": {"change_pct": 0.0, "session_date": "2026-07-03"}}
 
     _run(tb.get_theme_briefing(now_ts=1000.0, fetcher=fetch))
-    _run(tb.get_theme_briefing(now_ts=1000.0 + 60, fetcher=fetch))  # TTL(12h) 내
+    _run(tb.get_theme_briefing(now_ts=1000.0 + 60, fetcher=fetch))  # TTL(6h) 내, 같은 KST 날짜
     assert calls["n"] == 1
+
+
+def test_day_rollover_forces_refetch_even_within_ttl():
+    """★2026-07-07 "07-02 고착" 사고 재현: 재시작이 저녁(23:50 KST)에 일어나 TTL(6h)
+    잔여가 남아있어도, KST 날짜가 바뀌고 컷오프(05:00 KST)를 지나면 강제 재조회해야 한다.
+    """
+    from datetime import datetime, timedelta, timezone
+    kst = timezone(timedelta(hours=9))
+
+    last_fetch = datetime(2026, 7, 6, 23, 50, tzinfo=kst).timestamp()
+    calls = {"n": 0}
+
+    async def old_fetch(tickers):
+        calls["n"] += 1
+        return {"^SOX": {"change_pct": -1.0, "session_date": "2026-07-02"}}
+
+    _run(tb.get_theme_briefing(now_ts=last_fetch, fetcher=old_fetch))
+    assert calls["n"] == 1
+
+    next_check = datetime(2026, 7, 7, 5, 10, tzinfo=kst).timestamp()
+    assert next_check - last_fetch < 6 * 3600, "TTL(6h) 안이어야 이 테스트의 취지가 성립"
+
+    async def fresh_fetch(tickers):
+        calls["n"] += 1
+        return {"^SOX": {"change_pct": 1.9, "session_date": "2026-07-06"}}
+
+    out = _run(tb.get_theme_briefing(now_ts=next_check, fetcher=fresh_fetch))
+    assert calls["n"] == 2, "TTL 안이어도 날짜 롤오버+컷오프 지나면 재조회해야 함"
+    assert out["session_date_us"] == "2026-07-06"
+
+
+def test_no_refetch_before_cutoff_hour_even_if_date_changed():
+    """날짜는 바뀌었지만 컷오프(05:00 KST) 전이면 아직 마감 전일 수 있어 재조회 안 한다
+    (과도한 API 호출 방지 — 컷오프 이후에만 "하루 한 번 강제 재시도"가 발동)."""
+    from datetime import datetime, timedelta, timezone
+    kst = timezone(timedelta(hours=9))
+
+    last_fetch = datetime(2026, 7, 6, 23, 50, tzinfo=kst).timestamp()
+    calls = {"n": 0}
+
+    async def fetch(tickers):
+        calls["n"] += 1
+        return {"^SOX": {"change_pct": -1.0, "session_date": "2026-07-02"}}
+
+    _run(tb.get_theme_briefing(now_ts=last_fetch, fetcher=fetch))
+
+    before_cutoff = datetime(2026, 7, 7, 4, 0, tzinfo=kst).timestamp()
+    _run(tb.get_theme_briefing(now_ts=before_cutoff, fetcher=fetch))
+    assert calls["n"] == 1, "컷오프 전엔 날짜가 바뀌어도 재조회 안 해야 함"
 
 
 def test_no_recommendation_or_toggle_flags():
