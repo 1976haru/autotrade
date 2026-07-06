@@ -304,23 +304,30 @@ class TestDryRunC_FailOpen:
 class TestBotOwnedSymbolsHelper:
     """_bot_owned_symbols DB 쿼리 헬퍼 직접 검증."""
 
-    def _make_db_with_buys(self, symbols):
-        from app.db.models import OrderAuditLog
+    def _make_db(self):
         eng = create_engine("sqlite://", connect_args={"check_same_thread": False},
                             poolclass=StaticPool)
         Base.metadata.create_all(eng)
         Session = sessionmaker(bind=eng)
-        db = Session()
+        return Session()
+
+    def _add_order(self, db, symbol, side, qty, *, trade_reason="kis_paper_auto",
+                   decision="APPROVED"):
+        from app.db.models import OrderAuditLog
         from datetime import datetime, timezone
+        db.add(OrderAuditLog(
+            symbol=symbol, side=side, trade_reason=trade_reason,
+            decision=decision, executed=True,
+            filled_quantity=qty, avg_fill_price=100_000,
+            created_at=datetime.now(timezone.utc),
+            # NOT NULL 필드 최솟값
+            mode="PAPER", quantity=qty, order_type="MARKET", latest_price=100_000,
+        ))
+
+    def _make_db_with_buys(self, symbols):
+        db = self._make_db()
         for sym in symbols:
-            db.add(OrderAuditLog(
-                symbol=sym, side="BUY", trade_reason="kis_paper_auto",
-                decision="APPROVED", executed=True,
-                filled_quantity=10, avg_fill_price=100_000,
-                created_at=datetime.now(timezone.utc),
-                # NOT NULL 필드 최솟값
-                mode="PAPER", quantity=10, order_type="MARKET", latest_price=100_000,
-            ))
+            self._add_order(db, sym, "BUY", 10)
         db.commit()
         return db
 
@@ -330,10 +337,7 @@ class TestBotOwnedSymbolsHelper:
         assert result == frozenset(["000990", "005930"])
 
     def test_returns_empty_when_no_buys(self):
-        eng = create_engine("sqlite://", connect_args={"check_same_thread": False},
-                            poolclass=StaticPool)
-        Base.metadata.create_all(eng)
-        db = sessionmaker(bind=eng)()
+        db = self._make_db()
         result = driver_bridge._bot_owned_symbols(db)
         assert result == frozenset()
 
@@ -342,3 +346,138 @@ class TestBotOwnedSymbolsHelper:
             def query(self, *a, **k): raise RuntimeError("db error")
         result = driver_bridge._bot_owned_symbols(_BrokenDb())
         assert result is None
+
+    # ────────────────────────────────────────────────────────────────
+    # ★기아(000270) 사고 재현 — 순보유(net) 반영 회귀 테스트 (2026-07-06)
+    # ────────────────────────────────────────────────────────────────
+
+    def test_fully_closed_symbol_excluded_from_ledger(self):
+        """봇이 과거 BUY+SELL로 전량 청산(net=0)한 종목은 원장에서 제외돼야 함.
+
+        기아 사고 재현: 06-05 BUY 6주, 06-12 BUY 18주 + SELL 18주(전량청산).
+        net = 6(06-05 몫, 실제로는 이후 다른 SELL로 청산됨) — 여기서는 단순화해
+        전체 BUY=24, SELL=24로 net=0 케이스를 직접 구성한다.
+        """
+        db = self._make_db()
+        self._add_order(db, "000270", "BUY", 6)
+        self._add_order(db, "000270", "BUY", 18)
+        self._add_order(db, "000270", "SELL", 24)
+        db.commit()
+        result = driver_bridge._bot_owned_symbols(db)
+        assert "000270" not in result, \
+            "전량 청산(net=0)된 종목은 원장에 남아있으면 안 됨 (기아 사고 재현)"
+
+    def test_partially_closed_symbol_still_included(self):
+        """봇이 일부만 매도(net>0)한 종목은 여전히 원장에 남아 손절 대상이어야 함."""
+        db = self._make_db()
+        self._add_order(db, "005930", "BUY", 10)
+        self._add_order(db, "005930", "SELL", 4)
+        db.commit()
+        result = driver_bridge._bot_owned_symbols(db)
+        assert "005930" in result, "순보유(net=6>0) 종목은 원장에 남아있어야 함"
+
+    def test_manual_buy_never_counted_even_alone(self):
+        """manual_buy 태그는 trade_reason 필터에서 애초에 제외 — 이번 버그의 원인 아님을 확인."""
+        db = self._make_db()
+        self._add_order(db, "000270", "BUY", 1, trade_reason="manual_buy")
+        db.commit()
+        result = driver_bridge._bot_owned_symbols(db)
+        assert result == frozenset(), \
+            "manual_buy 단독으로는 원장에 절대 들어가면 안 됨 (trade_reason 필터는 원래부터 정상)"
+
+
+# ════════════════════════════════════════════════════════════════════
+# DRY-RUN (d): 같은 종목을 봇(과거, 전량청산)+수동(오늘) 재사용 — 기아 사고 재현
+# ════════════════════════════════════════════════════════════════════
+
+class TestDryRunD_GhostOwnershipReclaim:
+    """(d): 봇이 과거 전량 청산한 종목을 사용자가 오늘 재매수 → 손절 오발동 안 됨.
+
+    실제 사고(2026-07-06 기아/000270) end-to-end 재현:
+    - _bot_owned_symbols는 override 없이 *실제 DB 쿼리* 사용
+    - DB에는 봇의 과거 BUY+SELL(net=0, 전량청산) 이력만 있음
+    - held_map(현재 KIS 잔고)에는 사용자의 오늘자 수동매수 1주만 존재
+    - 기대: net-quantity 수정 후 SELL_NOT_BOT_OWNED로 청산 제외 (수정 전엔 오발동했음)
+    """
+
+    def test_d1_ghost_history_does_not_trigger_forced_stoploss(self):
+        _MAN = "000270"
+        _AVG = 159_950  # 실제 사고의 수동매수 체결가
+
+        db = TestBotOwnedSymbolsHelper()._make_db()
+        TestBotOwnedSymbolsHelper()._add_order(db, _MAN, "BUY", 6)
+        TestBotOwnedSymbolsHelper()._add_order(db, _MAN, "BUY", 18)
+        TestBotOwnedSymbolsHelper()._add_order(db, _MAN, "SELL", 24)
+        db.commit()
+
+        def _session_factory():
+            return db
+
+        _reset()
+        driver_bridge._HELD_SNAPSHOT = {_MAN: {"hldg": 1, "ord_psbl": 1, "avg_price": _AVG}}
+        driver_bridge._HELD_SNAPSHOT_AT = _NOW
+        calls = []
+        out = asyncio.run(kis_paper_realtime_scan_tick(
+            session_factory=_session_factory,
+            broker=_broker([_pos(_MAN, _AVG, qty=1)]),
+            risk=object(),
+            route_order_fn=_recording_route(calls),
+            settings=_settings(),
+            market_input_fn=_exit_input(_MAN, _AVG, -0.02),  # 실사고와 동일 -2% 하락
+            universe_symbols=[_MAN],
+            client=object(),
+            now=_NOW,
+            # ★override 미주입 — 실제 _bot_owned_symbols(db) 경로를 그대로 태운다.
+        ))
+        sells = [o for o in calls if str(getattr(o, "side", "")).upper().endswith("SELL")]
+        skip_codes = [s.get("reason_code") for s in out.get("skipped", [])]
+
+        assert out["orders_submitted"] == 0, \
+            f"전량청산 이력만 있는 종목의 신규 수동매수는 손절 오발동 안 돼야 함. codes={skip_codes}"
+        assert len(sells) == 0
+        # position=None(원장 밖 판정) → mi=None exit-only 입력에서는 council이 HOLD로
+        # 떨어져 EXIT_ONLY_NO_SELL로 먼저 걸린다(Filter B 도달 전 선착, test_b3와 동일 패턴).
+        # 핵심 불변식은 "SELL 0건" — 이 사고 재현에서 실제로 막혔는지가 중요.
+        assert skip_codes == ["EXIT_ONLY_NO_SELL"], \
+            f"수정 전(버그)에는 orders_submitted==1 이었어야 할 자리 — 지금은 안전하게 skip. codes={skip_codes}"
+
+    def test_d2_filter_b_explicitly_blocks_with_real_ledger(self, monkeypatch):
+        """council SELL 강제 + override 미주입 → Filter B가 실제 DB 원장으로 SELL_NOT_BOT_OWNED 반환."""
+        from types import SimpleNamespace as NS
+        from app.agents.agent_council import CouncilAction
+
+        def _fake_council(*a, **kw):
+            return NS(final_action=CouncilAction.SELL)
+
+        monkeypatch.setattr("app.agents.agent_council.run_agent_council", _fake_council)
+
+        _MAN = "000270"
+        _AVG = 159_950
+        db = TestBotOwnedSymbolsHelper()._make_db()
+        TestBotOwnedSymbolsHelper()._add_order(db, _MAN, "BUY", 6)
+        TestBotOwnedSymbolsHelper()._add_order(db, _MAN, "BUY", 18)
+        TestBotOwnedSymbolsHelper()._add_order(db, _MAN, "SELL", 24)
+        db.commit()
+
+        _reset()
+        driver_bridge._HELD_SNAPSHOT = {_MAN: {"hldg": 1, "ord_psbl": 1, "avg_price": _AVG}}
+        driver_bridge._HELD_SNAPSHOT_AT = _NOW
+        calls = []
+        out = asyncio.run(kis_paper_realtime_scan_tick(
+            session_factory=lambda: db,
+            broker=_broker([_pos(_MAN, _AVG, qty=1)]),
+            risk=object(),
+            route_order_fn=_recording_route(calls),
+            settings=_settings(),
+            market_input_fn=_exit_input(_MAN, _AVG, -0.02),
+            universe_symbols=[_MAN],
+            client=object(),
+            now=_NOW,
+        ))
+        sells = [o for o in calls if str(getattr(o, "side", "")).upper().endswith("SELL")]
+        skip_codes = [s.get("reason_code") for s in out.get("skipped", [])]
+
+        assert out["orders_submitted"] == 0
+        assert len(sells) == 0
+        assert "SELL_NOT_BOT_OWNED" in skip_codes, \
+            f"실제 DB 원장(net=0)으로도 Filter B가 SELL_NOT_BOT_OWNED를 반환해야 함. codes={skip_codes}"

@@ -484,24 +484,43 @@ def _today_kis_paper_buy_state(db: Any, now: datetime) -> tuple[set[str], int]:
 
 
 def _bot_owned_symbols(db: Any) -> "frozenset[str] | None":
-    """봇(kis_paper_auto)이 BUY 체결한 종목 집합 — 소유권 원장.
+    """봇(kis_paper_auto) *순보유*(net position) 종목 집합 — 소유권 원장.
+
+    ★2026-07-06 기아(000270) 오매도 사고 수정: 과거엔 "봇이 BUY 체결한 적
+    있는가"(lifetime, 기간·수량 무관)로 판정 — 봇이 몇 주 전 전량 청산한
+    종목도 원장에 영구히 남아, 이후 사용자가 같은 종목을 신규로 수동매수하면
+    "봇 소유"로 오분류돼 강제 손절 대상이 됐다(실제 사고: 06-12 전량청산 후
+    07-06 수동매수 → 강제 STOP_LOSS 오발동).
+    수정: BUY 체결수량 합 − SELL 체결수량 합(net) > 0 인 종목만 포함.
+    trade_reason 필터(kis_paper_auto)는 원래부터 있었고 manual_buy/manual_sell은
+    애초에 이 쿼리에 안 잡힌다 — 이번 버그는 trade_reason 누락이 아니라
+    시간/순보유량 미반영이 원인.
+    broker_status 는 신뢰 못 함(부분체결 후 잔량취소된 행이 CANCELED로 남아있어도
+    filled_quantity>0인 실체결분은 유효) — filled_quantity>0 가 유일한 진실.
 
     Returns:
-        frozenset[str] : 봇 소유 종목 코드 집합 (비어있어도 frozenset).
+        frozenset[str] : 봇 순보유 종목 코드 집합 (비어있어도 frozenset).
         None           : DB 조회 실패 → 호출자가 fail-open (전부 봇소유 간주, 손절 유지).
     """
     try:
         from app.db.models import OrderAuditLog
         rows = (
-            db.query(OrderAuditLog.symbol)
+            db.query(OrderAuditLog.symbol, OrderAuditLog.side, OrderAuditLog.filled_quantity)
             .filter(OrderAuditLog.trade_reason == "kis_paper_auto")
-            .filter(OrderAuditLog.side == "BUY")
             .filter(OrderAuditLog.decision == "APPROVED")
             .filter(OrderAuditLog.filled_quantity > 0)
-            .distinct()
             .all()
         )
-        return frozenset(r[0] for r in rows if r[0])
+        net_qty: dict[str, int] = {}
+        for sym, side, qty in rows:
+            if not sym:
+                continue
+            qty = int(qty or 0)
+            if side == "BUY":
+                net_qty[sym] = net_qty.get(sym, 0) + qty
+            elif side == "SELL":
+                net_qty[sym] = net_qty.get(sym, 0) - qty
+        return frozenset(sym for sym, q in net_qty.items() if q > 0)
     except Exception:  # noqa: BLE001
         _log.error("[ownership-ledger] 원장 조회 실패 — fail-open: 전부 봇소유로 처리(손절 유지)")
         return None
