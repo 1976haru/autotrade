@@ -83,27 +83,36 @@ export function usePortfolio() {
     if (!codesKey) return;
     const codes = codesKey.split(",");
     const t = setInterval(async () => {
-      try {
-        // 시세와 함께 잔고도 갱신 — equity(평가총액)를 invested 와 같은 주기로
-        // 신선하게 유지해 추정자산/예수금/주식평가가 항상 정합하도록.
-        const [bal, quotes] = await Promise.all([
-          backendApi.brokerBalance().catch(() => null),
-          Promise.all(codes.map((c) => backendApi.brokerPrice(c))),
-        ]);
-        if (bal && typeof bal.cash === "number") setCash(bal.cash);
-        if (bal && typeof bal.equity === "number") setEquity(bal.equity);
-        setPositions((prev) =>
-          prev.map((p) => {
-            const q = quotes.find((x) => x.symbol === p.code);
-            return q ? { ...p, cur: q.price } : p;
-          })
-        );
-      } catch {
-        // 폴링 실패는 다음 틱에 자동 재시도
-      }
+      // ratelimit_fix 권고1: 종목 하나가 (한 번도 캐시된 적 없어) 진짜 503 을
+      // 내더라도 Promise.allSettled 라 나머지 종목 가격은 정상 반영된다 —
+      // 예전 Promise.all 은 한 종목만 실패해도 배치 전체(잔고 포함)를 버리고
+      // 다음 15초 틱에 *전부* 재조회해 레이트리밋 아래서 재시도 폭풍을 키웠다.
+      // 대부분의 실패는 이제 백엔드가 200 + stale:true 로 흡수하므로 여기
+      // catch 에 걸리는 경우 자체가 크게 줄어든다(신규 종목의 첫 조회 등 드문 예외만).
+      const [balRes, ...quoteResults] = await Promise.allSettled([
+        backendApi.brokerBalance(),
+        ...codes.map((c) => backendApi.brokerPrice(c)),
+      ]);
+      const bal = balRes.status === "fulfilled" ? balRes.value : null;
+      if (bal && typeof bal.cash === "number") setCash(bal.cash);
+      if (bal && typeof bal.equity === "number") setEquity(bal.equity);
+      const quotes = quoteResults
+        .filter((r) => r.status === "fulfilled")
+        .map((r) => r.value);
+      setPositions((prev) =>
+        prev.map((p) => {
+          const q = quotes.find((x) => x.symbol === p.code);
+          if (!q) return p;   // 이 틱에 조회 실패 + 캐시도 없음 — 이전 값 유지(가짜 갱신 금지)
+          return { ...p, cur: q.price, stale: !!q.stale };
+        })
+      );
     }, PRICE_TICK_MS);
     return () => clearInterval(t);
   }, [codesKey]);
+
+  // ratelimit_fix 권고1: 시세가 하나라도 stale 이면(레이트리밋으로 옛 값 표시 중)
+  // 화면에서 balance-stale 배너와 같은 방식으로 알릴 수 있게 aggregate 로 노출.
+  const pricesStale = positions.some((p) => p.stale);
 
   const invested    = positions.reduce((s, p) => s + p.cur * p.qty, 0);
   // ★추정자산 = KIS 평가총액(tot_evlu_amt). dnca_tot_amt(cash)는 T+2 정산 전
@@ -118,6 +127,6 @@ export function usePortfolio() {
   return {
     cash: availableCash, positions,
     invested, totalAsset, equity, totalPnL, totalPnLPct,
-    loading, error, ready, stale, asOf, brokerHealthy,
+    loading, error, ready, stale, asOf, brokerHealthy, pricesStale,
   };
 }

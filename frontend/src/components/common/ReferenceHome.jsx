@@ -363,8 +363,9 @@ export function ReferenceHome({
             <div data-testid="refhome-balance-failed" style={{ fontSize: F.md, fontWeight: 700, color: UP }}>{moneyFailureLine(lastOkHm)}</div>
           ) : (
             <div>
-            {/* T2: stale(레이트리밋 옛값)은 숫자 + 기준시각 명시 — 가짜 0도, 불필요한 실패도 아님. */}
-            {portfolio?.stale && (
+            {/* T2/ratelimit_fix 권고1: stale(레이트리밋 옛값 — 잔고 or 보유종목 시세)은
+                숫자 + 기준시각 명시 — 가짜 0도, 불필요한 실패도 아님. */}
+            {(portfolio?.stale || portfolio?.pricesStale) && (
               <div data-testid="refhome-balance-stale" style={{ fontSize: F.sm, fontWeight: 700, color: "#7a4a00", marginBottom: 8 }}>
                 {portfolio?.asOf || ""} 기준 · 증권사 응답 지연으로 옛 값이에요
               </div>
