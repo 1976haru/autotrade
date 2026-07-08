@@ -122,3 +122,9 @@ backend/autotrade-backend.spec
 # scripts/generate_build_stamp.py 가 빌드 시 생성하는 backend build metadata.
 # 빌드 산출물 — git 에 커밋하지 않는다 (런타임 git/env fallback 으로 동작).
 backend/app/system/build_stamp.py
+
+# ---------- 일회성 조사/리서치 스크립트 (2026-07-09) ----------
+# 백테스트/데이터 조사용 임시 스크립트. 결론은 results/*/*.md 로 보존하고
+# 재현용 스크립트 자체는 git 추적하지 않는다 (일회성, 정식 테스트 아님).
+scripts/_tmp_*.py
+backend/scripts/_tmp_*.py

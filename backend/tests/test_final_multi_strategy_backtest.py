@@ -24,10 +24,11 @@ client = TestClient(app)
 
 def test_cost_model_defaults():
     assert DEFAULT_COST.commission_bps == 1.5
-    assert DEFAULT_COST.tax_bps == 18.0
+    # 2026 개정: 거래세 0.18% → 0.20% (0.05% 거래세 + 0.15% 농특세, 코스피/코스닥 동일)
+    assert DEFAULT_COST.tax_bps == 20.0
     assert DEFAULT_COST.slippage_bps == 5.0
-    # 왕복 = 1.5*2 + 18 + 5*2 = 31 bps
-    assert cost_drag_bps() == 31.0
+    # 왕복 = 1.5*2 + 20 + 5*2 = 33 bps
+    assert cost_drag_bps() == 33.0
 
 
 def test_apply_round_trip_cost_buy():
