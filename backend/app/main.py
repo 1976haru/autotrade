@@ -219,6 +219,30 @@ async def lifespan(_app: FastAPI):
             type(exc).__name__, exc,
         )
 
+    # MULTI-TF-SHADOW-V1 — *opt-in*, 기본 OFF. results/multi_timeframe 후속 —
+    # 5m entry + 60m confirm(Council) 콤보를 read-only 관측(신호빈도 + 슬리피지).
+    # broker.place_order / route_order / OrderExecutor 호출 0건.
+    mtf_shadow = None
+    try:
+        if cfg.enable_multi_tf_shadow:
+            from app.api.deps import get_broker
+            from app.db.session import SessionLocal
+            from app.shadow.multi_tf_shadow import MultiTfShadowRunner
+            mtf_shadow = MultiTfShadowRunner(
+                broker_factory=get_broker,
+                session_factory=SessionLocal,
+                symbols=cfg.multi_tf_shadow_symbol_list(),
+                interval=cfg.multi_tf_shadow_interval_seconds,
+            )
+            if mtf_shadow.start():
+                _startup_logger.info(
+                    "[startup] multi-tf shadow started (opt-in, read-only — no broker orders)"
+                )
+    except Exception as exc:  # noqa: BLE001
+        _startup_logger.warning(
+            "[startup] multi-tf shadow not started: %s: %s", type(exc).__name__, exc,
+        )
+
     try:
         yield
     finally:
@@ -234,6 +258,11 @@ async def lifespan(_app: FastAPI):
         if bg_driver is not None:
             try:
                 await bg_driver.stop()
+            except Exception:  # noqa: BLE001 — shutdown 정리는 best-effort.
+                pass
+        if mtf_shadow is not None:
+            try:
+                await mtf_shadow.stop()
             except Exception:  # noqa: BLE001 — shutdown 정리는 best-effort.
                 pass
         if poller_starter_task is not None and not poller_starter_task.done():

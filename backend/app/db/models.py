@@ -735,3 +735,54 @@ class TrailingShadowOutcome(Base):
     peak_return_pct:  Mapped[float]    = mapped_column(Float)
     activated:        Mapped[bool]     = mapped_column(Boolean, default=False)
     closed_at:        Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+
+
+class MultiTfShadowTick(Base):
+    """MULTI-TF-SHADOW-V1 — 5m entry + 60m confirm(Council) 콤보 관측, 틱 단위 요약.
+
+    results/multi_timeframe/design.md 콤보(5m entry AGENT_COUNCIL BUY + 60m confirm
+    AGENT_COUNCIL BUY)를 read-only로 매 tick 스캔한 집계. 주문/판단 0 — broker.
+    place_order/route_order/OrderExecutor 미접촉, fetch_realtime_quote(read-only
+    시세)만 호출. is_order_signal=False 영구.
+    """
+
+    __tablename__ = "multi_tf_shadow_tick"
+
+    id:                   Mapped[int]      = mapped_column(primary_key=True)
+    created_at:           Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+    symbols_scanned:      Mapped[int]      = mapped_column(Integer)
+    combo_signals_found:  Mapped[int]      = mapped_column(Integer)
+    fetch_errors:         Mapped[int]      = mapped_column(Integer, default=0)
+    rate_limited_count:   Mapped[int]      = mapped_column(Integer, default=0)
+    tick_duration_seconds: Mapped[float]   = mapped_column(Float)
+    is_order_signal:      Mapped[bool]     = mapped_column(Boolean, default=False)
+
+
+class MultiTfShadowSignal(Base):
+    """MULTI-TF-SHADOW-V1 — 콤보(5m entry BUY + 60m confirm BUY) 매치 시점 기록.
+
+    p1(신호 확정 시점 시세) → p2(60분 확인평가 완료 직후 재조회 시세) 슬리피지가
+    핵심 측정값 — results/multi_timeframe/adverse_selection_measurement.md 의
+    "실측 슬리피지"를 이 콤보 자체의 5분 빈도로 재측정한다. 주문 0건.
+    """
+
+    __tablename__ = "multi_tf_shadow_signal"
+
+    id:               Mapped[int]      = mapped_column(primary_key=True)
+    created_at:       Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+    symbol:           Mapped[str]      = mapped_column(String(16), index=True)
+    entry_tf:         Mapped[str]      = mapped_column(String(8))
+    confirm_tf:       Mapped[str]      = mapped_column(String(8))
+    entry_signal:     Mapped[str]      = mapped_column(String(16))
+    confirm_signal:   Mapped[str]      = mapped_column(String(16))
+    p1_price:         Mapped[float]    = mapped_column(Float)
+    p1_timestamp:     Mapped[datetime] = mapped_column(DateTime)
+    p2_price:         Mapped[float | None]     = mapped_column(Float, nullable=True)
+    p2_timestamp:     Mapped[datetime | None]  = mapped_column(DateTime, nullable=True)
+    elapsed_seconds:  Mapped[float | None]     = mapped_column(Float, nullable=True)
+    slippage_bps:     Mapped[float | None]     = mapped_column(Float, nullable=True)
+    prev_close:       Mapped[float | None]     = mapped_column(Float, nullable=True)
+    confidence:       Mapped[float | None]     = mapped_column(Float, nullable=True)
+    is_order_signal:  Mapped[bool]     = mapped_column(Boolean, default=False)
+    is_live_authorization: Mapped[bool] = mapped_column(Boolean, default=False)
+    closed_at:        Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)

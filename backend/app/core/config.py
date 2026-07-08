@@ -187,6 +187,22 @@ class Settings(BaseSettings):
     # 여전히 KIS_IS_PAPER=true / ENABLE_LIVE_TRADING=false 가 강제된다.
     use_real_tick_runner:               bool = False
 
+    # MULTI-TF-SHADOW-V1 — 5분봉 entry + 60분봉 confirm(Council) 콤보를 read-only로
+    # 관측(신호 빈도 + 실제 슬리피지 측정, results/multi_timeframe/design.md 후속).
+    # 기본 OFF. 켜도 broker.place_order/route_order/OrderExecutor 호출 0건 —
+    # fetch_realtime_quote/inquire-time-dailychartprice(둘 다 read-only 시세)만
+    # 호출하며 기존 shared rate limiter를 그대로 통과한다(별도 우회 0).
+    enable_multi_tf_shadow:              bool = False
+    # 관측 대상 종목(콤마) — 기본 8종목(부하 최소화, results/timeframe_test 35종목
+    # 백테스트와 겹치는 대형주 위주). 빈 값이면 shadow 비활성.
+    multi_tf_shadow_symbols:             str  = "005930,000660,005380,035420,373220,000270,006400,035720"
+    multi_tf_shadow_interval_seconds:    int  = 300   # 5분 tick(entry TF와 동일 주기)
+
+    def multi_tf_shadow_symbol_list(self) -> list[str]:
+        if not self.multi_tf_shadow_symbols:
+            return []
+        return [s.strip() for s in self.multi_tf_shadow_symbols.split(",") if s.strip()]
+
     def symbol_whitelist_set(self) -> set[str]:
         """env 콤마 문자열을 set으로 파싱. 공백 strip."""
         if not self.symbol_whitelist:
