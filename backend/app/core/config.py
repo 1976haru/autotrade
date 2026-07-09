@@ -104,6 +104,21 @@ class Settings(BaseSettings):
     # 183: 일일(KST date) 최대 주문 횟수 한도. 0이면 비활성.
     max_orders_per_day: int = 0
 
+    # Consecutive-loss circuit breaker. Defaults enable observation/blocking only
+    # in non-live execution surfaces first: SIMULATION, PAPER, and LIVE_SHADOW.
+    risk_consecutive_loss_limit: int = 5
+    risk_consecutive_loss_cooldown_buys: int = 5
+    risk_consecutive_loss_modes: str = "SIMULATION,PAPER,LIVE_SHADOW"
+
+    def risk_consecutive_loss_mode_set(self) -> set[str]:
+        if not self.risk_consecutive_loss_modes:
+            return set()
+        return {
+            m.strip().upper()
+            for m in self.risk_consecutive_loss_modes.split(",")
+            if m.strip()
+        }
+
     # AI Paper background tick driver — *opt-in*, 기본 OFF. RUNNING + 장중 +
     # PAPER/SIM 모드일 때만 N초마다 run-once diagnostic 파이프라인을 자동 반복
     # 실행한다. **실거래 주문 권한이 아니다** — broker / OrderExecutor /

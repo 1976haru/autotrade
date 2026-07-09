@@ -4,7 +4,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.brokers.base import OrderRequest, OrderSide, OrderType
+from app.brokers.base import OrderRequest, OrderSide, OrderType, Position
 from app.brokers.mock_broker import MockBrokerAdapter
 from app.core.modes import OperationMode
 from app.db.base import Base
@@ -27,6 +27,28 @@ def _order(qty: int = 1) -> OrderRequest:
     return OrderRequest(
         symbol="005930", side=OrderSide.BUY, quantity=qty, order_type=OrderType.MARKET,
     )
+
+
+def _sell(qty: int = 1) -> OrderRequest:
+    return OrderRequest(
+        symbol="005930", side=OrderSide.SELL, quantity=qty, order_type=OrderType.MARKET,
+    )
+
+
+def _seed_closed_loss(db, *, symbol: str = "005930", buy: int = 100_000, sell: int = 90_000) -> None:
+    db.add(OrderAuditLog(
+        mode="SIMULATION", symbol=symbol, side="BUY", quantity=1,
+        order_type="MARKET", latest_price=buy,
+        decision="APPROVED", reasons=[], executed=True,
+        avg_fill_price=buy, filled_quantity=1, broker_status="FILLED",
+    ))
+    db.flush()
+    db.add(OrderAuditLog(
+        mode="SIMULATION", symbol=symbol, side="SELL", quantity=1,
+        order_type="MARKET", latest_price=sell,
+        decision="APPROVED", reasons=[], executed=True,
+        avg_fill_price=sell, filled_quantity=1, broker_status="FILLED",
+    ))
 
 
 def run(coro):
@@ -73,6 +95,94 @@ def test_daily_order_cap_applies_to_buy_not_sell():
                  mode=OperationMode.SIMULATION, broker=broker,
                  risk=RiskManager(policy), db=db))
         assert not any("max_orders_per_day" in x for x in r3.reasons)  # SELL 면제.
+
+
+def test_consecutive_loss_cooldown_blocks_five_buy_candidates_then_resumes():
+    Session = _session_factory()
+    policy = RiskPolicy(
+        max_order_notional=10_000_000,
+        consecutive_loss_limit=5,
+        consecutive_loss_cooldown_buys=5,
+        consecutive_loss_enabled_modes=frozenset({"SIMULATION"}),
+    )
+    with Session() as db:
+        for _ in range(5):
+            _seed_closed_loss(db)
+        db.commit()
+
+        broker = MockBrokerAdapter(initial_cash=10_000_000)
+        risk = RiskManager(policy)
+        blocked = [
+            run(route_order(
+                order=_order(1), requested_by_ai=False,
+                mode=OperationMode.SIMULATION, broker=broker, risk=risk, db=db,
+            ))
+            for _ in range(5)
+        ]
+        assert all(r.decision == RiskDecision.REJECTED for r in blocked)
+        assert all(any("ConsecutiveLossRule" in x for x in r.reasons) for r in blocked)
+        assert broker.orders == {}
+
+        resumed = run(route_order(
+            order=_order(1), requested_by_ai=False,
+            mode=OperationMode.SIMULATION, broker=broker, risk=risk, db=db,
+        ))
+        assert resumed.decision == RiskDecision.APPROVED
+        assert resumed.result is not None
+        assert not any("ConsecutiveLossRule" in x for x in resumed.reasons)
+
+
+def test_consecutive_loss_cooldown_does_not_block_sell_exit():
+    Session = _session_factory()
+    policy = RiskPolicy(
+        max_order_notional=10_000_000,
+        consecutive_loss_limit=5,
+        consecutive_loss_cooldown_buys=5,
+        consecutive_loss_enabled_modes=frozenset({"SIMULATION"}),
+    )
+    with Session() as db:
+        for _ in range(5):
+            _seed_closed_loss(db)
+        db.commit()
+
+        broker = MockBrokerAdapter(initial_cash=10_000_000)
+        broker.positions["005930"] = Position(
+            symbol="005930", quantity=1, avg_price=75_000, market_price=75_000,
+        )
+        risk = RiskManager(policy)
+        result = run(route_order(
+            order=_sell(1), requested_by_ai=False,
+            mode=OperationMode.SIMULATION, broker=broker, risk=risk, db=db,
+        ))
+        assert result.decision == RiskDecision.APPROVED
+        assert result.result is not None
+        assert result.result.side == OrderSide.SELL
+
+
+def test_consecutive_loss_and_daily_loss_reasons_coexist_without_overwrite():
+    Session = _session_factory()
+    policy = RiskPolicy(
+        max_order_notional=10_000_000,
+        max_daily_loss=200_000,
+        consecutive_loss_limit=5,
+        consecutive_loss_cooldown_buys=5,
+        consecutive_loss_enabled_modes=frozenset({"SIMULATION"}),
+    )
+    with Session() as db:
+        for _ in range(5):
+            _seed_closed_loss(db, buy=100_000, sell=50_000)
+        db.commit()
+
+        result = run(route_order(
+            order=_order(1), requested_by_ai=False,
+            mode=OperationMode.SIMULATION,
+            broker=MockBrokerAdapter(initial_cash=10_000_000),
+            risk=RiskManager(policy),
+            db=db,
+        ))
+        assert result.decision == RiskDecision.REJECTED
+        assert "daily loss limit reached" in result.reasons
+        assert any("ConsecutiveLossRule" in x for x in result.reasons)
 
 
 def test_oversized_order_is_rejected_with_audit_only():

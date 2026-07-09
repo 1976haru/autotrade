@@ -15,8 +15,8 @@ from app.permission.gate import PermissionGate
 from app.risk.daily_pnl import (
     compute_today_realized_pnl,
     compute_weekly_realized_pnl_kst,
-    count_consecutive_losing_trades,
     count_orders_today_kst,
+    get_consecutive_loss_state,
 )
 from app.risk.order_guard import (
     GuardDecision,
@@ -38,6 +38,37 @@ _SHADOW_CONFIDENCE_NOTE = (
     "추정치 — 실제 체결과 다를 수 있습니다 "
     "(orderbook depth / 부분체결 / 호가 공백 / 슬리피지 미반영)."
 )
+_CONSECUTIVE_LOSS_REASON_MARKER = "#36 ConsecutiveLossRule"
+
+
+def _consecutive_loss_mode_enabled(risk: RiskManager, mode: OperationMode) -> bool:
+    enabled_modes = risk.policy.consecutive_loss_enabled_modes
+    return not enabled_modes or mode.value in enabled_modes
+
+
+def _count_consecutive_loss_cooldown_buys(
+    db: Session,
+    *,
+    after_audit_id: int | None,
+) -> int:
+    if after_audit_id is None:
+        return 0
+    rows = (
+        db.query(OrderAuditLog.reasons)
+          .filter(
+              OrderAuditLog.id > after_audit_id,
+              OrderAuditLog.side == OrderSide.BUY.value,
+              OrderAuditLog.decision == RiskDecision.REJECTED.value,
+          )
+          .order_by(OrderAuditLog.id)
+          .all()
+    )
+    skipped = 0
+    for (reasons,) in rows:
+        if any(_CONSECUTIVE_LOSS_REASON_MARKER in str(reason)
+               for reason in (reasons or [])):
+            skipped += 1
+    return skipped
 
 
 class DuplicateOrderError(Exception):
@@ -195,10 +226,25 @@ async def route_order(
         compute_weekly_realized_pnl_kst(db)
         if risk.policy.weekly_loss_limit > 0 else 0
     )
-    consecutive_loss_count = (
-        count_consecutive_losing_trades(db)
-        if risk.policy.consecutive_loss_limit > 0 else 0
-    )
+    consecutive_loss_count = 0
+    if (
+        risk.policy.consecutive_loss_limit > 0
+        and _consecutive_loss_mode_enabled(risk, mode)
+    ):
+        (
+            consecutive_loss_count,
+            latest_losing_sell_audit_id,
+        ) = get_consecutive_loss_state(db)
+        if (
+            order.side == OrderSide.BUY
+            and risk.policy.consecutive_loss_cooldown_buys > 0
+            and consecutive_loss_count >= risk.policy.consecutive_loss_limit
+        ):
+            skipped_buys = _count_consecutive_loss_cooldown_buys(
+                db, after_audit_id=latest_losing_sell_audit_id,
+            )
+            if skipped_buys >= risk.policy.consecutive_loss_cooldown_buys:
+                consecutive_loss_count = 0
 
     # 143: Quote.timestamp는 ISO 문자열. RiskManager가 stale 검사를 수행하려면
     # datetime이 필요하므로 여기서 파싱한다. 파싱 실패는 broker 계약 위반이지만

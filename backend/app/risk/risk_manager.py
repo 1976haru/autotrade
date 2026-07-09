@@ -141,6 +141,8 @@ class RiskPolicy:
     # 기존 hard reject "daily loss limit reached"가 그대로 잡는다.
     weekly_loss_limit:    int   = 0    # 주간 누적 realized PnL 한도 (양수)
     consecutive_loss_limit: int = 0    # 연속 손실 거래 수 임계
+    consecutive_loss_cooldown_buys: int = 0
+    consecutive_loss_enabled_modes: frozenset[str] = field(default_factory=frozenset)
     daily_loss_warn_pct:    float = 0.0  # max_daily_loss의 X%; 0 = 비활성
     daily_loss_reduce_pct:  float = 0.0  # max_daily_loss의 Y%; 0 = 비활성
     weekly_loss_warn_pct:   float = 0.0
@@ -192,6 +194,15 @@ class RiskPolicy:
             max_symbol_exposure_pct          = settings.max_symbol_exposure_pct,
             auto_stop_consecutive_rejections = settings.auto_stop_consecutive_rejections,
             max_orders_per_day               = settings.max_orders_per_day,
+            consecutive_loss_limit = getattr(settings, "risk_consecutive_loss_limit", 0),
+            consecutive_loss_cooldown_buys = getattr(
+                settings, "risk_consecutive_loss_cooldown_buys", 0,
+            ),
+            consecutive_loss_enabled_modes = frozenset(
+                settings.risk_consecutive_loss_mode_set()
+                if hasattr(settings, "risk_consecutive_loss_mode_set")
+                else ()
+            ),
         )
 
 

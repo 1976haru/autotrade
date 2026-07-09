@@ -225,12 +225,14 @@ def compute_weekly_realized_pnl_kst(
     return realized_week
 
 
-def count_consecutive_losing_trades(
+def get_consecutive_loss_state(
     db:        Session,
     *,
     lookback:  int = 50,
-) -> int:
+) -> tuple[int, int | None]:
     """가장 최근의 SELL 매칭(=closed trade)부터 연속해서 손실인 거래 수.
+
+    반환값은 (연속 손실 수, 가장 최근 손실 SELL audit id)이다.
 
     예: 최근 SELL부터 역순으로 (lose, lose, win, lose, lose) → 2.
     이익(>=0)이 등장하면 거기서 멈춘다.
@@ -243,7 +245,7 @@ def count_consecutive_losing_trades(
     부분 매칭(예: SELL 10주 중 7주만 매칭)은 매칭된 부분의 PnL로만 평가.
     """
     if lookback <= 0:
-        return 0
+        return 0, None
 
     rows = (
         db.query(OrderAuditLog)
@@ -258,7 +260,7 @@ def count_consecutive_losing_trades(
 
     # 1패스: 모든 closed trade의 PnL을 시간순으로 모은다.
     buy_queue: dict[str, deque[tuple[int, int]]] = defaultdict(deque)
-    closed_trade_pnls: list[int] = []
+    closed_trade_pnls: list[tuple[int, int]] = []
 
     for r in rows:
         qty   = r.filled_quantity
@@ -283,14 +285,28 @@ def count_consecutive_losing_trades(
             else:
                 q[0] = (buy_qty - take, buy_price)
         if matched > 0:
-            closed_trade_pnls.append(sell_pnl)
+            closed_trade_pnls.append((r.id, sell_pnl))
 
     # 2패스: 뒤에서부터 trailing — pnl < 0인 동안 카운트.
     tail = closed_trade_pnls[-lookback:]
     count = 0
-    for pnl in reversed(tail):
+    latest_losing_sell_audit_id: int | None = None
+    for audit_id, pnl in reversed(tail):
         if pnl < 0:
             count += 1
+            if latest_losing_sell_audit_id is None:
+                latest_losing_sell_audit_id = audit_id
         else:
             break
+    return count, latest_losing_sell_audit_id
+
+
+def count_consecutive_losing_trades(
+    db:        Session,
+    *,
+    lookback:  int = 50,
+) -> int:
+    count, _latest_losing_sell_audit_id = get_consecutive_loss_state(
+        db, lookback=lookback,
+    )
     return count
