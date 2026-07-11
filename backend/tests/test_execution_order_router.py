@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -35,7 +36,10 @@ def _sell(qty: int = 1) -> OrderRequest:
     )
 
 
-def _seed_closed_loss(db, *, symbol: str = "005930", buy: int = 100_000, sell: int = 90_000) -> None:
+def _seed_closed_loss(
+    db, *, symbol: str = "005930", buy: int = 100_000, sell: int = 90_000,
+    sell_created_at: datetime | None = None,
+) -> None:
     db.add(OrderAuditLog(
         mode="SIMULATION", symbol=symbol, side="BUY", quantity=1,
         order_type="MARKET", latest_price=buy,
@@ -43,12 +47,15 @@ def _seed_closed_loss(db, *, symbol: str = "005930", buy: int = 100_000, sell: i
         avg_fill_price=buy, filled_quantity=1, broker_status="FILLED",
     ))
     db.flush()
-    db.add(OrderAuditLog(
+    sell_row = OrderAuditLog(
         mode="SIMULATION", symbol=symbol, side="SELL", quantity=1,
         order_type="MARKET", latest_price=sell,
         decision="APPROVED", reasons=[], executed=True,
         avg_fill_price=sell, filled_quantity=1, broker_status="FILLED",
-    ))
+    )
+    if sell_created_at is not None:
+        sell_row.created_at = sell_created_at
+    db.add(sell_row)
 
 
 def run(coro):
@@ -97,39 +104,84 @@ def test_daily_order_cap_applies_to_buy_not_sell():
         assert not any("max_orders_per_day" in x for x in r3.reasons)  # SELL 면제.
 
 
-def test_consecutive_loss_cooldown_blocks_five_buy_candidates_then_resumes():
+def test_consecutive_loss_cooldown_blocks_rapid_multi_symbol_burst():
+    """다종목 동시스캔(예: 300종목/30초 틱) burst 시나리오 — 여러 BUY 후보가
+    같은 순간 몰려도 시간 기준 쿨다운은 즉시 소진되면 안 된다 (attempt-count
+    기준이던 구버전의 결함: results/circuit_breaker/time_cooldown_revalidation.md)."""
     Session = _session_factory()
     policy = RiskPolicy(
         max_order_notional=10_000_000,
         consecutive_loss_limit=5,
-        consecutive_loss_cooldown_buys=5,
+        consecutive_loss_cooldown_minutes=60,
         consecutive_loss_enabled_modes=frozenset({"SIMULATION"}),
     )
     with Session() as db:
         for _ in range(5):
-            _seed_closed_loss(db)
+            _seed_closed_loss(db, sell_created_at=datetime.now(timezone.utc))
         db.commit()
 
         broker = MockBrokerAdapter(initial_cash=10_000_000)
         risk = RiskManager(policy)
+        # 서로 다른 10개 "종목"의 BUY 시도가 같은 틱 안에서 몰린 상황을 흉내.
         blocked = [
             run(route_order(
                 order=_order(1), requested_by_ai=False,
                 mode=OperationMode.SIMULATION, broker=broker, risk=risk, db=db,
             ))
-            for _ in range(5)
+            for _ in range(10)
         ]
         assert all(r.decision == RiskDecision.REJECTED for r in blocked)
         assert all(any("ConsecutiveLossRule" in x for x in r.reasons) for r in blocked)
         assert broker.orders == {}
 
+
+def test_consecutive_loss_cooldown_resumes_after_minutes_elapsed():
+    Session = _session_factory()
+    policy = RiskPolicy(
+        max_order_notional=10_000_000,
+        consecutive_loss_limit=5,
+        consecutive_loss_cooldown_minutes=60,
+        consecutive_loss_enabled_modes=frozenset({"SIMULATION"}),
+    )
+    with Session() as db:
+        stale = datetime.now(timezone.utc) - timedelta(minutes=61)
+        for _ in range(5):
+            _seed_closed_loss(db, sell_created_at=stale)
+        db.commit()
+
         resumed = run(route_order(
             order=_order(1), requested_by_ai=False,
-            mode=OperationMode.SIMULATION, broker=broker, risk=risk, db=db,
+            mode=OperationMode.SIMULATION,
+            broker=MockBrokerAdapter(initial_cash=10_000_000),
+            risk=RiskManager(policy), db=db,
         ))
         assert resumed.decision == RiskDecision.APPROVED
         assert resumed.result is not None
         assert not any("ConsecutiveLossRule" in x for x in resumed.reasons)
+
+
+def test_consecutive_loss_cooldown_still_blocked_before_minutes_elapsed():
+    Session = _session_factory()
+    policy = RiskPolicy(
+        max_order_notional=10_000_000,
+        consecutive_loss_limit=5,
+        consecutive_loss_cooldown_minutes=60,
+        consecutive_loss_enabled_modes=frozenset({"SIMULATION"}),
+    )
+    with Session() as db:
+        recent = datetime.now(timezone.utc) - timedelta(minutes=30)
+        for _ in range(5):
+            _seed_closed_loss(db, sell_created_at=recent)
+        db.commit()
+
+        result = run(route_order(
+            order=_order(1), requested_by_ai=False,
+            mode=OperationMode.SIMULATION,
+            broker=MockBrokerAdapter(initial_cash=10_000_000),
+            risk=RiskManager(policy), db=db,
+        ))
+        assert result.decision == RiskDecision.REJECTED
+        assert any("ConsecutiveLossRule" in x for x in result.reasons)
 
 
 def test_consecutive_loss_cooldown_does_not_block_sell_exit():
@@ -137,12 +189,12 @@ def test_consecutive_loss_cooldown_does_not_block_sell_exit():
     policy = RiskPolicy(
         max_order_notional=10_000_000,
         consecutive_loss_limit=5,
-        consecutive_loss_cooldown_buys=5,
+        consecutive_loss_cooldown_minutes=60,
         consecutive_loss_enabled_modes=frozenset({"SIMULATION"}),
     )
     with Session() as db:
         for _ in range(5):
-            _seed_closed_loss(db)
+            _seed_closed_loss(db, sell_created_at=datetime.now(timezone.utc))
         db.commit()
 
         broker = MockBrokerAdapter(initial_cash=10_000_000)
@@ -165,12 +217,12 @@ def test_consecutive_loss_and_daily_loss_reasons_coexist_without_overwrite():
         max_order_notional=10_000_000,
         max_daily_loss=200_000,
         consecutive_loss_limit=5,
-        consecutive_loss_cooldown_buys=5,
+        consecutive_loss_cooldown_minutes=60,
         consecutive_loss_enabled_modes=frozenset({"SIMULATION"}),
     )
     with Session() as db:
         for _ in range(5):
-            _seed_closed_loss(db, buy=100_000, sell=50_000)
+            _seed_closed_loss(db, buy=100_000, sell=50_000, sell_created_at=datetime.now(timezone.utc))
         db.commit()
 
         result = run(route_order(

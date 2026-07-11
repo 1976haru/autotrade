@@ -106,8 +106,18 @@ class Settings(BaseSettings):
 
     # Consecutive-loss circuit breaker. Defaults enable observation/blocking only
     # in non-live execution surfaces first: SIMULATION, PAPER, and LIVE_SHADOW.
+    # Cooldown is *time*-based (elapsed minutes since the losing streak's last
+    # closed trade), not attempt-count-based — with a 300-symbol/30s-tick scan,
+    # an attempt-count cooldown exhausts within a single tick (measured median
+    # ~10min at 35-symbol backtest scale, ~1min projected at 300-symbol scale),
+    # defeating the "rest for a while" intent. 60min default is backtest-chosen
+    # (results/circuit_breaker/time_cooldown_revalidation.md) — captures ~97%
+    # of the max achievable cumulative-return improvement across 15~180min
+    # while keeping skipped-candidate win-rate clearly below baseline (16.6%
+    # vs 39.9%), i.e. still discriminating bad candidates rather than
+    # over-blocking recoveries.
     risk_consecutive_loss_limit: int = 5
-    risk_consecutive_loss_cooldown_buys: int = 5
+    risk_consecutive_loss_cooldown_minutes: int = 60
     risk_consecutive_loss_modes: str = "SIMULATION,PAPER,LIVE_SHADOW"
 
     def risk_consecutive_loss_mode_set(self) -> set[str]:

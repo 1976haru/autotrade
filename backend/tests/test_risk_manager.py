@@ -362,7 +362,7 @@ def _settings(**overrides):
         auto_stop_consecutive_rejections = 0,
         max_orders_per_day               = 0,
         risk_consecutive_loss_limit      = 5,
-        risk_consecutive_loss_cooldown_buys = 5,
+        risk_consecutive_loss_cooldown_minutes = 60,
         risk_consecutive_loss_modes      = "SIMULATION,PAPER,LIVE_SHADOW",
     )
     base.update(overrides)
@@ -406,7 +406,7 @@ def test_policy_from_settings_propagates_threshold_overrides():
 def test_policy_from_settings_enables_consecutive_loss_cooldown_defaults():
     p = RiskPolicy.from_settings(_settings())
     assert p.consecutive_loss_limit == 5
-    assert p.consecutive_loss_cooldown_buys == 5
+    assert p.consecutive_loss_cooldown_minutes == 60
     assert p.consecutive_loss_enabled_modes == frozenset({
         "SIMULATION", "PAPER", "LIVE_SHADOW",
     })
@@ -415,11 +415,11 @@ def test_policy_from_settings_enables_consecutive_loss_cooldown_defaults():
 def test_policy_from_settings_propagates_consecutive_loss_overrides():
     p = RiskPolicy.from_settings(_settings(
         risk_consecutive_loss_limit=7,
-        risk_consecutive_loss_cooldown_buys=3,
+        risk_consecutive_loss_cooldown_minutes=15,
         risk_consecutive_loss_modes="paper, live_shadow",
     ))
     assert p.consecutive_loss_limit == 7
-    assert p.consecutive_loss_cooldown_buys == 3
+    assert p.consecutive_loss_cooldown_minutes == 15
     assert p.consecutive_loss_enabled_modes == frozenset({"PAPER", "LIVE_SHADOW"})
 
 

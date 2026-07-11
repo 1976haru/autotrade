@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -38,37 +38,9 @@ _SHADOW_CONFIDENCE_NOTE = (
     "추정치 — 실제 체결과 다를 수 있습니다 "
     "(orderbook depth / 부분체결 / 호가 공백 / 슬리피지 미반영)."
 )
-_CONSECUTIVE_LOSS_REASON_MARKER = "#36 ConsecutiveLossRule"
-
-
 def _consecutive_loss_mode_enabled(risk: RiskManager, mode: OperationMode) -> bool:
     enabled_modes = risk.policy.consecutive_loss_enabled_modes
     return not enabled_modes or mode.value in enabled_modes
-
-
-def _count_consecutive_loss_cooldown_buys(
-    db: Session,
-    *,
-    after_audit_id: int | None,
-) -> int:
-    if after_audit_id is None:
-        return 0
-    rows = (
-        db.query(OrderAuditLog.reasons)
-          .filter(
-              OrderAuditLog.id > after_audit_id,
-              OrderAuditLog.side == OrderSide.BUY.value,
-              OrderAuditLog.decision == RiskDecision.REJECTED.value,
-          )
-          .order_by(OrderAuditLog.id)
-          .all()
-    )
-    skipped = 0
-    for (reasons,) in rows:
-        if any(_CONSECUTIVE_LOSS_REASON_MARKER in str(reason)
-               for reason in (reasons or [])):
-            skipped += 1
-    return skipped
 
 
 class DuplicateOrderError(Exception):
@@ -233,17 +205,17 @@ async def route_order(
     ):
         (
             consecutive_loss_count,
-            latest_losing_sell_audit_id,
+            _latest_losing_sell_audit_id,
+            latest_losing_sell_at,
         ) = get_consecutive_loss_state(db)
         if (
             order.side == OrderSide.BUY
-            and risk.policy.consecutive_loss_cooldown_buys > 0
+            and risk.policy.consecutive_loss_cooldown_minutes > 0
             and consecutive_loss_count >= risk.policy.consecutive_loss_limit
+            and latest_losing_sell_at is not None
         ):
-            skipped_buys = _count_consecutive_loss_cooldown_buys(
-                db, after_audit_id=latest_losing_sell_audit_id,
-            )
-            if skipped_buys >= risk.policy.consecutive_loss_cooldown_buys:
+            elapsed = datetime.now(timezone.utc) - latest_losing_sell_at
+            if elapsed >= timedelta(minutes=risk.policy.consecutive_loss_cooldown_minutes):
                 consecutive_loss_count = 0
 
     # 143: Quote.timestamp는 ISO 문자열. RiskManager가 stale 검사를 수행하려면
