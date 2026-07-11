@@ -5,7 +5,7 @@ vi.mock("../services/backend/client", () => ({
   backendApi: {
     brokerBalance: vi.fn(),
     brokerPositions: vi.fn(),
-    brokerPrice: vi.fn(async () => ({ symbol: "x", price: 0 })),
+    brokerPrices: vi.fn(async () => ({ quotes: {} })),
   },
 }));
 
@@ -84,14 +84,36 @@ describe("usePortfolio B4 — 최초 실패 시 첫 성공까지 복구 재시�
   });
 });
 
-describe("usePortfolio ratelimit_fix 권고1 — 시세 폴링 stale/부분실패 처리", () => {
+describe("usePortfolio ratelimit_fix v2 — 일괄 시세 폴링 stale/부분실패 처리", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     backendApi.brokerBalance.mockReset();
     backendApi.brokerPositions.mockReset();
-    backendApi.brokerPrice.mockReset();
+    backendApi.brokerPrices.mockReset();
   });
   afterEach(() => vi.useRealTimers());
+
+  it("brokerPrices 를 종목별 개별호출이 아닌 1회 일괄호출로 부른다", async () => {
+    backendApi.brokerBalance.mockResolvedValue({ cash: 100, equity: 1_000_000 });
+    backendApi.brokerPositions.mockResolvedValue([
+      { symbol: "005930", quantity: 1, avg_price: 70_000, market_price: 71_000 },
+      { symbol: "000660", quantity: 1, avg_price: 200_000, market_price: 210_000 },
+    ]);
+    backendApi.brokerPrices.mockResolvedValue({
+      quotes: {
+        "005930": { symbol: "005930", price: 72_000, stale: false, as_of_kst: "10:00" },
+        "000660": { symbol: "000660", price: 999_000, stale: false, as_of_kst: "10:00" },
+      },
+    });
+    renderHook(() => usePortfolio());
+    await flush();
+    await vi.advanceTimersByTimeAsync(20_000);   // PRICE_TICK_MS 1회 경과
+    await flush();
+
+    // 예전엔 종목당 1콜(N콜) — 이제 틱당 정확히 1콜(일괄)이어야 한다.
+    expect(backendApi.brokerPrices).toHaveBeenCalledTimes(1);
+    expect(backendApi.brokerPrices).toHaveBeenCalledWith(["000660", "005930"]);
+  });
 
   it("종목 시세가 stale:true 로 오면 이전 가격 유지 + position.stale=true + pricesStale=true", async () => {
     backendApi.brokerBalance.mockResolvedValue({ cash: 100, equity: 1_000_000 });
@@ -103,10 +125,12 @@ describe("usePortfolio ratelimit_fix 권고1 — 시세 폴링 stale/부분실�
     expect(result.current.positions.length).toBe(1);
     expect(result.current.pricesStale).toBe(false);
 
-    backendApi.brokerPrice.mockResolvedValue({
-      symbol: "005930", price: 71_500, stale: true, as_of_kst: "09:27",
+    backendApi.brokerPrices.mockResolvedValue({
+      quotes: {
+        "005930": { symbol: "005930", price: 71_500, stale: true, as_of_kst: "09:27" },
+      },
     });
-    await vi.advanceTimersByTimeAsync(15_000);   // PRICE_TICK_MS 1회 경과
+    await vi.advanceTimersByTimeAsync(20_000);   // PRICE_TICK_MS 1회 경과
     await flush();
 
     expect(result.current.positions[0].cur).toBe(71_500);   // 백엔드가 준 마지막 정상값
@@ -114,7 +138,7 @@ describe("usePortfolio ratelimit_fix 권고1 — 시세 폴링 stale/부분실�
     expect(result.current.pricesStale).toBe(true);
   });
 
-  it("한 종목 조회가 실패(reject)해도 다른 종목 시세는 정상 반영(배치 전체 무효화 금지)", async () => {
+  it("한 종목 조회가 실패(kis_error)해도 다른 종목 시세는 정상 반영(배치 전체 무효화 금지)", async () => {
     backendApi.brokerBalance.mockResolvedValue({ cash: 100, equity: 1_000_000 });
     backendApi.brokerPositions.mockResolvedValue([
       { symbol: "005930", quantity: 1, avg_price: 70_000, market_price: 71_000 },
@@ -124,15 +148,14 @@ describe("usePortfolio ratelimit_fix 권고1 — 시세 폴링 stale/부분실�
     await flush();
     expect(result.current.positions.length).toBe(2);
 
-    backendApi.brokerPrice.mockImplementation(async (symbol) => {
-      if (symbol === "005930") {
-        const err = new Error("Backend API error: 503");
-        err.status = 503;
-        throw err;   // 캐시조차 없는 드문 실패(처음 보는 종목 등)
-      }
-      return { symbol, price: 999_000, stale: false, as_of_kst: "10:00" };
+    backendApi.brokerPrices.mockResolvedValue({
+      quotes: {
+        // 캐시조차 없는 드문 실패(처음 보는 종목 등) — 백엔드가 kis_error 로 표시.
+        "005930": { symbol: "005930", kis_error: true, stale: true },
+        "000660": { symbol: "000660", price: 999_000, stale: false, as_of_kst: "10:00" },
+      },
     });
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(20_000);
     await flush();
 
     const p930 = result.current.positions.find((x) => x.code === "005930");
@@ -140,5 +163,21 @@ describe("usePortfolio ratelimit_fix 권고1 — 시세 폴링 stale/부분실�
     expect(p660.cur).toBe(999_000);     // 005930 실패와 무관하게 정상 반영
     expect(p930.cur).toBe(71_000);      // 실패분은 이전 값 유지(가짜 갱신 없음)
     expect(result.current.equity).toBe(1_000_000); // balance 갱신도 살아있음(allSettled 로 배치 전체가 안 죽음)
+  });
+
+  it("brokerPrices 자체가 reject 돼도 balance 갱신은 살아있다(allSettled)", async () => {
+    backendApi.brokerBalance.mockResolvedValue({ cash: 100, equity: 2_000_000 });
+    backendApi.brokerPositions.mockResolvedValue([
+      { symbol: "005930", quantity: 1, avg_price: 70_000, market_price: 71_000 },
+    ]);
+    const { result } = renderHook(() => usePortfolio());
+    await flush();
+
+    backendApi.brokerPrices.mockRejectedValue(new Error("network error"));
+    await vi.advanceTimersByTimeAsync(20_000);
+    await flush();
+
+    expect(result.current.positions[0].cur).toBe(71_000);  // 갱신 실패 → 이전 값 유지
+    expect(result.current.equity).toBe(2_000_000);          // balance 는 무관하게 정상
   });
 });

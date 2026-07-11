@@ -43,15 +43,10 @@ def _now_hm_kst() -> str:
     return datetime.now(timezone(timedelta(hours=9))).strftime("%H:%M")
 
 
-@router.get("/price/{symbol}")
-async def get_price(symbol: str, broker: BrokerAdapter = Depends(get_broker)):
-    """시세 — 성공 시 stale=false. 레이트리밋/일시 실패 시 마지막 정상값을
-    stale=true + as_of_kst 로 반환(없으면 503). /balance 와 동일 패턴(ratelimit_fix 권고1).
-
-    프런트 대시보드(usePortfolio.js)가 15초마다 보유종목 전부를 Promise.all 로
-    동시 조회하는데, 예외 없이 그대로 두면 레이트리밋 실패가 매 틱 배치 전체
-    재시도를 유발해 봇 자신의 회전 스캔과 경합을 키운다(results/ratelimit_fix/
-    design.md 권고1). 손절/청산 실시간 조회는 이 라우트를 거치지 않으므로 무관.
+async def _fetch_quote_with_fallback(symbol: str, broker: BrokerAdapter) -> dict:
+    """시세 1건 — 성공 시 stale=false. 레이트리밋/일시 실패 시 마지막 정상값을
+    stale=true + as_of_kst 로 반환(없으면 error=true, 호출자가 503/부분실패로 매핑).
+    /price/{symbol}, /prices 가 공유하는 단일 fallback 로직(ratelimit_fix 권고1).
     """
     global _last_good_quotes
     try:
@@ -67,10 +62,42 @@ async def get_price(symbol: str, broker: BrokerAdapter = Depends(get_broker)):
             stale = dict(cached)
             stale["stale"] = True
             return stale  # 옛 정상값(as_of_kst 그대로) — 가짜 값 아님
-        return JSONResponse(
-            status_code=503,
-            content={"detail": "증권사(KIS) 응답이 없어요", "symbol": symbol, "kis_error": True},
-        )
+        return {
+            "detail": "증권사(KIS) 응답이 없어요", "symbol": symbol,
+            "kis_error": True, "stale": True, "error": True,
+        }
+
+
+@router.get("/price/{symbol}")
+async def get_price(symbol: str, broker: BrokerAdapter = Depends(get_broker)):
+    """시세 — 손절/청산 실시간 조회(app.market_data.kis_realtime.fetch_realtime_quote)는
+    이 라우트를 전혀 경유하지 않는다 — 프런트 대시보드 표시 전용."""
+    out = await _fetch_quote_with_fallback(symbol, broker)
+    if out.pop("error", False):
+        return JSONResponse(status_code=503, content=out)
+    return out
+
+
+@router.get("/prices")
+async def get_prices(symbols: str, broker: BrokerAdapter = Depends(get_broker)):
+    """다종목 일괄 시세 — ratelimit_fix v2 1단계: 프런트가 보유종목마다 개별
+    호출하던 N개 요청을 1개로 묶는다(results/ratelimit_fix/design_v2.md).
+
+    KIS quote API(inquire-price)는 종목당 1콜만 지원 — 이 엔드포인트는 프런트↔
+    백엔드 왕복을 N+1콜→1콜로 줄이는 게 핵심이지, 백엔드→KIS 호출 수 자체를
+    줄이지는 않는다(다만 KisBrokerAdapter의 quote 캐시를 그대로 통과하므로 이미
+    봇 스캔이 최근 조회한 종목은 캐시 히트로 실제 KIS 재호출이 없다). **순차**
+    조회 — 동시발사(gather)하면 리미터 앞에 N개가 한꺼번에 다시 몰려 이번 개선의
+    핵심(프런트가 한 번에 N개를 동시요청하던 문제)이 백엔드 안에서 재발한다.
+    손절/청산 실시간 조회(fetch_realtime_quote)는 이 라우트와 무관 — 별도 경로.
+    """
+    codes = [s.strip() for s in symbols.split(",") if s.strip()]
+    quotes: dict[str, dict] = {}
+    for sym in codes:
+        out = await _fetch_quote_with_fallback(sym, broker)
+        out.pop("error", None)
+        quotes[sym] = out
+    return {"quotes": quotes}
 
 
 @router.get("/balance")

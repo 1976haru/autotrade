@@ -83,26 +83,23 @@ export function usePortfolio() {
     if (!codesKey) return;
     const codes = codesKey.split(",");
     const t = setInterval(async () => {
-      // ratelimit_fix 권고1: 종목 하나가 (한 번도 캐시된 적 없어) 진짜 503 을
-      // 내더라도 Promise.allSettled 라 나머지 종목 가격은 정상 반영된다 —
-      // 예전 Promise.all 은 한 종목만 실패해도 배치 전체(잔고 포함)를 버리고
-      // 다음 15초 틱에 *전부* 재조회해 레이트리밋 아래서 재시도 폭풍을 키웠다.
-      // 대부분의 실패는 이제 백엔드가 200 + stale:true 로 흡수하므로 여기
-      // catch 에 걸리는 경우 자체가 크게 줄어든다(신규 종목의 첫 조회 등 드문 예외만).
-      const [balRes, ...quoteResults] = await Promise.allSettled([
+      // ratelimit_fix v2(2026-07-11): 종목마다 개별 brokerPrice 호출(N콜)을
+      // brokerPrices 일괄 호출(1콜)로 교체 — 프론트가 15초(→20초)마다 보유종목
+      // 전부를 동시발사하던 게 KIS 레이트리밋 예산의 최대 병목이었다
+      // (results/ratelimit_fix/design_v2.md). balance 는 여전히 독립 처리
+      // (Promise.allSettled) — 한쪽이 죽어도 다른 쪽은 정상 표시.
+      const [balRes, pricesRes] = await Promise.allSettled([
         backendApi.brokerBalance(),
-        ...codes.map((c) => backendApi.brokerPrice(c)),
+        backendApi.brokerPrices(codes),
       ]);
       const bal = balRes.status === "fulfilled" ? balRes.value : null;
       if (bal && typeof bal.cash === "number") setCash(bal.cash);
       if (bal && typeof bal.equity === "number") setEquity(bal.equity);
-      const quotes = quoteResults
-        .filter((r) => r.status === "fulfilled")
-        .map((r) => r.value);
+      const quotes = pricesRes.status === "fulfilled" ? (pricesRes.value?.quotes ?? {}) : {};
       setPositions((prev) =>
         prev.map((p) => {
-          const q = quotes.find((x) => x.symbol === p.code);
-          if (!q) return p;   // 이 틱에 조회 실패 + 캐시도 없음 — 이전 값 유지(가짜 갱신 금지)
+          const q = quotes[p.code];
+          if (!q || q.kis_error) return p;   // 이 틱에 조회 실패 + 캐시도 없음 — 이전 값 유지(가짜 갱신 금지)
           return { ...p, cur: q.price, stale: !!q.stale };
         })
       );

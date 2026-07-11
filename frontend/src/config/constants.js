@@ -49,9 +49,13 @@ export const CLAUDE_MAX_TOK = 1000;
  *  시세(brokerPrice)를 PRICE_TICK_MS 마다 한꺼번에(Promise.all) 호출하는데,
  *  보유 5종 이상이면 2초당 5+콜로 KIS 초당 한도(2 req/s)를 넘겨 EGW00201
  *  ("초당 거래건수 초과") 를 유발하고 브라우저가 느려졌다. 자동매매 루프 자체도
- *  KIS 시세를 스캔하므로 프론트 폴링은 보수적이어야 한다. 대시보드 시세는 15초
- *  주기로 충분(백엔드 quote 캐시 TTL 과도 정합). */
-export const PRICE_TICK_MS  = 15000;
+ *  KIS 시세를 스캔하므로 프론트 폴링은 보수적이어야 한다.
+ *  2026-07-11(ratelimit_fix v2): 15000ms → 20000ms. 15초 폴링 < 20초 quote
+ *  캐시 TTL이라 대부분의 재조회가 캐시가 아직 유효한 시점에 또 시도하는
+ *  낭비였다 — 폴링 주기를 캐시 TTL 이상으로 올려 정합(results/ratelimit_fix/
+ *  design_v2.md). 동시에 usePortfolio 가 보유종목별 개별 brokerPrice 호출을
+ *  brokerPrices(일괄) 1콜로 교체 — N+1콜/tick → 2콜/tick(balance+prices). */
+export const PRICE_TICK_MS  = 20000;
 
 /** 테마 브리핑(전일 미국 테마 ETF 등락) 재조회 주기 (ms). 하루 1회만 값이
  *  바뀌는 데이터라 PRICE_TICK_MS급 폴링은 과함 — 30분이면 미국장 마감(~06:00

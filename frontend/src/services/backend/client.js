@@ -526,6 +526,9 @@ export const backendApi = {
       body: JSON.stringify({ enabled, ...(note ? { note } : {}) }),
     }),
   brokerPrice:     (symbol) => backendFetch(`/api/broker/price/${symbol}`),
+  brokerPrices:    (symbols) => backendFetch(
+    `/api/broker/prices?symbols=${encodeURIComponent(symbols.join(","))}`,
+  ),
   brokerBalance:   () => backendFetch("/api/broker/balance"),
   brokerPositions: () => backendFetch("/api/broker/positions"),
   brokerOrder:     (order) => backendFetch("/api/broker/orders", {
