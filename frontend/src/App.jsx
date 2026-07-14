@@ -31,6 +31,7 @@ import { useSettings }   from "./store/useSettings";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { BackendOfflineBanner } from "./components/BackendOfflineBanner";
 import { OfflineBanner }    from "./components/common/OfflineBanner";
+import { KillSwitchBanner } from "./components/common/KillSwitchBanner";
 import { PwaInstallHint }   from "./components/common/PwaInstallHint";
 import { FEATURES } from "./config/features";
 import {
@@ -123,6 +124,7 @@ function AppShell() {
 
   return (
     <div className="app-shell" style={{ minHeight:"100vh", background:"var(--c-bg)", color:"var(--c-text)", fontFamily:"'Inter', system-ui, -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif", display:"flex", flexDirection:"column" }}>
+      <KillSwitchBanner operatorName={settings.operatorName} />
       <TopBar brokerId={settings.brokerId} tradeMode={settings.tradeMode} connected={settings.connected} />
       <TopNav active={tab} onChange={setTab} badges={{ approve: approvals.pending.length }} />
       {/* #63: 네트워크 단절 알림 — BackendOfflineBanner(backend off)와 의미가
