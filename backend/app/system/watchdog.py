@@ -14,6 +14,7 @@ from enum import Enum
 class WatchdogAction(str, Enum):
     OK = "OK"
     WARN_TICK_SLOW = "WARN_TICK_SLOW"
+    WARN_BACKEND_DOWN = "WARN_BACKEND_DOWN"
     RESTART_ENGINE = "RESTART_ENGINE"
     RESTART_BACKEND = "RESTART_BACKEND"
 
@@ -22,6 +23,10 @@ class WatchdogAction(str, Enum):
 DEFAULT_STUCK_THRESHOLD_SECONDS: float = 300.0
 # tick 간격이 설정값의 이 배수 초과면 WARN.
 DEFAULT_TICK_SLOW_FACTOR: float = 3.0
+# health check 가 이 횟수 이상 *연속* 실패해야 재시작(hysteresis) — 미만은
+# WARN_BACKEND_DOWN 만(재시작 아님). 단발성 응답 실패(GC pause, 순간 blip)로
+# 즉시 재시작되던 오판(08-10 사고, results/watchdog_fix/design.md) 방지.
+DEFAULT_HEALTH_FAIL_THRESHOLD: int = 3
 
 
 def _aware(ts: datetime | None) -> datetime | None:
@@ -54,12 +59,24 @@ def decide_action(
     now: datetime | None = None,
     stuck_threshold_seconds: float = DEFAULT_STUCK_THRESHOLD_SECONDS,
     tick_slow_factor: float = DEFAULT_TICK_SLOW_FACTOR,
+    consecutive_health_fail_count: int = 1,
+    health_fail_threshold: int = DEFAULT_HEALTH_FAIL_THRESHOLD,
 ) -> tuple[WatchdogAction, str]:
-    """(action, reason) 결정. 우선순위: backend down > engine stuck > tick slow > OK."""
+    """(action, reason) 결정. 우선순위: backend down(hysteresis) > engine stuck > tick slow > OK.
+
+    health_ok=False 는 *단독으로는* 재시작을 일으키지 않는다 — 연속
+    `health_fail_threshold` 회 이상 실패해야 RESTART_BACKEND, 미만이면
+    WARN_BACKEND_DOWN(경고만, 재시작 아님). `consecutive_health_fail_count`
+    는 *이번 호출을 포함한* 연속 실패 횟수로, caller(scripts/watchdog.py)가
+    상태로 유지해 넘긴다 — health_ok=True 가 한 번이라도 뜨면 caller 가 즉시
+    0으로 리셋 후 호출해야 한다(진짜 정상화는 지연 없이 인정).
+    """
     now = now or datetime.now(timezone.utc)
 
     if not health_ok:
-        return WatchdogAction.RESTART_BACKEND, "BACKEND_DOWN"
+        if int(consecutive_health_fail_count) >= int(health_fail_threshold):
+            return WatchdogAction.RESTART_BACKEND, "BACKEND_DOWN"
+        return WatchdogAction.WARN_BACKEND_DOWN, "BACKEND_DOWN"
 
     stuck = _aware(stuck_since)
     if str(engine_state).upper() == "STUCK" and stuck is not None:

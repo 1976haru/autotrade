@@ -63,6 +63,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--check-interval", type=float, default=15.0)
     p.add_argument("--stuck-threshold", type=float, default=300.0)
     p.add_argument("--tick-interval", type=float, default=30.0)
+    p.add_argument("--health-fail-threshold", type=int, default=3,
+                   help="health check 연속 실패 임계치 — 이 횟수 이상 "
+                        "*연속* 실패해야 backend 재시작(hysteresis). 단발성 "
+                        "응답 실패로 즉시 재시작되는 오판을 방지(08-10 사고).")
     p.add_argument("--max-restarts", type=int, default=10)
     p.add_argument("--restart-grace", type=float, default=150.0,
                    help="재시작 후 이 초 동안은 추가 재시작 안 함(기동 중 backend 를 "
@@ -80,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     restart_count = 0
     iterations = 0
     last_restart_ts: float | None = None   # storm 방지 — 마지막 재시작 monotonic 시각.
+    health_fail_streak = 0   # hysteresis — health check *연속* 실패 횟수(이번 포함).
 
     while True:
         iterations += 1
@@ -93,6 +98,10 @@ def main(argv: list[str] | None = None) -> int:
             except Exception:  # noqa: BLE001
                 last_tick_dt = None
 
+        # hysteresis 카운터 — 1회라도 성공하면 즉시 리셋(정상화는 지연 없이 인정),
+        # 실패면 연속 카운트 증가 후 decide_action 에 전달.
+        health_fail_streak = 0 if ok else (health_fail_streak + 1)
+
         action, reason = decide_action(
             health_ok=ok,
             engine_state=stab.get("engine_state"),
@@ -100,12 +109,19 @@ def main(argv: list[str] | None = None) -> int:
             interval_seconds=args.tick_interval,
             stuck_threshold_seconds=args.stuck_threshold,
             now=datetime.now(timezone.utc),
+            consecutive_health_fail_count=health_fail_streak,
+            health_fail_threshold=args.health_fail_threshold,
         )
 
         if action == WatchdogAction.OK:
             log.info("WATCHDOG_CHECK", action=action.value, reason=reason, health_ok=ok)
         elif action == WatchdogAction.WARN_TICK_SLOW:
             log.warn("WATCHDOG_CHECK", action=action.value, reason=reason)
+        elif action == WatchdogAction.WARN_BACKEND_DOWN:
+            # ★hysteresis — 아직 임계 미만. 재시작하지 않고 경고만(다음 폴링에서 재확인).
+            log.warn("WATCHDOG_CHECK", action=action.value, reason=reason,
+                     health_fail_streak=health_fail_streak,
+                     health_fail_threshold=args.health_fail_threshold)
         elif action == WatchdogAction.RESTART_BACKEND:
             _restart_target = args.backend_script or args.backend_cmd
             _in_grace = (last_restart_ts is not None
@@ -124,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 restart_count += 1
                 log.error("BACKEND_RESTART", reason=reason, restart_count=restart_count,
+                          health_fail_streak=health_fail_streak,
                           last_restart_at=datetime.now(timezone.utc).isoformat())
                 try:
                     if proc is not None:
