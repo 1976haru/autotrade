@@ -72,9 +72,15 @@ export function useAutoPaperLoop({
           capitalSettings || loadPaperCapitalSettings(),
         ),
       };
-      await api.autoPaperStart(body);
+      const snap = await api.autoPaperStart(body);
       await refresh();
-      const res = { ok: true, reasons: [] };
+      // INTRADAY-FLAT-BY-CLOSE-V1: 서버 시계 기준 신규매수 가능 여부 carry (14:30 이후 Start).
+      const res = {
+        ok: true, reasons: [],
+        buyAllowed: snap?.intraday_buy_allowed !== false,
+        buyReasonCode: snap?.intraday_buy_reason_code || null,
+        buyReasonMessage: snap?.intraday_buy_reason_message || null,
+      };
       setStartResult(res);
       return res;
     } catch (err) {

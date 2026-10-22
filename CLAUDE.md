@@ -43,6 +43,8 @@
 
 새 주문 경로를 추가할 때는 반드시 `route_order`를 통과하도록 한다.
 
+**INTRADAY-FLAT-BY-CLOSE-V1 (2026-10-23)** — `route_order`는 idempotency 직후, OrderGuard 전에 *프로그램*(`trade_reason="kis_paper_auto"`) 신규 BUY를 `intraday_buy_gate.program_buy_block_reason`으로 재검증한다(14:30 컷오프·휴장일·달력 미등록·직전일 EOD 미완료 → broker 호출 없이 REJECTED audit). `route_order`에 keyword-only `now`(기본 wall clock)가 추가됐다. `PermissionGate.approve`도 같은 helper로 재검증한다. 15:15 장마감 청산은 `app/kis_paper/eod_liquidation.py` coordinator가 같은 sanctioned 경로로만 수행한다. RiskManager의 보유수량 이내 reduce-only SELL은 진입 notional·일일손실 한도에서 면제된다(긴급정지는 유지). 상세: [`docs/kis_paper_intraday_flat_by_close.md`](docs/kis_paper_intraday_flat_by_close.md)
+
 ### 핵심 아키텍처 불변식 (#34~#43)
 
 주문경로를 코드 단에서 고정하는 불변식. 전체 원문·테스트 가드는 [archive](docs/claude_md_changelog_archive.md) 블록1 참조.
@@ -109,6 +111,9 @@ env 변수로 모든 위험 동작을 차단한다. 자세한 매트릭스는 [`
 | `MARKET_DATA_PROVIDER` | `mock` | 시장 데이터 소스 (`mock`/`yfinance`/`kis`). **`kis` 일 때만** KIS 실시간 시세로 Paper Auto 가 KIS 모의주문 전송 가능; `mock`/`yfinance` 는 전송 차단 |
 | `ENABLE_FILL_POLLING` | `false` | 백그라운드 체결 갱신 |
 | `STALE_PRICE_MAX_AGE_SECONDS` | `60` | RiskManager step 1.5 — 시세 timestamp가 N초 초과 oldness이면 hard-reject (143) |
+| `KIS_PAPER_AUTO_ORDER_WINDOW_END` | `14:30` | 프로그램 신규 BUY 마감 (실효 = min(값, 정규장 마감−60분)). SELL 청산과 분리 |
+| `KIS_PAPER_EOD_FLATTEN_ENABLED` | `true` | 15:15 프로그램 보유 당일 청산 (실주문은 기존 KIS paper opt-in 전부 충족 시만) |
+| `KIS_PAPER_EOD_CLOSING_AUCTION_ORDERS_ENABLED` | `false` | 15:20~15:30 단일가 신규 청산 주문 (모의 접수 미확인 → 기본 OFF) |
 
 ## 다층 안전 가드
 
@@ -181,6 +186,7 @@ docs/
 - **성과/설명 대시보드 (advisory, read-only)** — #49~#52/6-0x 성과·AI판단 설명·복기 피드백·판단품질 게이트. [`docs/agent_performance_explainability_dashboard.md`](docs/agent_performance_explainability_dashboard.md), [`docs/post_trade_feedback_quality_score.md`](docs/post_trade_feedback_quality_score.md)
 - **백테스트·전략검증 연구기록 (read-only, 실측 기록 — archive 참조)** — #46~#48/6-0x(Council 백테스트·Walk-forward·스트레스), BUILD-01/02A/02B, STRATEGY-VALIDATION-01, REAL-DATA-*, INTRADAY-DATA-01/02, REAL-INTRADAY-TEST-01, KIS-INTRADAY-100/1Y/ROBUST/60D/FORWARD/DECOMPOSITION, WF-6M-50SYMBOLS·ROOT-CAUSE. **연구/백테스트 결과이며 실전매매 권고가 아님.** 상세: [archive](docs/claude_md_changelog_archive.md), [`docs/strategy_potential_validation.md`](docs/strategy_potential_validation.md) 등
 - **EXE/Desktop/Installer** — #53/7-01 sidecar 상태, #54/7-02 Universe 표시, #55/7-03 portfolio 소스, #56/7-04 로그 뷰어, #57/7-05 버전 표시, #63/8-01 preflight, #68/8-06 운영자 매뉴얼, #69/8-07 runbook, #86~#89 Tauri 패키징·KIS Paper one-click, INSTALL-UX-FIX-01, Desktop Release Workflow(수동 trigger·Windows only·LIVE flag true 0건). [`docs/desktop_packaging.md`](docs/desktop_packaging.md), [`docs/user_manual.md`](docs/user_manual.md), [`docs/runbook.md`](docs/runbook.md)
+- **KIS Paper 당일 청산형 단타 (INTRADAY-FLAT-BY-CLOSE-V1)** — 14:30 신규 BUY 마감(모든 진입점 서버 시계 재검증), BUY/NORMAL_EXIT/EOD_FORCED_EXIT 목적별 게이트, 15:15 EOD coordinator(DB lease·결정적 client_order_id·KIS 잔고/일별체결 대조, FLAT_CONFIRMED/FLATTEN_INCOMPLETE), KRX 휴장일 달력. 취소 주문 미구현(BLOCKER). [`docs/kis_paper_intraday_flat_by_close.md`](docs/kis_paper_intraday_flat_by_close.md)
 - **KIS 실시간 시세 ↔ Paper Auto Loop** — CONNECT-KIS-REALTIME-PRICE-TO-PAPER-AUTO-LOOP-V2: 4모드(VIRTUAL_ONLY/KIS_REALTIME_DRYRUN/KIS_REALTIME_PAPER_AUTO/SMOKE_TEST). `price_source="kis"`일 때만 KIS 모의주문 전송, mock 시세 전송 차단. `KIS_IS_PAPER=true`·`broker_order_type=KIS_PAPER` 유지. archive 블록1 참조
 
 ## 변경 시 동기화

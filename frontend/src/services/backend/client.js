@@ -1038,6 +1038,14 @@ export const backendApi = {
   kisPaperReport: () => backendFetch("/api/kis-paper/report"),
   // 0-04: KIS 모의 자동매매 env/설정 상태 (read-only). secret 값 0건.
   kisPaperAutoStatus: () => backendFetch("/api/kis-paper/auto/status"),
+  // INTRADAY-FLAT-BY-CLOSE-V1: 14:30 매수마감·15:15 강제청산·EOD 상태 (read-only, 서버 시계).
+  kisPaperEodStatus: () => backendFetch("/api/kis-paper/eod/status"),
+  // FLATTEN_INCOMPLETE 운영자 확인 — 다음 거래일 신규 매수 차단 해제. 주문 0건.
+  kisPaperEodAcknowledge: ({ tradingDate, decidedBy, note } = {}) =>
+    backendFetch("/api/kis-paper/eod/acknowledge", {
+      method: "POST",
+      body: JSON.stringify({ trading_date: tradingDate, decided_by: decidedBy, note: note || null }),
+    }),
   // #53 / 7-01: EXE 운영 상태 표준 enum (read-only). secret 값 0건.
   exeStatus: () => backendFetch("/api/system/exe-status"),
   // #57 / 7-05: backend sidecar build metadata (read-only). secret 값 0건.

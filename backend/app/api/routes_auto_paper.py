@@ -231,7 +231,22 @@ def post_start(body: _StartBody | None = None) -> dict:
         # EMERGENCY_STOP 상태에서 start() 차단 — 운영자가 reset() 호출 후
         # 재시도해야 함. 409 Conflict 로 표현 (이미 다른 상태에 잠겨 있음).
         raise HTTPException(status_code=409, detail=str(e))
-    return snap.to_dict()
+    out = snap.to_dict()
+    # INTRADAY-FLAT-BY-CLOSE-V1: 14:30 이후 Start — 루프는 시작(보유 청산 관리 계속)
+    #   하되 신규 BUY 는 불가임을 서버 시계 기준으로 함께 알린다 (시간/달력 판단 —
+    #   직전일 EOD 사고 차단 포함 상세는 GET /api/kis-paper/eod/status).
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        from app.core.config import get_settings
+        from app.scheduler.intraday_session import IntradayPolicy, buy_reason_message_ko
+        _ok, _code = IntradayPolicy.from_settings(get_settings()).buy_entry_decision(
+            _dt.now(_tz.utc))
+        out["intraday_buy_allowed"] = bool(_ok)
+        out["intraday_buy_reason_code"] = _code
+        out["intraday_buy_reason_message"] = buy_reason_message_ko(_code)
+    except Exception:  # noqa: BLE001 — 표시용, 시작 자체엔 영향 없음.
+        pass
+    return out
 
 
 @_AP.post("/stop")

@@ -455,3 +455,56 @@ async def post_kis_paper_auto_run_once(
             "is_live_authorization": False,
         }
     return result.to_dict()
+
+
+# ── KIS-PAPER-INTRADAY-FLAT-BY-CLOSE-V1: 장마감 당일 청산 상태 / 운영자 확인 ──────
+
+
+@router.get("/eod/status")
+def get_kis_paper_eod_status(db: Session = Depends(get_db)) -> dict:
+    """장중 단타 세션(14:30 매수마감·15:15 강제청산·15:30 마감) + EOD 청산 상태.
+
+    read-only — broker 호출 0건 (driver 의 마지막 대조 결과만). 서버 시계 기준
+    판단이므로 프론트 시각과 무관하다. 실거래 권한 아님.
+    """
+    from app.auto_paper.background_driver import get_background_tick_driver
+    from app.kis_paper.eod_liquidation import eod_status
+    out = eod_status(db)
+    drv = get_background_tick_driver()
+    out["background_driver_running"] = bool(drv.is_running)
+    out["background_driver_enabled"] = bool(drv.status().get("enabled"))
+    out["service_kind"] = "CONTINUOUS_BACKGROUND_DRIVER"
+    out["notice"] = (
+        "정상 종일 운용은 백엔드 상시 서비스(background driver)가 수행합니다. "
+        "설정 화면의 quick(3틱)/slow(20틱) 시험은 단발 점검이며 종일 운용이 아닙니다. "
+        "PC 절전·앱 종료·네트워크 단절 시 15:15 청산이 실행되지 않을 수 있습니다."
+    )
+    return out
+
+
+class _EodAckBody(BaseModel):
+    trading_date: str
+    decided_by:   str
+    note:         Optional[str] = None
+
+
+@router.post("/eod/acknowledge")
+def post_kis_paper_eod_acknowledge(body: _EodAckBody, db: Session = Depends(get_db)) -> dict:
+    """FLATTEN_INCOMPLETE(또는 미판정) 운영자 확인 — 다음 거래일 신규 BUY 차단 해제.
+
+    사고 기록(state)은 그대로 보존. 주문 0건. 운영자는 KIS 모의계좌에서 잔여 보유를
+    직접 확인/정리한 뒤 호출해야 한다.
+    """
+    from app.kis_paper.eod_liquidation import acknowledge_incident
+    if not (body.decided_by or "").strip():
+        raise HTTPException(status_code=400, detail="decided_by is required")
+    try:
+        row = acknowledge_incident(db, trading_date=body.trading_date,
+                                   decided_by=body.decided_by.strip(), note=body.note)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "trading_date": row.trading_date, "state": row.state,
+        "incident_acknowledged": True, "acknowledged_by": row.acknowledged_by,
+        "is_live_authorization": False, "broker_order_sent": False,
+    }

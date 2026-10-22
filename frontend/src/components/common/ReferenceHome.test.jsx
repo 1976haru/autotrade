@@ -33,6 +33,13 @@ vi.mock("../../services/backend/client", () => ({
     agentCalibration: vi.fn(async () => ({ no_data: true, buckets: [] })),
     agentShadow: vi.fn(async () => ({ no_data: true, tracking_count: 0, track_days: 5 })),
     agentLearning: vi.fn(async () => ({ observations: [{ code: "INSUFFICIENT_SAMPLE", text: "아직 표본이 부족해요 — 판단 보류", evidence: {} }], footer: "이 관찰을 바탕으로 한 설정 변경은 운영자 승인으로 진행돼요." })),
+    kisPaperEodStatus: vi.fn(async () => ({
+      phase: "ENTRY_OPEN", trading_date: "2026-10-22", buy_allowed: true,
+      schedule: { calendar: "TRADING_DAY", buy_cutoff: "14:30", flatten_start: "15:15", session_close: "15:30" },
+      eod_state: "IDLE", summary: {}, paper_auto_mode: { mode: "VIRTUAL_ONLY" },
+      broker_label: "VIRTUAL/MOCK", kis_is_paper: true, enable_live_trading: false,
+      background_driver_running: true,
+    })),
     preflightStatus: vi.fn(async () => ({ all_ok: true, summary: "출발 준비 완료", items: [
       { key: "kis", label: "증권사(KIS) 연결", status: "ok", detail: "예수금 100,000,000원" },
     ] })),

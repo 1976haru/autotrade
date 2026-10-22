@@ -404,6 +404,67 @@ class KisClient:
             raise KisApiError(f"KIS daily-ccld endpoint returned {r.status_code}: {r.text[:200]}")
         return r.json()
 
+    async def inquire_daily_ccld_all(
+        self,
+        cano:     str,
+        prdt_cd:  str,
+        *,
+        kst_date: str,
+        max_pages: int = 20,
+    ) -> list[dict]:
+        """오늘(KST) 주문/체결 *전 페이지* — read-only (EOD 청산 대조용).
+
+        `inquire_daily_ccld` 는 1페이지(모의 소량)만 읽어 주문이 많은 날 뒤쪽 주문을
+        놓친다. KIS 연속조회 규약(응답 header tr_cont ∈ {F, M} → 다음 요청 header
+        tr_cont=N + body ctx_area_fk100/nk100)을 따라 전부 읽는다. 같은 TR id
+        (VTTC0081R 모의 / TTTC0081R 실전) · 같은 endpoint — 신규 TR 없음.
+        잔량/미체결 판단용 행만 반환하며 주문 write 0건.
+        """
+        rows: list[dict] = []
+        fk, nk, tr_cont = "", "", ""
+        for _ in range(max(1, int(max_pages))):
+            token = await self._ensure_token()
+            await self._throttle()
+            headers = {
+                "authorization": f"Bearer {token}",
+                "appkey":        self.app_key,
+                "appsecret":     self.app_secret,
+                "tr_id":         self._daily_ccld_tr_id(),
+                "custtype":      "P",
+            }
+            if tr_cont:
+                headers["tr_cont"] = "N"
+            async with self._client() as client:
+                r = await client.get(
+                    "/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+                    params={
+                        "CANO": cano, "ACNT_PRDT_CD": prdt_cd,
+                        "INQR_STRT_DT": kst_date, "INQR_END_DT": kst_date,
+                        "SLL_BUY_DVSN_CD": "00", "INQR_DVSN": "00", "PDNO": "",
+                        "CCLD_DVSN": "00", "ORD_GNO_BRNO": "", "ODNO": "",
+                        "INQR_DVSN_3": "00", "INQR_DVSN_1": "",
+                        "CTX_AREA_FK100": fk, "CTX_AREA_NK100": nk,
+                    },
+                    headers=headers,
+                )
+            if r.status_code != 200:
+                raise KisApiError(
+                    f"KIS daily-ccld endpoint returned {r.status_code}: {r.text[:200]}")
+            body = r.json()
+            if str(body.get("rt_cd", "0")) != "0":
+                raise KisApiError(
+                    f"KIS daily-ccld rt_cd={body.get('rt_cd')} msg={body.get('msg1', '')}")
+            rows.extend(body.get("output1") or [])
+            tr_cont = str(r.headers.get("tr_cont", "") or "").strip().upper()
+            fk = str(body.get("ctx_area_fk100", "") or "").strip()
+            nk = str(body.get("ctx_area_nk100", "") or "").strip()
+            if tr_cont not in ("F", "M"):
+                break
+        else:
+            # max_pages 소진 — 불완전한 목록으로 "미체결 없음" 판단을 내리지 않게 실패 처리.
+            raise KisApiError("KIS daily-ccld pagination exceeded max_pages")
+        return rows
+
     async def place_order(
         self,
         cano:       str,

@@ -72,6 +72,7 @@ async def route_order(
     broker:          BrokerAdapter,
     risk:            RiskManager,
     db:              Session,
+    now:             datetime | None = None,
 ) -> OrderRoutingResult:
     """Run an order through the full guardrail chain.
 
@@ -104,6 +105,47 @@ async def route_order(
     # pending. 모든 cooldown / window가 0(default)이면 본 가드는 사실상 no-op
     # (기존 호환). 하나라도 활성이면 RiskManager 평가 *전*에 차단해 broker
     # 호출 비용을 들이지 않는다.
+    # INTRADAY-FLAT-BY-CLOSE-V1: 프로그램(kis_paper_auto) 신규 BUY 서버측 재검증.
+    #   14:30 컷오프 / 휴장일 / 달력 미등록 / 직전일 EOD 미완료 → broker 호출 없이
+    #   REJECTED audit. 스캔·run-once·재시작·지연 호출 *모든* 경로가 여기서 막힌다.
+    #   SELL(청산)·수동 주문은 대상 아님.
+    if order.side == OrderSide.BUY:
+        from app.kis_paper.intraday_buy_gate import (
+            is_program_order,
+            program_buy_block_reason,
+        )
+        if is_program_order(order.trade_reason):
+            # now: 호출자(driver/executor)의 서버 시계 — 미지정이면 wall clock.
+            block_code, block_msg = program_buy_block_reason(db, now=now)
+            if block_code is not None:
+                cutoff_reasons = [f"{block_code}: {block_msg}"]
+                cutoff_audit = OrderAuditLog(
+                    mode=mode.value,
+                    requested_by_ai=requested_by_ai,
+                    symbol=order.symbol,
+                    side=order.side.value,
+                    quantity=order.quantity,
+                    order_type=order.order_type.value,
+                    limit_price=order.limit_price,
+                    latest_price=0,                # broker quote 호출 회피
+                    decision=RiskDecision.REJECTED.value,
+                    reasons=cutoff_reasons,
+                    trade_reason=order.trade_reason,
+                    strategy=order.strategy,
+                    signal_strength=order.signal_strength,
+                    signal_confidence=order.signal_confidence,
+                    client_order_id=order.client_order_id,
+                    ai_decision_meta=order.ai_decision_meta,
+                    source=derive_order_source(order, requested_by_ai=requested_by_ai).value,
+                )
+                db.add(cutoff_audit)
+                db.commit()
+                return OrderRoutingResult(
+                    decision=RiskDecision.REJECTED,
+                    reasons=cutoff_reasons,
+                    audit=cutoff_audit,
+                )
+
     guard_cfg = OrderGuardConfig(
         duplicate_window_seconds=risk.policy.order_guard_duplicate_window_seconds,
         symbol_cooldown_seconds=risk.policy.order_guard_symbol_cooldown_seconds,

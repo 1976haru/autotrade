@@ -247,6 +247,10 @@ class BackgroundTickDriver:
         # 개장 전(PRE_OPEN) 1회 universe 캐시 warmup 콜러블 — 미주입 시
         # driver_bridge.premarket_warmup_tick lazy import(broker import 회피).
         premarket_warmup_fn: Optional[Callable[..., Any]] = None,
+        # INTRADAY-FLAT-BY-CLOSE-V1: 장마감 청산 coordinator 1 단계 콜러블 — 미주입 시
+        # eod_liquidation.run_eod_step lazy import. 루프 RUNNING 여부와 *무관* 하게
+        # wall-clock 으로 매 interval 호출 (프론트 polling 의존 0).
+        eod_step_fn: Optional[Callable[..., Any]] = None,
     ):
         self._settings_provider = settings_provider
         self._loop_provider = loop_provider
@@ -259,6 +263,8 @@ class BackgroundTickDriver:
         self._risk_manager_provider = risk_manager_provider
         self._kis_auto_tick_fn = kis_auto_tick_fn
         self._premarket_warmup_fn = premarket_warmup_fn
+        self._eod_step_fn = eod_step_fn
+        self._last_eod: dict[str, Any] | None = None
         self._warmup_date: str | None = None    # 당일 1회 warmup 가드 (KST date)
         # 상태.
         self._task: asyncio.Task | None = None
@@ -383,6 +389,13 @@ class BackgroundTickDriver:
         phase = current_market_phase(now)
         if phase != MarketPhase.OPEN:
             return self._gate(False, BackgroundTickReason.MARKET_CLOSED)
+        # INTRADAY-FLAT-BY-CLOSE-V1: KRX 휴장일(평일 공휴일)도 장 종료로 취급.
+        try:
+            from app.scheduler.intraday_session import IntradayPhase, IntradayPolicy
+            if IntradayPolicy.from_settings(s).phase(now) == IntradayPhase.NON_TRADING_DAY:
+                return self._gate(False, BackgroundTickReason.MARKET_CLOSED)
+        except Exception:  # noqa: BLE001 — 달력 판단 실패는 기존 동작 유지.
+            pass
 
         if state != "RUNNING":
             return self._gate(False, BackgroundTickReason.AUTO_LOOP_NOT_RUNNING)
@@ -630,6 +643,39 @@ class BackgroundTickDriver:
             _log.warning("[bg-tick] premarket warmup 실패(무시): %s: %s",
                          type(exc).__name__, exc)
 
+    async def maybe_eod_step(self, now: datetime | None = None) -> dict[str, Any] | None:
+        """장마감 청산 coordinator 1 단계 — KIS Paper Auto 활성 시에만.
+
+        루프 상태(RUNNING/STOPPED/PAUSED)와 무관하게 호출 — 운영자가 STOP 해도
+        보유 청산 필요 여부는 계속 관리된다(EMERGENCY_STOP 은 coordinator 가 차단).
+        실패해도 driver 를 죽이지 않는다."""
+        if now is None:
+            now = self._now_provider()
+        s = self._settings()
+        if not bool(getattr(s, "enable_kis_paper_auto_trading", False)):
+            return None
+        if bool(getattr(s, "enable_live_trading", False)):
+            return None
+        try:
+            state = str(self._loop().status(now=now).state)
+        except Exception:  # noqa: BLE001
+            state = None
+        try:
+            fn = self._eod_step_fn
+            if fn is None:
+                from app.kis_paper.eod_liquidation import run_eod_step
+                fn = run_eod_step
+            ret = fn(now=now, loop_state=state)
+            res = (await ret) if asyncio.iscoroutine(ret) else ret
+            self._last_eod = dict(res or {})
+            return self._last_eod
+        except Exception as exc:  # noqa: BLE001 — EOD 실패가 tick loop 를 죽이지 않음.
+            safe = _redact_secret(f"{type(exc).__name__}: {exc}")
+            _log.warning("[bg-tick] EOD step 실패: %s", safe)
+            self._emit(level="ERROR", code="KIS_PAPER_EOD_STEP_ERROR", message=safe,
+                       details={"is_live_authorization": False})
+            return None
+
     async def kis_paper_tick(self, now: datetime | None = None) -> DriverTickResult:
         """KIS_PAPER_AUTO 1 tick — 게이트 통과 시 주입 콜러블로 KIS 주문 흐름 위임.
 
@@ -729,6 +775,9 @@ class BackgroundTickDriver:
                 # 개장 전(PRE_OPEN) 당일 1회 universe 캐시 warmup — 콜드 스파이크 평탄화.
                 #   게이트와 무관(주문 0). 실패해도 loop 무영향.
                 await self._maybe_premarket_warmup(self._now_provider())
+                # 장마감 청산 coordinator — 스캔 tick *전* 에 순차 실행(같은 task →
+                #   스캔과 동시 매도 0). 루프 상태 무관, wall-clock 트리거.
+                await self.maybe_eod_step(self._now_provider())
                 try:
                     if bool(getattr(self._settings(), "enable_kis_paper_auto_trading", False)):
                         await self.kis_paper_tick()
@@ -816,6 +865,10 @@ class BackgroundTickDriver:
             "kis_paper_auto_dry_run": bool(getattr(s, "kis_paper_auto_order_dry_run", True)),
             "last_broker_order_no":   self._last_broker_order_no,
             "last_order_status":      self._last_order_status,
+            # INTRADAY-FLAT-BY-CLOSE-V1: 마지막 EOD coordinator 단계 요약.
+            "last_eod_state":         (self._last_eod or {}).get("state"),
+            "last_eod_reason_code":   (self._last_eod or {}).get("reason_code"),
+            "last_eod_phase":         (self._last_eod or {}).get("phase"),
             # 절대 invariant.
             "is_order_signal":       False,
             "is_live_authorization": False,

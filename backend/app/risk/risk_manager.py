@@ -419,7 +419,15 @@ class RiskManager:
         # daily loss / cash availability — position-limit이 아니므로 RiskManager
         # 본체에 그대로 둔다.
         if self.daily_realized_pnl <= -abs(self.policy.max_daily_loss):
-            result.reasons.append("daily loss limit reached")
+            # INTRADAY-FLAT-BY-CLOSE-V1: 일일 손실 한도 도달은 *신규 노출* 을 막는 장치다.
+            #   보유 수량 이내 reduce-only SELL(손절/장마감 청산)까지 막으면 손실 포지션을
+            #   못 닫아 손실이 더 커진다 → 청산은 통과 (손실 방어 우선, loss_limits 의
+            #   block_buy 정책과 정합). 무보유/초과 SELL 은 종전대로 차단.
+            if pl_rule.is_reduce_only_sell(pl_input):
+                result.passed.append(
+                    "daily loss limit reached — reduce-only SELL allowed (exposure reduction)")
+            else:
+                result.reasons.append("daily loss limit reached")
         else:
             result.passed.append("daily loss limit not reached")
 

@@ -34,6 +34,7 @@ import { TechniqueScorecard } from "./TechniqueScorecard";
 import { AgentDashboard } from "./AgentDashboard";
 import { BriefingBoard } from "./BriefingBoard";
 import { PreflightPanel } from "./PreflightPanel";
+import { IntradaySessionPanel } from "./IntradaySessionPanel";
 import { ThemeFilterCard } from "./ThemeFilterCard";
 import { themeBriefingById } from "../../utils/themeBriefing";
 
@@ -86,6 +87,9 @@ export function ReferenceHome({
     const res = await loop.start();
     if (closed) {
       setStartNote({ kind: "closed", text: "지금은 장 시간이 아니에요 — 장이 열리면(평일 09:00) 자동으로 거래를 시작해요" });
+    } else if (res.ok && res.buyAllowed === false) {
+      // INTRADAY-FLAT-BY-CLOSE-V1: 14:30 이후 Start — 보유 청산 관리만, 신규 매수 0 (서버 판단).
+      setStartNote({ kind: "closed", text: `자동매매를 켰지만 신규 매수는 하지 않아요 — ${res.buyReasonMessage || "신규 매수 마감"} (보유 종목 청산은 계속 관리)` });
     } else if (res.ok) {
       setStartNote({ kind: "ok", text: "자동매매를 시작했어요" });
     } else {
@@ -313,6 +317,8 @@ export function ReferenceHome({
               🛑 {emergencyStop ? "긴급정지 해제" : "긴급정지"}
             </button>
           </div>
+          {/* INTRADAY-FLAT-BY-CLOSE-V1: 14:30 매수마감 · 15:15 강제청산 · EOD 상태 (서버 시계) */}
+          <IntradaySessionPanel />
           {/* pre-market gate / 시작 결과 안내 */}
           {startNote && (
             <div data-testid="refhome-start-note" style={{

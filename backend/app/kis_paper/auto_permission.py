@@ -22,7 +22,13 @@ from datetime import datetime, time, timezone
 from enum import StrEnum
 from typing import Any
 
-from app.scheduler.market_clock import MarketPhase, current_market_phase, to_kst
+from app.scheduler.intraday_session import (
+    BUY_ALLOWED,
+    BUY_BLOCKED_BEFORE_ENTRY,
+    IntradayPolicy,
+    load_krx_calendar,
+)
+from app.scheduler.market_clock import MarketPhase, current_market_phase
 
 
 class KisPaperPermReason(StrEnum):
@@ -45,6 +51,21 @@ class KisPaperPermReason(StrEnum):
     # V2: 실시간 KIS 시세가 아니면 실제 KIS 모의주문 전송 금지 (mock 시세 차단).
     KIS_REALTIME_PRICE_REQUIRED    = "KIS_REALTIME_PRICE_REQUIRED"
     KIS_PRICE_STALE                = "KIS_PRICE_STALE"
+    # INTRADAY-FLAT-BY-CLOSE-V1: BUY/SELL 목적별 게이트 분리.
+    BUY_CUTOFF_ACTIVE              = "BUY_CUTOFF_ACTIVE"
+    BUY_BLOCKED_NON_TRADING_DAY    = "BUY_BLOCKED_NON_TRADING_DAY"
+    BUY_BLOCKED_CALENDAR_UNKNOWN   = "BUY_BLOCKED_CALENDAR_UNKNOWN"
+    BUY_BLOCKED_AFTER_CLOSE        = "BUY_BLOCKED_AFTER_CLOSE"
+    BUY_BLOCKED_BY_EOD_INCIDENT    = "BUY_BLOCKED_BY_EOD_INCIDENT"
+    EXIT_WINDOW_CLOSED             = "EXIT_WINDOW_CLOSED"
+    EXIT_NOTIONAL_LIMIT_EXCEEDED   = "EXIT_NOTIONAL_LIMIT_EXCEEDED"
+    SELL_QUANTITY_INVALID          = "SELL_QUANTITY_INVALID"
+
+
+# 주문 목적 — 게이트가 목적별로 다른 한도/시간창을 적용한다.
+PURPOSE_BUY_ENTRY       = "BUY_ENTRY"
+PURPOSE_NORMAL_EXIT     = "NORMAL_EXIT"
+PURPOSE_EOD_FORCED_EXIT = "EOD_FORCED_EXIT"
 
 
 _REASON_MESSAGE_KO: dict[str, str] = {
@@ -80,6 +101,22 @@ _REASON_MESSAGE_KO: dict[str, str] = {
         "실시간 KIS 시세 기준이 아니라 KIS 모의주문을 전송하지 않습니다 (mock 시세 주문 금지).",
     KisPaperPermReason.KIS_PRICE_STALE:
         "KIS 시세가 오래되어(stale) KIS 모의주문을 전송하지 않습니다.",
+    KisPaperPermReason.BUY_CUTOFF_ACTIVE:
+        "신규 매수 마감(기본 14:30 KST) 이후라 신규 매수를 하지 않습니다. 보유 청산은 계속됩니다.",
+    KisPaperPermReason.BUY_BLOCKED_NON_TRADING_DAY:
+        "휴장일/주말이라 신규 매수를 하지 않습니다.",
+    KisPaperPermReason.BUY_BLOCKED_CALENDAR_UNKNOWN:
+        "거래일 여부를 확인할 수 없어(휴장일 달력 미등록 연도) 신규 매수를 차단합니다.",
+    KisPaperPermReason.BUY_BLOCKED_AFTER_CLOSE:
+        "정규장이 끝나 신규 매수를 하지 않습니다.",
+    KisPaperPermReason.BUY_BLOCKED_BY_EOD_INCIDENT:
+        "직전 거래일 장마감 청산이 완료되지 않아(FLATTEN_INCOMPLETE) 운영자 확인 전까지 신규 매수를 차단합니다.",
+    KisPaperPermReason.EXIT_WINDOW_CLOSED:
+        "현재는 청산(SELL) 주문 가능 시간이 아닙니다 (정규장 연속매매 구간 밖).",
+    KisPaperPermReason.EXIT_NOTIONAL_LIMIT_EXCEEDED:
+        "청산 주문 금액이 청산 1회 한도를 초과했습니다.",
+    KisPaperPermReason.SELL_QUANTITY_INVALID:
+        "매도 수량이 0 이하이거나 보유 수량을 초과합니다 (무보유/초과 매도/숏 금지).",
 }
 
 
@@ -132,6 +169,22 @@ class KisPaperOrderPermissionInput:
     price_is_stale:                bool = False
     # 시각 (UTC) — None 이면 now(UTC).
     now:                           datetime | None = None
+    # ── INTRADAY-FLAT-BY-CLOSE-V1: 목적별 게이트 ────────────────────────────
+    # "" 이면 side 로 유도 (BUY→BUY_ENTRY, SELL→NORMAL_EXIT).
+    order_purpose:                 str  = ""
+    # 청산 SELL 1회 명목 한도 — 0 = 보유수량이 유일한 상한 (진입 한도와 분리).
+    max_exit_order_notional:       int  = 0
+    # SELL 수량 검증 — held_quantity >= 0 이면 0 < quantity <= held_quantity 강제.
+    #   -1 = 미상(호출자가 상위에서 이미 클램프) → 검사 생략 (backward-compat).
+    quantity:                      int  = 0
+    held_quantity:                 int  = -1
+    # 정규장 close 기준 오프셋 / 달력 / 단일가 청산 허용.
+    buy_cutoff_minutes_before_close: int = 60
+    flatten_minutes_before_close:  int  = 15
+    allow_closing_auction_exit:    bool = False
+    calendar_override_path:        str  = ""
+    # 외부(DB) 사유로 신규 BUY 차단 — 예: 직전 거래일 FLATTEN_INCOMPLETE 미확인.
+    buy_blocked_by_incident:       bool = False
 
 
 @dataclass(frozen=True)
@@ -179,14 +232,24 @@ def _parse_hhmm(s: str) -> time | None:
         return None
 
 
+def _resolve_purpose(raw: str, side: str) -> str:
+    """주문 목적 — BUY 는 어떤 라벨이든 진입 게이트, SELL 은 EOD 라벨만 강제청산."""
+    if side == "BUY":
+        return PURPOSE_BUY_ENTRY
+    if (raw or "").strip().upper() == PURPOSE_EOD_FORCED_EXIT:
+        return PURPOSE_EOD_FORCED_EXIT
+    return PURPOSE_NORMAL_EXIT
+
+
 def evaluate_kis_paper_order_permission(
     inp: KisPaperOrderPermissionInput,
 ) -> KisPaperOrderPermission:
     """KIS 모의 자동주문 허용 여부 + 사유. 첫 차단 사유에서 멈춤.
 
-    조건 순서 (사용자 요청서 §3): flag → KIS paper 모드 → LIVE off → 자격 →
-    긴급정지 → 장 OPEN → 시간창 → 신호(BUY/SELL) → confidence → quality →
-    exit plan → notional 한도 → 일일 한도 → 허용.
+    조건 순서: flag → KIS paper 모드 → LIVE off → 자격 → 긴급정지 → 장 OPEN →
+    신호(BUY/SELL) → *목적별* 시간창(BUY 14:30 컷오프 / 청산 ~15:20 / EOD 15:15~) →
+    confidence·quality(진입만) → exit plan → 시세 출처 → *목적별* notional 한도 →
+    일일 한도(BUY 만) → 허용.
     """
     now = inp.now or datetime.now(timezone.utc)
 
@@ -211,27 +274,51 @@ def evaluate_kis_paper_order_permission(
     if inp.emergency_stop:
         return _block(KisPaperPermReason.EMERGENCY_STOP_ENABLED)
 
-    # 장 OPEN.
+    # 장 OPEN (평일 09:00~15:30).
     if current_market_phase(now) != MarketPhase.OPEN:
         return _block(KisPaperPermReason.MARKET_CLOSED)
-
-    # 시간창 (KST).
-    kst_t = to_kst(now).time()
-    ws = _parse_hhmm(inp.window_start)
-    we = _parse_hhmm(inp.window_end)
-    if ws is not None and we is not None and not (ws <= kst_t <= we):
-        return _block(KisPaperPermReason.KIS_PAPER_ORDER_WINDOW_CLOSED)
 
     # 신호.
     side = (inp.side or "").strip().upper()
     if side not in _BUY_SELL:
         return _block(KisPaperPermReason.NO_STRATEGY_SIGNAL)
-    # ★위험 청산(손절/익절 도달) SELL 은 품질/확신 게이트 *면제* — 청산은 위험 축소라
-    #   votes 가 약해도 강제돼야 한다(설계 의도). 면제는 *품질/확신만*, 그리고 위 긴급정지·
-    #   시간창은 이미 통과한 뒤다(긴급정지·장 OPEN·시세출처·notional·일일횟수 등은 *유지*).
-    #   ★방어적 범위 강제: 면제는 *SELL* 위험청산에만 — 게이트 단에서도 side 재확인
+    purpose = _resolve_purpose(inp.order_purpose, side)
+
+    # 시간창 — *목적별* (INTRADAY-FLAT-BY-CLOSE-V1). 단일 서버 시계(intraday_session).
+    #   BUY_ENTRY       : entry_start ≤ t < buy_cutoff(14:30). 14:30:00 부터 무조건 차단.
+    #   NORMAL_EXIT     : entry_start ≤ t < auction_start(15:20) — 14:30 이후에도 청산 가능.
+    #   EOD_FORCED_EXIT : flatten_start(15:15) ≤ t < auction_start (+단일가는 플래그 ON 시).
+    policy = IntradayPolicy(
+        window_start=inp.window_start, window_end=inp.window_end,
+        buy_cutoff_minutes_before_close=inp.buy_cutoff_minutes_before_close,
+        flatten_minutes_before_close=inp.flatten_minutes_before_close,
+        calendar=load_krx_calendar(inp.calendar_override_path or None),
+    )
+    if purpose == PURPOSE_BUY_ENTRY:
+        ok, code = policy.buy_entry_decision(now)
+        if not ok:
+            if code == BUY_BLOCKED_BEFORE_ENTRY:
+                return _block(KisPaperPermReason.KIS_PAPER_ORDER_WINDOW_CLOSED)
+            return _block(KisPaperPermReason(code))
+        assert code == BUY_ALLOWED
+        if inp.buy_blocked_by_incident:
+            return _block(KisPaperPermReason.BUY_BLOCKED_BY_EOD_INCIDENT)
+    else:
+        if not policy.exit_window_open(
+                now, forced=(purpose == PURPOSE_EOD_FORCED_EXIT),
+                allow_closing_auction=inp.allow_closing_auction_exit):
+            return _block(KisPaperPermReason.EXIT_WINDOW_CLOSED)
+        # 무보유/초과 매도/숏 금지 — 보유 수량이 주어지면 강제.
+        if inp.held_quantity >= 0 and not (0 < inp.quantity <= inp.held_quantity):
+            return _block(KisPaperPermReason.SELL_QUANTITY_INVALID)
+
+    # 품질/확신 — *신규 진입* 게이트. 청산은 위험 축소라 면제:
+    #   - is_risk_exit (실보유 청산 / 손절·익절 등) SELL
+    #   - EOD_FORCED_EXIT (시간 기반 강제청산 — Council HOLD/신호 부재와 무관)
+    #   ★방어적 범위 강제: 면제는 *SELL* 에만 — 게이트 단에서도 side 재확인
     #   (플래그가 어쩌다 BUY 에 켜져도 BUY 는 품질/확신 게이트 적용, 악용/오작동 방지).
-    _quality_exempt = inp.is_risk_exit and side == "SELL"
+    _quality_exempt = side == "SELL" and (
+        inp.is_risk_exit or purpose == PURPOSE_EOD_FORCED_EXIT)
     if not _quality_exempt:
         if inp.confidence < inp.min_confidence:
             return _block(KisPaperPermReason.LOW_CONFIDENCE)
@@ -249,10 +336,15 @@ def evaluate_kis_paper_order_permission(
         if inp.price_is_stale:
             return _block(KisPaperPermReason.KIS_PRICE_STALE)
 
-    # 한도.
-    #   notional 1회 한도: 신규 진입(BUY)·청산(SELL) 모두 적용 유지.
-    if inp.max_order_notional > 0 and inp.notional_krw > inp.max_order_notional:
-        return _block(KisPaperPermReason.KIS_PAPER_NOTIONAL_LIMIT_EXCEEDED)
+    # 한도 — 목적별 분리.
+    #   notional 1회 한도: BUY 는 max_order_notional, 청산은 max_exit_order_notional
+    #   (0 = 보유수량이 유일한 상한). 예전엔 SELL 에도 진입 한도가 적용돼 평가액이
+    #   한도를 넘게 오른 포지션을 *못 팔았다* (익절/강제청산 불가 결함).
+    if side == "BUY":
+        if inp.max_order_notional > 0 and inp.notional_krw > inp.max_order_notional:
+            return _block(KisPaperPermReason.KIS_PAPER_NOTIONAL_LIMIT_EXCEEDED)
+    elif inp.max_exit_order_notional > 0 and inp.notional_krw > inp.max_exit_order_notional:
+        return _block(KisPaperPermReason.EXIT_NOTIONAL_LIMIT_EXCEEDED)
     #   일일 주문 횟수 한도: *신규 진입(BUY)에만* 적용. 청산(SELL: 손절/익절)은
     #   한도 소진으로 막히면 안 되므로 면제한다 — 단 본 게이트 통과 후에도 주문은
     #   route_order → RiskManager → PermissionGate → OrderExecutor 를 그대로
@@ -273,11 +365,15 @@ def evaluate_kis_paper_order_permission(
         side=side, notional_krw=int(inp.notional_krw),
         metadata={"window_start": inp.window_start, "window_end": inp.window_end,
                   "daily_order_count": inp.daily_order_count,
-                  "max_orders_per_day": inp.max_orders_per_day},
+                  "max_orders_per_day": inp.max_orders_per_day,
+                  "order_purpose": purpose},
     )
 
 
 __all__ = [
+    "PURPOSE_BUY_ENTRY",
+    "PURPOSE_NORMAL_EXIT",
+    "PURPOSE_EOD_FORCED_EXIT",
     "KisPaperPermReason",
     "perm_message_ko",
     "KisPaperOrderPermissionInput",

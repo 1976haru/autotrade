@@ -1,0 +1,85 @@
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { render, cleanup, waitFor, fireEvent } from "@testing-library/react";
+
+import { IntradaySessionPanel, summarizeEodProgress } from "./IntradaySessionPanel";
+
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+const base = {
+  phase: "ENTRY_OPEN", trading_date: "2026-10-22", buy_allowed: true,
+  buy_block_reason_code: null, buy_block_reason_message: "신규 매수 가능 시간입니다.",
+  schedule: { calendar: "TRADING_DAY", buy_cutoff: "14:30", flatten_start: "15:15", session_close: "15:30" },
+  eod_state: "IDLE", eod_reason_code: null, summary: {},
+  paper_auto_mode: { mode: "KIS_REALTIME_PAPER_AUTO", price_source: "kis", dry_run: false, smoke_mode: false },
+  broker_label: "KIS_PAPER", kis_is_paper: true, enable_live_trading: false,
+  background_driver_running: true, previous_incident_trading_date: null,
+  last_reconcile_at: null, last_reconcile_ok: false,
+};
+const api = (d) => ({ kisPaperEodStatus: vi.fn(async () => d), kisPaperEodAcknowledge: vi.fn(async () => ({})) });
+
+describe("IntradaySessionPanel (INTRADAY-FLAT-BY-CLOSE-V1)", () => {
+  it("서버 일정(14:30/15:15/15:30) + 모의계좌 배지 + 운용모드 표시", async () => {
+    const { getByTestId } = render(<IntradaySessionPanel api={api(base)} pollMs={60_000} />);
+    await waitFor(() => expect(getByTestId("isp-buy-cutoff").textContent).toBe("14:30"));
+    expect(getByTestId("isp-flatten-start").textContent).toBe("15:15");
+    expect(getByTestId("isp-close").textContent).toBe("15:30");
+    expect(getByTestId("isp-account-badge").textContent).toContain("모의투자");
+    expect(getByTestId("isp-mode").textContent).toContain("KIS 모의 자동주문");
+    expect(getByTestId("isp-buy-status").textContent).toContain("신규 매수 가능");
+  });
+
+  it("14:30 이후: 신규매수 불가 사유 + 청산 진행률 표시 (서버 값 그대로)", async () => {
+    const d = {
+      ...base, phase: "EOD_FLATTEN", buy_allowed: false, buy_block_reason_code: "BUY_CUTOFF_ACTIVE",
+      buy_block_reason_message: "신규 매수 마감 시각이 지나 신규 매수를 하지 않습니다 (보유 청산만 진행).",
+      eod_state: "FLATTENING", eod_reason_code: "EOD_FLATTEN_IN_PROGRESS",
+      summary: {
+        symbols: { "005930": { managed_qty: 7 }, "000660": { managed_qty: 0 } },
+        totals: { managed_qty: 7, open_sell_qty: 3, unconfirmed_eod_qty: 0, program_open_buy_qty: 0,
+                  eod_orders_submitted: 2, eod_filled_qty: 4, unmanaged_symbols: 1 },
+        last_broker_order_no: "0000012345", last_failure_code: null,
+      },
+    };
+    const { getByTestId } = render(<IntradaySessionPanel api={api(d)} pollMs={60_000} />);
+    await waitFor(() => expect(getByTestId("isp-buy-status").textContent).toContain("신규 매수 불가"));
+    expect(getByTestId("isp-eod-state").textContent).toContain("강제청산 진행 중");
+    const p = getByTestId("isp-progress").textContent;
+    expect(p).toContain("청산 대상 1종목");
+    expect(p).toContain("남은 보유 7주");
+    expect(p).toContain("미체결 3주");
+    expect(p).toContain("주문 접수 2건");
+    expect(p).toContain("체결 4주");
+    expect(getByTestId("isp-meta").textContent).toContain("0000012345");
+  });
+
+  it("가상/dry-run 은 '모의투자 계좌' 로 표시하지 않는다 (실계좌·모의 오인 방지)", async () => {
+    const d = { ...base, broker_label: "VIRTUAL/MOCK", paper_auto_mode: { mode: "VIRTUAL_ONLY" } };
+    const { getByTestId } = render(<IntradaySessionPanel api={api(d)} pollMs={60_000} />);
+    await waitFor(() => expect(getByTestId("isp-account-badge").textContent).toContain("가상"));
+  });
+
+  it("FLATTEN_INCOMPLETE 사고 + 확인 버튼 → acknowledge 호출 (주문 0)", async () => {
+    const d = { ...base, eod_state: "FLATTEN_INCOMPLETE", previous_incident_trading_date: "2026-10-21" };
+    const a = api(d);
+    vi.spyOn(window, "prompt").mockReturnValue("운영자");
+    const { getByTestId } = render(<IntradaySessionPanel api={a} pollMs={60_000} />);
+    await waitFor(() => expect(getByTestId("isp-incident").textContent).toContain("2026-10-21"));
+    fireEvent.click(getByTestId("isp-ack"));
+    await waitFor(() => expect(a.kisPaperEodAcknowledge).toHaveBeenCalledWith({ tradingDate: "2026-10-21", decidedBy: "운영자" }));
+  });
+
+  it("background driver 꺼짐 경고 / 휴장일 / 조회 실패 정직 표시", async () => {
+    const d = { ...base, background_driver_running: false, schedule: { calendar: "HOLIDAY" } };
+    const { getByTestId, unmount } = render(<IntradaySessionPanel api={api(d)} pollMs={60_000} />);
+    await waitFor(() => expect(getByTestId("isp-driver-off")).toBeTruthy());
+    expect(getByTestId("isp-non-trading").textContent).toContain("휴장일");
+    unmount();
+    const bad = { kisPaperEodStatus: vi.fn(async () => { throw new Error("down"); }) };
+    const r2 = render(<IntradaySessionPanel api={bad} pollMs={60_000} />);
+    await waitFor(() => expect(r2.getByTestId("isp-failed").textContent).toContain("불러오지 못했어요"));
+  });
+
+  it("summarizeEodProgress 는 서버 totals 만 사용 (추정 0)", () => {
+    expect(summarizeEodProgress({})).toEqual({ symbols: 0, heldQty: 0, openQty: 0, submitted: 0, filledQty: 0, unmanaged: 0 });
+  });
+});

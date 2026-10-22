@@ -786,3 +786,35 @@ class MultiTfShadowSignal(Base):
     is_order_signal:  Mapped[bool]     = mapped_column(Boolean, default=False)
     is_live_authorization: Mapped[bool] = mapped_column(Boolean, default=False)
     closed_at:        Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+
+
+class EodLiquidationState(Base):
+    """KIS-PAPER-INTRADAY-FLAT-BY-CLOSE-V1 — 거래일별 장마감 청산 상태 (재시작 복구용).
+
+    거래일(KST) 1행. EOD coordinator 가 상태/lease/진행 요약을 저장해 서버 재시작·
+    절전 복귀·다중 프로세스에서도 *중복 주문 없이* 이어서 처리한다. 주문 자체는
+    기존 sanctioned 경로(route_order → RiskManager → PermissionGate → OrderExecutor)
+    만 사용 — 본 테이블은 상태 기록일 뿐 주문 권한이 아니다(is_live_authorization=False).
+    """
+
+    __tablename__ = "eod_liquidation_state"
+
+    id:               Mapped[int]             = mapped_column(primary_key=True)
+    trading_date:     Mapped[str]             = mapped_column(String(10), unique=True, index=True)
+    state:            Mapped[str]             = mapped_column(String(32), index=True)
+    created_at:       Mapped[datetime]        = mapped_column(DateTime, default=_utcnow)
+    updated_at:       Mapped[datetime]        = mapped_column(DateTime, default=_utcnow)
+    # DB lease — 두 프로세스/중복 start 에서 EOD 청산이 동시에 돌지 않게.
+    lease_owner:      Mapped[str | None]      = mapped_column(String(96), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_reconcile_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_reconcile_ok: Mapped[bool]           = mapped_column(Boolean, default=False)
+    final_verdict_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reason_code:      Mapped[str | None]      = mapped_column(String(64), nullable=True)
+    summary:          Mapped[dict]            = mapped_column(JSON, default=dict)
+    # FLATTEN_INCOMPLETE 운영자 확인 (확인 전까지 다음 거래일 신규 BUY 차단).
+    incident_acknowledged: Mapped[bool]       = mapped_column(Boolean, default=False)
+    acknowledged_by:  Mapped[str | None]      = mapped_column(String(64), nullable=True)
+    acknowledged_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ack_note:         Mapped[str | None]      = mapped_column(String(255), nullable=True)
+    is_live_authorization: Mapped[bool]       = mapped_column(Boolean, default=False)

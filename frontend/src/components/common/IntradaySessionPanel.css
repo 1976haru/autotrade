@@ -1,0 +1,30 @@
+/* INTRADAY-FLAT-BY-CLOSE-V1 — 시작 버튼 옆 단타 일정/청산 상태 패널. 전역 토큰 사용. */
+.isp {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #2a1418;
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  border: 2px solid transparent;
+}
+.isp-ok { border-color: #15a05f; }
+.isp-warn { border-color: #f5a623; }
+.isp-bad { border-color: #c0392b; }
+.isp-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.isp-title { font-weight: 800; }
+.isp-badge { font-size: var(--fs-xs); font-weight: 800; border-radius: 999px; padding: 2px 8px; }
+.isp-badge-paper { background: #1d4ed8; color: #fff; }
+.isp-badge-virtual { background: #64748b; color: #fff; }
+.isp-times { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px; font-weight: 700; }
+.isp-times b { font-size: var(--fs-md); }
+.isp-line { margin-top: 6px; font-weight: 700; }
+.isp-code { font-size: var(--fs-xs); color: #5a2c30; font-weight: 600; }
+.isp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px 10px; margin-top: 6px; font-weight: 600; }
+.isp-meta { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; font-size: var(--fs-xs); color: #3d1e22; }
+.isp-warn { color: #b45309; font-weight: 800; }
+.isp-incident { margin-top: 8px; padding: 8px; border-radius: 8px; background: rgba(192, 57, 43, 0.14); font-weight: 700; }
+.isp-incident button { display: block; margin-top: 6px; padding: 6px 10px; border-radius: 8px; border: 0; background: #c0392b; color: #fff; font-weight: 800; cursor: pointer; }
+.isp-incident button:disabled { opacity: 0.6; cursor: default; }
+@media (max-width: 480px) { .isp-grid { grid-template-columns: repeat(2, 1fr); } }

@@ -131,13 +131,26 @@ def test_permission_sell_exempt_from_daily_order_cap(count):
     assert buy.reason_code == _R(KisPaperPermReason.KIS_PAPER_ORDER_LIMIT_EXCEEDED)
 
 
-def test_permission_sell_still_blocked_by_notional_cap():
-    # 면제는 *횟수* 한도에 한정 — notional 1회 한도는 SELL 에도 그대로 적용.
+def test_permission_sell_not_blocked_by_entry_notional_cap():
+    # INTRADAY-FLAT-BY-CLOSE-V1: 진입(BUY) notional 한도는 청산 SELL 에 적용하지 않는다
+    #   (평가액이 한도를 넘게 오른 보유를 못 팔던 결함). 청산 상한은 보유 수량.
     res = evaluate_kis_paper_order_permission(
         _perm_input(side="SELL", has_exit_plan=False,
                     daily_order_count=99, notional_krw=2_000_000))
+    assert res.allowed is True
+    buy = evaluate_kis_paper_order_permission(
+        _perm_input(side="BUY", notional_krw=2_000_000))
+    assert buy.reason_code == _R(KisPaperPermReason.KIS_PAPER_NOTIONAL_LIMIT_EXCEEDED)
+
+
+def test_permission_sell_blocked_by_separate_exit_notional_cap():
+    # 청산 전용 한도(max_exit_order_notional)를 명시하면 그 한도로 차단 — 진입 한도와 분리.
+    from dataclasses import replace
+    inp = replace(_perm_input(side="SELL", has_exit_plan=False, notional_krw=2_000_000),
+                  max_exit_order_notional=1_500_000)
+    res = evaluate_kis_paper_order_permission(inp)
     assert res.allowed is False
-    assert res.reason_code == _R(KisPaperPermReason.KIS_PAPER_NOTIONAL_LIMIT_EXCEEDED)
+    assert res.reason_code == _R(KisPaperPermReason.EXIT_NOTIONAL_LIMIT_EXCEEDED)
 
 
 def test_permission_input_has_no_secret_fields():

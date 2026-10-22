@@ -232,6 +232,20 @@ class PermissionGate:
             # 다시 검사. audit row가 source of truth.
             requested_by_ai=audit.requested_by_ai,
         )
+        # INTRADAY-FLAT-BY-CLOSE-V1: 승인 큐의 *프로그램* 신규 BUY 도 approve 시점에
+        #   14:30 컷오프/휴장일/직전일 EOD 미완료를 재검증 (route_order 와 동일 helper).
+        #   승인 큐는 route_order 를 다시 거치지 않으므로 여기서 막아야 한다.
+        if order.side == OrderSide.BUY:
+            from app.kis_paper.intraday_buy_gate import (
+                is_program_order,
+                program_buy_block_reason,
+            )
+            if is_program_order(audit.trade_reason):
+                block_code, block_msg = program_buy_block_reason(self.db)
+                if block_code is not None:
+                    re_eval.reasons.append(f"{block_code}: {block_msg}")
+                    re_eval.decision = RiskDecision.REJECTED
+
         if _approve_re_eval_blocks_execution(re_eval):
             # 076: persist the failed attempt on the row before raising.
             # JSON column needs reassignment for the change to be detected —

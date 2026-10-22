@@ -164,7 +164,30 @@ class Settings(BaseSettings):
     # E1(2026-06-10): 14:50→15:20 — 동시호가(15:20~30) 직전까지 연속매매 허용(하루 승인).
     #   auto_permission 윈도 게이트 *코드는 미수정*, 설정값만. 15:20 이후 신규 진입은
     #   청산 기회가 짧을 수 있음(동시호가/익일) — 설정 성격으로 인지.
-    kis_paper_auto_order_window_end:   str = "15:20"
+    # KIS-PAPER-INTRADAY-FLAT-BY-CLOSE-V1(2026-10-23): 15:20→14:30. 이제 이 값은
+    #   *신규 BUY 진입 마감* 전용이다 (SELL 청산은 auto_permission 에서 분리 — 14:30
+    #   이후에도 보유 청산 가능). 실효 마감 = min(본 값, 정규장 close − buy_cutoff 분).
+    kis_paper_auto_order_window_end:   str = "14:30"
+    # 정규장 close 기준 신규 BUY 마감 오프셋(분). 15:30 − 60 = 14:30. 특수일(수능 등
+    #   16:30 폐장)엔 마감도 같이 이동. intraday_session 이 단일 진실.
+    kis_paper_buy_cutoff_minutes_before_close: int = 60
+    # ── EOD 당일 청산 (overnight positions = 0 목표) ───────────────────────────
+    # 프로그램(kis_paper_auto) 관리 보유만 15:15 부터 강제 청산. 수동/타 모듈 보유는
+    #   대상 아님. 실제 주문은 기존 opt-in(enable_kis_paper_auto_trading + dry_run
+    #   false + KIS_IS_PAPER=true + 실거래 OFF)이 모두 충족될 때만 전송된다.
+    kis_paper_eod_flatten_enabled:      bool = True
+    kis_paper_eod_flatten_minutes_before_close: int = 15
+    # 15:20~15:30 종가 단일가 구간의 신규 청산 주문 — KIS *모의* 서버의 단일가 시장가
+    #   접수 여부가 공식 문서로 확인되지 않아 기본 OFF (운영자 리허설로 확인 후 ON).
+    kis_paper_eod_closing_auction_orders_enabled: bool = False
+    # 종목당 EOD 매도 재시도 상한 (거부/실패 시). 중복 매도 방지는 미체결 대조 + lease.
+    kis_paper_eod_max_attempts_per_symbol: int = 3
+    # 루프가 STOPPED/PAUSED 여도 EOD 청산을 수행할지 (EMERGENCY_STOP 은 항상 차단).
+    kis_paper_eod_flatten_when_loop_stopped: bool = True
+    # 단일 *청산* SELL 1회 명목 한도 — 0 = 보유수량이 유일한 상한 (진입 한도와 분리).
+    kis_paper_auto_max_exit_order_notional: int = 0
+    # KRX 휴장일 override JSON 경로 (빈 값 = 내장 달력만). 형식은 intraday_session 참조.
+    krx_calendar_override_path:         str = ""
     # 신호 품질 최소 기준 (자동주문 진입 게이트).
     kis_paper_auto_min_confidence:    float = 0.6   # 0~1
     kis_paper_auto_min_quality_score: int   = 60    # 0~100

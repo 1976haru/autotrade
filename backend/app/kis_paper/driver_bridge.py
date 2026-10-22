@@ -717,6 +717,21 @@ async def kis_paper_realtime_scan_tick(
         max_new_per_tick = 1
     smoke_qty = max(1, int(getattr(settings, "kis_paper_smoke_qty", 1) or 1))
 
+    # INTRADAY-FLAT-BY-CLOSE-V1: 15:15(flatten_start) 이후엔 청산을 EOD coordinator 가
+    #   단독 소유 — 스캔 SELL 과 EOD SELL 이 같은 종목을 동시에 내는 중복 매도 차단.
+    #   (EOD 청산이 꺼져 있으면 종전대로 스캔이 15:20 까지 일반 청산을 계속한다.)
+    from app.scheduler.intraday_session import IntradayPhase, IntradayPolicy
+    _phase = IntradayPolicy.from_settings(settings).phase(now)
+    if _phase in (IntradayPhase.EOD_FLATTEN, IntradayPhase.CLOSING_AUCTION,
+                  IntradayPhase.POST_CLOSE) and bool(
+            getattr(settings, "kis_paper_eod_flatten_enabled", True)):
+        return _scan_summary(
+            mode=mode, symbols_scanned=0, candidates_found=0, orders_attempted=0,
+            orders_submitted=0, orders=[], skipped=[],
+            reason_code="EOD_COORDINATOR_OWNS_EXITS",
+            reason_message="장마감 청산 구간 — 신규 매수 0, 청산은 EOD coordinator 가 단독 수행합니다.",
+        )
+
     symbols = _scan_universe_symbols(settings, override=universe_symbols, now=now)
 
     db = session_factory()
@@ -743,6 +758,10 @@ async def kis_paper_realtime_scan_tick(
         #   held_symbols(보유)는 *KIS 잔고 = 브로커 진실* 에서 — 전일 캐리오버
         #   포지션을 봇이 인식해 청산/중복매수 가드가 올바로 작동하게 한다.
         _db_held, daily_buy_used = _today_kis_paper_buy_state(db, now)
+        # INTRADAY-FLAT-BY-CLOSE-V1: 신규 BUY 서버측 판단 (route_order 와 동일 helper).
+        #   차단이면 BUY 후보는 executor 로 보내지 않고 skip(사유 기록) — 청산은 계속.
+        from app.kis_paper.intraday_buy_gate import program_buy_block_reason
+        _buy_block_code, _ = program_buy_block_reason(db, settings=settings, now=now)
         # ★보유 *수량* 보존(단일 get_positions). SELL 수량 캡에 사용. held_symbols 는
         #   기존 set-기반 가드용으로 키에서 파생(중복 get_positions 호출 없음).
         held_map = await _kis_held_map(broker, fallback=_db_held, now=now)
@@ -862,6 +881,10 @@ async def kis_paper_realtime_scan_tick(
 
             # ── bridge 사전 가드 (RiskManager 전, BUY 신규 진입에만) ──────────
             if final == CouncilAction.BUY:
+                if _buy_block_code is not None:
+                    skipped.append({"symbol": symbol, "reason_code": _buy_block_code,
+                                    "price_source": "kis"})
+                    continue
                 if symbol in held_symbols:
                     skipped.append({"symbol": symbol, "reason_code": "DUPLICATE_POSITION_BLOCKED"})
                     continue

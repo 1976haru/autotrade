@@ -69,6 +69,40 @@ def _kis_order_response_to_result(raw: dict, order: "OrderRequest") -> OrderResu
     )
 
 
+def _int(v) -> int:
+    try:
+        return int(float(str(v).strip() or "0"))
+    except (TypeError, ValueError):
+        return 0
+
+
+def parse_ccld_row(row: dict) -> dict:
+    """KIS 일별주문체결 1행 → 잔량 포함 dict (EOD 대조용, 순수 함수).
+
+    remaining = rmn_qty(있으면) 또는 ord_qty − tot_ccld_qty − cncl_cfrm_qty.
+    취소 주문 *자체* 행(cncl_yn=Y)은 잔량 0 — 원주문 행의 잔량이 진실이다.
+    """
+    ord_qty = _int(row.get("ord_qty"))
+    filled = _int(row.get("tot_ccld_qty"))
+    canceled = (row.get("cncl_yn") or "").upper() == "Y"
+    if canceled:
+        remaining = 0
+    elif row.get("rmn_qty") not in (None, ""):
+        remaining = max(0, _int(row.get("rmn_qty")))
+    else:
+        remaining = max(0, ord_qty - filled - _int(row.get("cncl_cfrm_qty")))
+    return {
+        "odno":      str(row.get("odno") or ""),
+        "symbol":    str(row.get("pdno") or ""),
+        "side":      _kis_side_to_order_side(row.get("sll_buy_dvsn_cd", "02")).value,
+        "ord_qty":   ord_qty,
+        "filled":    filled,
+        "remaining": remaining,
+        "canceled":  canceled,
+        "ord_tmd":   str(row.get("ord_tmd") or ""),
+    }
+
+
 def _row_to_order_result(row: dict, order_id: str) -> OrderResult:
     ord_qty = int(row.get("ord_qty", "0") or "0")
     filled  = int(row.get("tot_ccld_qty", "0") or "0")
@@ -272,6 +306,18 @@ class KisBrokerAdapter(BrokerAdapter):
 
     async def cancel_order(self, order_id: str) -> OrderResult:
         raise NotImplementedError(_STUB_MESSAGE)
+
+    async def list_today_orders(self, *, kst_date: str) -> list[dict]:
+        """오늘(KST) 주문 목록 — read-only, 미체결 잔량 포함 (EOD 청산 대조용).
+
+        KIS 의 *정정취소가능주문조회*(inquire-psbl-rvsecncl, TTTC0084R)는 모의투자
+        TR 이 없어 사용하지 않는다. 대신 이미 쓰고 있는 일별주문체결조회(VTTC0081R)
+        전 페이지에서 잔량을 계산한다. 반환: [{odno, symbol, side, ord_qty, filled,
+        remaining, canceled, ord_tmd}] — 주문 write 0건.
+        """
+        cano, prdt = self._split_account()
+        raw_rows = await self.client.inquire_daily_ccld_all(cano, prdt, kst_date=kst_date)
+        return [parse_ccld_row(r) for r in raw_rows]
 
     async def get_order_status(self, order_id: str) -> OrderResult:
         cano, prdt = self._split_account()
