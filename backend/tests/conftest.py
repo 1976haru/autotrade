@@ -162,6 +162,39 @@ def _hermetic_create_schema() -> None:
 _hermetic_create_schema()
 
 
+def _real_appdata_fingerprint() -> dict:
+    """운영자의 실제 %APPDATA%/Autotrade 트리 (경로 → (크기, mtime)). 없으면 {}."""
+    base = os.environ.get("APPDATA")
+    if not base:
+        return {}
+    root = Path(base) / "Autotrade"
+    if not root.exists():
+        return {}
+    out = {}
+    for p in root.rglob("*"):
+        try:
+            st = p.stat()
+            out[str(p.relative_to(root))] = (st.st_size if p.is_file() else -1, int(st.st_mtime))
+        except OSError:
+            continue
+    return out
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _guard_real_appdata_untouched():
+    """WINDOWS-ONECLICK-EXE-V1 사고 재발 방지: 테스트가 운영자의 실제 %APPDATA%/Autotrade
+    에 파일을 만들거나 바꾸면 세션 종료 시 실패시킨다 (2026-10-24: frozen 모드 테스트가
+    실제 APPDATA 로 DB 를 복사한 사고). logs/ 는 다른 실행 중 프로세스가 쓸 수 있어 제외."""
+    before = _real_appdata_fingerprint()
+    yield
+    after = _real_appdata_fingerprint()
+    changed = sorted(
+        k for k in set(before) | set(after)
+        if before.get(k) != after.get(k) and not k.startswith("logs")
+    )
+    assert not changed, f"tests modified real %APPDATA%/Autotrade: {changed}"
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _isolate_appdata_state():
     """runtime_overrides / KIS 토큰 캐시를 임시 경로로 — 운영 %APPDATA% 미접촉."""

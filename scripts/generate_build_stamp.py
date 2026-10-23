@@ -6,7 +6,7 @@
 `--collect-submodules app` 로 bundle 하므로 packaged EXE 의 backend 가
 `/api/system/build-info` 에서 정확한 commit / 빌드 시각을 보고할 수 있다.
 
-값 우선순위: 환경변수(`AUTOTRADE_*`) → git 명령 → "unknown".
+값 우선순위: 환경변수(`AUTOTRADE_*`) → git 명령(version 은 tauri.conf.json) → "unknown".
 
 절대 원칙:
   - Secret / API key / 계좌번호 0건 — git hash / branch / time / channel 만.
@@ -51,6 +51,17 @@ def _pick(env: str, git_value: str | None, default: str = _UNKNOWN) -> str:
     return default
 
 
+def _tauri_version() -> str | None:
+    """설치파일 버전의 단일 진실 — src-tauri/tauri.conf.json 의 version."""
+    import json
+    conf = Path(__file__).resolve().parent.parent / "src-tauri" / "tauri.conf.json"
+    try:
+        v = json.loads(conf.read_text(encoding="utf-8")).get("version")
+    except Exception:  # noqa: BLE001
+        return None
+    return str(v) if v else None
+
+
 def build_stamp(channel: str | None, source: str | None) -> dict:
     commit_full = _pick("AUTOTRADE_GIT_COMMIT_FULL", _git("rev-parse", "HEAD"))
     short = commit_full[:7] if commit_full != _UNKNOWN else None
@@ -63,7 +74,7 @@ def build_stamp(channel: str | None, source: str | None) -> dict:
     else:
         is_dirty = bool(porcelain) if porcelain is not None else False
     return {
-        "version":     _pick("AUTOTRADE_APP_VERSION", None),
+        "version":     _pick("AUTOTRADE_APP_VERSION", _tauri_version()),
         "channel":     channel or os.getenv("AUTOTRADE_BUILD_CHANNEL") or "paper-beta",
         "commit":      commit,
         "commit_full": commit_full,

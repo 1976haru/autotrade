@@ -227,6 +227,34 @@ def test_versions_in_lockstep():
     assert conf["version"] == pkg["version"] == cargo == "1.1.0"   # 5월 1.0.0 산출물과 구분
 
 
+def test_build_stamp_version_falls_back_to_tauri_conf(monkeypatch):
+    # EXE-FINAL-BUILD-V2: 설치본 /api/system/build-info 의 version 이 "unknown" 이었다
+    #   (AUTOTRADE_APP_VERSION 미설정). tauri.conf.json 버전으로 채운다.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "generate_build_stamp", ROOT / "scripts" / "generate_build_stamp.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    monkeypatch.delenv("AUTOTRADE_APP_VERSION", raising=False)
+    conf = json.loads((TAURI / "tauri.conf.json").read_text(encoding="utf-8"))
+    assert mod.build_stamp(None, None)["version"] == conf["version"]
+    monkeypatch.setenv("AUTOTRADE_APP_VERSION", "9.9.9")
+    assert mod.build_stamp(None, None)["version"] == "9.9.9"
+
+
+def test_stale_service_worker_purged_before_webview_created():
+    # EXE-FINAL-BUILD-V2: 구 frontend 가 tauri.localhost 에 등록한 SW 가 두 번째 실행부터
+    #   offline.html 만 띄웠다. webview 생성(.build) *전* 정리돼야 이미 설치된 PC 도 복구된다.
+    src = _code(_lib())
+    run_body = src.split("pub fn run()", 1)[1]
+    assert run_body.index("purge_stale_service_worker(&profile)") < run_body.index(".build(context)")
+    purge = src.split("fn purge_stale_service_worker", 1)[1].split("\n}\n", 1)[0]
+    assert 'join("Service Worker")' in purge and "std::fs::rename" in purge
+    assert "Local Storage" not in purge   # 다른 프로필 데이터 미접촉
+    reg = (ROOT / "frontend" / "src" / "registerServiceWorker.js").read_text(encoding="utf-8")
+    assert "isTauriDesktop()" in reg.split("export async function registerServiceWorker", 1)[1]
+
+
 def test_user_data_dir_is_not_the_bundle_identifier_dir():
     # NSIS 제거 시 '앱 데이터 삭제' 는 %APPDATA%\\<identifier> 대상 — 운영 데이터는
     #   %APPDATA%\\Autotrade 에 있으므로 재설치/업데이트/제거로 지워지지 않는다.

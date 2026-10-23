@@ -27,6 +27,15 @@ export function computeSwUrl(baseUrl) {
 }
 
 
+/** Tauri webview 안에서 실행 중인지 (IPC 전역 또는 tauri.localhost origin). */
+export function isTauriDesktop() {
+  if (typeof window === "undefined") return false;
+  if (window.__TAURI_INTERNALS__) return true;
+  const host = window.location?.hostname;
+  return host === "tauri.localhost";
+}
+
+
 /**
  * 브라우저가 Service Worker를 지원하고 운영 환경(http/https)일 때만 등록.
  * file:// 또는 SW 미지원 환경에서는 noop + console warn.
@@ -42,6 +51,14 @@ export function computeSwUrl(baseUrl) {
  */
 export async function registerServiceWorker(options = {}) {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) {
+    return null;
+  }
+  // Windows EXE(Tauri) 는 http://tauri.localhost 로 서빙되어 아래 http 검사를 통과하지만,
+  // SW 의 navigation fetch 는 Tauri 커스텀 프로토콜을 거치지 못해 실패 → 두 번째 실행부터
+  // offline.html("오프라인 상태")만 표시됐다 (EXE-FINAL-BUILD-V2 설치 검증). 데스크톱에서는
+  // SW 를 등록하지 않고, 과거에 등록된 SW 도 해제한다.
+  if (isTauriDesktop()) {
+    await unregisterServiceWorker();
     return null;
   }
   // SW는 http/https에서만 작동. file:// / 일부 chrome-extension 환경 회피.

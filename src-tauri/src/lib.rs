@@ -185,9 +185,41 @@ fn kill_sidecar(app: &AppHandle, reason: &str) {
     }
 }
 
+/// WebView2 프로필의 stale PWA Service Worker 제거 (EXE-FINAL-BUILD-V2 설치 검증에서 발견).
+/// Windows Tauri 는 frontend 를 http://tauri.localhost 로 서빙 → 구버전 frontend 가 SW 를
+/// 등록했고, 다음 실행부터 SW 의 navigation fetch 가 Tauri 커스텀 프로토콜을 못 거쳐
+/// 실패 → offline.html("오프라인 상태")만 표시됐다. frontend 는 이제 Tauri 에서 SW 를
+/// 등록하지 않지만, 이미 설치된 PC 는 offline.html 이 떠서 그 JS 가 실행될 기회가 없다 →
+/// webview 생성 *전* 여기서 정리. 다른 인스턴스가 사용 중이면 rename 이 실패하므로
+/// 건너뛴다(삭제는 rename 성공 시에만). localStorage 등 다른 프로필 데이터는 미접촉.
+fn purge_stale_service_worker(profile_default_dir: &std::path::Path) -> bool {
+    let sw = profile_default_dir.join("Service Worker");
+    if !sw.exists() {
+        return false;
+    }
+    let stale = profile_default_dir.join(format!("Service Worker.stale-{}", now_unix_secs()));
+    if std::fs::rename(&sw, &stale).is_err() {
+        return false;
+    }
+    let _ = std::fs::remove_dir_all(&stale);
+    true
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+
+    let context = tauri::generate_context!();
+    #[cfg(windows)]
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        let profile = PathBuf::from(local)
+            .join(&context.config().identifier)
+            .join("EBWebView")
+            .join("Default");
+        if purge_stale_service_worker(&profile) {
+            append_log("stale webview service worker removed (offline.html fallback fix)");
+        }
+    }
 
     let app = tauri::Builder::default()
         // 반드시 첫 plugin — 아이콘을 두 번 눌러도 새 창/새 백엔드를 만들지 않고
@@ -335,7 +367,7 @@ pub fn run() {
             confirm_quit,
             hide_to_tray
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building Agent Trader v1");
 
     app.run(|app_handle, event| {
@@ -424,7 +456,25 @@ fn backend_port_info() -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use super::mask_secrets;
+    use super::{mask_secrets, purge_stale_service_worker};
+
+    #[test]
+    fn purges_only_service_worker_dir() {
+        let base = std::env::temp_dir().join(format!("at-sw-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(base.join("Service Worker").join("CacheStorage")).unwrap();
+        std::fs::create_dir_all(base.join("Local Storage")).unwrap();
+        std::fs::write(base.join("Local Storage").join("keep.txt"), "x").unwrap();
+        assert!(purge_stale_service_worker(&base));
+        assert!(!base.join("Service Worker").exists());
+        assert!(base.join("Local Storage").join("keep.txt").exists());
+        let leftovers = std::fs::read_dir(&base).unwrap()
+            .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().starts_with("Service Worker"))
+            .count();
+        assert_eq!(leftovers, 0);
+        assert!(!purge_stale_service_worker(&base)); // 없으면 no-op
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn masks_bearer_and_key_values() {
