@@ -179,6 +179,26 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
         </div>
       )}
 
+      <div className="isp-meta" data-testid="isp-start-status">
+        <span data-testid="isp-kis-conn">
+          KIS 모의계좌 설정: {st.kis_credentials_present ? "✅ 연결 정보 있음" : "⚠ 키/계좌 미설정 (%APPDATA%\\Autotrade\\.env)"}
+        </span>
+        <span data-testid="isp-rehearsal">
+          리허설 모드: {st.rehearsal_mode
+            ? `켜짐 — 신규 매수는 ${st.rehearsal_symbol} 최대 ${st.rehearsal_max_buy_qty}주, 자동 스캔 매수 0`
+            : "꺼짐"}
+        </span>
+        <span data-testid="isp-loop">
+          자동매매: {st.auto_loop_state === "RUNNING" ? "▶ 실행 중"
+            : st.auto_loop_state === "EMERGENCY_STOP" ? "🛑 긴급정지"
+              : "⏸ 정지 (시작 버튼을 눌러야 신규 매수)"}
+        </span>
+        <span data-testid="isp-holdings">
+          프로그램 보유 {(st.program_ledger_holdings || []).length}종목 · 미체결 {prog.openQty}주
+        </span>
+        <span>오류가 있으면 설정 탭의 &apos;로그 보기&apos; 또는 %APPDATA%\Autotrade\logs 를 확인하세요.</span>
+      </div>
+
       <div className="isp-meta" data-testid="isp-meta">
         <span>운용 모드: <b data-testid="isp-mode">{MODE_LABEL[mode] || mode}</b></span>
         <span>시세: {st.paper_auto_mode?.price_source || "—"} · 브로커: {st.broker_label}</span>
@@ -213,7 +233,7 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
       </div>
 
       <div className="isp-code" data-testid="isp-not-guaranteed">
-        ※ PC 절전·앱 종료·네트워크 끊김이면 자동 청산이 실행되지 않을 수 있어요 (자동 보장 아님).
+        ※ 창의 X 버튼은 트레이로 숨김(청산 계속) · PC 절전·전원 종료·강제 종료·네트워크 끊김이면 자동 청산이 실행되지 않을 수 있어요 (자동 보장 아님).
       </div>
 
       {st.previous_incident_trading_date && (

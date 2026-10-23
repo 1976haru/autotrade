@@ -137,6 +137,11 @@ describe("isDesktopApp", () => {
     delete window.__TAURI_METADATA__;
   });
   afterEach(() => {
+    // 테스트가 심은 Tauri 전역은 *항상* 지운 뒤 원래 값만 복원 — 예전엔 원래 없던 경우
+    //   지우지 않아 이후 테스트가 데스크톱 모드로 오염됐다.
+    delete window.__TAURI__;
+    delete window.__TAURI_INTERNALS__;
+    delete window.__TAURI_METADATA__;
     if (_original.tauri != null) window.__TAURI__ = _original.tauri;
     if (_original.tauriInternals != null) window.__TAURI_INTERNALS__ = _original.tauriInternals;
     if (_original.tauriMeta != null) window.__TAURI_METADATA__ = _original.tauriMeta;

@@ -105,6 +105,19 @@ describe("IntradaySessionPanel (INTRADAY-FLAT-BY-CLOSE-V1)", () => {
     expect(getByTestId("isp-buy-cancels").textContent).toContain("잔량 6주");
   });
 
+  it("EXE: 시작 화면 — KIS 설정·리허설·자동매매 상태·보유/미체결 수 표시", async () => {
+    const d = { ...base, kis_credentials_present: true, rehearsal_mode: true,
+      rehearsal_symbol: "005930", rehearsal_max_buy_qty: 1, auto_loop_state: "PAUSED",
+      program_ledger_holdings: [{ symbol: "005930", quantity: 1 }],
+      summary: { totals: { open_sell_qty: 1 } } };
+    const { getByTestId } = render(<IntradaySessionPanel api={api(d)} pollMs={60_000} />);
+    await waitFor(() => expect(getByTestId("isp-kis-conn").textContent).toContain("연결 정보 있음"));
+    expect(getByTestId("isp-rehearsal").textContent).toContain("005930 최대 1주");
+    expect(getByTestId("isp-loop").textContent).toContain("시작 버튼을 눌러야 신규 매수");
+    expect(getByTestId("isp-holdings").textContent).toContain("보유 1종목 · 미체결 1주");
+    expect(getByTestId("isp-not-guaranteed").textContent).toContain("트레이로 숨김");
+  });
+
   it("PREFLIGHT: 정지(⏸)와 긴급정지(🛑)의 청산 영향 차이를 항상 표시", async () => {
     const { getByTestId } = render(<IntradaySessionPanel api={api(base)} pollMs={60_000} />);
     await waitFor(() => expect(getByTestId("isp-stop-vs-emergency").textContent).toContain("청산은 계속"));

@@ -38,7 +38,8 @@ import logging
 import os
 import socket
 import sys
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
@@ -388,36 +389,49 @@ def is_port_open(host: str, port: int, timeout: float = 0.5) -> bool:
         sock.close()
 
 
-def is_backend_alive(host: str, port: int, timeout: float = 1.5) -> bool:
-    """포트에 listen 중인 프로세스가 *Agent Trader backend* 인지 확인.
+BACKEND_APP_ID = "agent-trader-backend"   # app.main.BACKEND_APP_ID 와 동일 (테스트로 lock)
 
-    /health 가 200 + body 에 'ok' or 'status' 키를 포함하면 같은 backend 로 간주.
-    실패 시 False — 다른 프로세스가 포트를 점유한 것 (예: 이전 stale sidecar /
-    다른 앱). 본 함수가 False 면 호출자는 fallback port 로 bind 시도한다.
 
-    *어떤 broker / OrderExecutor / 실거래 API 도 호출하지 않는다* — 단순 HTTP
-    GET /health 만.
-    """
+def read_backend_health(host: str, port: int, timeout: float = 1.5) -> dict | None:
+    """GET /health body (dict) 또는 None. broker / 실거래 API 호출 0건."""
     url = f"http://{host}:{port}/health"
     try:
         with urlopen(url, timeout=timeout) as resp:  # noqa: S310 — local 127.0.0.1
             if resp.status != 200:
-                return False
-            try:
-                body = json.loads(resp.read().decode("utf-8", errors="replace"))
-            except (ValueError, UnicodeDecodeError):
-                return False
-            if not isinstance(body, dict):
-                return False
-            return bool(body.get("ok")) or body.get("status") == "ok"
-    except (URLError, OSError, TimeoutError):
+                return None
+            body = json.loads(resp.read().decode("utf-8", errors="replace"))
+            return body if isinstance(body, dict) else None
+    except (URLError, OSError, TimeoutError, ValueError, UnicodeDecodeError):
+        return None
+
+
+def is_backend_alive(host: str, port: int, timeout: float = 1.5,
+                     expected_commit: str | None = None) -> bool:
+    """포트에 listen 중인 프로세스가 *같은 빌드의 Agent Trader backend* 인지 확인.
+
+    WINDOWS-ONECLICK-EXE-V1: 예전엔 /health 가 {"ok": true} 이기만 하면 우리 backend 로
+    간주해 *다른 프로그램* 이나 *이전 버전* 백엔드(자체 매매 driver 를 가진)를 재사용할
+    수 있었다. 이제 app_id 가 일치해야 하고, expected_commit 이 주어지면 build_commit 도
+    같아야 한다 (다르면 재사용하지 않고 다음 포트로 — 오래된 실행본을 붙잡지 않음).
+
+    *어떤 broker / OrderExecutor / 실거래 API 도 호출하지 않는다* — 단순 HTTP
+    GET /health 만.
+    """
+    body = read_backend_health(host, port, timeout)
+    if body is None:
         return False
+    if body.get("app_id") != BACKEND_APP_ID:
+        return False
+    if expected_commit and body.get("build_commit") not in (None, expected_commit):
+        return False
+    return bool(body.get("ok")) or body.get("status") == "ok"
 
 
 def find_free_port(
     host: str,
     candidates: list[int],
     log: logging.Logger,
+    expected_commit: str | None = None,
 ) -> tuple[int, bool, str]:
     """candidates 를 순회하며 첫 *free* 포트를 반환.
 
@@ -435,7 +449,7 @@ def find_free_port(
             log.info("port probe %s:%d → FREE", host, p)
             return (p, True, "free")
         log.warning("port probe %s:%d → IN USE", host, p)
-        if is_backend_alive(host, p):
+        if is_backend_alive(host, p, expected_commit=expected_commit):
             log.info(
                 "port %s:%d already hosts an Agent Trader backend "
                 "(/health responded 200) — sidecar will reuse it.",
@@ -443,14 +457,16 @@ def find_free_port(
             )
             return (p, True, "reuse-backend")
         log.warning(
-            "port %s:%d in use but /health does NOT respond — likely a stale "
-            "process or non-backend listener. trying next candidate.",
+            "port %s:%d in use but is NOT this Agent Trader build (other program, "
+            "older/different build, or no /health) — not reused. trying next candidate.",
             host, p,
         )
     return (candidates[0], False, "all in use, none responded to /health")
 
 
-def write_backend_port_file(host: str, port: int, mode: str) -> Path | None:
+def write_backend_port_file(host: str, port: int, mode: str,
+                            instance_id: str | None = None,
+                            build_commit: str | None = None) -> Path | None:
     """%APPDATA%/Autotrade/backend-port.json 에 현재 bound port 기록.
 
     `mode`: "free" (새로 bind) / "reuse-backend" (기존 backend 재사용)
@@ -470,7 +486,11 @@ def write_backend_port_file(host: str, port: int, mode: str) -> Path | None:
                 "host":        host,
                 "port":        port,
                 "mode":        mode,
-                "written_at":  datetime.utcnow().isoformat() + "Z",
+                # frontend 가 이 instance_id 와 /health.instance_id 를 대조해 *이번 실행본*
+                #   backend 에만 연결한다 (secret 아님 — 프로세스별 uuid).
+                "instance_id": instance_id,
+                "build_commit": build_commit,
+                "written_at":  datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -591,7 +611,19 @@ def run(argv: list[str] | None = None) -> int:
     else:
         candidates = [port]
 
-    chosen_port, ok, reason = find_free_port(host, candidates, log)
+    # WINDOWS-ONECLICK-EXE-V1: 실행본 식별자 — backend /health 가 그대로 노출한다.
+    instance_id = os.environ.get("AUTOTRADE_INSTANCE_ID") or uuid.uuid4().hex
+    os.environ["AUTOTRADE_INSTANCE_ID"] = instance_id
+    try:
+        from app.system.build_info import get_build_info
+        own_commit = get_build_info().get("commit")
+    except Exception:  # noqa: BLE001 — commit 미상이면 commit 대조 없이 app_id 만.
+        own_commit = None
+    if own_commit in ("unknown", ""):
+        own_commit = None
+    log.info("instance_id=%s build_commit=%s", instance_id, own_commit)
+
+    chosen_port, ok, reason = find_free_port(host, candidates, log, expected_commit=own_commit)
     if not ok:
         log.error(
             "could not find a usable port for backend (host=%s candidates=%s). "
@@ -602,7 +634,12 @@ def run(argv: list[str] | None = None) -> int:
         )
         return 5  # 기존 exit code 호환 — frontend 가 port 충돌로 인지
 
-    port_file = write_backend_port_file(host, chosen_port, reason)
+    port_instance = instance_id
+    if reason == "reuse-backend":
+        existing = read_backend_health(host, chosen_port) or {}
+        port_instance = existing.get("instance_id") or instance_id
+    port_file = write_backend_port_file(host, chosen_port, reason,
+                                        instance_id=port_instance, build_commit=own_commit)
     if port_file is not None:
         log.info("backend-port.json written → %s", port_file)
     else:

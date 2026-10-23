@@ -30,6 +30,7 @@ import { useRiskPolicy } from "./store/useRiskPolicy";
 import { useSettings }   from "./store/useSettings";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { BackendOfflineBanner } from "./components/BackendOfflineBanner";
+import { DesktopTrayBridge } from "./desktop/DesktopTrayBridge";
 import { OfflineBanner }    from "./components/common/OfflineBanner";
 import { KillSwitchBanner } from "./components/common/KillSwitchBanner";
 import { PwaInstallHint }   from "./components/common/PwaInstallHint";
@@ -131,6 +132,8 @@ function AppShell() {
           다름. navigator.onLine 감시. */}
       <OfflineBanner />
       <BackendOfflineBanner brokerHealthy={portfolio.brokerHealthy} brokerAsOf={portfolio.asOf} />
+      {/* WINDOWS-ONECLICK-EXE-V1: 트레이 메뉴(상태 확인/안전 종료) 다리 — 데스크톱에서만 렌더. */}
+      <DesktopTrayBridge />
       {/* #63: 홈화면 설치 안내 — standalone/dismiss 세션에선 노출 X. 새 홈(관제판)에서는
           최상단을 차지하지 않도록 숨기고, 설정(config) 탭으로 이동. */}
       {tab === "config" && <PwaInstallHint />}

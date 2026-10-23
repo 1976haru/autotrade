@@ -3,6 +3,15 @@
 // frontend 도 동일 순서로 multi-port probe 후 *성공한 포트* 의 baseUrl 을
 // 전역 API client 에 반영해 이후 모든 호출 (감사 / 에이전트 / 대시보드 /
 // auto-paper) 이 같은 포트를 사용한다.
+import {
+  IDENTITY_REASON_KO,
+  fetchHealth,
+  isTauriRuntime,
+  judgeBackendIdentity,
+  orderPorts,
+  readDesktopPortInfo,
+} from "../../desktop/backendIdentity";
+
 const DEFAULT_BACKEND_URL = "http://127.0.0.1:8000";
 const FALLBACK_PORTS = [8000, 8001, 8002];
 
@@ -36,13 +45,33 @@ export function resetBackendBaseUrl() {
 export async function discoverBackendBaseUrl({
   ports = FALLBACK_PORTS,
   fetchImpl = (typeof globalThis !== "undefined" && globalThis.fetch),
+  // WINDOWS-ONECLICK-EXE-V1: 데스크톱(EXE)에서는 이번 실행본 신원 검사를 강제.
+  //   테스트/웹 모드는 기본 false (종전 동작). desktopPortInfo 주입 가능(테스트).
+  requireIdentity = isTauriRuntime(),
+  desktopPortInfo,
 } = {}) {
   if (typeof fetchImpl !== "function") {
     return { ok: false, error: "fetch not available" };
   }
+  let expectedInstanceId = null;
+  if (requireIdentity) {
+    const info = desktopPortInfo !== undefined ? desktopPortInfo : await readDesktopPortInfo();
+    if (info) {
+      ports = orderPorts(ports, info.port);
+      expectedInstanceId = info.instanceId;
+    }
+  }
   let lastError = "no ports tried";
   for (const port of ports) {
     const baseUrl = `http://127.0.0.1:${port}`;
+    if (requireIdentity) {
+      const verdict = judgeBackendIdentity(await fetchHealth(baseUrl, fetchImpl),
+        { expectedInstanceId });
+      if (!verdict.ok) {
+        lastError = `${verdict.reason}: ${IDENTITY_REASON_KO[verdict.reason] || ""}`;
+        continue;
+      }
+    }
     try {
       const sres = await fetchImpl(`${baseUrl}/api/status`);
       if (sres && sres.ok) {
@@ -1040,6 +1069,8 @@ export const backendApi = {
   kisPaperAutoStatus: () => backendFetch("/api/kis-paper/auto/status"),
   // INTRADAY-FLAT-BY-CLOSE-V1: 14:30 매수마감·15:15 강제청산·EOD 상태 (read-only, 서버 시계).
   kisPaperEodStatus: () => backendFetch("/api/kis-paper/eod/status"),
+  // WINDOWS-ONECLICK-EXE-V1: 앱 종료 전 확인 (보유/미체결 → 자동 청산 불가 경고). read-only.
+  kisPaperEodShutdownCheck: () => backendFetch("/api/kis-paper/eod/shutdown-check"),
   // FLATTEN_INCOMPLETE 운영자 확인 — 다음 거래일 신규 매수 차단 해제. 주문 0건.
   kisPaperEodAcknowledge: ({ tradingDate, decidedBy, note } = {}) =>
     backendFetch("/api/kis-paper/eod/acknowledge", {

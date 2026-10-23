@@ -44,6 +44,15 @@ const DB_PREP_HINT_THRESHOLD_MS = 5_000;
 // fix/desktop-sidecar-port-fallback: 8000 이 stale 프로세스에 점유된 경우
 // backend launcher 가 8001/8002 로 fallback bind 한다. frontend 도 동일 순서로
 // 시도 — 8000 실패 시 8001, 8002 를 차례로 probe.
+import {
+  IDENTITY_REASON_KO,
+  fetchHealth,
+  isTauriRuntime,
+  judgeBackendIdentity,
+  orderPorts,
+  readDesktopPortInfo,
+} from "./backendIdentity";
+
 const DEFAULT_FALLBACK_PORTS = [8000, 8001, 8002];
 
 function _baseUrlForPort(port) {
@@ -323,10 +332,31 @@ export function startBackendPoll({
 export async function probeBackendWithFallback({
   ports = DEFAULT_FALLBACK_PORTS,
   fetchImpl,
+  // WINDOWS-ONECLICK-EXE-V1: 데스크톱에서는 이번 실행본(app_id + instance_id) 만 신뢰.
+  requireIdentity = isTauriRuntime(),
+  desktopPortInfo,
 } = {}) {
   let lastError = "no ports tried";
+  let expectedInstanceId = null;
+  if (requireIdentity) {
+    const info = desktopPortInfo !== undefined ? desktopPortInfo : await readDesktopPortInfo();
+    if (info) {
+      ports = orderPorts(ports, info.port);
+      expectedInstanceId = info.instanceId;
+    }
+  }
+  const _fetch = fetchImpl || (typeof globalThis !== "undefined" ? globalThis.fetch : null);
   for (const port of ports) {
     const baseUrl = _baseUrlForPort(port);
+    if (requireIdentity && typeof _fetch === "function") {
+      const verdict = judgeBackendIdentity(await fetchHealth(baseUrl, _fetch),
+        { expectedInstanceId });
+      if (!verdict.ok) {
+        lastError = `${verdict.reason}: ${IDENTITY_REASON_KO[verdict.reason] || ""}`;
+        _appendLog({ kind: "identity_rejected", url: baseUrl, error: verdict.reason });
+        continue;
+      }
+    }
     const probe = await probeBackendOnce({ baseUrl, fetchImpl });
     if (probe.statusOk) {
       _appendLog({ kind: "probe_success_port", url: baseUrl });

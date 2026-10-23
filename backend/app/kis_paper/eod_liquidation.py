@@ -1059,6 +1059,12 @@ def eod_status(db: Any, *, settings: Any = None, now: datetime | None = None,
             ledger_holdings or int(((row.summary or {}) if row else {}).get(
                 "totals", {}).get("managed_qty", 0) or 0) > 0)),
         "auto_liquidation_guaranteed": False,
+        # WINDOWS-ONECLICK-EXE-V1: 시작 화면 표시용 (secret 0건 — bool/심볼/수량만).
+        "rehearsal_mode": bool(getattr(settings, "kis_paper_rehearsal_mode", False)),
+        "rehearsal_symbol": str(getattr(settings, "kis_paper_rehearsal_symbol", "") or ""),
+        "rehearsal_max_buy_qty": int(getattr(settings, "kis_paper_rehearsal_max_buy_qty", 0) or 0),
+        "kis_credentials_present": _credentials_present(settings),
+        "auto_loop_state": _auto_loop_state(now),
         "paper_auto_mode": mode.to_dict(),
         "broker_label": ("KIS_PAPER" if (mode.mode != "VIRTUAL_ONLY" and mode.kis_realtime)
                          else "VIRTUAL/MOCK"),
@@ -1066,6 +1072,64 @@ def eod_status(db: Any, *, settings: Any = None, now: datetime | None = None,
         "enable_live_trading": bool(getattr(settings, "enable_live_trading", False)),
         "is_live_authorization": False,
         "broker_order_type": "KIS_PAPER",
+    }
+
+
+def _credentials_present(settings: Any) -> bool:
+    try:
+        from app.kis_paper.readiness import evaluate_readiness
+        rd = evaluate_readiness(settings)
+        return bool(rd.kis_key_present and rd.kis_secret_present and rd.kis_account_present)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _auto_loop_state(now: datetime) -> str | None:
+    try:
+        from app.auto_paper.loop import get_auto_paper_loop
+        return str(get_auto_paper_loop().status(now=now).state)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def shutdown_check(db: Any, *, settings: Any = None, now: datetime | None = None,
+                   risk: Any = None) -> dict[str, Any]:
+    """데스크톱 앱 종료(X/트레이 '안전 종료') 전 판단 — DB/요약만, 브로커 호출 0건.
+
+    프로그램 보유(원장) 또는 미체결(마지막 대조)이 있으면 종료 시 15:00~15:30 자동 청산이
+    실행되지 않으므로 safe_to_quit=False + 이유. 자동 청산은 앱(백엔드)이 켜져 있어야만
+    동작하며 PC 절전/강제 종료/전원 차단 시에는 보장되지 않는다.
+    """
+    st = eod_status(db, settings=settings, now=now, risk=risk)
+    holdings = list(st.get("program_ledger_holdings") or [])
+    totals = (st.get("summary") or {}).get("totals") or {}
+    open_qty = int(totals.get("open_sell_qty", 0) or 0) + int(
+        totals.get("program_open_buy_qty", 0) or 0) + int(totals.get("unconfirmed_eod_qty", 0) or 0)
+    phase = st.get("phase")
+    after_close = phase in ("POST_CLOSE", "NON_TRADING_DAY")
+    needs = bool(holdings) or open_qty > 0
+    if not needs:
+        msg = "프로그램 보유·미체결이 없습니다. 안전하게 종료할 수 있습니다."
+    elif after_close:
+        msg = (f"장 마감 이후인데 프로그램 보유 {len(holdings)}종목이 남아 있습니다(원장 기준). "
+               "오늘 자동 청산은 더 진행되지 않습니다 — KIS 앱에서 잔고를 확인하세요.")
+    else:
+        msg = (f"프로그램 보유 {len(holdings)}종목 / 미체결 {open_qty}주가 있습니다. "
+               "지금 종료하면 15:00~15:30 자동 청산이 실행되지 않습니다. "
+               "'트레이로 계속 실행'을 권장합니다.")
+    return {
+        "safe_to_quit": not needs or after_close,
+        "needs_running_for_eod": needs and not after_close,
+        "program_holdings": holdings,
+        "open_order_qty": open_qty,
+        "phase": phase,
+        "eod_state": st.get("eod_state"),
+        "emergency_stop": st.get("emergency_stop"),
+        "message_ko": msg,
+        "auto_liquidation_guaranteed": False,
+        "guarantee_notice_ko": ("PC 전원 종료·강제 종료·절전·네트워크 단절 상태에서는 "
+                                "자동 청산을 보장할 수 없습니다."),
+        "is_live_authorization": False,
     }
 
 
@@ -1090,4 +1154,5 @@ __all__ = [
     "EodState", "run_eod_step", "reconcile", "eod_status", "acknowledge_incident",
     "acquire_lease", "release_lease", "bot_net_quantities", "sell_quantity_for",
     "eod_client_order_prefix", "effective_policy", "process_owner_id", "eod_message_ko",
+    "shutdown_check",
 ]

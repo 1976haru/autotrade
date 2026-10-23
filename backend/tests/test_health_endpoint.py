@@ -44,6 +44,10 @@ def test_health_is_lightweight_no_query_params_needed():
     """/api/status 와 달리 query parameter / auth header 없이 200 응답."""
     res = _client().get("/health")
     assert res.status_code == 200
-    # body 가 4 키 정도로 작아야 — 디버그 dump 가 아님.
+    # 디버그 dump 가 아님 — 허용된 키만 (WINDOWS-ONECLICK-EXE-V1: 데스크톱이 다른
+    #   프로그램/이전 실행본을 오인하지 않도록 신원 필드 추가. secret 0건).
     body = res.json()
-    assert len(body) <= 5
+    allowed = {"ok", "status", "app", "db_ready", "migration_status",
+               "app_id", "instance_id", "build_commit", "pid",
+               "kis_is_paper", "live_trading_enabled"}
+    assert set(body) <= allowed, set(body) - allowed

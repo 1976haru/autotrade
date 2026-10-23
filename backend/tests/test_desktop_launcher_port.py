@@ -101,18 +101,39 @@ class TestIsBackendAlive:
         with patch("app_desktop_launcher.urlopen", side_effect=URLError("nope")):
             assert launcher.is_backend_alive("127.0.0.1", 8000) is False
 
-    def test_returns_true_on_200_with_ok_body(self):
+    @staticmethod
+    def _resp(body: bytes):
         class _Resp:
             status = 200
             def read(self):
-                return b'{"ok": true, "status": "ok"}'
+                return body
             def __enter__(self):
                 return self
             def __exit__(self, *args):
                 return False
+        return _Resp()
 
-        with patch("app_desktop_launcher.urlopen", return_value=_Resp()):
+    def test_ok_body_without_app_id_is_other_program(self):
+        # WINDOWS-ONECLICK-EXE-V1: {"ok": true} 만으로는 *다른 프로그램* 일 수 있다 → 재사용 금지.
+        with patch("app_desktop_launcher.urlopen",
+                   return_value=self._resp(b'{"ok": true, "status": "ok"}')):
+            assert launcher.is_backend_alive("127.0.0.1", 8000) is False
+
+    def test_returns_true_on_agent_trader_identity(self):
+        body = b'{"ok": true, "status": "ok", "app_id": "agent-trader-backend", "build_commit": "abc1234"}'
+        with patch("app_desktop_launcher.urlopen", return_value=self._resp(body)):
             assert launcher.is_backend_alive("127.0.0.1", 8000) is True
+            assert launcher.is_backend_alive("127.0.0.1", 8000, expected_commit="abc1234") is True
+
+    def test_different_build_not_reused(self):
+        # 이전/다른 빌드의 backend(자체 매매 driver 보유)를 붙잡지 않는다.
+        body = b'{"ok": true, "app_id": "agent-trader-backend", "build_commit": "old0001"}'
+        with patch("app_desktop_launcher.urlopen", return_value=self._resp(body)):
+            assert launcher.is_backend_alive("127.0.0.1", 8000, expected_commit="new0002") is False
+
+    def test_app_id_constant_matches_backend(self):
+        from app.main import BACKEND_APP_ID
+        assert launcher.BACKEND_APP_ID == BACKEND_APP_ID
 
     def test_returns_false_on_non_200(self):
         class _Resp:

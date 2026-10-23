@@ -549,6 +549,14 @@ def get_kis_paper_eod_status(db: Session = Depends(get_db)) -> dict:
     return out
 
 
+@router.get("/eod/shutdown-check")
+def get_kis_paper_eod_shutdown_check(db: Session = Depends(get_db)) -> dict:
+    """데스크톱 앱 종료 전 확인 — 보유/미체결이 있으면 종료 시 자동 청산 불가 경고.
+    read-only (DB/마지막 대조 요약), broker 호출 0건."""
+    from app.kis_paper.eod_liquidation import shutdown_check
+    return shutdown_check(db)
+
+
 class _EodAckBody(BaseModel):
     trading_date: str
     decided_by:   str

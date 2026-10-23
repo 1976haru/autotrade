@@ -368,13 +368,33 @@ def root() -> dict:
 # fix/desktop-nonblocking-migration-health: `db_ready` / `migration_status`
 # 를 추가 — DB 호출 없이 module-level singleton 만 read 하므로 응답 속도는
 # 영향 없음. migration 진행 중에도 본 endpoint 는 200 응답.
+#
+# WINDOWS-ONECLICK-EXE-V1: 신원 필드 — 데스크톱 launcher / frontend 가 8000~8002 에서
+# *다른 프로그램* 이나 *이전 버전/다른 실행본* 백엔드를 정상 서비스로 오인하지 않도록
+# app_id(고정) · instance_id(프로세스별, launcher 가 주입) · build_commit 를 노출한다.
+# Secret 0건 (commit hash / uuid / bool 만).
+BACKEND_APP_ID = "agent-trader-backend"
+_INSTANCE_ID = os.environ.get("AUTOTRADE_INSTANCE_ID") or __import__("uuid").uuid4().hex
+
+
 @app.get("/health")
 def health() -> dict:
     mig = get_migration_status()
+    try:
+        from app.system.build_info import get_build_info
+        commit = get_build_info().get("commit")
+    except Exception:  # noqa: BLE001
+        commit = None
     return {
         "ok":               True,
         "status":           "ok",
         "app":              settings.app_name,
+        "app_id":           BACKEND_APP_ID,
+        "instance_id":      _INSTANCE_ID,
+        "build_commit":     commit,
+        "pid":              os.getpid(),
+        "kis_is_paper":     bool(settings.kis_is_paper),
+        "live_trading_enabled": bool(settings.enable_live_trading),
         "db_ready":         db_is_ready(),
         "migration_status": mig.state.value,
     }

@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { APP_INFO } from "../../config/appInfo";
 
 import {
   FaqCard,
@@ -69,7 +70,7 @@ describe("<FeedbackModal>", () => {
     );
     const details = getByTestId("feedback-auto-meta-details");
     expect(details.textContent).toMatch(/Agent Trader v1/);
-    expect(details.textContent).toMatch(/v1\.0\.0/);
+    expect(details.textContent).toContain(`v${APP_INFO.version}`);   // package.json 단일 진실
     expect(details.textContent).toMatch(/SIMULATION/);
     expect(details.textContent).not.toMatch(/sk-ant-|app_secret=/);
   });

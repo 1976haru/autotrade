@@ -2,6 +2,7 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HeroSummaryCard } from "./HeroSummaryCard";
+import { APP_INFO } from "../../config/appInfo";
 
 
 // 230: useBackendStatus 모킹 — 정상 / 에러 / 로딩 분기 모두.
@@ -32,7 +33,8 @@ describe("<HeroSummaryCard>", () => {
     // Product branding v1: "에이전트 트레이더 v1" + version line "Agent Trader v1 v1.0.0"
     expect(getByTestId("hero-summary").textContent).toContain("에이전트 트레이더 v1");
     expect(getByTestId("hero-app-version-line").textContent)
-      .toMatch(/Agent Trader v1\s+v1\.0\.0/);
+      // 버전은 package.json 단일 진실(build-time inject) — 하드코딩 금지 (1.1.0 bump 대응).
+      .toContain(`Agent Trader v1 v${APP_INFO.version}`);
   });
 
   it("shows Demo Mode pill when backend is unreachable", () => {
