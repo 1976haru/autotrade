@@ -334,10 +334,16 @@ def test_anchor_skips_already_absolute(monkeypatch):
     assert os.environ["DATABASE_URL"] == "sqlite:///C:/abs/auto_trader.db"  # 불변
 
 
-def test_anchor_skips_when_frozen(monkeypatch):
+def test_anchor_when_frozen_uses_appdata_not_install_dir(monkeypatch, tmp_path):
+    # WINDOWS-ONECLICK-EXE-V1: 예전엔 frozen 이면 건너뛰어 설치 폴더(CWD) 기준 DB 를 열었다.
+    #   이제 %APPDATA%\Autotrade\data 로 고정 (설치 폴더 밖 — 재설치/제거에도 보존).
     import logging
     import app_desktop_launcher as L
+    monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))      # 실제 APPDATA 미접촉
     monkeypatch.setenv("DATABASE_URL", "sqlite:///./data/auto_trader.db")
     monkeypatch.setattr(L.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(L.sys, "executable", str(tmp_path / "inst" / "app.exe"))
+    monkeypatch.chdir(tmp_path)
     L._anchor_relative_db_to_absolute(logging.getLogger("t"))
-    assert os.environ["DATABASE_URL"] == "sqlite:///./data/auto_trader.db"  # frozen 은 건너뜀
+    expected = (tmp_path / "Roaming" / "Autotrade" / "data" / "auto_trader.db").resolve()
+    assert os.environ["DATABASE_URL"] == "sqlite:///" + expected.as_posix()

@@ -113,6 +113,7 @@ def _anchor_relative_db_to_absolute(log: logging.Logger) -> None:
     임시 추출 경로라 건너뛴다(별도 패키징 경로, 이번 범위 밖)."""
     try:
         if getattr(sys, "frozen", False):
+            _anchor_frozen_db_to_appdata(log)
             return
         cur = os.environ.get("DATABASE_URL") or "sqlite:///./data/auto_trader.db"
         if not cur.startswith("sqlite:///"):
@@ -128,6 +129,47 @@ def _anchor_relative_db_to_absolute(log: logging.Logger) -> None:
                  os.environ["DATABASE_URL"])
     except Exception as exc:  # noqa: BLE001 — 실패해도 기존 동작 유지(raise 금지)
         log.warning("database anchor skipped: %s", exc)
+
+
+def _anchor_frozen_db_to_appdata(log: logging.Logger) -> None:
+    """WINDOWS-ONECLICK-EXE-V1: 설치형(EXE)에서 상대 sqlite 경로를 %APPDATA%\\Autotrade\\data
+    로 고정한다.
+
+    예전엔 frozen 이면 고정을 건너뛰어 `./data/auto_trader.db` 가 *설치 폴더(CWD)* 기준으로
+    열렸다 — (1) 재설치/제거/업데이트 시 설치 폴더와 함께 위험, (2) Program Files 설치면
+    쓰기 불가. 사용자 데이터는 설치 폴더 밖(%APPDATA%\\Autotrade — .env·로그·설정과 동거)에 둔다.
+
+    이전 버전 DB(설치 폴더 / 실행파일 옆 data\\auto_trader.db)가 있고 새 위치에 DB 가 없으면
+    *복사* 한다 (원본 삭제 0 — 데이터 손실 방지). 운영자가 .env 에 절대경로 DATABASE_URL 을
+    지정했다면 그대로 존중한다.
+    """
+    import shutil
+
+    cur = os.environ.get("DATABASE_URL") or "sqlite:///./data/auto_trader.db"
+    if not cur.startswith("sqlite:///"):
+        return
+    raw = cur[len("sqlite:///"):]
+    if Path(raw).is_absolute():
+        log.info("database already absolute (operator setting kept): %s", cur)
+        return
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        log.warning("APPDATA missing — frozen DB stays CWD-relative: %s", cur)
+        return
+    target = (Path(appdata) / APPDATA_DIR_NAME / raw).resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not target.exists():
+        legacy_candidates = [
+            (Path(sys.executable).resolve().parent / raw).resolve(),
+            (Path.cwd() / raw).resolve(),
+        ]
+        for legacy in legacy_candidates:
+            if legacy != target and legacy.is_file():
+                shutil.copy2(legacy, target)
+                log.info("legacy EXE database copied (original kept): %s -> %s", legacy, target)
+                break
+    os.environ["DATABASE_URL"] = "sqlite:///" + target.as_posix()
+    log.info("database anchored for installed app: %s", os.environ["DATABASE_URL"])
 
 
 def _key_fingerprint(value: str) -> str:
@@ -576,6 +618,14 @@ def run(argv: list[str] | None = None) -> int:
     # EGW00103 으로 거부한다. 선택된 .env 와 가려진 후보의 키 지문을 비교해
     # 경고만 낸다 (파일 수정 0건, secret 원문 0건).
     detect_shadowed_env_conflicts(env_path, candidate_env_paths(), log)
+    # WINDOWS-ONECLICK-EXE-V1: .env 가 없거나 로드에 실패해도 DB 경로 고정은 항상 수행
+    #   (설치형은 %APPDATA%\Autotrade\data — 설치 폴더 밖). 이미 절대경로면 no-op.
+    _anchor_relative_db_to_absolute(log)
+    try:
+        from app.core.config import get_settings as _gs
+        _gs.cache_clear()
+    except Exception:  # noqa: BLE001
+        pass
     _print_safety_snapshot(log, env_path)
     # readiness API 가 본 정보를 carry 할 수 있도록 process env 로 공개.
     # *secret 원문 아님* — 파일 경로 + 로드 성공 여부만.

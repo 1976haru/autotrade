@@ -296,3 +296,57 @@ def test_migrations_upgrade_preserves_existing_rows(tmp_path):
             os.environ.pop("DATABASE_URL", None)
         else:
             os.environ["DATABASE_URL"] = old
+
+
+# ── 설치형 DB 위치: 설치 폴더 밖(%APPDATA%\Autotrade\data), 이전 DB 는 복사(원본 보존) ──
+
+
+def _frozen(monkeypatch, tmp_path, exe_dir):
+    import sys
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(exe_dir / "agent-trader-v1.exe"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.chdir(exe_dir)
+
+
+def test_frozen_db_anchored_to_appdata_and_legacy_copied(monkeypatch, tmp_path):
+    import logging
+    import os
+
+    import app_desktop_launcher as launcher
+    exe_dir = tmp_path / "Local" / "Agent Trader v1"
+    (exe_dir / "data").mkdir(parents=True)
+    legacy = exe_dir / "data" / "auto_trader.db"
+    legacy.write_bytes(b"legacy-db-bytes")
+    _frozen(monkeypatch, tmp_path, exe_dir)
+    launcher._anchor_relative_db_to_absolute(logging.getLogger("t"))
+    target = tmp_path / "Roaming" / "Autotrade" / "data" / "auto_trader.db"
+    assert os.environ["DATABASE_URL"] == "sqlite:///" + target.resolve().as_posix()
+    assert target.read_bytes() == b"legacy-db-bytes"
+    assert legacy.exists()                                   # 원본 삭제 0
+    # 두 번째 실행: 새 위치 DB 를 덮어쓰지 않는다.
+    target.write_bytes(b"newer-data")
+    monkeypatch.delenv("DATABASE_URL")
+    launcher._anchor_relative_db_to_absolute(logging.getLogger("t"))
+    assert target.read_bytes() == b"newer-data"
+
+
+def test_frozen_db_respects_operator_absolute_path(monkeypatch, tmp_path):
+    import logging
+    import os
+
+    import app_desktop_launcher as launcher
+    exe_dir = tmp_path / "Local" / "Agent Trader v1"
+    exe_dir.mkdir(parents=True)
+    _frozen(monkeypatch, tmp_path, exe_dir)
+    custom = "sqlite:///" + (tmp_path / "mine.db").as_posix()
+    monkeypatch.setenv("DATABASE_URL", custom)
+    launcher._anchor_relative_db_to_absolute(logging.getLogger("t"))
+    assert os.environ["DATABASE_URL"] == custom
+
+
+def test_launcher_always_anchors_db_even_without_env_file():
+    src = (ROOT / "backend" / "app_desktop_launcher.py").read_text(encoding="utf-8")
+    run_body = src.split("def run(", 1)[1]
+    assert "_anchor_relative_db_to_absolute(log)" in run_body
