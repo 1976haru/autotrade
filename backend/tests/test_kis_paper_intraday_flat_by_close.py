@@ -1657,3 +1657,292 @@ def test_V3_precheck_warns_on_capacity_risk_without_behavior_change(session_fact
     assert out["summary"]["precheck"]["capacity"]["risk"] == "TIGHT"
     assert any(e["code"] == "KIS_PAPER_EOD_CAPACITY_RISK" and e["level"] == "WARN" for e in events)
     assert len(broker.place_calls) == 2          # 단계적 정책(2종목/tick) 그대로 — 경고만
+
+
+# ═══════════════════ FIRST-ORDER-PREFLIGHT-01 (실제 KIS 호출 0) ═══════════════════
+
+
+@pytest.fixture
+def run_once_env(monkeypatch):
+    """run-once 라우트를 실제 함수 그대로 호출하기 위한 설정 (fake 자격 — secret 아님)."""
+    from app.api import routes_kis_paper as rk
+    from app.core import config as cfg
+    env = {
+        "ENABLE_KIS_PAPER_AUTO_TRADING": "true", "KIS_PAPER_AUTO_ORDER_DRY_RUN": "false",
+        "MARKET_DATA_PROVIDER": "kis", "KIS_IS_PAPER": "true", "ENABLE_LIVE_TRADING": "false",
+        "KIS_APP_KEY": "FAKE-KEY", "KIS_APP_SECRET": "FAKE-SECRET",
+        "KIS_ACCOUNT_NO": "0000000001", "KIS_PRODUCT_CODE": "01",
+    }
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    cfg.get_settings.cache_clear()
+    # 라우트의 paper 판정은 정확한 타입명 비교 — fake(서브클래스)도 KIS paper 로 인정.
+    monkeypatch.setattr(rk, "_broker_is_kis_paper",
+                        lambda b: isinstance(b, KisBrokerAdapter) and bool(b.is_paper))
+    clock = {"now": kst(13, 30)}
+    monkeypatch.setattr(rk, "_run_once_now", lambda: clock["now"])
+    yield rk, clock
+    cfg.get_settings.cache_clear()
+
+
+def _run_once(rk, db, broker, **kw):
+    body = dict(symbol="005930", side="BUY", quantity=1, price=10_000,
+                selected_strategies=["REHEARSAL"], confidence=0.9, quality_score=90,
+                has_exit_plan=True, exit_plan={"stop_loss_pct": 2, "take_profit_pct": 3.5})
+    body.update(kw)
+    return asyncio.run(rk.post_kis_paper_auto_run_once(
+        rk._KisAutoRunOnceBody(**body), db=db, broker=broker, risk=RiskManager(RiskPolicy())))
+
+
+def test_PF_run_once_price_mismatch_rejected_without_order(run_once_env, db):
+    rk, clock = run_once_env
+    clock["now"] = datetime.now(timezone.utc)              # fake 시세 시각과 같은 시계
+    broker = FakeKisPaperBroker({}, price=10_000)
+    out = _run_once(rk, db, broker, price=11_000)          # 10% 괴리
+    assert out["reason_code"] == "RUN_ONCE_PRICE_MISMATCH" and out["submitted"] is False
+    assert broker.place_calls == []
+
+
+def test_PF_run_once_quote_unavailable_or_stale_rejected(run_once_env, db, monkeypatch):
+    rk, clock = run_once_env
+    broker = FakeKisPaperBroker({})
+
+    async def boom(symbol):
+        raise RuntimeError("EGW00201")
+    broker.get_price = boom
+    assert _run_once(rk, db, broker)["reason_code"] == "RUN_ONCE_QUOTE_UNAVAILABLE"
+    broker2 = FakeKisPaperBroker({})
+    clock["now"] = datetime.now(timezone.utc) + timedelta(minutes=5)   # 시세 5분 전 → stale
+    assert _run_once(rk, db, broker2)["reason_code"] == "RUN_ONCE_QUOTE_STALE"
+    assert broker.place_calls == [] and broker2.place_calls == []
+
+
+def test_PF_run_once_mock_quote_source_cannot_send_kis_order(run_once_env, db, monkeypatch):
+    rk, clock = run_once_env
+    _pin_gate_clock(monkeypatch)
+    clock["now"] = datetime.now(timezone.utc)
+    broker = FakeKisPaperBroker({})
+
+    async def mock_quote(symbol):
+        return Quote(symbol=symbol, price=10_000,
+                     timestamp=datetime.now(timezone.utc).isoformat(), source="mock")
+    broker.get_price = mock_quote
+    out = _run_once(rk, db, broker)
+    assert out["reason_code"] == "KIS_REALTIME_PRICE_REQUIRED" and broker.place_calls == []
+    assert out["price_check"]["price_source"] == "mock"
+
+
+def test_PF_run_once_uses_server_price_and_records_source(run_once_env, db, monkeypatch):
+    rk, clock = run_once_env
+    _pin_gate_clock(monkeypatch)
+    clock["now"] = datetime.now(timezone.utc)   # fake 시세 timestamp(실제 현재)와 같은 시계
+    broker = FakeKisPaperBroker({}, price=10_050)
+    out = _run_once(rk, db, broker, price=10_000)           # 0.5% 괴리 — 허용
+    assert out["submitted"] is True, out
+    assert out["price_check"]["server_price"] == 10_050
+    assert out["price_check"]["price_source"] == "kis"
+    assert len(broker.place_calls) == 1 and broker.place_calls[0].trade_reason == "kis_paper_auto"
+
+
+def _pin_gate_clock(monkeypatch):
+    """BUY 시간 게이트(권한/route_order)만 13:30 KST 로 고정 — 테스트 실행 시각과 무관하게.
+    시세 신선도 검증은 fake 시세 timestamp(실제 현재)와 같은 시계로 따로 수행된다."""
+    import app.kis_paper.auto_executor as ax
+    import app.kis_paper.intraday_buy_gate as g
+    from app.kis_paper import auto_permission as ap
+    from dataclasses import replace
+    if getattr(ax.evaluate_kis_paper_order_permission, "_pinned", False):
+        return
+    orig = ap.evaluate_kis_paper_order_permission
+    real = g.program_buy_block_reason
+
+    def pinned_perm(inp):
+        return orig(replace(inp, now=kst(13, 30)))
+    pinned_perm._pinned = True
+    monkeypatch.setattr(ax, "evaluate_kis_paper_order_permission", pinned_perm)
+    monkeypatch.setattr(g, "program_buy_block_reason",
+                        lambda d, **kw: real(d, **{**kw, "now": kst(13, 30)}))
+
+
+def _submit_run_once_buy_at(rk, clock, db, broker, monkeypatch, *, symbol="005930", qty=1):
+    """run-once BUY 를 13:30 KST 게이트로 실행 (시세는 fake 현재가)."""
+    _pin_gate_clock(monkeypatch)
+    clock["now"] = datetime.now(timezone.utc)
+    return _run_once(rk, db, broker, symbol=symbol, quantity=qty, price=broker.price)
+
+
+def test_PF_run_once_buy_becomes_eod_managed_and_is_liquidated(run_once_env, session_factory,
+                                                                 db, monkeypatch):
+    """수동 run-once 1주 매수 → KIS 체결(가정) → EOD 관리 대상 → 15:00 자동 매도 → FLAT."""
+    rk, clock = run_once_env
+    broker = FakeKisPaperBroker({}, price=10_000, fill_mode="fill")
+    out = _submit_run_once_buy_at(rk, clock, db, broker, monkeypatch)
+    assert out["submitted"] is True and broker.holdings == {"005930": 1}
+    audit = db.query(OrderAuditLog).filter(OrderAuditLog.side == "BUY").one()
+    assert audit.trade_reason == "kis_paper_auto"         # 프로그램 소유 원장에 기록
+    monkeypatch.undo()                                     # 시계 고정 해제 후 EOD 진행
+    s = make_settings()
+    pre = step(session_factory, broker, kst(14, 45), settings=s)
+    assert pre["summary"]["symbols"]["005930"]["managed_qty"] == 1   # EOD 관리 대상
+    st = step(session_factory, broker, kst(15, 0, 5), settings=s, loop_state="PAUSED")
+    assert [(o.side, o.quantity) for o in broker.place_calls] == [
+        (OrderSide.BUY, 1), (OrderSide.SELL, 1)]
+    assert st["phase"] == "EOD_PRECHECK"
+    final = step(session_factory, broker, kst(15, 30, 5), settings=s, loop_state="PAUSED")
+    assert final["state"] == EodState.FLAT_CONFIRMED.value and broker.holdings["005930"] == 0
+
+
+def test_PF_eod_runs_without_start_button_paused_loop(session_factory, db):
+    """시작버튼 미클릭(PAUSED) — driver 경로로 15:00 단계적·15:15 잔여 청산 실행."""
+    for sym in ("000001", "000002", "000003"):
+        seed_bot_position(db, sym, 1)
+    broker = CountingBroker({"000001": 1, "000002": 1, "000003": 1})
+    drv = _day_driver(session_factory, broker, loop_state="PAUSED")
+    r1 = asyncio.run(drv.maybe_eod_step(kst(15, 0, 5)))
+    assert r1["phase"] == "EOD_PRECHECK" and broker.calls["place"] == 2
+    r2 = asyncio.run(drv.maybe_eod_step(kst(15, 15, 5)))
+    assert r2["phase"] == "EOD_FLATTEN" and broker.calls["place"] == 3
+
+
+def test_PF_smoke_mode_never_blocks_eod_sell(session_factory, db):
+    seed_bot_position(db, "005930", 1)
+    broker = FakeKisPaperBroker({"005930": 1})
+    s = make_settings(kis_paper_smoke_mode=True, kis_paper_smoke_symbol="005930",
+                      kis_paper_smoke_qty=1)
+    out = step(session_factory, broker, kst(15, 0, 5), settings=s)
+    assert out["summary"]["mode"] == "KIS_REALTIME_SMOKE_TEST"
+    assert [(o.side, o.quantity) for o in broker.place_calls] == [(OrderSide.SELL, 1)]
+
+
+def test_PF_smoke_scan_sell_clamped_to_orderable(monkeypatch):
+    """smoke 스캔 SELL 수량 = min(smoke_qty, 보유, 주문가능) — 초과매도 0."""
+    from app.kis_paper import driver_bridge as dbr
+    from pathlib import Path
+    src = Path(dbr.__file__).read_text(encoding="utf-8")
+    assert "qty = min(smoke_qty, _hldg, _ordp) if smoke else min(_hldg, _ordp)" in src
+
+
+# ── 리허설 가드: 지정 종목 1주, 스캔 자동매수 0, 매도는 항상 허용 ─────────────────
+
+
+def _rehearsal(**kw):
+    return make_settings(kis_paper_rehearsal_mode=True, kis_paper_rehearsal_symbol="005930",
+                         kis_paper_rehearsal_max_buy_qty=1, **kw)
+
+
+def test_PF_rehearsal_gate_symbol_and_daily_qty(db):
+    s = _rehearsal()
+    code, _ = program_buy_block_reason(db, settings=s, now=kst(13, 0), symbol="000660", quantity=1)
+    assert code == "REHEARSAL_SYMBOL_NOT_ALLOWED"
+    code, _ = program_buy_block_reason(db, settings=s, now=kst(13, 0), symbol="005930", quantity=2)
+    assert code == "REHEARSAL_BUY_LIMIT_REACHED"
+    assert program_buy_block_reason(db, settings=s, now=kst(13, 0), symbol="005930",
+                                    quantity=1)[0] is None
+    db.add(OrderAuditLog(created_at=kst(13, 1).replace(tzinfo=None), mode="PAPER",
+                         requested_by_ai=False, symbol="005930", side="BUY", quantity=1,
+                         order_type="MARKET", latest_price=1, decision="APPROVED", reasons=[],
+                         trade_reason="kis_paper_auto", executed=True))
+    db.commit()
+    code, _ = program_buy_block_reason(db, settings=s, now=kst(13, 2), symbol="005930", quantity=1)
+    assert code == "REHEARSAL_BUY_LIMIT_REACHED"
+    # 다음 거래일엔 리셋.
+    assert program_buy_block_reason(db, settings=s, now=kst(13, 0, d=date(2026, 10, 23)),
+                                    symbol="005930", quantity=1)[0] is None
+
+
+def test_PF_rehearsal_second_buy_blocked_but_eod_sell_allowed(run_once_env, session_factory, db,
+                                                              monkeypatch):
+    rk, clock = run_once_env
+    monkeypatch.setenv("KIS_PAPER_REHEARSAL_MODE", "true")
+    from app.core import config as cfg
+    cfg.get_settings.cache_clear()
+    broker = FakeKisPaperBroker({}, price=10_000)
+    first = _submit_run_once_buy_at(rk, clock, db, broker, monkeypatch)
+    assert first["submitted"] is True
+    second = _submit_run_once_buy_at(rk, clock, db, broker, monkeypatch)
+    assert second["submitted"] is False
+    assert "REHEARSAL_BUY_LIMIT_REACHED" in " ".join(
+        second.get("metadata", {}).get("routing_reasons", [])) + second["reason_message"]
+    other = _submit_run_once_buy_at(rk, clock, db, broker, monkeypatch, symbol="000660")
+    assert other["submitted"] is False
+    assert len([o for o in broker.place_calls if o.side == OrderSide.BUY]) == 1
+    monkeypatch.undo()
+    out = step(session_factory, broker, kst(15, 0, 5), settings=_rehearsal())
+    assert [(o.side, o.quantity) for o in broker.place_calls][-1] == (OrderSide.SELL, 1)
+    assert out["orders_submitted_this_step"] == 1
+
+
+def test_PF_rehearsal_disables_scan_auto_buys_but_not_sells(db, session_factory):
+    from app.agents.agent_council import StrategyMarketInput
+    from app.kis_paper.driver_bridge import kis_paper_realtime_scan_tick
+    from app.market_data.kis_realtime import KIS_PRICE_OK, KisRealtimeQuote
+
+    async def buy_input(symbol, *, client, now, market_is_open, **kw):
+        mi = StrategyMarketInput(
+            symbol=symbol, current_price=10800.0, prev_close=10000.0, open_price=10300.0,
+            vwap=10400.0, opening_range_high=10500.0, opening_range_low=10200.0,
+            recent_closes=(10000.0, 10200.0, 10400.0, 10600.0, 10800.0),
+            current_volume=200.0, avg_volume=100.0, market_regime="TREND_UP",
+            regime_decision="ALLOW")
+        return mi, KisRealtimeQuote(symbol=symbol, status=KIS_PRICE_OK, price=10800.0,
+                                    is_stale=False)
+    sent = []
+
+    async def route(**kw):
+        sent.append(kw["order"])
+        return SimpleNamespace(decision=RiskDecision.APPROVED, reasons=[],
+                               audit=SimpleNamespace(id=1, broker_order_id="X", broker_status="RECEIVED",
+                                                     filled_quantity=0, executed=True))
+    s = _rehearsal(kis_paper_max_new_positions_per_tick=1, kis_paper_scan_max_symbols=10,
+                   kis_app_key="FAKE-KEY", kis_app_secret="FAKE-SECRET",
+                   kis_account_no="0000000001", kis_product_code="01")
+    out = asyncio.run(kis_paper_realtime_scan_tick(
+        session_factory=session_factory, broker=FakeKisPaperBroker({}), risk=object(),
+        route_order_fn=route, settings=s, market_input_fn=buy_input,
+        universe_symbols=["005930"], client=object(), now=kst(13, 0)))
+    assert sent == [] and out["orders_submitted"] == 0
+    assert {x["reason_code"] for x in out["skipped"]} == {"REHEARSAL_SCAN_BUY_DISABLED"}
+
+
+# ── 취소: 미확인 주문을 취소 완료로 처리하지 않는다 ──────────────────────────
+
+
+def test_PF_cancel_request_accepted_is_not_cancel_confirmed(session_factory, db):
+    seed_today_program_buy(db, "005930", 10, "0000000960")
+    broker = FakeKisPaperBroker({})
+    broker.rows.append(open_buy_row("0000000960", "005930", 10))
+
+    async def accept_only(order_id, *, org_no=None, symbol="", side=OrderSide.BUY):
+        broker.cancel_calls.append((order_id, org_no))
+        return OrderResult(order_id="C1", status=OrderStatus.RECEIVED, symbol=symbol,
+                           side=side, quantity=0)
+    broker.cancel_order = accept_only
+    out = step(session_factory, broker, kst(14, 31))
+    st = out["summary"]["buy_cancels"]["0000000960"]["status"]
+    assert st == "CANCEL_REQUESTED_AWAITING_CONFIRM"            # 접수 ≠ 완료
+    final = step(session_factory, broker, kst(15, 30, 5))
+    assert final["state"] == EodState.FLATTEN_INCOMPLETE.value  # 잔량 남음 → 성공 위장 0
+
+
+def test_PF_cancel_missing_required_fields_never_sent(monkeypatch):
+    """org_no 또는 원주문번호가 없으면 네트워크 호출 전에 거부."""
+    from app.brokers import kis_client as kc
+    c = kc.KisClient("k", "s", True)
+    for kw in ({"org_no": "", "orig_odno": "1"}, {"org_no": "91252", "orig_odno": ""}):
+        with pytest.raises(ValueError):
+            asyncio.run(c.cancel_order_paper("12345678", "01", **kw))
+
+
+def test_PF_paper_network_path_and_tr_prefixes():
+    """첫 리허설 네트워크 경로: 모의 호스트 + 모든 TR 이 모의(V) 계열."""
+    from app.brokers import kis_client as kc
+    c = kc.KisClient("k", "s", True)
+    assert c.base_url == kc.PAPER_HOST and "vts" in kc.PAPER_HOST.lower()
+    assert c.base_url != kc.LIVE_HOST
+    assert c._balance_tr_id() == "VTTC8434R"
+    assert c._daily_ccld_tr_id() == "VTTC0081R"
+    assert {c._order_tr_id(is_buy=True), c._order_tr_id(is_buy=False)} == {"VTTC0802U", "VTTC0801U"}
+    import inspect
+    src = inspect.getsource(kc.KisClient.cancel_order_paper) + inspect.getsource(kc.KisClient.place_order)
+    assert '"VTTC0013U"' in src and '"VTTC0012U"' in src and '"VTTC0011U"' in src
+    assert "TTTC0013U\"" not in src and '"TTTC0011U"' not in src and '"TTTC0012U"' not in src

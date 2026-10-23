@@ -50,6 +50,12 @@ const F = {
   md: "var(--fs-md)", lg: "var(--fs-lg)", xl: "var(--fs-xl)", xxl: "var(--fs-2xl)",
 };
 
+export const EMERGENCY_CONFIRM_TEXT =
+  "정말 긴급정지할까요?\n" +
+  "긴급정지는 신규 매수뿐 아니라 장마감 자동 청산 매도와 미체결 주문 취소까지 모두 막아요.\n" +
+  "남은 보유 종목은 KIS 모의투자 앱에서 직접 정리해야 해요.\n\n" +
+  "신규 매수만 멈추려면 '⏸ 자동매매 정지'를 쓰세요 — 장마감 자동 청산은 계속돼요.";
+
 const pnlColor = (n) => (n > 0 ? UP : n < 0 ? DOWN : C.text);
 const signed = (n) => `${n > 0 ? "+" : ""}${fmtKRW(Math.round(n))}`;
 const card = { background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 18, boxShadow: "0 1px 3px rgba(0,0,0,.06)" };
@@ -220,7 +226,9 @@ export function ReferenceHome({
   const askEmergency = () => {
     if (emergencyStop) { onEmergencyStop?.(); return; }
     const ok = (typeof window !== "undefined" && typeof window.confirm === "function")
-      ? window.confirm("정말 자동매매를 멈출까요?\n긴급정지를 누르면 모든 주문이 차단돼요.")
+      // FIRST-ORDER-PREFLIGHT-01: 긴급정지는 *청산 매도·미체결 취소까지* 막는다 — 장마감
+      //   자동 청산이 필요한 상황에서 일반 정지 수단으로 오해하지 않게 분명히 안내.
+      ? window.confirm(EMERGENCY_CONFIRM_TEXT)
       : true;
     if (ok) onEmergencyStop?.();
   };

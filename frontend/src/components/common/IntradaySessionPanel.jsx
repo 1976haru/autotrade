@@ -208,6 +208,10 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
         </div>
       )}
 
+      <div className="isp-code" data-testid="isp-stop-vs-emergency">
+        ※ ⏸ 자동매매 정지 = 신규 매수만 중단(장마감 자동 청산은 계속) · 🛑 긴급정지 = 청산 매도·미체결 취소까지 전부 중단
+      </div>
+
       <div className="isp-code" data-testid="isp-not-guaranteed">
         ※ PC 절전·앱 종료·네트워크 끊김이면 자동 청산이 실행되지 않을 수 있어요 (자동 보장 아님).
       </div>

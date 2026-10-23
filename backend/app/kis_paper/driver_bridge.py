@@ -760,6 +760,14 @@ async def kis_paper_realtime_scan_tick(
         #   차단이면 BUY 후보는 executor 로 보내지 않고 skip(사유 기록) — 청산은 계속.
         from app.kis_paper.intraday_buy_gate import program_buy_block_reason
         _buy_block_code, _ = program_buy_block_reason(db, settings=settings, now=now)
+        # FIRST-ORDER-PREFLIGHT-01: 리허설 모드 — 자동 스캔 신규 BUY 전면 차단(run-once 만).
+        #   보유 종목 SELL(손절/익절/청산)은 그대로 평가·전송된다.
+        from app.kis_paper.intraday_buy_gate import (
+            REHEARSAL_SCAN_BUY_DISABLED,
+            rehearsal_enabled,
+        )
+        if _buy_block_code is None and rehearsal_enabled(settings):
+            _buy_block_code = REHEARSAL_SCAN_BUY_DISABLED
         # ★보유 *수량* 보존(단일 get_positions). SELL 수량 캡에 사용. held_symbols 는
         #   기존 set-기반 가드용으로 키에서 파생(중복 get_positions 호출 없음).
         held_map = await _kis_held_map(broker, fallback=_db_held, now=now)
@@ -874,7 +882,8 @@ async def kis_paper_realtime_scan_tick(
                 _info = held_map.get(symbol) or {}
                 _hldg = int(_info.get("hldg", 0) or 0)
                 _ordp = int(_info.get("ord_psbl", _hldg) or 0)
-                qty = smoke_qty if smoke else min(_hldg, _ordp)
+                # smoke 도 보유·주문가능 수량을 넘지 않게 클램프 (초과 매도 KIS 거부 방지).
+                qty = min(smoke_qty, _hldg, _ordp) if smoke else min(_hldg, _ordp)
             notional = price * qty
 
             # ── bridge 사전 가드 (RiskManager 전, BUY 신규 진입에만) ──────────

@@ -22,7 +22,7 @@ CLAUDE.md: broker / OrderExecutor / route_order import 0건 (순환/우회 방�
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.scheduler.intraday_session import (
@@ -96,10 +96,52 @@ def eod_incident_block(db: Any, now: datetime) -> str | None:
     return None
 
 
+REHEARSAL_SYMBOL_NOT_ALLOWED = "REHEARSAL_SYMBOL_NOT_ALLOWED"
+REHEARSAL_BUY_LIMIT_REACHED = "REHEARSAL_BUY_LIMIT_REACHED"
+REHEARSAL_SCAN_BUY_DISABLED = "REHEARSAL_SCAN_BUY_DISABLED"
+
+
+def rehearsal_enabled(settings: Any) -> bool:
+    return bool(getattr(settings, "kis_paper_rehearsal_mode", False))
+
+
+def _today_program_buy_qty(db: Any, now: datetime) -> int:
+    """오늘(KST) 프로그램 BUY 로 *전송된* 수량 합 (접수 기준 — 체결 전이라도 카운트)."""
+    from app.db.models import OrderAuditLog
+    day = to_kst(now).date()
+    start_utc = datetime(day.year, day.month, day.day) - timedelta(hours=9)
+    rows = (
+        db.query(OrderAuditLog.quantity)
+        .filter(OrderAuditLog.trade_reason.in_(tuple(PROGRAM_TRADE_REASONS)))
+        .filter(OrderAuditLog.side == "BUY")
+        .filter(OrderAuditLog.executed.is_(True))
+        .filter(OrderAuditLog.created_at >= start_utc)
+        .all()
+    )
+    return sum(int(q or 0) for (q,) in rows)
+
+
+def rehearsal_buy_block_reason(db: Any, *, settings: Any, now: datetime,
+                               symbol: str | None, quantity: int | None) -> tuple[str | None, str]:
+    """리허설 모드 신규 BUY 한도 — 지정 종목·하루 누적 수량. SELL 은 대상 아님."""
+    if not rehearsal_enabled(settings):
+        return None, ""
+    want = str(getattr(settings, "kis_paper_rehearsal_symbol", "005930") or "")
+    cap = max(0, int(getattr(settings, "kis_paper_rehearsal_max_buy_qty", 1) or 0))
+    if symbol is not None and str(symbol) != want:
+        return REHEARSAL_SYMBOL_NOT_ALLOWED, f"리허설 모드 — 신규 매수는 {want} 만 허용됩니다."
+    used = _today_program_buy_qty(db, now) if db is not None else 0
+    if used + int(quantity or 0) > cap:
+        return REHEARSAL_BUY_LIMIT_REACHED, (
+            f"리허설 모드 — 오늘 신규 매수 상한 {cap}주(이미 {used}주) 초과. 청산 매도는 계속 허용.")
+    return None, ""
+
+
 def program_buy_block_reason(
     db: Any, *, settings: Any = None, now: datetime | None = None,
+    symbol: str | None = None, quantity: int | None = None,
 ) -> tuple[str | None, str]:
-    """(reason_code | None, message). None = 신규 BUY 허용 (시간/달력/EOD 사고 기준)."""
+    """(reason_code | None, message). None = 신규 BUY 허용 (시간/달력/EOD 사고/리허설 기준)."""
     if now is None:
         now = datetime.now(timezone.utc)
     if settings is None:
@@ -116,6 +158,10 @@ def program_buy_block_reason(
                 return BUY_BLOCKED_BY_EOD_INCIDENT, (
                     f"{prev} 장마감 청산이 확인되지 않았습니다(FLATTEN_INCOMPLETE/미판정). "
                     "운영자 확인(acknowledge) 전까지 신규 매수를 차단합니다.")
+        r_code, r_msg = rehearsal_buy_block_reason(
+            db, settings=settings, now=now, symbol=symbol, quantity=quantity)
+        if r_code is not None:
+            return r_code, r_msg
         return None, buy_reason_message_ko(BUY_ALLOWED)
     except Exception as exc:  # noqa: BLE001 — fail-closed (신규 BUY 차단).
         _log.warning("[intraday-buy-gate] 판단 실패 → BUY 차단: %s: %s",

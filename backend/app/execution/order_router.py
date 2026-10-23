@@ -121,7 +121,8 @@ async def route_order(
         block_msg = ""
         if is_program_order(order.trade_reason):
             # now: 호출자(driver/executor)의 서버 시계 — 미지정이면 wall clock.
-            block_code, block_msg = program_buy_block_reason(db, now=now)
+            block_code, block_msg = program_buy_block_reason(
+                db, now=now, symbol=order.symbol, quantity=order.quantity)
         elif is_manual_buy(order.trade_reason) and isinstance(broker, KisBrokerAdapter):
             # V2: 수동매매 패널 BUY 도 14:30 이후/휴장일 차단 (KIS 세션 대상).
             block_code, block_msg = manual_buy_block_reason(now=now)

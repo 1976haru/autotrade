@@ -162,6 +162,14 @@ class Settings(BaseSettings):
     #   이력 있음) | "current"(KIS 공식 샘플 — VTTC0012U/0011U + EXCG_ID_DVSN_CD=KRX).
     #   리허설에서 current 접수·체결을 확인한 뒤에만 전환. 모의 전용(실전 TR 미정의).
     kis_paper_order_api_format:        str = "legacy"
+    # FIRST-ORDER-PREFLIGHT-01: run-once 입력가 vs 서버 조회가 허용 괴리(%).
+    kis_paper_run_once_max_price_deviation_pct: float = 1.0
+    # 첫 실사용 리허설 가드 — True 면 프로그램 신규 BUY 는 지정 종목·하루 누적 수량
+    #   상한 이내만(run-once 전용), 자동 스캔 BUY 는 전면 차단. SELL(일반·EOD)은 무제한
+    #   허용(보유 이내). 기본 OFF.
+    kis_paper_rehearsal_mode:          bool = False
+    kis_paper_rehearsal_symbol:        str  = "005930"
+    kis_paper_rehearsal_max_buy_qty:   int  = 1
     kis_paper_auto_max_order_notional: int = 1_000_000
     # 주문 허용 시간창 (KST "HH:MM"). 장 시작 직후/마감 직전 변동성 회피.
     kis_paper_auto_order_window_start: str = "09:05"

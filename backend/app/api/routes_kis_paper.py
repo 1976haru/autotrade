@@ -426,13 +426,27 @@ async def post_kis_paper_auto_run_once(
     """
     settings = get_settings()
     rd = evaluate_readiness(settings)
+    now = _run_once_now()
+    side = body.side.strip().upper()
+    # FIRST-ORDER-PREFLIGHT-01: 사용자 입력 가격을 신뢰하지 않는다. 서버가 브로커(KIS)
+    #   현재가·시세 시각을 직접 조회해 (1) 출처 (2) 신선도 (3) 입력가와의 괴리를 재검증하고,
+    #   주문 판단에는 *서버 조회가* 와 *실제 출처* 를 쓴다. 조회 실패/괴리 초과 → 주문 0.
+    verify = await _verify_run_once_price(broker, body.symbol, int(body.price), settings, now)
+    if side in ("BUY", "SELL") and not verify["ok"]:
+        return {
+            "reason_code": verify["reason_code"], "reason_message": verify["reason_message"],
+            "submitted": False, "broker_order_sent": False, "price_check": verify,
+            "broker_order_type": "KIS_PAPER", "is_live_authorization": False,
+        }
     decision = KisPaperAutoDecision(
-        symbol=body.symbol, side=body.side.strip().upper(),
-        quantity=int(body.quantity), price=int(body.price),
+        symbol=body.symbol, side=side,
+        quantity=int(body.quantity), price=int(verify.get("server_price") or body.price),
         selected_strategies=list(body.selected_strategies or []),
         confidence=float(body.confidence), quality_score=int(body.quality_score),
         entry_reason=body.entry_reason, has_exit_plan=bool(body.has_exit_plan),
         exit_plan=dict(body.exit_plan or {}),
+        price_source=str(verify.get("price_source") or "unknown"),
+        price_is_stale=bool(verify.get("is_stale", True)),
     )
     try:
         result = await execute_kis_paper_auto_order(
@@ -442,6 +456,7 @@ async def post_kis_paper_auto_run_once(
                 rd.kis_key_present and rd.kis_secret_present and rd.kis_account_present
             ),
             route_order_fn=route_order,
+            now=now,
         )
         db.commit()
     except Exception as exc:   # noqa: BLE001 — 흐름이 500 으로 죽지 않게.
@@ -454,7 +469,59 @@ async def post_kis_paper_auto_run_once(
             "broker_order_sent":     False,
             "is_live_authorization": False,
         }
-    return result.to_dict()
+    out = result.to_dict()
+    out["price_check"] = verify
+    return out
+
+
+def _run_once_now():
+    """run-once 서버 시계 (테스트에서 monkeypatch). 프론트 시각 미사용."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc)
+
+
+async def _verify_run_once_price(broker, symbol: str, client_price: int, settings,
+                                 now) -> dict:
+    """브로커 현재가 재조회 + 출처/신선도/괴리 검증 (주문 write 0 — read-only get_price)."""
+    from datetime import datetime, timezone
+    max_age = int(getattr(settings, "stale_price_max_age_seconds", 60) or 60)
+    max_dev = float(getattr(settings, "kis_paper_run_once_max_price_deviation_pct", 1.0) or 1.0)
+    base = {"client_price": int(client_price), "max_age_seconds": max_age,
+            "max_deviation_pct": max_dev, "ok": False}
+    try:
+        q = await broker.get_price(symbol)
+    except Exception as exc:  # noqa: BLE001
+        return {**base, "reason_code": "RUN_ONCE_QUOTE_UNAVAILABLE",
+                "reason_message": f"브로커 현재가 조회 실패({type(exc).__name__}) — 주문하지 않습니다."}
+    price = int(getattr(q, "price", 0) or 0)
+    source = str(getattr(q, "source", "") or "unknown").lower()
+    try:
+        ts = datetime.fromisoformat(str(q.timestamp))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        age = (now - ts).total_seconds()
+    except Exception:  # noqa: BLE001
+        age = None
+    stale = age is None or age > max_age or age < -5
+    dev = (abs(client_price - price) / price * 100.0) if price > 0 else None
+    info = {**base, "server_price": price, "price_source": source,
+            "quote_timestamp": str(getattr(q, "timestamp", "")),
+            "quote_age_seconds": None if age is None else round(age, 1),
+            "deviation_pct": None if dev is None else round(dev, 3), "is_stale": stale}
+    if price <= 0:
+        return {**info, "reason_code": "RUN_ONCE_QUOTE_INVALID",
+                "reason_message": "브로커 현재가가 0 이하 — 주문하지 않습니다."}
+    if stale:
+        return {**info, "reason_code": "RUN_ONCE_QUOTE_STALE",
+                "reason_message": f"브로커 시세가 오래됨(> {max_age}초) — 주문하지 않습니다."}
+    if dev is not None and dev > max_dev:
+        return {**info, "reason_code": "RUN_ONCE_PRICE_MISMATCH",
+                "reason_message": (f"입력가 {client_price} 가 서버 조회가 {price} 와 "
+                                   f"{dev:.2f}% 차이(> {max_dev}%) — 주문하지 않습니다.")}
+    # 출처 검증은 게이트(auto_permission: KIS_REALTIME_PRICE_REQUIRED)가 실제 출처로 수행 —
+    #   dry-run 진단은 mock 출처도 허용하되 실제 전송은 kis 출처에서만 통과한다.
+    return {**info, "ok": True, "reason_code": "RUN_ONCE_PRICE_VERIFIED",
+            "reason_message": "서버가 브로커 현재가·시세 시각을 재검증했습니다."}
 
 
 # ── KIS-PAPER-INTRADAY-FLAT-BY-CLOSE-V1: 장마감 당일 청산 상태 / 운영자 확인 ──────

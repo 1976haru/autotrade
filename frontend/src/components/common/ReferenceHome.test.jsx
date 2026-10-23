@@ -186,6 +186,18 @@ describe("ReferenceHome", () => {
     confirmSpy.mockRestore();
   });
 
+  it("긴급정지 확인창: 청산 매도·취소까지 막힌다 + 일반 정지(⏸)와 구분 안내", () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const { getByTestId } = renderHome({ onEmergencyStop: vi.fn() });
+    fireEvent.click(getByTestId("refhome-emergency"));
+    const msg = confirmSpy.mock.calls[0][0];
+    expect(msg).toContain("청산 매도");
+    expect(msg).toContain("취소까지");
+    expect(msg).toContain("자동매매 정지");
+    expect(msg).toContain("장마감 자동 청산은 계속");
+    confirmSpy.mockRestore();
+  });
+
   it("긴급정지: 확인 취소 시 호출 안 됨 (실수 방지)", () => {
     const onEmergencyStop = vi.fn();
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);

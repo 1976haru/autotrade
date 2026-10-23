@@ -246,7 +246,8 @@ class PermissionGate:
             block_code = None
             block_msg = ""
             if is_program_order(audit.trade_reason):
-                block_code, block_msg = program_buy_block_reason(self.db)
+                block_code, block_msg = program_buy_block_reason(
+                    self.db, symbol=order.symbol, quantity=order.quantity)
             elif is_manual_buy(audit.trade_reason) and isinstance(broker, KisBrokerAdapter):
                 block_code, block_msg = manual_buy_block_reason()
             if block_code is not None:
