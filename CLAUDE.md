@@ -43,6 +43,8 @@
 
 새 주문 경로를 추가할 때는 반드시 `route_order`를 통과하도록 한다.
 
+**V2 EOD-SAFETY-HARDENING (2026-10-23)** — 취소 주문 단일 진입점 `route_cancel → OrderExecutor.cancel`(broker.cancel_order 유일 호출부, KIS 모의 TR VTTC0013U 전용, 긴급정지·비PAPER·실거래플래그·live broker 시 REJECTED audit). `route_order`는 수동매매 BUY(`manual_buy`, KIS 브로커)도 14:30 이후 차단. EOD 무력화 설정 제거, 15:00 사전점검·단계적 청산 추가.
+
 **INTRADAY-FLAT-BY-CLOSE-V1 (2026-10-23)** — `route_order`는 idempotency 직후, OrderGuard 전에 *프로그램*(`trade_reason="kis_paper_auto"`) 신규 BUY를 `intraday_buy_gate.program_buy_block_reason`으로 재검증한다(14:30 컷오프·휴장일·달력 미등록·직전일 EOD 미완료 → broker 호출 없이 REJECTED audit). `route_order`에 keyword-only `now`(기본 wall clock)가 추가됐다. `PermissionGate.approve`도 같은 helper로 재검증한다. 15:15 장마감 청산은 `app/kis_paper/eod_liquidation.py` coordinator가 같은 sanctioned 경로로만 수행한다. RiskManager의 보유수량 이내 reduce-only SELL은 진입 notional·일일손실 한도에서 면제된다(긴급정지는 유지). 상세: [`docs/kis_paper_intraday_flat_by_close.md`](docs/kis_paper_intraday_flat_by_close.md)
 
 ### 핵심 아키텍처 불변식 (#34~#43)
@@ -54,7 +56,7 @@
 - **#37 3-Level Kill Switch** (`app/risk/emergency_stop.py`) — OFF/L1/L2/L3. **자동 청산·자동 취소 절대 금지** (read-only candidate list만). [`docs/emergency_stop_policy.md`](docs/emergency_stop_policy.md)
 - **#38 OrderGuard** (`app/risk/order_guard.py`) — RiskManager 평가 *전* `route_order`에서 호출되는 pre-trade 중복/쿨타임 가드. fingerprint 식별, 모든 cooldown/window default 0=비활성. [`docs/order_guard_policy.md`](docs/order_guard_policy.md)
 - **#39 AI Permission Gate** (`app/risk/ai_permission_gate.py`) — 5단계×5행동 매트릭스. **AI API Key는 주문 권한이 아니다** (key/secret 입력 안 받음, broker import 0건). [`docs/ai_permission_gate.md`](docs/ai_permission_gate.md)
-- **#40 OrderExecutor 단일 진입점** (`app/execution/order_executor.py`) — `OrderExecutor.execute`만이 `broker.place_order()`를 호출하는 *유일한* 코드. 모든 audit에 `source` carry (정적 grep 가드). [`docs/order_executor_contract.md`](docs/order_executor_contract.md)
+- **#40 OrderExecutor 단일 진입점** (`app/execution/order_executor.py`) — `OrderExecutor.execute`만이 `broker.place_order()`를, `OrderExecutor.cancel`만이 `broker.cancel_order()`를 호출하는 *유일한* 코드(취소는 `route_cancel` 경유, KIS 모의 전용). 모든 audit에 `source` carry (정적 grep 가드). [`docs/order_executor_contract.md`](docs/order_executor_contract.md)
 - **#41 Manual Approval** — 첫 실거래는 PendingApproval 큐 + *운영자 명시 승인* 필수. `PermissionGate.approve`는 broker 호출 *전* RiskManager 재검증. [`docs/manual_approval_policy.md`](docs/manual_approval_policy.md)
 - **#42 PaperTrader** (`app/execution/paper_trader.py`) — OrderExecutor wrapper, `assert_paper_broker` 후 위임. `is_live_broker(broker)`면 `NotPaperBrokerError`. [`docs/paper_trading_policy.md`](docs/paper_trading_policy.md)
 - **#43 LIVE_SHADOW ShadowTrade** — 모든 주문 `REJECTED` + would-have 정보를 `ShadowTrade` row로 기록. `actual_broker_order_sent` invariant False. [`docs/live_shadow_trade_policy.md`](docs/live_shadow_trade_policy.md)
@@ -112,7 +114,7 @@ env 변수로 모든 위험 동작을 차단한다. 자세한 매트릭스는 [`
 | `ENABLE_FILL_POLLING` | `false` | 백그라운드 체결 갱신 |
 | `STALE_PRICE_MAX_AGE_SECONDS` | `60` | RiskManager step 1.5 — 시세 timestamp가 N초 초과 oldness이면 hard-reject (143) |
 | `KIS_PAPER_AUTO_ORDER_WINDOW_END` | `14:30` | 프로그램 신규 BUY 마감 (실효 = min(값, 정규장 마감−60분)). SELL 청산과 분리 |
-| `KIS_PAPER_EOD_FLATTEN_ENABLED` | `true` | 15:15 프로그램 보유 당일 청산 (실주문은 기존 KIS paper opt-in 전부 충족 시만) |
+| `KIS_PAPER_EOD_STAGED_SYMBOLS_PER_STEP` | `2` | 15:00~15:15 단계적 청산 tick당 종목 수. EOD 자체는 *끌 수 없음*(V2 — 무력화 설정 제거, 강제청산 오프셋 [12,30]분 클램프) |
 | `KIS_PAPER_EOD_CLOSING_AUCTION_ORDERS_ENABLED` | `false` | 15:20~15:30 단일가 신규 청산 주문 (모의 접수 미확인 → 기본 OFF) |
 
 ## 다층 안전 가드

@@ -54,6 +54,28 @@ class OrderExecutor:
         self.broker = broker
         self.db = db
 
+    async def cancel(self, original_order_id: str, audit: OrderAuditLog, *,
+                     org_no: str | None, symbol: str, side) -> OrderResult:
+        """미체결 주문 취소 — broker.cancel_order 를 호출하는 *유일한* 코드 (#40 확장).
+
+        route_cancel 이 가드(긴급정지·paper broker·실거래 OFF)와 audit 을 만든 뒤에만
+        호출한다. audit.order_type 이 CANCEL 이고 decision 이 APPROVED 여야 한다.
+        취소 접수(RECEIVED) ≠ 취소 완료 — 호출자가 일별체결로 대조한다.
+        """
+        if audit is None:
+            raise ValueError("audit row is required to cancel an order")
+        if audit.decision != RiskDecision.APPROVED.value or audit.order_type != "CANCEL":
+            raise UnauthorizedOrderError(
+                f"OrderExecutor refuses to call broker.cancel_order: "
+                f"decision={audit.decision!r} order_type={audit.order_type!r}")
+        result = await self.broker.cancel_order(
+            original_order_id, org_no=org_no, symbol=symbol, side=side)
+        audit.executed = result.status.value != "REJECTED"
+        audit.broker_order_id = result.order_id or None
+        audit.broker_status = result.status.value
+        audit.message = (result.message or "")[:255]
+        return result
+
     async def execute(self, order: OrderRequest, audit: OrderAuditLog) -> OrderResult:
         if audit is None:
             raise ValueError("audit row is required to execute an order")

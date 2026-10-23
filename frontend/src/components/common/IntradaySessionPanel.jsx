@@ -12,11 +12,20 @@ export const EOD_POLL_MS = 15_000;
 const STATE_LABEL = {
   IDLE: "대기 (매수 가능 시간)",
   BUY_CUTOFF_ACTIVE: "신규매수 마감 — 보유 청산만",
-  FLATTENING: "장마감 강제청산 진행 중",
+  FLATTENING: "장마감 강제청산 진행 중 (15:00 단계적 · 15:15 전량)",
   WAITING_FOR_FILLS: "청산 주문 체결/최종 대조 대기",
   FLAT_CONFIRMED: "당일 청산 완료 확인 (보유 0)",
   FLATTEN_INCOMPLETE: "청산 미완료 — 운영자 확인 필요",
   BLOCKED: "청산 차단 — 수동 대응 필요",
+};
+
+const CANCEL_LABEL = {
+  CANCEL_REQUESTED_AWAITING_CONFIRM: "취소 요청됨·확인 대기",
+  CONFIRMED_NO_REMAINING: "잔량 없음 확인",
+  CANCEL_FAILED: "취소 실패 — 확인 필요",
+  CANCEL_ATTEMPT_FAILED: "취소 시도 실패",
+  AWAITING_KIS_VISIBILITY: "증권사 조회 대기",
+  DRY_RUN_CANCEL_PLANNED: "점검 모드 — 취소 계획만",
 };
 
 const MODE_LABEL = {
@@ -84,7 +93,6 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
   const acknowledge = async () => {
     const td = st?.previous_incident_trading_date;
     if (!td) return;
-    // eslint-disable-next-line no-alert
     const who = window.prompt(
       `${td} 장마감 청산 미완료를 확인했습니까?\nKIS 모의계좌 잔고를 직접 확인한 뒤 이름을 입력하세요.`, "");
     if (!who || !who.trim()) return;
@@ -118,6 +126,7 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
   const tone = stateTone(st.eod_state);
   const isKisPaper = st.broker_label === "KIS_PAPER" && st.kis_is_paper && !st.enable_live_trading;
   const nonTrading = sch.calendar && sch.calendar !== "TRADING_DAY";
+  const cancelRows = Object.entries(sum.buy_cancels || {});
 
   return (
     <div className={`isp isp-${tone}`} data-testid="intraday-session-panel">
@@ -138,6 +147,7 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
       ) : (
         <div className="isp-times" data-testid="isp-times">
           <span>신규매수 마감 <b data-testid="isp-buy-cutoff">{sch.buy_cutoff || "—"}</b></span>
+          <span>청산 사전점검 <b data-testid="isp-precheck">{sch.precheck_start || "—"}</b></span>
           <span>강제청산 시작 <b data-testid="isp-flatten-start">{sch.flatten_start || "—"}</b></span>
           <span>정규장 종료 <b data-testid="isp-close">{sch.session_close || "—"}</b></span>
         </div>
@@ -174,6 +184,26 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
             ⚠ 백엔드 상시 실행기가 꺼져 있어 15:15 자동 청산이 실행되지 않습니다.
           </span>
         )}
+      </div>
+
+      {st.manual_liquidation_required && (
+        <div className="isp-incident" data-testid="isp-manual-liquidation">
+          🛑 긴급정지 중이라 자동 청산·취소를 하지 않아요. 프로그램 보유
+          {(st.program_ledger_holdings || []).length > 0
+            ? ` ${(st.program_ledger_holdings || []).length}종목` : ""}이 남아 있어
+          KIS 모의투자 앱에서 직접 정리해야 해요.
+        </div>
+      )}
+
+      {cancelRows.length > 0 && (
+        <div className="isp-meta" data-testid="isp-buy-cancels">
+          <span>미체결 매수 취소: {cancelRows.map(([, c]) =>
+            `${c.symbol || ""}(${CANCEL_LABEL[c.status] || c.status}${c.remaining ? `, 잔량 ${c.remaining}주` : ""})`).join(" · ")}</span>
+        </div>
+      )}
+
+      <div className="isp-code" data-testid="isp-not-guaranteed">
+        ※ PC 절전·앱 종료·네트워크 끊김이면 자동 청산이 실행되지 않을 수 있어요 (자동 보장 아님).
       </div>
 
       {st.previous_incident_trading_date && (

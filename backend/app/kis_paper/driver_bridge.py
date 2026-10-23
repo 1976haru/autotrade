@@ -717,14 +717,12 @@ async def kis_paper_realtime_scan_tick(
         max_new_per_tick = 1
     smoke_qty = max(1, int(getattr(settings, "kis_paper_smoke_qty", 1) or 1))
 
-    # INTRADAY-FLAT-BY-CLOSE-V1: 15:15(flatten_start) 이후엔 청산을 EOD coordinator 가
-    #   단독 소유 — 스캔 SELL 과 EOD SELL 이 같은 종목을 동시에 내는 중복 매도 차단.
-    #   (EOD 청산이 꺼져 있으면 종전대로 스캔이 15:20 까지 일반 청산을 계속한다.)
+    # INTRADAY-FLAT-BY-CLOSE V2: 15:00(precheck) 이후엔 청산을 EOD coordinator 가 단독
+    #   소유 — 스캔 SELL 과 EOD SELL 이 같은 종목을 동시에 내는 중복 매도 차단.
     from app.scheduler.intraday_session import IntradayPhase, IntradayPolicy
     _phase = IntradayPolicy.from_settings(settings).phase(now)
-    if _phase in (IntradayPhase.EOD_FLATTEN, IntradayPhase.CLOSING_AUCTION,
-                  IntradayPhase.POST_CLOSE) and bool(
-            getattr(settings, "kis_paper_eod_flatten_enabled", True)):
+    if _phase in (IntradayPhase.EOD_PRECHECK, IntradayPhase.EOD_FLATTEN,
+                  IntradayPhase.CLOSING_AUCTION, IntradayPhase.POST_CLOSE):
         return _scan_summary(
             mode=mode, symbols_scanned=0, candidates_found=0, orders_attempted=0,
             orders_submitted=0, orders=[], skipped=[],

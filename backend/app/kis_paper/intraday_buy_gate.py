@@ -51,6 +51,31 @@ def is_program_order(trade_reason: str | None) -> bool:
     return str(trade_reason or "").strip() in PROGRAM_TRADE_REASONS
 
 
+# V2: 수동매매 패널 BUY 도 14:30 이후 차단 (KRX 세션 판단만 — 직전일 EOD 사고 차단은
+#   프로그램 주문 전용). KIS 브로커로 가는 경우에만 적용 — mock/시뮬레이션 브로커는
+#   거래소 세션과 무관하므로 대상 아님.
+MANUAL_BUY_TRADE_REASONS: frozenset[str] = frozenset({"manual_buy"})
+
+
+def is_manual_buy(trade_reason: str | None) -> bool:
+    return str(trade_reason or "").strip() in MANUAL_BUY_TRADE_REASONS
+
+
+def manual_buy_block_reason(*, settings: Any = None,
+                            now: datetime | None = None) -> tuple[str | None, str]:
+    """(reason_code | None, message) — 수동 BUY 의 시간/달력 판단 (fail-closed)."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    if settings is None:
+        from app.core.config import get_settings
+        settings = get_settings()
+    try:
+        ok, code = IntradayPolicy.from_settings(settings).buy_entry_decision(now)
+        return (None, buy_reason_message_ko(code)) if ok else (code, buy_reason_message_ko(code))
+    except Exception:  # noqa: BLE001
+        return BUY_BLOCKED_GATE_ERROR, "신규 매수 게이트 판단 실패 — 안전을 위해 차단합니다."
+
+
 def eod_incident_block(db: Any, now: datetime) -> str | None:
     """직전 거래일 EOD 미해결 행의 trading_date (없으면 None).
 

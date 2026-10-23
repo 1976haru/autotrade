@@ -236,15 +236,22 @@ class PermissionGate:
         #   14:30 컷오프/휴장일/직전일 EOD 미완료를 재검증 (route_order 와 동일 helper).
         #   승인 큐는 route_order 를 다시 거치지 않으므로 여기서 막아야 한다.
         if order.side == OrderSide.BUY:
+            from app.brokers.kis import KisBrokerAdapter
             from app.kis_paper.intraday_buy_gate import (
+                is_manual_buy,
                 is_program_order,
+                manual_buy_block_reason,
                 program_buy_block_reason,
             )
+            block_code = None
+            block_msg = ""
             if is_program_order(audit.trade_reason):
                 block_code, block_msg = program_buy_block_reason(self.db)
-                if block_code is not None:
-                    re_eval.reasons.append(f"{block_code}: {block_msg}")
-                    re_eval.decision = RiskDecision.REJECTED
+            elif is_manual_buy(audit.trade_reason) and isinstance(broker, KisBrokerAdapter):
+                block_code, block_msg = manual_buy_block_reason()
+            if block_code is not None:
+                re_eval.reasons.append(f"{block_code}: {block_msg}")
+                re_eval.decision = RiskDecision.REJECTED
 
         if _approve_re_eval_blocks_execution(re_eval):
             # 076: persist the failed attempt on the row before raising.

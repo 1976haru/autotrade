@@ -206,8 +206,16 @@ def test_place_order_live_mode_explicitly_disabled():
 
 
 def test_cancel_order_still_stub():
+    # V2(EOD-SAFETY-HARDENING): *실전* 취소는 여전히 stub (LIVE 경로 미개방).
     with pytest.raises(NotImplementedError, match="LIVE_MANUAL_APPROVAL"):
-        run(KisBrokerAdapter().cancel_order("any-id"))
+        run(KisBrokerAdapter(is_paper=False).cancel_order("any-id"))
+
+
+def test_paper_cancel_without_org_no_refused_without_network():
+    # 모의 취소는 구현됐지만 KRX_FWDG_ORD_ORGNO 미상이면 네트워크 호출 없이 REJECTED.
+    res = run(KisBrokerAdapter(is_paper=True).cancel_order("any-id"))
+    assert res.status.value == "REJECTED"
+    assert "CANCEL_ORG_NO_UNKNOWN" in res.message
 
 
 def test_get_order_status_returns_filled_result():

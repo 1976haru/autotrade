@@ -121,8 +121,17 @@ class TestApiResponses:
             else:
                 yield (p.lower(), o)
 
+        import re
+        _key_name = re.compile(r"^KIS_[A-Z_]+$")
         for ep in ("/api/kis-paper/readiness", "/api/kis-paper/auto/status"):
             for key, val in _walk(client.get(ep).json()):
+                # missing_credentials 는 *누락된 env 변수 이름* 목록(값 아님) — 설계상 노출.
+                #   (운영 .env 에 자격이 다 있으면 빈 목록이라 예전엔 가려져 있던 경로 —
+                #   hermetic 테스트 환경에선 이름이 채워진다.) 이름 형식만 허용.
+                if key.startswith(".missing_credentials["):
+                    assert isinstance(val, str) and _key_name.match(val), (
+                        f"{ep}: missing_credentials 항목은 변수 이름만 ({val!r})")
+                    continue
                 if any(s in key for s in ("app_key", "app_secret", "account_no",
                                           "secret", "credential")):
                     assert isinstance(val, bool), (

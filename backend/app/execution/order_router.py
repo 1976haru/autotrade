@@ -108,43 +108,51 @@ async def route_order(
     # INTRADAY-FLAT-BY-CLOSE-V1: 프로그램(kis_paper_auto) 신규 BUY 서버측 재검증.
     #   14:30 컷오프 / 휴장일 / 달력 미등록 / 직전일 EOD 미완료 → broker 호출 없이
     #   REJECTED audit. 스캔·run-once·재시작·지연 호출 *모든* 경로가 여기서 막힌다.
-    #   SELL(청산)·수동 주문은 대상 아님.
+    #   V2: 수동매매 패널 BUY(manual_buy)도 KIS 브로커면 시간/달력 차단. SELL 은 대상 아님.
     if order.side == OrderSide.BUY:
+        from app.brokers.kis import KisBrokerAdapter
         from app.kis_paper.intraday_buy_gate import (
+            is_manual_buy,
             is_program_order,
+            manual_buy_block_reason,
             program_buy_block_reason,
         )
+        block_code: str | None = None
+        block_msg = ""
         if is_program_order(order.trade_reason):
             # now: 호출자(driver/executor)의 서버 시계 — 미지정이면 wall clock.
             block_code, block_msg = program_buy_block_reason(db, now=now)
-            if block_code is not None:
-                cutoff_reasons = [f"{block_code}: {block_msg}"]
-                cutoff_audit = OrderAuditLog(
-                    mode=mode.value,
-                    requested_by_ai=requested_by_ai,
-                    symbol=order.symbol,
-                    side=order.side.value,
-                    quantity=order.quantity,
-                    order_type=order.order_type.value,
-                    limit_price=order.limit_price,
-                    latest_price=0,                # broker quote 호출 회피
-                    decision=RiskDecision.REJECTED.value,
-                    reasons=cutoff_reasons,
-                    trade_reason=order.trade_reason,
-                    strategy=order.strategy,
-                    signal_strength=order.signal_strength,
-                    signal_confidence=order.signal_confidence,
-                    client_order_id=order.client_order_id,
-                    ai_decision_meta=order.ai_decision_meta,
-                    source=derive_order_source(order, requested_by_ai=requested_by_ai).value,
-                )
-                db.add(cutoff_audit)
-                db.commit()
-                return OrderRoutingResult(
-                    decision=RiskDecision.REJECTED,
-                    reasons=cutoff_reasons,
-                    audit=cutoff_audit,
-                )
+        elif is_manual_buy(order.trade_reason) and isinstance(broker, KisBrokerAdapter):
+            # V2: 수동매매 패널 BUY 도 14:30 이후/휴장일 차단 (KIS 세션 대상).
+            block_code, block_msg = manual_buy_block_reason(now=now)
+        if block_code is not None:
+            cutoff_reasons = [f"{block_code}: {block_msg}"]
+            cutoff_audit = OrderAuditLog(
+                mode=mode.value,
+                requested_by_ai=requested_by_ai,
+                symbol=order.symbol,
+                side=order.side.value,
+                quantity=order.quantity,
+                order_type=order.order_type.value,
+                limit_price=order.limit_price,
+                latest_price=0,                # broker quote 호출 회피
+                decision=RiskDecision.REJECTED.value,
+                reasons=cutoff_reasons,
+                trade_reason=order.trade_reason,
+                strategy=order.strategy,
+                signal_strength=order.signal_strength,
+                signal_confidence=order.signal_confidence,
+                client_order_id=order.client_order_id,
+                ai_decision_meta=order.ai_decision_meta,
+                source=derive_order_source(order, requested_by_ai=requested_by_ai).value,
+            )
+            db.add(cutoff_audit)
+            db.commit()
+            return OrderRoutingResult(
+                decision=RiskDecision.REJECTED,
+                reasons=cutoff_reasons,
+                audit=cutoff_audit,
+            )
 
     guard_cfg = OrderGuardConfig(
         duplicate_window_seconds=risk.policy.order_guard_duplicate_window_seconds,
@@ -421,3 +429,73 @@ async def route_order(
         audit=audit,
         result=result,
     )
+
+
+CANCEL_TRADE_REASON = "kis_paper_cancel"
+
+
+async def route_cancel(
+    *,
+    original_order_id: str,
+    org_no:            str | None,
+    symbol:            str,
+    side:              OrderSide,
+    reason:            str,
+    mode:              OperationMode,
+    broker:            BrokerAdapter,
+    risk:              RiskManager,
+    db:                Session,
+    client_order_id:   str,
+    live_trading_enabled: bool = False,
+) -> OrderRoutingResult:
+    """미체결 주문 *취소* 의 단일 진입점 (INTRADAY-FLAT-BY-CLOSE V2).
+
+    가드 → audit(항상 기록) → OrderExecutor.cancel (broker.cancel_order 유일 호출부).
+    - 긴급정지 ON: 취소도 하지 않는다 (#37 — 킬스위치 중 자동 취소 금지, 운영자 수동).
+    - PAPER 모드 + paper broker + 실거래 OFF 에서만 (실전 계좌 취소 0건).
+    - client_order_id idempotency (DuplicateOrderError) — 재시작/중복 tick 재전송 차단.
+    취소 *접수* 는 취소 완료가 아니다 — 호출자가 일별체결 잔량으로 대조한다.
+    """
+    from app.execution.paper_trader import is_live_broker
+
+    if db.execute(select(OrderAuditLog.id).where(
+            OrderAuditLog.client_order_id == client_order_id)).first() is not None:
+        raise DuplicateOrderError(f"client_order_id={client_order_id} already processed")
+
+    reasons = [f"CANCEL original={original_order_id} reason={reason}"]
+    blocked: str | None = None
+    if risk.emergency_stop:
+        blocked = "emergency stop is enabled — auto cancel prohibited (#37)"
+    elif mode != OperationMode.PAPER:
+        blocked = f"cancel allowed only in PAPER mode (mode={mode.value})"
+    elif live_trading_enabled:
+        blocked = "live trading flag is on — paper cancel path refused"
+    elif is_live_broker(broker):
+        blocked = "broker is not a paper broker — live cancel prohibited"
+    audit = OrderAuditLog(
+        mode=mode.value, requested_by_ai=False, symbol=symbol, side=side.value,
+        quantity=0, order_type="CANCEL", limit_price=None, latest_price=0,
+        decision=(RiskDecision.REJECTED if blocked else RiskDecision.APPROVED).value,
+        reasons=reasons + ([blocked] if blocked else []),
+        trade_reason=CANCEL_TRADE_REASON, strategy="EOD_CANCEL",
+        client_order_id=client_order_id, source="STRATEGY",
+    )
+    db.add(audit)
+    if blocked:
+        db.commit()
+        return OrderRoutingResult(decision=RiskDecision.REJECTED,
+                                  reasons=list(audit.reasons), audit=audit)
+    db.flush()
+    try:
+        result = await OrderExecutor(broker, db).cancel(
+            original_order_id, audit, org_no=org_no, symbol=symbol, side=side)
+    except Exception as exc:  # noqa: BLE001 — 실패도 audit 에 남긴다.
+        audit.executed = False
+        audit.broker_status = "ERROR"
+        audit.message = f"{type(exc).__name__}: {exc}"[:255]
+        db.commit()
+        return OrderRoutingResult(decision=RiskDecision.APPROVED,
+                                  reasons=list(audit.reasons), audit=audit)
+    db.commit()
+    return OrderRoutingResult(decision=RiskDecision.APPROVED,
+                              reasons=list(audit.reasons), audit=audit, result=result)

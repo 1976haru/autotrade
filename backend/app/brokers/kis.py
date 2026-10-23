@@ -100,6 +100,10 @@ def parse_ccld_row(row: dict) -> dict:
         "remaining": remaining,
         "canceled":  canceled,
         "ord_tmd":   str(row.get("ord_tmd") or ""),
+        # 정정/취소용 KRX 전송 주문조직번호(주문채번지점번호) + 원주문번호(취소행이면).
+        "ord_gno_brno": str(row.get("ord_gno_brno") or ""),
+        "orgn_odno":    str(row.get("orgn_odno") or ""),
+        "cncl_cfrm_qty": _int(row.get("cncl_cfrm_qty")),
     }
 
 
@@ -304,8 +308,33 @@ class KisBrokerAdapter(BrokerAdapter):
         self._balance_cache = None
         return _kis_order_response_to_result(raw, order)
 
-    async def cancel_order(self, order_id: str) -> OrderResult:
-        raise NotImplementedError(_STUB_MESSAGE)
+    async def cancel_order(self, order_id: str, *, org_no: str | None = None,
+                           symbol: str = "", side: OrderSide = OrderSide.BUY) -> OrderResult:
+        """미체결 잔량 전부 취소 — **KIS 모의투자 전용**.
+
+        실전(is_paper=False)은 NotImplementedError 유지 (LIVE 취소 경로 미개방).
+        호출자는 OrderExecutor.cancel 뿐(단일 진입점 #40). 응답 rt_cd=0 은 *취소 접수*
+        일 뿐 — 실제 취소/직전 체결 수량은 일별체결(잔량)·잔고로 대조해야 한다.
+        org_no(KRX_FWDG_ORD_ORGNO) 는 일별체결 행의 ord_gno_brno 를 사용한다.
+        """
+        if not self.is_paper:
+            raise NotImplementedError(_STUB_MESSAGE)
+        if not org_no:
+            return OrderResult(order_id="", status=OrderStatus.REJECTED, symbol=symbol,
+                               side=side, quantity=0,
+                               message="CANCEL_ORG_NO_UNKNOWN: KRX_FWDG_ORD_ORGNO 미상")
+        cano, prdt = self._split_account()
+        raw = await self.client.cancel_order_paper(cano, prdt, org_no=org_no,
+                                                   orig_odno=order_id)
+        self._balance_cache = None
+        rt_cd = raw.get("rt_cd")
+        msg = f"[{raw.get('msg_cd', '')}] {raw.get('msg1', '')}".strip()
+        new_odno = str((raw.get("output") or {}).get("ODNO") or "")
+        return OrderResult(
+            order_id=new_odno, symbol=symbol, side=side, quantity=0,
+            status=OrderStatus.RECEIVED if rt_cd == "0" else OrderStatus.REJECTED,
+            message=msg,
+        )
 
     async def list_today_orders(self, *, kst_date: str) -> list[dict]:
         """오늘(KST) 주문 목록 — read-only, 미체결 잔량 포함 (EOD 청산 대조용).

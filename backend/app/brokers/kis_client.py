@@ -404,6 +404,56 @@ class KisClient:
             raise KisApiError(f"KIS daily-ccld endpoint returned {r.status_code}: {r.text[:200]}")
         return r.json()
 
+    async def cancel_order_paper(
+        self,
+        cano:      str,
+        prdt_cd:   str,
+        *,
+        org_no:    str,
+        orig_odno: str,
+        exchange:  str = "KRX",
+    ) -> dict:
+        """주식 주문 *취소*(잔량 전부) — **KIS 모의투자 전용** (TR VTTC0013U).
+
+        공식 KIS 샘플(open-trading-api examples_llm/domestic_stock/order_rvsecncl):
+        POST /uapi/domestic-stock/v1/trading/order-rvsecncl, 모의 tr_id=VTTC0013U,
+        RVSE_CNCL_DVSN_CD=02(취소), QTY_ALL_ORD_YN=Y(잔량 전부), ORD_QTY/ORD_UNPR=0,
+        EXCG_ID_DVSN_CD=KRX(정규장 원주문 — NXT/SOR 미사용).
+        실전 TR(TTTC0013U)은 *정의하지 않는다* — is_paper=False 면 네트워크 호출 전 거부.
+        """
+        if not self.is_paper:
+            raise KisApiError("live (real-money) cancel is not permitted — KIS paper only")
+        if not org_no or not orig_odno:
+            raise ValueError("cancel requires org_no (KRX_FWDG_ORD_ORGNO) and orig_odno")
+        token = await self._ensure_token()
+        await self._throttle()
+        async with self._client() as client:
+            r = await client.post(
+                "/uapi/domestic-stock/v1/trading/order-rvsecncl",
+                json={
+                    "CANO":               cano,
+                    "ACNT_PRDT_CD":       prdt_cd,
+                    "KRX_FWDG_ORD_ORGNO": org_no,
+                    "ORGN_ODNO":          orig_odno,
+                    "ORD_DVSN":           "00",
+                    "RVSE_CNCL_DVSN_CD":  "02",
+                    "ORD_QTY":            "0",
+                    "ORD_UNPR":           "0",
+                    "QTY_ALL_ORD_YN":     "Y",
+                    "EXCG_ID_DVSN_CD":    exchange,
+                },
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "appkey":        self.app_key,
+                    "appsecret":     self.app_secret,
+                    "tr_id":         "VTTC0013U",
+                    "custtype":      "P",
+                },
+            )
+        if r.status_code != 200:
+            raise KisApiError(f"KIS order-rvsecncl returned {r.status_code}: {r.text[:200]}")
+        return r.json()
+
     async def inquire_daily_ccld_all(
         self,
         cano:     str,

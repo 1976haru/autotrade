@@ -56,6 +56,7 @@ class KisPaperPermReason(StrEnum):
     BUY_BLOCKED_NON_TRADING_DAY    = "BUY_BLOCKED_NON_TRADING_DAY"
     BUY_BLOCKED_CALENDAR_UNKNOWN   = "BUY_BLOCKED_CALENDAR_UNKNOWN"
     BUY_BLOCKED_AFTER_CLOSE        = "BUY_BLOCKED_AFTER_CLOSE"
+    BUY_BLOCKED_SPECIAL_SESSION_UNCONFIRMED = "BUY_BLOCKED_SPECIAL_SESSION_UNCONFIRMED"
     BUY_BLOCKED_BY_EOD_INCIDENT    = "BUY_BLOCKED_BY_EOD_INCIDENT"
     EXIT_WINDOW_CLOSED             = "EXIT_WINDOW_CLOSED"
     EXIT_NOTIONAL_LIMIT_EXCEEDED   = "EXIT_NOTIONAL_LIMIT_EXCEEDED"
@@ -109,6 +110,8 @@ _REASON_MESSAGE_KO: dict[str, str] = {
         "거래일 여부를 확인할 수 없어(휴장일 달력 미등록 연도) 신규 매수를 차단합니다.",
     KisPaperPermReason.BUY_BLOCKED_AFTER_CLOSE:
         "정규장이 끝나 신규 매수를 하지 않습니다.",
+    KisPaperPermReason.BUY_BLOCKED_SPECIAL_SESSION_UNCONFIRMED:
+        "거래시간이 바뀌는 특수일(수능일 등)인데 KRX 공지가 확인되지 않아 신규 매수를 차단합니다.",
     KisPaperPermReason.BUY_BLOCKED_BY_EOD_INCIDENT:
         "직전 거래일 장마감 청산이 완료되지 않아(FLATTEN_INCOMPLETE) 운영자 확인 전까지 신규 매수를 차단합니다.",
     KisPaperPermReason.EXIT_WINDOW_CLOSED:

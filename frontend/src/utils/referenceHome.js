@@ -3,7 +3,7 @@
 import { isKstToday } from "./tradingStatus";
 
 // ── 계좌번호 마스킹 (절대원칙 #4: 평문 노출 금지) ──────────────────────────────
-/** "50191162-01" → "5019****-01" 식. 앞 4 + 끝 2만 노출, 가운데 별표.
+/** "AAAABBBB-CC"(8+2자리) → "AAAA****-CC" 식. 앞 4 + 끝 2만 노출, 가운데 별표.
  *  값이 없거나 너무 짧으면 null (호출자가 "모의계좌"로 표시). */
 export function maskAccountNo(raw) {
   if (!raw) return null;

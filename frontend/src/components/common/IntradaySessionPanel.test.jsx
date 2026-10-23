@@ -79,6 +79,32 @@ describe("IntradaySessionPanel (INTRADAY-FLAT-BY-CLOSE-V1)", () => {
     await waitFor(() => expect(r2.getByTestId("isp-failed").textContent).toContain("불러오지 못했어요"));
   });
 
+  it("V2: 15:00 사전점검 시각 + 자동청산 보장 아님 안내 항상 표시", async () => {
+    const d = { ...base, schedule: { ...base.schedule, precheck_start: "15:00" } };
+    const { getByTestId } = render(<IntradaySessionPanel api={api(d)} pollMs={60_000} />);
+    await waitFor(() => expect(getByTestId("isp-precheck").textContent).toBe("15:00"));
+    expect(getByTestId("isp-not-guaranteed").textContent).toContain("자동 보장 아님");
+  });
+
+  it("V2: 긴급정지 + 보유 → 수동 청산 필요 경고 (서버 판정 그대로)", async () => {
+    const d = { ...base, emergency_stop: true, manual_liquidation_required: true,
+                program_ledger_holdings: [{ symbol: "005930", quantity: 3 }], eod_state: "BLOCKED" };
+    const { getByTestId } = render(<IntradaySessionPanel api={api(d)} pollMs={60_000} />);
+    await waitFor(() => expect(getByTestId("isp-manual-liquidation").textContent).toContain("직접 정리"));
+    expect(getByTestId("isp-manual-liquidation").textContent).toContain("1종목");
+  });
+
+  it("V2: 미체결 매수 취소 상태 표시 (요청·확인·실패)", async () => {
+    const d = { ...base, eod_state: "BUY_CUTOFF_ACTIVE", summary: { buy_cancels: {
+      "0000000777": { symbol: "005930", status: "CANCEL_REQUESTED_AWAITING_CONFIRM", remaining: 6 },
+      "0000000778": { symbol: "000660", status: "CANCEL_FAILED", remaining: 2 },
+    } } };
+    const { getByTestId } = render(<IntradaySessionPanel api={api(d)} pollMs={60_000} />);
+    await waitFor(() => expect(getByTestId("isp-buy-cancels").textContent).toContain("취소 요청됨"));
+    expect(getByTestId("isp-buy-cancels").textContent).toContain("취소 실패");
+    expect(getByTestId("isp-buy-cancels").textContent).toContain("잔량 6주");
+  });
+
   it("summarizeEodProgress 는 서버 totals 만 사용 (추정 0)", () => {
     expect(summarizeEodProgress({})).toEqual({ symbols: 0, heldQty: 0, openQty: 0, submitted: 0, filledQty: 0, unmanaged: 0 });
   });

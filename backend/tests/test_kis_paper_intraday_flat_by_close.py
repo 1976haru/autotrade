@@ -94,10 +94,9 @@ def make_settings(**kw):
         kis_paper_auto_order_window_start="09:05", kis_paper_auto_order_window_end="14:30",
         kis_paper_auto_min_confidence=0.6, kis_paper_auto_min_quality_score=60,
         kis_paper_buy_cutoff_minutes_before_close=60,
-        kis_paper_eod_flatten_enabled=True, kis_paper_eod_flatten_minutes_before_close=15,
+        kis_paper_eod_flatten_minutes_before_close=15, kis_paper_eod_staged_symbols_per_step=2,
         kis_paper_eod_closing_auction_orders_enabled=False,
         kis_paper_eod_max_attempts_per_symbol=3,
-        kis_paper_eod_flatten_when_loop_stopped=True,
         kis_paper_auto_max_exit_order_notional=0,
         krx_calendar_override_path="",
         ai_paper_tick_interval_seconds=30,
@@ -123,6 +122,8 @@ class FakeKisPaperBroker(KisBrokerAdapter):
         self.place_calls: list[OrderRequest] = []
         self.fail_positions = False
         self.fail_orders = False
+        self.cancel_calls: list[tuple[str, str | None]] = []
+        self.cancel_reject = False
 
     def _open_sell(self, sym: str) -> int:
         return sum(r["remaining"] for r in self.rows
@@ -156,7 +157,7 @@ class FakeKisPaperBroker(KisBrokerAdapter):
         self.rows.append({"odno": odno, "symbol": order.symbol, "side": order.side.value,
                           "ord_qty": order.quantity, "filled": filled,
                           "remaining": order.quantity - filled, "canceled": False,
-                          "ord_tmd": ""})
+                          "ord_tmd": "", "ord_gno_brno": "06010"})
         return OrderResult(order_id=odno, status=OrderStatus.RECEIVED, symbol=order.symbol,
                            side=order.side, quantity=order.quantity)
 
@@ -164,6 +165,17 @@ class FakeKisPaperBroker(KisBrokerAdapter):
         if self.fail_orders:
             raise RuntimeError("EGW00201")
         return [dict(r) for r in self.rows]
+
+    async def cancel_order(self, order_id: str, *, org_no=None, symbol="", side=OrderSide.BUY):
+        self.cancel_calls.append((order_id, org_no))
+        if self.cancel_reject or not org_no:
+            return OrderResult(order_id="", status=OrderStatus.REJECTED, symbol=symbol,
+                               side=side, quantity=0, message="[40000000] reject")
+        for r in self.rows:
+            if r["odno"] == order_id:
+                r["remaining"] = 0
+        return OrderResult(order_id=f"C{order_id}", status=OrderStatus.RECEIVED,
+                           symbol=symbol, side=side, quantity=0, message="[APBK0013] ok")
 
     def fill_all(self) -> None:
         """미체결 잔량 체결 처리 (시장 체결 시뮬)."""
@@ -342,7 +354,7 @@ def test_D_eod_forced_exit_without_any_council_signal(session_factory, db):
     assert out["orders_submitted_this_step"] == 1
     sell = broker.place_calls[0]
     assert sell.side == OrderSide.SELL and sell.quantity == 7
-    assert sell.client_order_id == "eod-20261022-005930-1"
+    assert sell.client_order_id == "eod-d20261022-s005930-n1"
     assert sell.order_type == OrderType.MARKET
 
 
@@ -439,12 +451,20 @@ def test_S_loop_stopped_still_flattens_by_default(session_factory, db):
     assert len(broker.place_calls) == 1
 
 
-def test_S_loop_stopped_can_opt_out(session_factory, db):
+def test_S_no_silent_eod_disable_path(session_factory, db):
+    # V2: 예전 opt-out 설정(flatten_enabled/when_loop_stopped=false)이 env 에 남아 있어도
+    #   무시된다 — 당일 단타 모드에선 KIS 안전 게이트를 통과하면 EOD 는 항상 관리.
     seed_bot_position(db, "005930", 2)
     broker = FakeKisPaperBroker({"005930": 2})
     out = step(session_factory, broker, kst(15, 16), loop_state="STOPPED",
-               settings=make_settings(kis_paper_eod_flatten_when_loop_stopped=False))
-    assert out["state"] == EodState.BLOCKED.value and broker.place_calls == []
+               settings=make_settings(kis_paper_eod_flatten_enabled=False,
+                                      kis_paper_eod_flatten_when_loop_stopped=False,
+                                      kis_paper_eod_flatten_minutes_before_close=0))
+    assert out["state"] != EodState.BLOCKED.value
+    assert len(broker.place_calls) == 1
+    from app.core.config import Settings
+    assert "kis_paper_eod_flatten_enabled" not in Settings.model_fields
+    assert "kis_paper_eod_flatten_when_loop_stopped" not in Settings.model_fields
 
 
 def test_W_eod_results_never_live_authorization(session_factory, db):
@@ -572,7 +592,7 @@ def test_J_restart_at_1515_restores_state_and_order_numbers(session_factory, db)
     sym = out["summary"]["symbols"]["005930"]
     assert sym["eod_attempts"] == 1
     assert sym["eod_orders"][0]["broker_order_no"] == "0000000001"
-    assert sym["eod_orders"][0]["client_order_id"] == "eod-20261022-005930-1"
+    assert sym["eod_orders"][0]["client_order_id"] == "eod-d20261022-s005930-n1"
 
 
 def test_J_rejected_attempt_counted_and_capped(session_factory, db):
@@ -584,7 +604,7 @@ def test_J_rejected_attempt_counted_and_capped(session_factory, db):
     eod = db.query(OrderAuditLog).filter(OrderAuditLog.client_order_id.like("eod-%")).all()
     assert len(eod) == 3                         # 시도 상한
     assert sorted(r.client_order_id for r in eod) == [
-        "eod-20261022-005930-1", "eod-20261022-005930-2", "eod-20261022-005930-3"]
+        "eod-d20261022-s005930-n1", "eod-d20261022-s005930-n2", "eod-d20261022-s005930-n3"]
     assert broker.place_calls == []
 
 
@@ -658,11 +678,12 @@ def test_M_holiday_no_buy_no_eod(session_factory, db):
 
 
 def test_M_special_session_shifts_cutoff_and_flatten():
-    suneung = date(2026, 11, 19)  # 10:00~16:30
+    suneung = date(2025, 11, 13)  # 2026학년도 수능 (확정 실적) 10:00~16:30
     pol = IntradayPolicy(calendar=load_krx_calendar())
     sch = pol.schedule(kst(12, 0, d=suneung))
-    assert (sch.entry_start, sch.buy_cutoff, sch.flatten_start, sch.session_close) == (
-        time(10, 5), time(15, 30), time(16, 15), time(16, 30))
+    assert (sch.entry_start, sch.buy_cutoff, sch.precheck_start, sch.flatten_start,
+            sch.session_close) == (
+        time(10, 5), time(15, 30), time(16, 0), time(16, 15), time(16, 30))
     assert pol.buy_entry_decision(kst(15, 29, d=suneung))[0] is True
     assert pol.phase(kst(16, 15, d=suneung)) == IntradayPhase.EOD_FLATTEN
 
@@ -829,7 +850,9 @@ def test_U_status_shape_and_reason_codes(session_factory, db):
     assert st["summary"]["last_broker_order_no"] == "0000000001"
     assert st["paper_auto_mode"]["mode"] == "KIS_REALTIME_PAPER_AUTO"
     assert st["broker_label"] == "KIS_PAPER"
-    assert st["eod_settings"]["cancel_order_supported"] is False
+    assert st["eod_settings"]["cancel_order_supported"] is True
+    assert st["eod_settings"]["cancel_order_verified_on_kis_paper"] is False
+    assert st["auto_liquidation_guaranteed"] is False
     assert st["is_live_authorization"] is False
 
 
@@ -908,4 +931,357 @@ def test_W_new_modules_never_call_live_tr_or_place_order_directly():
         src = (root / rel).read_text(encoding="utf-8")
         assert ".place_order(" not in src
         assert "TTTC0801U" not in src and "TTTC0802U" not in src
-        assert "cancel_order(" not in src
+        assert ".cancel_order(" not in src     # 취소는 route_cancel → OrderExecutor.cancel 만
+
+
+# ═══════════════════════ V2: KIS-PAPER-EOD-SAFETY-HARDENING ═══════════════════════
+
+
+def seed_today_program_buy(db, symbol: str, qty: int, odno: str, *, filled: int = 0):
+    """오늘(14:00 KST) 접수된 프로그램 BUY — 아직 미체결/부분체결."""
+    db.add(OrderAuditLog(
+        created_at=kst(14, 0).replace(tzinfo=None), mode="PAPER", requested_by_ai=False,
+        symbol=symbol, side="BUY", quantity=qty, order_type="MARKET", latest_price=10_000,
+        decision="APPROVED", reasons=[], trade_reason="kis_paper_auto", executed=True,
+        broker_order_id=odno, broker_status="RECEIVED", filled_quantity=filled,
+    ))
+    db.commit()
+
+
+def open_buy_row(odno: str, symbol: str, qty: int, filled: int = 0, org: str = "06010"):
+    return {"odno": odno, "symbol": symbol, "side": "BUY", "ord_qty": qty, "filled": filled,
+            "remaining": qty - filled, "canceled": False, "ord_tmd": "", "ord_gno_brno": org}
+
+
+# ── 14:30 미체결 BUY 취소 ─────────────────────────────────────────────────────
+
+
+def test_V2_open_program_buy_cancelled_after_cutoff_and_confirmed(session_factory, db):
+    seed_today_program_buy(db, "005930", 10, "0000000777")
+    broker = FakeKisPaperBroker({})
+    broker.rows.append(open_buy_row("0000000777", "005930", 10))
+    out = step(session_factory, broker, kst(14, 30, 5))
+    assert out["state"] == EodState.BUY_CUTOFF_ACTIVE.value
+    assert broker.cancel_calls == [("0000000777", "06010")]
+    assert out["cancels_sent_this_step"] == 1
+    cx = db.query(OrderAuditLog).filter(OrderAuditLog.order_type == "CANCEL").one()
+    assert cx.client_order_id == "cxl-d20261022-o0000000777-n1"
+    assert cx.trade_reason == "kis_paper_cancel" and cx.executed is True
+    # 다음 단계: KIS 잔량 0 확인 → CONFIRMED, 재요청 0.
+    out2 = step(session_factory, broker, kst(14, 31))
+    assert len(broker.cancel_calls) == 1
+    assert out2["summary"]["buy_cancels"]["0000000777"]["status"] == "CONFIRMED_NO_REMAINING"
+
+
+def test_V2_partial_fill_before_cancel_is_liquidated(session_factory, db):
+    # 4주 체결 후 잔량 6 취소 → 체결분 4주는 KIS 잔고/원장에 반영되어 EOD 청산 대상.
+    seed_today_program_buy(db, "005930", 10, "0000000778")
+    broker = FakeKisPaperBroker({"005930": 4})
+    broker.rows.append(open_buy_row("0000000778", "005930", 10, filled=4))
+    step(session_factory, broker, kst(14, 30, 5))
+    assert broker.cancel_calls == [("0000000778", "06010")]
+    out = step(session_factory, broker, kst(15, 15, 5))
+    assert [(o.symbol, o.quantity) for o in broker.place_calls] == [("005930", 4)]
+    assert out["orders_submitted_this_step"] == 1
+    final = step(session_factory, broker, kst(15, 30, 5))
+    assert final["state"] == EodState.FLAT_CONFIRMED.value
+
+
+def test_V2_cancel_failure_is_critical_and_blocks_flat(session_factory, db):
+    seed_today_program_buy(db, "005930", 10, "0000000779")
+    broker = FakeKisPaperBroker({})
+    broker.cancel_reject = True
+    broker.rows.append(open_buy_row("0000000779", "005930", 10))
+    events: list = []
+    for i in range(5):
+        step(session_factory, broker, kst(14, 31, i * 10), events=events)
+    assert len(broker.cancel_calls) == 3                      # 시도 상한
+    assert any(e["code"] == "KIS_PAPER_EOD_BUY_CANCEL_FAILED" and e["level"] == "CRITICAL"
+               for e in events)
+    final = step(session_factory, broker, kst(15, 30, 5))
+    assert final["state"] == EodState.FLATTEN_INCOMPLETE.value
+    assert final["reason_code"] == "EOD_OPEN_ORDERS_REMAIN"
+
+
+def test_V2_cancel_waits_for_confirmation_before_retry(session_factory, db):
+    seed_today_program_buy(db, "005930", 10, "0000000780")
+    broker = FakeKisPaperBroker({})
+    broker.rows.append(open_buy_row("0000000780", "005930", 10))
+
+    async def accept_but_keep_open(order_id, *, org_no=None, symbol="", side=OrderSide.BUY):
+        broker.cancel_calls.append((order_id, org_no))
+        return OrderResult(order_id="C1", status=OrderStatus.RECEIVED, symbol=symbol,
+                           side=side, quantity=0)
+    broker.cancel_order = accept_but_keep_open
+    step(session_factory, broker, kst(14, 31, 0))
+    step(session_factory, broker, kst(14, 31, 30))            # 90초 확인 대기 중 재요청 0
+    assert len(broker.cancel_calls) == 1
+
+
+def test_V2_unconfirmed_program_buy_blocks_flat_confirmed(session_factory, db):
+    # 접수됐지만 KIS 일별체결에 아직 안 보이는 BUY → 취소 불가(조직번호 미상)·대기 → 판정 금지.
+    seed_today_program_buy(db, "005930", 10, "0000000781")
+    broker = FakeKisPaperBroker({})
+    out = step(session_factory, broker, kst(14, 31))
+    assert broker.cancel_calls == []
+    assert out["summary"]["buy_cancels"]["0000000781"]["status"] == "AWAITING_KIS_VISIBILITY"
+    final = step(session_factory, broker, kst(15, 30, 5))
+    assert final["state"] == EodState.FLATTEN_INCOMPLETE.value
+
+
+def test_V2_emergency_no_cancel_and_manual_liquidation_warning(session_factory, db):
+    seed_bot_position(db, "005930", 3)
+    seed_today_program_buy(db, "000660", 5, "0000000782")
+    broker = FakeKisPaperBroker({"005930": 3})
+    broker.rows.append(open_buy_row("0000000782", "000660", 5))
+    rm = RiskManager(RiskPolicy())
+    rm.emergency_stop = True
+    out = step(session_factory, broker, kst(14, 35), risk=rm)
+    assert out["state"] == EodState.BLOCKED.value
+    assert broker.cancel_calls == [] and broker.place_calls == []
+    assert out["summary"]["manual_liquidation_required"] is True
+    st = eod_status(db, settings=make_settings(), now=kst(14, 36), risk=rm)
+    assert st["emergency_stop"] is True and st["manual_liquidation_required"] is True
+    assert {"symbol": "005930", "quantity": 3} in st["program_ledger_holdings"]
+
+
+# ── route_cancel / OrderExecutor.cancel 가드 ────────────────────────────────
+
+
+def _rc(db, broker, **kw):
+    from app.core.modes import OperationMode
+    from app.execution.order_router import route_cancel
+    base = dict(original_order_id="0000000001", org_no="06010", symbol="005930",
+                side=OrderSide.BUY, reason="t", mode=OperationMode.PAPER, broker=broker,
+                risk=RiskManager(RiskPolicy()), db=db, client_order_id="cxl-t-1")
+    base.update(kw)
+    return asyncio.run(route_cancel(**base))
+
+
+def test_V2_route_cancel_guards(db):
+    from app.core.modes import OperationMode
+    from app.execution.order_router import DuplicateOrderError
+    broker = FakeKisPaperBroker({})
+    rm = RiskManager(RiskPolicy())
+    rm.emergency_stop = True
+    r1 = _rc(db, broker, risk=rm, client_order_id="c1")
+    r2 = _rc(db, broker, mode=OperationMode.LIVE_MANUAL_APPROVAL, client_order_id="c2")
+    r3 = _rc(db, broker, live_trading_enabled=True, client_order_id="c3")
+    live = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801", is_paper=False)
+    r4 = _rc(db, live, client_order_id="c4")
+    for r in (r1, r2, r3, r4):
+        assert r.decision == RiskDecision.REJECTED and r.audit.executed is False
+    assert broker.cancel_calls == []
+    ok = _rc(db, broker, client_order_id="c5")
+    assert ok.decision == RiskDecision.APPROVED and broker.cancel_calls == [("0000000001", "06010")]
+    with pytest.raises(DuplicateOrderError):
+        _rc(db, broker, client_order_id="c5")
+    assert len(broker.cancel_calls) == 1
+
+
+def test_V2_order_executor_cancel_refuses_unapproved_audit(db):
+    from app.execution.executor import OrderExecutor, UnauthorizedOrderError
+    broker = FakeKisPaperBroker({})
+    for decision, otype in (("REJECTED", "CANCEL"), ("APPROVED", "MARKET")):
+        audit = OrderAuditLog(mode="PAPER", requested_by_ai=False, symbol="005930", side="BUY",
+                              quantity=0, order_type=otype, latest_price=0, decision=decision,
+                              reasons=[])
+        with pytest.raises(UnauthorizedOrderError):
+            asyncio.run(OrderExecutor(broker, db).cancel(
+                "1", audit, org_no="06010", symbol="005930", side=OrderSide.BUY))
+    assert broker.cancel_calls == []
+
+
+def test_V2_kis_cancel_live_refused_before_network():
+    from app.brokers import kis_client as kc
+    c = kc.KisClient("k", "s", False)
+    with pytest.raises(kc.KisApiError):
+        asyncio.run(c.cancel_order_paper("12345678", "01", org_no="06010", orig_odno="1"))
+    live = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801", is_paper=False)
+    with pytest.raises(NotImplementedError):
+        asyncio.run(live.cancel_order("1", org_no="06010"))
+
+
+def test_V2_kis_cancel_paper_payload(monkeypatch):
+    from app.brokers import kis_client as kc
+    sent = {}
+
+    class _Resp:
+        status_code, text = 200, ""
+
+        def json(self):
+            return {"rt_cd": "0", "msg_cd": "APBK0013", "msg1": "ok", "output": {"ODNO": "0000099"}}
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            sent.update(url=url, body=json, headers=headers)
+            return _Resp()
+
+    c = kc.KisClient("k", "s", True)
+    monkeypatch.setattr(c, "_ensure_token", lambda: asyncio.sleep(0, result="tok"))
+    monkeypatch.setattr(c, "_throttle", lambda: asyncio.sleep(0))
+    monkeypatch.setattr(c, "_client", lambda: _Client())
+    ad = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801",
+                          is_paper=True, client=c)
+    res = asyncio.run(ad.cancel_order("0000000777", org_no="06010", symbol="005930"))
+    assert res.status == OrderStatus.RECEIVED and res.order_id == "0000099"
+    assert sent["url"].endswith("/trading/order-rvsecncl")
+    assert sent["headers"]["tr_id"] == "VTTC0013U"
+    b = sent["body"]
+    assert (b["KRX_FWDG_ORD_ORGNO"], b["ORGN_ODNO"], b["RVSE_CNCL_DVSN_CD"],
+            b["QTY_ALL_ORD_YN"], b["EXCG_ID_DVSN_CD"]) == ("06010", "0000000777", "02", "Y", "KRX")
+    # 조직번호 미상이면 네트워크 호출 없이 REJECTED.
+    sent.clear()
+    r2 = asyncio.run(ad.cancel_order("0000000777", org_no=None, symbol="005930"))
+    assert r2.status == OrderStatus.REJECTED and sent == {}
+
+
+# ── 15:00 사전점검 + 단계적 청산 / 15:15 전량 ─────────────────────────────────
+
+
+def test_V2_precheck_at_1500_staged_losers_first(session_factory, db):
+    for sym in ("000001", "000002", "000003"):
+        seed_bot_position(db, sym, 1)
+    broker = FakeKisPaperBroker({"000001": 1, "000002": 1, "000003": 1})
+    orig = broker.get_positions
+    pnl = {"000001": 10_500, "000002": 9_000, "000003": 9_800}   # avg 10,000
+
+    async def priced():
+        ps = await orig()
+        return [p.model_copy(update={"market_price": pnl[p.symbol]}) for p in ps]
+    broker.get_positions = priced
+    events: list = []
+    out = step(session_factory, broker, kst(15, 0, 5), events=events)
+    assert out["phase"] == "EOD_PRECHECK"
+    assert out["reason_code"] == "EOD_STAGED_FLATTEN_IN_PROGRESS"
+    assert [o.symbol for o in broker.place_calls] == ["000002", "000003"]   # 손실 큰 순, 2종목
+    assert out["summary"]["precheck"]["ok"] is True
+    assert any(e["code"] == "KIS_PAPER_EOD_PRECHECK_OK" for e in events)
+    step(session_factory, broker, kst(15, 0, 35))
+    assert [o.symbol for o in broker.place_calls] == ["000002", "000003", "000001"]
+
+
+def test_V2_precheck_failure_is_critical_early(session_factory, db):
+    seed_bot_position(db, "005930", 1)
+    broker = FakeKisPaperBroker({"005930": 1})
+    broker.fail_orders = True
+    events: list = []
+    step(session_factory, broker, kst(15, 0, 5), events=events)
+    assert any(e["code"] == "KIS_PAPER_EOD_PRECHECK_FAILED" and e["level"] == "CRITICAL"
+               for e in events)
+    assert broker.place_calls == []
+
+
+def test_V2_scan_hands_off_from_1500():
+    from app.kis_paper.driver_bridge import kis_paper_realtime_scan_tick
+    out = asyncio.run(kis_paper_realtime_scan_tick(
+        now=kst(15, 0, 1), settings=make_settings(), session_factory=lambda: None,
+        broker=object(), risk=object(), route_order_fn=lambda **k: None))
+    assert out["reason_code"] == "EOD_COORDINATOR_OWNS_EXITS"
+
+
+@pytest.mark.parametrize("t,phase", [
+    ((14, 29, 59), "ENTRY_OPEN"), ((14, 30, 0), "BUY_CUTOFF"), ((14, 59, 59), "BUY_CUTOFF"),
+    ((15, 0, 0), "EOD_PRECHECK"), ((15, 14, 59), "EOD_PRECHECK"), ((15, 15, 0), "EOD_FLATTEN"),
+    ((15, 19, 59), "EOD_FLATTEN"), ((15, 20, 0), "CLOSING_AUCTION"),
+    ((15, 29, 59), "CLOSING_AUCTION"), ((15, 30, 0), "POST_CLOSE"),
+    ((9, 4, 59), "OPENING_BUFFER"), ((8, 59, 59), "PRE_OPEN"),
+])
+def test_V2_all_kst_boundaries(t, phase):
+    assert IntradayPolicy(calendar=load_krx_calendar()).phase(kst(*t)).value == phase
+
+
+@pytest.mark.parametrize("minutes,expect", [(0, time(15, 15)), (1, time(15, 18)),
+                                            (15, time(15, 15)), (100, time(15, 0))])
+def test_V2_flatten_offset_clamped_cannot_disable(minutes, expect):
+    pol = IntradayPolicy.from_settings(
+        make_settings(kis_paper_eod_flatten_minutes_before_close=minutes))
+    assert pol.schedule(kst(12, 0)).flatten_start == expect
+
+
+# ── 수동매매 BUY ─────────────────────────────────────────────────────────────
+
+
+def _manual_buy(db, broker, now):
+    from app.core.modes import OperationMode
+    order = OrderRequest(symbol="005930", side=OrderSide.BUY, quantity=1,
+                         order_type=OrderType.MARKET, trade_reason="manual_buy")
+    return asyncio.run(route_order(order=order, requested_by_ai=False, mode=OperationMode.PAPER,
+                                   broker=broker, risk=RiskManager(RiskPolicy()), db=db, now=now))
+
+
+def test_V2_manual_buy_blocked_after_cutoff_on_kis(db):
+    broker = FakeKisPaperBroker({})
+    r = _manual_buy(db, broker, kst(14, 30))
+    assert r.decision == RiskDecision.REJECTED and r.reasons[0].startswith("BUY_CUTOFF_ACTIVE")
+    assert broker.place_calls == []
+    ok = _manual_buy(db, broker, kst(14, 29, 59))
+    assert ok.decision == RiskDecision.APPROVED and len(broker.place_calls) == 1
+
+
+def test_V2_manual_buy_mock_broker_not_session_bound(db):
+    r = _manual_buy(db, MockBrokerAdapter(), kst(14, 45))
+    assert not any(str(x).startswith("BUY_CUTOFF") for x in r.reasons)
+
+
+# ── 휴장일 / 특수거래일 ──────────────────────────────────────────────────────
+
+
+def test_V2_suneung_2026_is_thursday_and_unconfirmed_blocks_buy():
+    d = date(2026, 11, 19)
+    assert d.weekday() == 3                                    # 목요일
+    pol = IntradayPolicy(calendar=load_krx_calendar())
+    sch = pol.schedule(kst(11, 0, d=d))
+    assert sch.special_session_unconfirmed is True
+    assert (sch.flatten_start, sch.session_close) == (time(15, 15), time(15, 30))  # 보수적
+    assert pol.buy_entry_decision(kst(11, 0, d=d)) == (
+        False, "BUY_BLOCKED_SPECIAL_SESSION_UNCONFIRMED")
+    assert evaluate_kis_paper_order_permission(perm(now=kst(11, 0, d=d))).allowed is False
+
+
+def test_V2_confirmed_special_session_via_override(tmp_path):
+    p = tmp_path / "cal.json"
+    p.write_text('{"confirmed_special_sessions": ["2026-11-19"]}', encoding="utf-8")
+    pol = IntradayPolicy(calendar=load_krx_calendar(str(p)))
+    d = date(2026, 11, 19)
+    sch = pol.schedule(kst(11, 0, d=d))
+    assert (sch.entry_start, sch.buy_cutoff, sch.flatten_start, sch.session_close) == (
+        time(10, 5), time(15, 30), time(16, 15), time(16, 30))
+    assert pol.buy_entry_decision(kst(11, 0, d=d))[0] is True
+
+
+@pytest.mark.parametrize("d", ["2026-07-17", "2027-05-03", "2027-07-19", "2027-02-09",
+                               "2027-12-27", "2027-10-11"])
+def test_V2_new_public_holidays(d):
+    y, m, dd = (int(x) for x in d.split("-"))
+    pol = IntradayPolicy(calendar=load_krx_calendar())
+    assert pol.phase(kst(10, 0, d=date(y, m, dd))) == IntradayPhase.NON_TRADING_DAY
+
+
+def test_V2_client_order_ids_do_not_trip_secret_scanner():
+    from app.agents.agent_memory import _SECRET_PATTERNS
+    for _name, pat in _SECRET_PATTERNS:
+        for i in ("eod-d20261022-s005930-n1", "cxl-d20261022-o0000012345-n3"):
+            assert not pat.search(i), (_name, i)
+
+
+def test_V2_restart_after_cancel_does_not_resend(session_factory, db):
+    seed_today_program_buy(db, "005930", 10, "0000000790")
+    broker = FakeKisPaperBroker({})
+    broker.rows.append(open_buy_row("0000000790", "005930", 10))
+
+    async def accept_only(order_id, *, org_no=None, symbol="", side=OrderSide.BUY):
+        broker.cancel_calls.append((order_id, org_no))
+        return OrderResult(order_id="C9", status=OrderStatus.RECEIVED, symbol=symbol,
+                           side=side, quantity=0)
+    broker.cancel_order = accept_only
+    step(session_factory, broker, kst(14, 31), owner="old-pid")
+    # 재시작(새 owner, lease 만료 후) — DB 의 cancel audit 로 '확인 대기' 복원 → 재요청 0.
+    step(session_factory, broker, kst(14, 32), owner="new-pid")
+    assert len(broker.cancel_calls) == 1
