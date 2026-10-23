@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import ast
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -87,8 +87,10 @@ def test_cleanup_records_outcome_and_deletes(db):
 
 def test_summarize_t3(db):
     # 두 outcome: 하나 +8%(트레일 우위), 하나 +3.2%(미달).
-    update_and_shadow(db, [_pos("005930", 100000, 108000)], now=NOW); update_and_shadow(db, [], now=NOW)
-    update_and_shadow(db, [_pos("000660", 100000, 103200)], now=NOW); update_and_shadow(db, [], now=NOW)
+    update_and_shadow(db, [_pos("005930", 100000, 108000)], now=NOW)
+    update_and_shadow(db, [], now=NOW)
+    update_and_shadow(db, [_pos("000660", 100000, 103200)], now=NOW)
+    update_and_shadow(db, [], now=NOW)
     rep = summarize_trailing_shadow(db)
     assert rep["activated_count"] == 2
     assert rep["trailing_would_win_count"] == 1   # +8% > 3+2=5 만 우위
@@ -100,7 +102,9 @@ def test_static_no_broker_route_order_import():
     tree = ast.parse(src)
     mods = []
     for n in ast.walk(tree):
-        if isinstance(n, ast.ImportFrom): mods.append(n.module or "")
-        elif isinstance(n, ast.Import): mods += [a.name for a in n.names]
+        if isinstance(n, ast.ImportFrom):
+            mods.append(n.module or "")
+        elif isinstance(n, ast.Import):
+            mods += [a.name for a in n.names]
     for bad in ("order_router", "order_executor", "route_order", "driver_bridge", "brokers"):
         assert not any(bad in (m or "") for m in mods), f"forbidden import: {bad}"

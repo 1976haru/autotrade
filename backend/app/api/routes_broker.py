@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_broker, get_risk_manager
-from app.brokers.base import Balance, BrokerAdapter, OrderRequest, Position
+from app.brokers.base import BrokerAdapter, OrderRequest, Position
 from app.core.config import get_settings
 from app.db.session import get_db
 from app.execution.order_router import DuplicateOrderError, route_order

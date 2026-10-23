@@ -16,7 +16,6 @@ import pytest
 
 from app.backtest.cost_model import UNFILLED_RATE, cost_drag_bps, round_trip_cost_fraction
 from app.backtest.strategy_council_backtest import (
-    AGENT_COUNCIL,
     SINGLE_STRATEGIES,
     BacktestInput,
     OHLCVBar,

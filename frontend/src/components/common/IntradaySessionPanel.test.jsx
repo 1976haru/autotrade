@@ -105,6 +105,12 @@ describe("IntradaySessionPanel (INTRADAY-FLAT-BY-CLOSE-V1)", () => {
     expect(getByTestId("isp-buy-cancels").textContent).toContain("잔량 6주");
   });
 
+  it("V3: 점검 모드 판정은 '실제 청산 결과 아님' 표시", async () => {
+    const d = { ...base, eod_state: "FLAT_CONFIRMED", summary: { verdict_basis: "DRY_RUN_NO_KIS_ORDERS" } };
+    const { getByTestId } = render(<IntradaySessionPanel api={api(d)} pollMs={60_000} />);
+    await waitFor(() => expect(getByTestId("isp-dryrun-basis").textContent).toContain("실제 청산 결과가 아닙니다"));
+  });
+
   it("summarizeEodProgress 는 서버 totals 만 사용 (추정 0)", () => {
     expect(summarizeEodProgress({})).toEqual({ symbols: 0, heldQty: 0, openQty: 0, submitted: 0, filledQty: 0, unmanaged: 0 });
   });

@@ -127,7 +127,7 @@ def test_e2e_agent_decision_log_carries_vote_meta(db):
     assert log.meta["order_created"] is True
     assert log.meta["is_live_authorization"] is False
     assert log.meta["final_action"] == "BUY"
-    assert len(log.meta["votes"]) == 4                              # 4전략 vote 보존.
+    assert len(log.meta["votes"]) == 5                              # 5전략(ORB/MOMENTUM/GAP/VWAP/CANDLE) vote 보존.
     assert log.meta["selected_strategies"]
     assert log.meta["risk_profile"] == "AGGRESSIVE"
     assert log.meta["exit_plan_validation"]["valid"] is True

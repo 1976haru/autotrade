@@ -764,7 +764,8 @@ def test_cash_state_realized_pnl_from_order_audit_log():
             broker_status="FILLED", filled_quantity=1, avg_fill_price=px,
             limit_price=px, latest_price=px, trade_reason="kis_paper_auto",
         ))
-    s.commit(); s.close()
+    s.commit()
+    s.close()
 
     def _ov():
         db = TS()

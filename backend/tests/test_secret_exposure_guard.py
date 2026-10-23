@@ -180,7 +180,6 @@ class TestRedactionGuards:
         # R-B(2026-06-12): KIS 주문번호(10자리)는 계좌번호가 아니므로 broker_order_no/odno
         #   필드에 한해 'kr_account_long'(\d{10,14}) 오탐만 면제 — 결정/episode 로깅 복구.
         from app.agents.agent_memory import (
-            SecretLeakError,
             sanitize_dict,
             sanitize_text,
         )

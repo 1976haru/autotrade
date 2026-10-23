@@ -320,6 +320,9 @@ async def reconcile(db: Any, broker: Any, *, trading_date: str) -> Reconciliatio
     ccld_filled = {k: int(v.get("filled", 0) or 0) for k, v in ccld_by_odno.items()}
     net = bot_net_quantities(rows, ccld_filled)
     program_odnos = {str(getattr(r, "broker_order_id", "") or "") for r in rows} - {""}
+    org_by_odno = {str(r.broker_order_id): str(getattr(r, "broker_org_no", "") or "")
+                   for r in rows if getattr(r, "broker_order_id", None)
+                   and getattr(r, "broker_org_no", None)}
 
     held: dict[str, dict[str, int]] = {}
     for p in positions or []:
@@ -342,8 +345,13 @@ async def reconcile(db: Any, broker: Any, *, trading_date: str) -> Reconciliatio
         if o.get("side") == "SELL":
             open_sell[o["symbol"]] = open_sell.get(o["symbol"], 0) + rem
         elif o.get("odno") in program_odnos:
+            # 주문조직번호: 1순위 주문 시점 응답(audit.broker_org_no), 2순위 일별체결 ord_gno_brno.
             program_open_buys.append({"symbol": o["symbol"], "odno": o["odno"], "remaining": rem,
-                                      "ord_gno_brno": o.get("ord_gno_brno", ""),
+                                      "ord_gno_brno": (org_by_odno.get(o["odno"])
+                                                       or o.get("ord_gno_brno", "")),
+                                      "org_no_source": ("ORDER_RESPONSE"
+                                                        if org_by_odno.get(o["odno"])
+                                                        else "DAILY_CCLD"),
                                       "visible_at_kis": True})
     # 오늘 접수된 프로그램 BUY 인데 KIS 일별체결에 아직 안 보이는 것 → 미확인 BUY.
     #   (주문 접수 직후 조회 지연) — 확인 전까지 FLAT_CONFIRMED 금지.
@@ -574,6 +582,9 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
             "program_open_buys": rec.program_open_buys, "totals": rec.totals,
             "reconcile_ok": rec.ok, "reconcile_error": rec.error_code,
             "mode": mode.mode, "dry_run": bool(mode.dry_run), "smoke_mode": bool(mode.smoke_mode),
+            # 판정 근거 — dry-run 은 KIS 주문 0건이라 FLAT/INCOMPLETE 가 *실제 청산 결과가 아님*.
+            "verdict_basis": ("DRY_RUN_NO_KIS_ORDERS" if mode.dry_run
+                              else "KIS_PAPER_BALANCE_RECONCILED"),
             "last_broker_order_no": prev_summary.get("last_broker_order_no"),
             "last_order_reason_code": prev_summary.get("last_order_reason_code"),
             "last_fill_detected_at": prev_summary.get("last_fill_detected_at"),
@@ -689,10 +700,19 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
                 "open_sell_qty": rec.totals["open_sell_qty"],
                 "program_open_buy_qty": rec.totals["program_open_buy_qty"],
                 "dry_run": bool(mode.dry_run), "mode": mode.mode,
+                "capacity": estimate_eod_capacity(settings, rec.totals["managed_symbols"]),
             }
             _emit(event_sink, level="INFO", code="KIS_PAPER_EOD_PRECHECK_OK",
                   message="15:00 장마감 청산 사전점검 — KIS 잔고/주문 조회 정상, 단계적 청산 시작.",
                   details={"trading_date": trading_date, "totals": rec.totals})
+            cap = summary["precheck"]["capacity"]
+            if cap["risk"] != "OK":
+                # *경고만* — 동작 변경 없음. 운영자가 보수 정책(보유 축소 등)을 판단.
+                _emit(event_sink, level="WARN", code="KIS_PAPER_EOD_CAPACITY_RISK",
+                      message=(f"장마감 청산 처리량 위험({cap['risk']}): 추정 "
+                               f"{cap['est_seconds_worst']}초 / 15:15~15:20 창 "
+                               f"{cap['window_seconds']}초 (추정치 — KIS 실측 아님)."),
+                      details={"trading_date": trading_date, **cap})
         elif "precheck" in prev_summary:
             summary["precheck"] = prev_summary["precheck"]
 
@@ -838,6 +858,31 @@ async def _submit_sells(db: Any, *, rec: Reconciliation, summary: dict[str, Any]
 
 
 _CANCEL_CONFIRM_WAIT_SECONDS = 90
+
+# 처리 용량 추정 (V3) — *추정치*. KIS 모의서버 실측값이 아니다.
+#   종목당 KIS 호출: 시세 1 + route_order 시세/잔고/포지션 2(캐시 미스 최악) + 주문 1 = 4회 근사
+#   (fake 브로커 실측 5종목 27회·15종목 77회·40종목 202회 ≈ 5회/종목 + 대조 2회 → 최악 5 사용).
+_CALLS_PER_SELL_WORST = 5
+_RECONCILE_CALLS = 2
+
+
+def estimate_eod_capacity(settings: Any, n_symbols: int) -> dict[str, Any]:
+    """15:15~15:20(강제청산→단일가) 창 안에 전량 청산 주문을 *제출*할 수 있는지 추정.
+
+    제출 시간만 계산한다 — 체결 확인·부분체결 재시도·네트워크 지연·EGW00201 백오프는
+    포함하지 않으므로 여유율(50%)로 판정한다. risk: OK / TIGHT(>50%) / OVER(>100%).
+    """
+    calls = max(1, int(getattr(settings, "kis_rate_limit_calls", 1) or 1))
+    window = float(getattr(settings, "kis_rate_limit_window_seconds", 1.1) or 1.1)
+    per_call = window / calls
+    flatten_min = min(30, max(12, int(getattr(
+        settings, "kis_paper_eod_flatten_minutes_before_close", 15) or 15)))
+    window_seconds = (flatten_min - 10) * 60          # 강제청산 시작 → 단일가(마감−10분)
+    est = round((n_symbols * _CALLS_PER_SELL_WORST + _RECONCILE_CALLS) * per_call)
+    risk = "OK" if est <= window_seconds * 0.5 else ("TIGHT" if est <= window_seconds else "OVER")
+    return {"symbols": int(n_symbols), "est_seconds_worst": int(est),
+            "window_seconds": int(window_seconds), "seconds_per_call": round(per_call, 3),
+            "risk": risk, "basis": "ESTIMATE_NOT_MEASURED_ON_KIS"}
 
 
 def _cancel_audit_rows(db: Any, trading_date: str, odno: str) -> list[Any]:

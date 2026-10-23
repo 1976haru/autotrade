@@ -237,6 +237,11 @@ def _build_adapter(*, calls, window, qttl, bttl):
     client = KisClient("k", "s", is_paper=True,
                        transport=_kis_mock_transport(now, call_log),
                        rate_limiter=limiter)
+    # 운영 정상상태(토큰 24h 캐시됨)를 *명시* — 공유 토큰 캐시 파일 상태에 따라 토큰 발급
+    #   1회가 limiter 슬롯을 먹어 가상시계가 balance TTL(5s)을 넘기던 순서 의존(11↔12)을 제거.
+    from datetime import datetime, timedelta, timezone
+    client._token = "test-cached-token"
+    client._token_expires_at = datetime.now(timezone.utc) + timedelta(hours=12)
     adapter = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801",
                                client=client, quote_cache_ttl_seconds=qttl,
                                balance_cache_ttl_seconds=bttl, clock=now)
@@ -267,8 +272,13 @@ def test_scan_with_fix_stays_under_2_per_sec_and_zero_egw():
     assert _max_calls_in_any_window(call_log) <= _KIS_LIMIT_PER_SEC
     # caching collapsed 10 per-symbol balance reads into a single upstream call.
     balance_calls = sum(1 for _ in call_log)  # sanity: see explicit count below
-    # 10 distinct quotes + 1 balance = 11 upstream calls (not 20).
-    assert len(call_log) == 11
+    # 10 distinct quotes + balance re-read once per balance-TTL window (not 20).
+    #   2 req/1.1s 로 10종목 스캔은 ~5.5s 걸려 bttl=5.0 을 한 번 넘긴다 → balance 2회.
+    #   (예전 기대값 11 은 토큰 발급 타이밍에 따라 달라지던 순서 의존 값이었다.)
+    import math
+    expected_balance_calls = math.floor(call_log[-1] / 5.0) + 1
+    assert expected_balance_calls == 2
+    assert len(call_log) == len(_SYMBOLS) + expected_balance_calls == 12
 
 
 def test_scan_without_fix_would_burst_and_trip_egw():

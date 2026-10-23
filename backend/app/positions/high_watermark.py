@@ -100,13 +100,22 @@ def update_and_shadow(
                 hwm = _seed_hwm(entry, cur, activation_pct)
                 activated = cur >= entry * (1 + activation_pct / 100.0)
 
+            # updated_at 은 *같은 틱 시계(now)* 로 기록 — 신선도 판정(fresh)이 now 와 비교하므로
+            #   wall-clock default 와 섞이면 시계가 다를 때 매 틱 재시드되는 불일치가 생긴다
+            #   (운영에선 now≈wall-clock 이라 동작 동일; 명시 지정은 onupdate 보다 우선).
+            stamp = now.astimezone(timezone.utc).replace(tzinfo=None) if now.tzinfo else now
             if row is None:
                 db.add(PositionHighWatermark(
-                    symbol=sym, entry_price=entry, high_watermark=hwm, activated=activated))
+                    symbol=sym, entry_price=entry, high_watermark=hwm, activated=activated,
+                    updated_at=stamp))
             else:
                 row.entry_price = entry
                 row.high_watermark = hwm
                 row.activated = activated
+                row.updated_at = stamp
+                # 같은 값 재대입은 '변경 없음'으로 보여 onupdate(wall-clock)가 덮어쓴다 → 강제 포함.
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(row, "updated_at")
 
             # 섀도 트레일링 판정 — activated AND cur ≤ hwm×(1−trailing%).
             trail_price = hwm * (1 - trailing_pct / 100.0)

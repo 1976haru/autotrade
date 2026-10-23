@@ -53,12 +53,14 @@ def _discover_strategies(episodes: list[dict[str, Any]]) -> tuple[str, ...]:
     seen: set[str] = set()
     for s in SINGLE_STRATEGIES:
         if s not in seen:
-            seen.add(s); out.append(s)
+            seen.add(s)
+            out.append(s)
     for ep in (episodes or []):
         for v in _votes(ep):
             s = str(v.get("strategy", "")).upper()
             if s and s not in seen:
-                seen.add(s); out.append(s)
+                seen.add(s)
+                out.append(s)
     return tuple(out)
 
 # risk_profile / market_regime / 시간대 버킷.

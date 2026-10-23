@@ -10,7 +10,6 @@ import pytest
 
 from app.brokers.kis_client import KisClient
 import app.performance.market_index as mi
-from app.risk.daily_pnl import today_kst
 
 
 def run(coro):

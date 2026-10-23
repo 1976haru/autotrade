@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import contextlib
-import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -186,7 +185,8 @@ def test_api_put_empty_body_400():
 def test_no_raw_config_put_without_diagnostic_helper():
     """★lint 가드: 테스트 파일에서 설정 PUT 은 반드시 _diag_put(헤더+격리) 경유.
     raw `_diag_put(c, "/api/runtime-config"...)` 가 새로 들어오면 누수 재발 → 즉시 실패."""
-    import pathlib, re
+    import pathlib
+    import re
     here = pathlib.Path(__file__)
     src = here.read_text(encoding="utf-8")
     # 헬퍼 정의/호출(_diag_put) 줄을 제외하고, raw c.put 으로 runtime-config 를 PUT 하는 줄 탐지.
@@ -210,7 +210,7 @@ def test_bot_scan_reads_effective_getters_each_tick(monkeypatch):
     from sqlalchemy.pool import StaticPool
     from app.db.base import Base
     from app.kis_paper import driver_bridge as dbge
-    from app.market_data.kis_realtime import KIS_PRICE_OK, KisRealtimeQuote
+    from app.market_data.kis_realtime import KisRealtimeQuote
 
     rc.set_runtime_overrides(max_concurrent_positions=2, per_stock_budget=300_000)
     calls = {"mc": 0, "bud": 0}

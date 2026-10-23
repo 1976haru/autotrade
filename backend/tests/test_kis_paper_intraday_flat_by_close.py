@@ -1285,3 +1285,375 @@ def test_V2_restart_after_cancel_does_not_resend(session_factory, db):
     # 재시작(새 owner, lease 만료 후) — DB 의 cancel audit 로 '확인 대기' 복원 → 재요청 0.
     step(session_factory, broker, kst(14, 32), owner="new-pid")
     assert len(broker.cancel_calls) == 1
+
+
+# ═══════════════════════ V3: FINAL REHEARSAL GATE ═══════════════════════════════
+# 실제 KIS 호출 0건 — 전부 FakeKisPaperBroker(KisBrokerAdapter 상속, 네트워크 메서드만 대체).
+
+
+class CountingBroker(FakeKisPaperBroker):
+    """KIS API 호출 수를 세는 fake — 처리 용량(15:00~15:20) 산정용."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.calls = {"price": 0, "balance": 0, "positions": 0, "orders": 0, "place": 0}
+
+    async def get_price(self, symbol):
+        self.calls["price"] += 1
+        return await super().get_price(symbol)
+
+    async def get_balance(self):
+        self.calls["balance"] += 1
+        return await super().get_balance()
+
+    async def get_positions(self):
+        self.calls["positions"] += 1
+        return await super().get_positions()
+
+    async def list_today_orders(self, *, kst_date):
+        self.calls["orders"] += 1
+        return await super().list_today_orders(kst_date=kst_date)
+
+    async def place_order(self, order):
+        self.calls["place"] += 1
+        return await super().place_order(order)
+
+
+def _day_driver(session_factory, broker, *, settings=None, loop_state="RUNNING"):
+    """BackgroundTickDriver 의 *실제* maybe_eod_step 경로로 run_eod_step 을 호출."""
+    from app.auto_paper.background_driver import BackgroundTickDriver
+    s = settings or make_settings(enable_ai_paper_background_tick=True)
+    loop = SimpleNamespace(status=lambda now=None: SimpleNamespace(state=loop_state, cycle_count=0))
+
+    async def eod_fn(*, now, loop_state):
+        return await run_eod_step(
+            now=now, settings=s, session_factory=session_factory, broker=broker,
+            risk=RiskManager(RiskPolicy()), route_order_fn=route_order, loop_state=loop_state,
+            owner_id="driver", event_sink=lambda **k: None, credentials_present=True)
+    return BackgroundTickDriver(settings_provider=lambda: s, loop_provider=lambda: loop,
+                                event_sink=lambda **k: None, eod_step_fn=eod_fn)
+
+
+def _ticks(start, end, every=30):
+    t = start
+    while t <= end:
+        yield t
+        t = t + timedelta(seconds=every)
+
+
+def test_V3_full_day_clock_injected_integration(session_factory, db):
+    """14:29:30 → 15:31 을 30초 tick 으로 driver 경로 그대로 진행.
+    14:30 미체결 BUY 취소 → 15:00 단계적 청산 → 15:15 잔여 강제청산 → 15:30 잔고 대조."""
+    for sym in ("000001", "000002", "000003"):
+        seed_bot_position(db, sym, 2)
+    seed_today_program_buy(db, "000004", 5, "0000000901")
+    broker = CountingBroker({"000001": 2, "000002": 2, "000003": 2, "035420": 9})  # 035420=수동
+    broker.rows.append(open_buy_row("0000000901", "000004", 5))
+    drv = _day_driver(session_factory, broker)
+    timeline = []
+    for now in _ticks(kst(14, 29, 30), kst(15, 31, 0)):
+        res = asyncio.run(drv.maybe_eod_step(now))
+        timeline.append((to_kst_hms(now), res["phase"], res["state"],
+                         len(broker.cancel_calls), len(broker.place_calls)))
+
+    def at(hms):
+        return next(t for t in timeline if t[0] == hms)
+    assert at("14:29:30")[2] == "IDLE" and at("14:29:30")[3] == 0
+    assert at("14:30:00")[1:4] == ("BUY_CUTOFF", "BUY_CUTOFF_ACTIVE", 1)    # 미체결 BUY 취소
+    assert at("14:59:30")[4] == 0                                           # 15:00 전 청산 0
+    assert at("15:00:00")[1] == "EOD_PRECHECK" and at("15:00:00")[4] == 2   # 단계적 2종목
+    assert at("15:00:30")[4] == 3                                           # 나머지
+    assert all(t[4] == 3 for t in timeline if t[0] >= "15:00:30")           # 중복 매도 0
+    assert at("15:31:00")[3] == 1                                           # 취소 재요청 0
+    final = timeline[-1]
+    assert final[1:3] == ("POST_CLOSE", "FLAT_CONFIRMED")
+    assert broker.holdings["035420"] == 9                                    # 수동 보유 무접촉
+    assert all(o.side == OrderSide.SELL for o in broker.place_calls)         # 14:30 이후 BUY 0
+    row = db.query(EodLiquidationState).one()
+    assert row.final_verdict_at is not None and row.summary["verdict_basis"] == \
+        "KIS_PAPER_BALANCE_RECONCILED"
+
+
+def to_kst_hms(dt):
+    return dt.astimezone(KST).strftime("%H:%M:%S")
+
+
+def test_V3_backend_scheduler_runs_without_ui_polling():
+    """run_forever 가 HTTP/프론트 polling 없이 wall-clock 주기로 EOD 단계와 tick 을 실행."""
+    from app.auto_paper.background_driver import BackgroundTickDriver
+    from app.core.modes import OperationMode
+    s = make_settings(enable_ai_paper_background_tick=True, ai_paper_tick_interval_seconds=1,
+                      default_mode=OperationMode.PAPER)
+    loop = SimpleNamespace(status=lambda now=None: SimpleNamespace(state="STOPPED", cycle_count=0),
+                           tick=lambda: SimpleNamespace(cycle_count=1))
+    eod_calls, tick_calls = [], []
+
+    async def eod_fn(*, now, loop_state):
+        eod_calls.append((now, loop_state))
+        return {"state": "FLATTENING", "phase": "EOD_FLATTEN"}
+
+    async def kis_tick(*, now):
+        tick_calls.append(now)
+        return {}
+    drv = BackgroundTickDriver(settings_provider=lambda: s, loop_provider=lambda: loop,
+                               event_sink=lambda **k: None, now_provider=lambda: kst(15, 16),
+                               eod_step_fn=eod_fn, kis_auto_tick_fn=kis_tick,
+                               premarket_warmup_fn=lambda now: None)
+
+    async def run():
+        assert drv.start() is True
+        await asyncio.sleep(2.3)
+        await drv.stop()
+    asyncio.run(run())
+    assert len(eod_calls) >= 2                       # 1초 주기로 반복 실행
+    assert all(ls == "STOPPED" for _, ls in eod_calls)   # 루프 STOP 이어도 EOD 관리
+    assert tick_calls == []                          # STOPPED → 신규 스캔/매수 tick 0
+
+
+@pytest.mark.parametrize("n_positions", [15, 40])
+def test_V3_capacity_all_positions_submitted_before_auction(session_factory, db, n_positions):
+    """15:00~15:20 처리 용량 — 운영 한도(동시보유 상한 15)와 과대 40종목 모두
+    단일가(15:20) 전에 전량 청산 주문 제출. KIS 호출 수 × 운영 리미터(1회/1.1s)로
+    소요시간을 산정해 5분(15:15~15:20) 창 안인지 확인."""
+    syms = [f"{i:06d}" for i in range(1, n_positions + 1)]
+    for s_ in syms:
+        seed_bot_position(db, s_, 1)
+    broker = CountingBroker({s_: 1 for s_ in syms})
+    # 최악 케이스: 15:00~15:15 동안 서버가 꺼져 있다가 15:15 에 처음 실행.
+    out = step(session_factory, broker, kst(15, 15, 0))
+    assert out["orders_submitted_this_step"] == n_positions
+    calls = sum(broker.calls.values())
+    est_seconds = calls * 1.1            # kis_rate_limit_calls=1 / window 1.1s (운영 기본)
+    assert est_seconds < 300, (calls, est_seconds)
+    final = step(session_factory, broker, kst(15, 30, 5))
+    assert final["state"] == EodState.FLAT_CONFIRMED.value
+
+
+def test_V3_staged_window_capacity_from_1500():
+    """15:00~15:15 단계적 구간만으로도 tick(30s)×2종목 = 60종목 처리 여유."""
+    from app.core.config import Settings
+    s = Settings.model_construct()
+    steps = (15 * 60) // int(s.ai_paper_tick_interval_seconds)
+    assert steps * int(s.kis_paper_eod_staged_symbols_per_step) >= 60
+    assert int(s.kis_paper_max_concurrent_positions) <= 60
+
+
+def test_V3_place_order_timeout_after_kis_accept_no_duplicate(session_factory, db):
+    """주문 전송 중 예외(타임아웃) — KIS 는 접수했을 수 있다. 다음 단계는 KIS 일별체결/잔고로
+    대조해 재매도하지 않는다 (audit 미기록이어도 잔고·미체결이 진실)."""
+    seed_bot_position(db, "005930", 3)
+    broker = FakeKisPaperBroker({"005930": 3}, fill_mode="none")
+    orig = broker.place_order
+
+    async def accept_then_timeout(order):
+        await orig(order)                 # KIS 에는 접수됨
+        raise TimeoutError("read timeout")
+    broker.place_order = accept_then_timeout
+    step(session_factory, broker, kst(15, 15, 0))
+    broker.place_order = orig
+    step(session_factory, broker, kst(15, 15, 30))
+    step(session_factory, broker, kst(15, 16, 0))
+    assert len(broker.place_calls) == 1
+
+
+def test_V3_dryrun_synthetic_positions_not_reported_as_kis_success(session_factory, db):
+    """DRYRUN: 합성 포지션으로 청산 경로만 검증 — KIS 주문 0, 판정 근거는 DRY_RUN 으로 표시."""
+    seed_bot_position(db, "005930", 3)
+    broker = FakeKisPaperBroker({"005930": 3})
+    s = make_settings(kis_paper_auto_order_dry_run=True)
+    for t in (kst(15, 0, 5), kst(15, 15, 5)):
+        out = step(session_factory, broker, t, settings=s)
+        assert out["summary"]["verdict_basis"] == "DRY_RUN_NO_KIS_ORDERS"
+    final = step(session_factory, broker, kst(15, 30, 5), settings=s)
+    assert broker.place_calls == []
+    assert final["state"] == EodState.FLATTEN_INCOMPLETE.value       # 아무것도 안 팔렸음 — 정직
+    assert final["summary"]["verdict_basis"] == "DRY_RUN_NO_KIS_ORDERS"
+
+
+# ── 주문 TR 형식 (공식 order_cash 샘플 비교) ──────────────────────────────────
+
+_OFFICIAL_ORDER_CASH_FIELDS = {"CANO", "ACNT_PRDT_CD", "PDNO", "ORD_DVSN", "ORD_QTY",
+                               "ORD_UNPR", "EXCG_ID_DVSN_CD", "SLL_TYPE", "CNDT_PRIC"}
+
+
+def _capture_order(monkeypatch, *, is_paper=True, api_format="legacy", is_buy=True):
+    from app.brokers import kis_client as kc
+    sent = {}
+
+    class _Resp:
+        status_code, text = 200, ""
+
+        def json(self):
+            return {"rt_cd": "0", "msg1": "ok",
+                    "output": {"ODNO": "0000123", "KRX_FWDG_ORD_ORGNO": "91252"}}
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            sent.update(url=url, body=json, headers=headers)
+            return _Resp()
+    c = kc.KisClient("k", "s", is_paper)
+    monkeypatch.setattr(c, "_ensure_token", lambda: asyncio.sleep(0, result="tok"))
+    monkeypatch.setattr(c, "_throttle", lambda: asyncio.sleep(0))
+    monkeypatch.setattr(c, "_client", lambda: _Client())
+    raw = asyncio.run(c.place_order("12345678", "01", "005930", is_buy=is_buy, quantity=1,
+                                    order_type="market", api_format=api_format))
+    return sent, raw
+
+
+def test_V3_legacy_order_format_pinned(monkeypatch):
+    sent, _ = _capture_order(monkeypatch, api_format="legacy", is_buy=True)
+    assert sent["headers"]["tr_id"] == "VTTC0802U"
+    assert set(sent["body"]) == {"CANO", "ACNT_PRDT_CD", "PDNO", "ORD_DVSN", "ORD_QTY", "ORD_UNPR"}
+    assert _OFFICIAL_ORDER_CASH_FIELDS - set(sent["body"]) == {"EXCG_ID_DVSN_CD", "SLL_TYPE",
+                                                              "CNDT_PRIC"}
+    sent, _ = _capture_order(monkeypatch, api_format="legacy", is_buy=False)
+    assert sent["headers"]["tr_id"] == "VTTC0801U"
+
+
+@pytest.mark.parametrize("is_buy,tr,sll", [(True, "VTTC0012U", ""), (False, "VTTC0011U", "01")])
+def test_V3_current_order_format_matches_official_sample(monkeypatch, is_buy, tr, sll):
+    sent, _ = _capture_order(monkeypatch, api_format="current", is_buy=is_buy)
+    assert sent["url"].endswith("/trading/order-cash")
+    assert sent["headers"]["tr_id"] == tr
+    assert set(sent["body"]) == _OFFICIAL_ORDER_CASH_FIELDS
+    assert sent["body"]["EXCG_ID_DVSN_CD"] == "KRX" and sent["body"]["SLL_TYPE"] == sll
+    assert (sent["body"]["ORD_DVSN"], sent["body"]["ORD_UNPR"]) == ("01", "0")
+
+
+def test_V3_current_format_refused_for_live_before_network(monkeypatch):
+    from app.brokers.kis_client import KisApiError
+    with pytest.raises(KisApiError):
+        _capture_order(monkeypatch, is_paper=False, api_format="current")
+
+
+def test_V3_unknown_order_format_rejected(monkeypatch):
+    with pytest.raises(ValueError):
+        _capture_order(monkeypatch, api_format="v9")
+
+
+def test_V3_default_order_format_is_legacy():
+    from app.core.config import Settings
+    assert Settings.model_construct().kis_paper_order_api_format == "legacy"
+
+
+# ── 주문조직번호(KRX_FWDG_ORD_ORGNO) 보존 → 취소에 우선 사용 ────────────────────
+
+
+def test_V3_order_response_org_no_captured_to_audit(db):
+    from app.brokers.kis import _kis_order_response_to_result
+    order = OrderRequest(symbol="005930", side=OrderSide.BUY, quantity=1,
+                         order_type=OrderType.MARKET)
+    r = _kis_order_response_to_result(
+        {"rt_cd": "0", "output": {"ODNO": "0000123", "KRX_FWDG_ORD_ORGNO": "91252"}}, order)
+    assert r.broker_org_no == "91252"
+
+    class _B(FakeKisPaperBroker):
+        async def place_order(self, order):
+            res = await super().place_order(order)
+            return res.model_copy(update={"broker_org_no": "91252"})
+    broker = _B({})
+    res = run_exec(db, broker, _buy_decision(), kst(10, 0))
+    audit = db.get(OrderAuditLog, res.audit_id)
+    assert audit.broker_org_no == "91252"
+
+
+def test_V3_cancel_prefers_order_response_org_no(session_factory, db):
+    db.add(OrderAuditLog(
+        created_at=kst(14, 0).replace(tzinfo=None), mode="PAPER", requested_by_ai=False,
+        symbol="005930", side="BUY", quantity=10, order_type="MARKET", latest_price=10_000,
+        decision="APPROVED", reasons=[], trade_reason="kis_paper_auto", executed=True,
+        broker_order_id="0000000950", broker_org_no="91252", broker_status="RECEIVED",
+        filled_quantity=0))
+    db.commit()
+    broker = FakeKisPaperBroker({})
+    broker.rows.append(open_buy_row("0000000950", "005930", 10, org="06010"))
+    out = step(session_factory, broker, kst(14, 31))
+    assert broker.cancel_calls == [("0000000950", "91252")]      # 응답 조직번호 우선
+    b = next(x for x in out["summary"]["program_open_buys"] if x["odno"] == "0000000950")
+    assert b["org_no_source"] == "ORDER_RESPONSE"
+
+
+def test_V3_cancel_request_qty_all_remaining(monkeypatch):
+    """정정취소 VTTC0013U — 잔량 전부(QTY_ALL_ORD_YN=Y, ORD_QTY=0) 취소, 정정 아님(02)."""
+    from app.brokers import kis_client as kc
+    sent = {}
+
+    class _Resp:
+        status_code, text = 200, ""
+
+        def json(self):
+            return {"rt_cd": "0", "output": {"ODNO": "1"}}
+
+    class _Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            sent.update(body=json, headers=headers)
+            return _Resp()
+    c = kc.KisClient("k", "s", True)
+    monkeypatch.setattr(c, "_ensure_token", lambda: asyncio.sleep(0, result="tok"))
+    monkeypatch.setattr(c, "_throttle", lambda: asyncio.sleep(0))
+    monkeypatch.setattr(c, "_client", lambda: _Client())
+    asyncio.run(c.cancel_order_paper("12345678", "01", org_no="91252", orig_odno="0000000950"))
+    b = sent["body"]
+    assert sent["headers"]["tr_id"] == "VTTC0013U"
+    assert (b["RVSE_CNCL_DVSN_CD"], b["QTY_ALL_ORD_YN"], b["ORD_QTY"], b["ORD_UNPR"]) == (
+        "02", "Y", "0", "0")
+    assert set(b) == {"CANO", "ACNT_PRDT_CD", "KRX_FWDG_ORD_ORGNO", "ORGN_ODNO", "ORD_DVSN",
+                      "RVSE_CNCL_DVSN_CD", "ORD_QTY", "ORD_UNPR", "QTY_ALL_ORD_YN",
+                      "EXCG_ID_DVSN_CD"}     # 공식 샘플 필수 필드 전부 (CNDT_PRIC 은 선택)
+
+
+def test_V3_adapter_legacy_call_contract_unchanged(monkeypatch):
+    """기본(legacy) 경로는 V3 이전과 동일하게 api_format 인자 없이 client 를 호출하고,
+    current 를 명시 opt-in 한 경우에만 api_format='current' 를 넘긴다 (실제 KIS 호출 0)."""
+    from app.core import config as cfg
+    seen = []
+
+    class _C:
+        async def place_order(self, *a, **kw):
+            seen.append(kw)
+            return {"rt_cd": "0", "output": {"ODNO": "1", "KRX_FWDG_ORD_ORGNO": "91252"}}
+    order = OrderRequest(symbol="005930", side=OrderSide.BUY, quantity=1,
+                         order_type=OrderType.MARKET)
+    for fmt, expect in (("legacy", None), ("current", "current")):
+        monkeypatch.setenv("KIS_PAPER_ORDER_API_FORMAT", fmt)
+        cfg.get_settings.cache_clear()
+        ad = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801",
+                              is_paper=True, client=_C())
+        res = asyncio.run(ad.place_order(order))
+        assert seen[-1].get("api_format") == expect
+        assert res.broker_org_no == "91252"
+    cfg.get_settings.cache_clear()
+
+
+@pytest.mark.parametrize("n,est,risk", [(15, 85, "OK"), (40, 222, "TIGHT"), (60, 332, "OVER")])
+def test_V3_capacity_estimate_is_labeled_estimate(n, est, risk):
+    from app.kis_paper.eod_liquidation import estimate_eod_capacity
+    cap = estimate_eod_capacity(make_settings(kis_rate_limit_calls=1,
+                                              kis_rate_limit_window_seconds=1.1), n)
+    assert (cap["est_seconds_worst"], cap["window_seconds"], cap["risk"]) == (est, 300, risk)
+    assert cap["basis"] == "ESTIMATE_NOT_MEASURED_ON_KIS"
+
+
+def test_V3_precheck_warns_on_capacity_risk_without_behavior_change(session_factory, db):
+    syms = [f"{i:06d}" for i in range(1, 41)]
+    for s_ in syms:
+        seed_bot_position(db, s_, 1)
+    broker = FakeKisPaperBroker({s_: 1 for s_ in syms})
+    events: list = []
+    out = step(session_factory, broker, kst(15, 0, 5), events=events,
+               settings=make_settings(kis_rate_limit_calls=1, kis_rate_limit_window_seconds=1.1))
+    assert out["summary"]["precheck"]["capacity"]["risk"] == "TIGHT"
+    assert any(e["code"] == "KIS_PAPER_EOD_CAPACITY_RISK" and e["level"] == "WARN" for e in events)
+    assert len(broker.place_calls) == 2          # 단계적 정책(2종목/tick) 그대로 — 경고만

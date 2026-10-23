@@ -323,8 +323,10 @@ def _resample_bars(minute_bars: list[dict]) -> list[dict]:
             order.append(key)
         else:
             agg = buckets[key]
-            agg["h"] = max(agg["h"], b["h"]); agg["l"] = min(agg["l"], b["l"])
-            agg["c"] = b["c"]; agg["v"] += b["v"]      # close=최신 → 부분봉도 갱신
+            agg["h"] = max(agg["h"], b["h"])
+            agg["l"] = min(agg["l"], b["l"])
+            agg["c"] = b["c"]
+            agg["v"] += b["v"]  # close=최신 → 부분봉도 갱신
     return [buckets[k] for k in order]
 
 
@@ -505,9 +507,11 @@ async def build_kis_market_input(
             orh: float | None = max(b["h"] for b in orb_min)
             orl: float | None = min(b["l"] for b in orb_min)
         elif today_60m:
-            orh = today_60m[0]["h"]; orl = today_60m[0]["l"]
+            orh = today_60m[0]["h"]
+            orl = today_60m[0]["l"]
         else:
-            orh = quote.high; orl = quote.low
+            orh = quote.high
+            orl = quote.low
         vwap = quote.vwap if quote.vwap else (sum(recent_closes) / len(recent_closes))
         avg_vol = quote.volume
     else:

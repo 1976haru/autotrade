@@ -73,6 +73,9 @@ class OrderResult(BaseModel):
     filled_quantity: int = 0
     avg_fill_price: int | None = None
     message: str = ""
+    # V3: 정정/취소에 필요한 거래소 전송 주문조직번호(KIS order-cash 응답
+    #   output.KRX_FWDG_ORD_ORGNO). 미제공 브로커/응답은 None.
+    broker_org_no: str | None = None
 
 
 class Balance(BaseModel):

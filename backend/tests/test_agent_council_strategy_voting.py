@@ -302,8 +302,7 @@ def test_candle_is_equal_weight_no_preference():
 def test_existing_four_strategies_unchanged():
     # 기존 4기법 가중치/평가 무변경 (투표자 1명 추가만).
     from app.agents.agent_council import (
-        STRATEGY_WEIGHTS, evaluate_orb, evaluate_momentum, evaluate_gap, evaluate_vwap,
-        StrategyMarketInput, CouncilAction)
+        STRATEGY_WEIGHTS, evaluate_momentum, StrategyMarketInput, CouncilAction)
     assert STRATEGY_WEIGHTS["MOMENTUM"] == 30
     assert STRATEGY_WEIGHTS["VWAP"] == 25 and STRATEGY_WEIGHTS["ORB"] == 25
     assert STRATEGY_WEIGHTS["GAP"] == 20

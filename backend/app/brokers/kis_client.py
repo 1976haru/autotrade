@@ -525,35 +525,55 @@ class KisClient:
         quantity:   int,
         order_type: str,        # "market" or "limit"
         limit_price: int | None = None,
+        api_format: str = "legacy",
     ) -> dict:
         """Submit a stock order to the KIS order-cash endpoint.
 
         Returns raw JSON. tr_id selects buy/sell + paper/live combination.
         Caller maps the response (rt_cd / msg1 / output.ODNO) to OrderResult.
+
+        api_format (V3, 2026-10-23):
+          - "legacy"  (기본·운영 체결 이력 있음): 모의 VTTC0802U/0801U, body 6필드.
+          - "current" (KIS 공식 examples_llm/domestic_stock/order_cash): 모의
+            VTTC0012U/0011U + 필수 EXCG_ID_DVSN_CD=KRX + SLL_TYPE(매도 01 일반매도)/
+            CNDT_PRIC(빈값). **모의 전용** — is_paper=False 면 네트워크 호출 전 거부
+            (실전 TR TTTC0011U/0012U 는 정의하지 않는다).
         """
         if order_type == "limit" and not limit_price:
             raise ValueError("limit orders require a limit_price")
         ord_dvsn = "01" if order_type == "market" else "00"
         ord_unpr = "0" if order_type == "market" else str(limit_price)
+        body = {
+            "CANO":         cano,
+            "ACNT_PRDT_CD": prdt_cd,
+            "PDNO":         symbol,
+            "ORD_DVSN":     ord_dvsn,
+            "ORD_QTY":      str(quantity),
+            "ORD_UNPR":     ord_unpr,
+        }
+        if api_format == "current":
+            if not self.is_paper:
+                raise KisApiError("current order-cash format is enabled for KIS paper only")
+            tr_id = "VTTC0012U" if is_buy else "VTTC0011U"
+            body.update({"EXCG_ID_DVSN_CD": "KRX",
+                         "SLL_TYPE": "" if is_buy else "01",
+                         "CNDT_PRIC": ""})
+        elif api_format == "legacy":
+            tr_id = self._order_tr_id(is_buy=is_buy)
+        else:
+            raise ValueError(f"unknown order api_format: {api_format!r}")
 
         token = await self._ensure_token()
         await self._throttle()
         async with self._client() as client:
             r = await client.post(
                 "/uapi/domestic-stock/v1/trading/order-cash",
-                json={
-                    "CANO":         cano,
-                    "ACNT_PRDT_CD": prdt_cd,
-                    "PDNO":         symbol,
-                    "ORD_DVSN":     ord_dvsn,
-                    "ORD_QTY":      str(quantity),
-                    "ORD_UNPR":     ord_unpr,
-                },
+                json=body,
                 headers={
                     "authorization": f"Bearer {token}",
                     "appkey":        self.app_key,
                     "appsecret":     self.app_secret,
-                    "tr_id":         self._order_tr_id(is_buy=is_buy),
+                    "tr_id":         tr_id,
                     "custtype":      "P",
                 },
             )

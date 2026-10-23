@@ -468,7 +468,8 @@ class TestQuery:
             meta={"decision_id": "d1", "source_module": PAPER_DECISION_LOG_SOURCE,
                   "reason_code": "KIS_PAPER_ORDER_LIMIT_EXCEEDED"},
         )
-        db.add(row); db.flush()
+        db.add(row)
+        db.flush()
         e = _row_to_entry(row)
         assert e.reason_code == "KIS_PAPER_ORDER_LIMIT_EXCEEDED"
         assert e.to_dict()["reason_code"] == "KIS_PAPER_ORDER_LIMIT_EXCEEDED"
@@ -484,7 +485,8 @@ class TestQuery:
             symbol="005930", mode=PAPER_DECISION_LOG_MODE, decision="HOLD",
             confidence=None, reasons=[], meta={"source_module": PAPER_DECISION_LOG_SOURCE},
         )
-        db.add(row); db.flush()
+        db.add(row)
+        db.flush()
         assert _row_to_entry(row).reason_code is None
 
     def test_query_filter_by_action(self, db):

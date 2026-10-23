@@ -162,6 +162,12 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
         <span className="isp-code"> ({st.eod_state}{st.eod_reason_code ? ` · ${st.eod_reason_code}` : ""})</span>
       </div>
 
+      {sum.verdict_basis === "DRY_RUN_NO_KIS_ORDERS" && st.eod_state !== "IDLE" && (
+        <div className="isp-code" data-testid="isp-dryrun-basis">
+          ※ 점검 모드 판정 — KIS 주문을 보내지 않았으므로 실제 청산 결과가 아닙니다.
+        </div>
+      )}
+
       {(st.eod_state !== "IDLE" || prog.heldQty > 0) && (
         <div className="isp-grid" data-testid="isp-progress">
           <span>청산 대상 {prog.symbols}종목</span>

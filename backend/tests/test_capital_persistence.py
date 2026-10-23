@@ -138,7 +138,6 @@ def test_persistence_enabled_reads_env(monkeypatch):
 def test_lifespan_sync_pattern_enables_persistence(monkeypatch):
     """main.py lifespan 이 하는 동기화(settings → os.environ)를 재현해
     _persistence_enabled() 가 True 가 되는지 — 내일 재시작 시 적용 보장."""
-    import os
     from app.auto_paper.capital_state import _persistence_enabled
     monkeypatch.delenv("PAPER_CAPITAL_PERSIST", raising=False)
     assert _persistence_enabled() is False

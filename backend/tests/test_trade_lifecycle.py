@@ -3,7 +3,7 @@
 read-only — 새 주문 0건, DB write 0건 (빌더는 SELECT 만). 합성 audit row 사용.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine

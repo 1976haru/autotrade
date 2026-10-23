@@ -80,8 +80,10 @@ def _resample_to_n(minute_bars: list[dict], n: int) -> list[dict]:
             order.append(key)
         else:
             agg = buckets[key]
-            agg["h"] = max(agg["h"], b["h"]); agg["l"] = min(agg["l"], b["l"])
-            agg["c"] = b["c"]; agg["v"] += b["v"]
+            agg["h"] = max(agg["h"], b["h"])
+            agg["l"] = min(agg["l"], b["l"])
+            agg["c"] = b["c"]
+            agg["v"] += b["v"]
     return [buckets[k] for k in order]
 
 

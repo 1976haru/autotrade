@@ -41,6 +41,7 @@ def _kis_order_response_to_result(raw: dict, order: "OrderRequest") -> OrderResu
     msg_cd = raw.get("msg_cd", "") or ""
     output = raw.get("output") or {}
     odno = output.get("ODNO") or ""
+    org_no = str(output.get("KRX_FWDG_ORD_ORGNO") or "") or None
 
     # Preserve the KIS message code (msg_cd) alongside msg1 so a rejection records
     # the *exact* KIS error code, e.g. "[40570000] 모의투자 주문이 불가한 계좌입니다".
@@ -66,6 +67,7 @@ def _kis_order_response_to_result(raw: dict, order: "OrderRequest") -> OrderResu
         side=order.side,
         quantity=order.quantity,
         message=full_msg,
+        broker_org_no=org_no,
     )
 
 
@@ -293,6 +295,11 @@ class KisBrokerAdapter(BrokerAdapter):
         cano, prdt = self._split_account()
         is_buy = order.side == OrderSide.BUY
         order_type = "market" if order.order_type.value == "MARKET" else "limit"
+        # V3: 기본 legacy 는 V3 이전과 *완전히 동일한* 호출(api_format 인자 없음) — 검증된
+        #   운영 경로 무변경. "current" 를 명시 opt-in 한 경우에만 신형 형식 인자를 넘긴다.
+        api_format = str(getattr(get_settings(), "kis_paper_order_api_format", "legacy")
+                         or "legacy").strip().lower()
+        extra = {} if api_format == "legacy" else {"api_format": api_format}
         try:
             raw = await self.client.place_order(
                 cano, prdt, order.symbol,
@@ -300,6 +307,7 @@ class KisBrokerAdapter(BrokerAdapter):
                 quantity=order.quantity,
                 order_type=order_type,
                 limit_price=order.limit_price,
+                **extra,
             )
         except KisApiError as e:
             raise e

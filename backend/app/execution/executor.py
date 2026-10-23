@@ -94,4 +94,5 @@ class OrderExecutor:
         audit.filled_quantity = result.filled_quantity
         audit.avg_fill_price = result.avg_fill_price
         audit.message = result.message
+        audit.broker_org_no = getattr(result, "broker_org_no", None)
         return result

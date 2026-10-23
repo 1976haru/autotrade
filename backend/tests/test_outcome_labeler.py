@@ -95,7 +95,9 @@ def test_static_no_council_route_order_import():
     src = (Path(__file__).resolve().parents[1] / "app" / "analytics" / "outcome_labeler.py").read_text(encoding="utf-8")
     mods = []
     for n in ast.walk(ast.parse(src)):
-        if isinstance(n, ast.ImportFrom): mods.append(n.module or "")
-        elif isinstance(n, ast.Import): mods += [a.name for a in n.names]
+        if isinstance(n, ast.ImportFrom):
+            mods.append(n.module or "")
+        elif isinstance(n, ast.Import):
+            mods += [a.name for a in n.names]
     for bad in ("agent_council", "order_router", "order_executor", "route_order", "driver_bridge", "brokers"):
         assert not any(bad in (m or "") for m in mods), f"forbidden import: {bad}"

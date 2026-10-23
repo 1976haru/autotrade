@@ -46,7 +46,8 @@ def _kst_day_bounds_utc(date_str: str | None, days: int) -> tuple[datetime, date
         end_kst = datetime(now_kst.year, now_kst.month, now_kst.day, tzinfo=_KST) + timedelta(days=1)
         start_kst = end_kst - timedelta(days=max(1, days))
     # UTC naive (DB created_at 비교) — astimezone(utc) 후 tzinfo 제거.
-    to_utc = lambda x: x.astimezone(timezone.utc).replace(tzinfo=None)
+    def to_utc(x):
+        return x.astimezone(timezone.utc).replace(tzinfo=None)
     return to_utc(start_kst), to_utc(end_kst)
 
 

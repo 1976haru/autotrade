@@ -1,7 +1,7 @@
 """기본 Universe(후보 종목군) 해결 — watchlist 가 비어도 PAPER 테스트 가능.
 
 Auto Paper Loop / 진단(run-once) 흐름이 후보 종목을 고를 때, 사용자가 관심종목
-(watchlist)을 등록하지 않았더라도 *시가총액 상위 50 종목* fallback universe 로
+(watchlist)을 등록하지 않았더라도 *시가총액 상위 100 종목* fallback universe (a90723c 에서 50→100 확장) 로
 파이프라인 전체를 검증할 수 있게 한다.
 
 설계 원칙 (CLAUDE.md 절대 원칙 1~5 상속):

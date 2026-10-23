@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.db.models import AgentDecisionLog, OrderAuditLog
-from app.performance.performance import SMALL_SAMPLE_THRESHOLD, compute_round_trips
+from app.performance.performance import compute_round_trips
 
 KST = timezone(timedelta(hours=9))
 
@@ -94,7 +94,8 @@ def compute_funnel(db: Session, *, start: date, end: date) -> dict[str, Any]:
     n_filled = audit_filled
     n_council = max(len(passed), n_submitted)
     n_signal = max(len(signal), n_council)   # 신호 ⊇ 통과 항상 + 제출 floor
-    _clamp = lambda x: max(0, x)
+    def _clamp(x):
+        return max(0, x)
 
     return {
         "stages": [

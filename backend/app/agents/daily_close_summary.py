@@ -20,12 +20,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date as Date
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 from typing import Any
 
 # 기존 #57 의 KST 윈도우 + 로더를 재사용 (중복 구현 0건).
 from app.agents.daily_report_agent import (
-    _kst_day_window,
     load_agent_decisions_for_date,
     load_audit_rows_for_date,
     load_emergency_events_for_date,

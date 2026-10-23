@@ -70,6 +70,8 @@ class OrderAuditLog(Base):
 
     executed:        Mapped[bool]           = mapped_column(Boolean, default=False)
     broker_order_id: Mapped[str | None]     = mapped_column(String(64), nullable=True)
+    # V3: 정정/취소용 KRX 전송 주문조직번호 (KIS order-cash 응답). NULL = 미제공/구버전 행.
+    broker_org_no:   Mapped[str | None]     = mapped_column(String(16), nullable=True)
     broker_status:   Mapped[str | None]     = mapped_column(String(32), nullable=True)
     filled_quantity: Mapped[int]            = mapped_column(Integer, default=0)
     avg_fill_price:  Mapped[int | None]     = mapped_column(Integer, nullable=True)

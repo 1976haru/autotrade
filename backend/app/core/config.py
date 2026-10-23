@@ -158,6 +158,10 @@ class Settings(BaseSettings):
     # (KIS_PAPER_DRY_RUN_OK). False 일 때만 실제 KIS 모의투자 주문 전송.
     kis_paper_auto_order_dry_run:    bool  = True
     kis_paper_auto_max_orders_per_day: int = 10
+    # V3(2026-10-23): KIS 모의 주문 API 형식. "legacy"(기본 — VTTC0802U/0801U, 운영 체결
+    #   이력 있음) | "current"(KIS 공식 샘플 — VTTC0012U/0011U + EXCG_ID_DVSN_CD=KRX).
+    #   리허설에서 current 접수·체결을 확인한 뒤에만 전환. 모의 전용(실전 TR 미정의).
+    kis_paper_order_api_format:        str = "legacy"
     kis_paper_auto_max_order_notional: int = 1_000_000
     # 주문 허용 시간창 (KST "HH:MM"). 장 시작 직후/마감 직전 변동성 회피.
     kis_paper_auto_order_window_start: str = "09:05"

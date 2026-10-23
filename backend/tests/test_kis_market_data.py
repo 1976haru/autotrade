@@ -91,7 +91,14 @@ def test_no_mock_fallback_on_failure():
     assert q.price is None
 
 
-def test_build_market_input_with_bars():
+@pytest.fixture
+def legacy_1m_path(monkeypatch):
+    """legacy 1분봉 당일 경로(BAR_INTERVAL_MINUTES=0, 롤백용으로 코드 보존)를 명시.
+    f117ca7 이후 라이브 기본은 30분봉 멀티데이 리샘플 경로다(아래 별도 테스트)."""
+    monkeypatch.setattr(kr, "_USE_INTRADAY_RESAMPLE", False)
+
+
+def test_build_market_input_with_bars(legacy_1m_path):
     bars = [{"stck_cntg_hour": f"0900{i:02d}", "stck_prpr": str(74000 + i * 100)}
             for i in range(10)]
     mi, q = asyncio.run(build_kis_market_input(
@@ -110,8 +117,21 @@ def test_build_market_input_returns_none_when_quote_fails():
     assert q.status == KIS_MARKET_DATA_UNAVAILABLE
 
 
-def test_build_market_input_degrades_without_bars():
-    # 분봉 미가용이어도 스냅샷으로 최소 구성 + 실패하지 않음.
+def test_resample_path_insufficient_bars_skips_entry_signal():
+    # 라이브 기본(30분봉): 룩백 봉 수(_RECENT_BARS) 미달이면 진입 입력을 만들지 않는다
+    #   (fail-closed — 부실 신호로 BUY 금지). 시세(quote)는 정상이라 보유 청산 평가는
+    #   driver_bridge 가 현재가로 계속한다(ⓑ-fix).
+    assert kr._USE_INTRADAY_RESAMPLE is True and kr.BAR_INTERVAL_MINUTES == 30
+    bars = [{"stck_cntg_hour": f"0900{i:02d}", "stck_prpr": str(74000 + i * 100)}
+            for i in range(10)]
+    mi, q = asyncio.run(build_kis_market_input(
+        "005930", client=FakeClient(bars=bars), now=NOW))
+    assert mi is None
+    assert q.ok and q.price_source == "kis" and float(q.price) == 75000.0
+
+
+def test_build_market_input_degrades_without_bars(legacy_1m_path):
+    # (legacy 경로) 분봉 미가용이어도 스냅샷으로 최소 구성 + 실패하지 않음.
     mi, q = asyncio.run(build_kis_market_input(
         "005930", client=FakeClient(bars=None), now=NOW))
     assert mi is not None

@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.backtest.cost_model import (
     DEFAULT_COST,
-    BacktestCostModel,
     apply_round_trip_cost,
     cost_drag_bps,
 )
