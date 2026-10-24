@@ -255,6 +255,18 @@ def test_stale_service_worker_purged_before_webview_created():
     assert "isTauriDesktop()" in reg.split("export async function registerServiceWorker", 1)[1]
 
 
+def test_safe_quit_kills_whole_sidecar_process_tree():
+    # EXE-1.1.0-FINAL-VALIDATION: '안전 종료' 후 PyInstaller bootloader 만 죽고 python 자식
+    #   백엔드가 고아로 남아 8000 포트를 계속 점유했다 → 트리 단위 종료 필수.
+    src = _code(_lib())
+    body = src.split("fn kill_sidecar(", 1)[1].split("\n}\n", 1)[0]
+    assert "kill_process_tree(child.pid())" in body
+    assert body.index("kill_process_tree(child.pid())") < body.index("child.kill()")
+    tree = src.split("fn kill_process_tree(", 1)[1].split("\n}\n", 1)[0]
+    assert '"taskkill"' in tree and '"/T"' in tree and '"/F"' in tree
+    assert "CREATE_NO_WINDOW" in tree
+
+
 def test_user_data_dir_is_not_the_bundle_identifier_dir():
     # NSIS 제거 시 '앱 데이터 삭제' 는 %APPDATA%\\<identifier> 대상 — 운영 데이터는
     #   %APPDATA%\\Autotrade 에 있으므로 재설치/업데이트/제거로 지워지지 않는다.

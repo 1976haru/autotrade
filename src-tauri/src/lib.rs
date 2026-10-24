@@ -173,12 +173,32 @@ fn show_main_and_call(app: &AppHandle, js_hook: &str) {
     }
 }
 
+/// `taskkill /PID <pid> /T /F` — pid 와 그 자식 프로세스 전부 종료 (콘솔 창 없이).
+#[cfg(windows)]
+fn kill_process_tree(pid: u32) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let out = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+    match out {
+        Ok(o) => append_log(&format!("taskkill tree pid={} ok={}", pid, o.status.success())),
+        Err(e) => append_log(&format!("taskkill tree pid={} failed: {}", pid, e)),
+    }
+}
+
 /// sidecar(백엔드) 종료 — '안전 종료' 확정 / 프로세스 종료 시에만.
 fn kill_sidecar(app: &AppHandle, reason: &str) {
     if let Some(state) = app.try_state::<BackendChild>() {
         if let Ok(mut guard) = state.0.lock() {
             if let Some(child) = guard.take() {
                 append_log(&format!("sidecar killed ({})", reason));
+                // PyInstaller onefile sidecar = bootloader + 실제 python 자식. bootloader 만
+                // kill 하면 자식(백엔드)이 고아로 남아 포트를 계속 점유했다 (EXE-FINAL
+                // 검증에서 '안전 종료' 후 백엔드 생존 확인) → 프로세스 트리 단위로 종료.
+                #[cfg(windows)]
+                kill_process_tree(child.pid());
                 let _ = child.kill();
             }
         }
