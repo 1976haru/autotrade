@@ -52,6 +52,10 @@ export function KillSwitchBanner({
 
   const marketHours = isMarketOpen(new Date(now));
   const levelLabel = _LEVEL_LABEL[status.level] || status.level;
+  // P0-SAFETY-FIX-V1: 실제 허용 범위는 backend order_policy 가 단일 진실. 정보가 없으면
+  //   (구버전 backend 등) 가장 강한 의미("모든 주문 차단")로 표시 — 과소 경고 금지.
+  const policy = status.order_policy || null;
+  const exitsContinue = Boolean(policy && policy.allows_eod_forced_exit);
   const activatedAt = status.active_since
     ? new Date(status.active_since).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })
     : null;
@@ -84,8 +88,15 @@ export function KillSwitchBanner({
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
         <div style={{ fontWeight: 800, fontSize: 15 }} data-testid={`${testId}-title`}>
-          🔴 긴급정지 활성 중 — 모든 주문 차단됨
+          {exitsContinue
+            ? "🔴 긴급정지 활성 중 — 신규 매수 차단 (보유 청산·미체결 매수 취소는 계속)"
+            : "🔴 긴급정지 활성 중 — 모든 주문 차단됨"}
         </div>
+        {policy && policy.operator_action_ko && (
+          <div style={{ fontSize: 12, opacity: 0.95 }} data-testid={`${testId}-policy`}>
+            {policy.operator_action_ko}
+          </div>
+        )}
         <div style={{ fontSize: 12, opacity: 0.92 }} data-testid={`${testId}-detail`}>
           {levelLabel}
           {activatedAt && (

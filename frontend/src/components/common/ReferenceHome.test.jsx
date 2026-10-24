@@ -186,7 +186,7 @@ describe("ReferenceHome", () => {
     confirmSpy.mockRestore();
   });
 
-  it("긴급정지 확인창: 청산 매도·취소까지 막힌다 + 일반 정지(⏸)와 구분 안내", () => {
+  it("긴급정지 확인창: LEVEL 1 = 신규 매수 차단·청산 계속, 전부 중단은 LEVEL 2/3 + 일반 정지(⏸)와 구분 안내", () => {
     const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
     const { getByTestId } = renderHome({ onEmergencyStop: vi.fn() });
     fireEvent.click(getByTestId("refhome-emergency"));
@@ -195,6 +195,12 @@ describe("ReferenceHome", () => {
     expect(msg).toContain("취소까지");
     expect(msg).toContain("자동매매 정지");
     expect(msg).toContain("장마감 자동 청산은 계속");
+    // P0-SAFETY-FIX-V1: 홈 버튼은 LEVEL 1 — 신규 매수만 막고 청산·매수 취소는 계속.
+    expect(msg).toContain("LEVEL 1");
+    expect(msg).toContain("신규 매수를 모두 막아요");
+    expect(msg).toContain("미체결 매수 취소는 계속");
+    expect(msg).toContain("LEVEL 2/3");
+    expect(msg).not.toContain("장마감 자동 청산 매도와 미체결 주문 취소까지 모두 막아요");
     confirmSpy.mockRestore();
   });
 

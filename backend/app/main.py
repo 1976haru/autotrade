@@ -219,6 +219,17 @@ async def lifespan(_app: FastAPI):
             type(exc).__name__, exc,
         )
 
+    # P0-SAFETY-FIX-V1: EOD guardian — driver 가 꺼져 있어도(EXE 기본·재실행) 프로그램 보유의
+    #   장마감 청산 관리를 계속한다. 신규 BUY/스캔 0, 승인(KIS 모의 자동매매 ON) 시에만 시작.
+    eod_guardian = None
+    try:
+        from app.auto_paper.background_driver import get_eod_guardian
+        eod_guardian = get_eod_guardian()
+        if eod_guardian.start():
+            _startup_logger.info("[startup] EOD guardian started (independent of tick driver)")
+    except Exception as exc:  # noqa: BLE001
+        _startup_logger.warning("[startup] EOD guardian not started: %s", type(exc).__name__)
+
     # MULTI-TF-SHADOW-V1 — *opt-in*, 기본 OFF. results/multi_timeframe 후속 —
     # 5m entry + 60m confirm(Council) 콤보를 read-only 관측(신호빈도 + 슬리피지).
     # broker.place_order / route_order / OrderExecutor 호출 0건.
@@ -255,6 +266,11 @@ async def lifespan(_app: FastAPI):
             )
         except Exception:  # noqa: BLE001
             pass
+        if eod_guardian is not None:
+            try:
+                await eod_guardian.stop()
+            except Exception:  # noqa: BLE001 — shutdown 정리는 best-effort.
+                pass
         if bg_driver is not None:
             try:
                 await bg_driver.stop()
@@ -273,6 +289,13 @@ async def lifespan(_app: FastAPI):
                 pass
         if poller is not None:
             await poller.stop()
+        # P0-SAFETY-FIX-V1: 실행기가 멈춘 뒤 이 프로세스의 EOD lease 해제 — 재시작한 새
+        #   프로세스가 lease 만료를 기다리지 않고 바로 EOD 를 이어받는다.
+        try:
+            from app.system.graceful_shutdown import release_process_eod_leases
+            release_process_eod_leases()
+        except Exception:  # noqa: BLE001 — shutdown 정리는 best-effort.
+            pass
 
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)

@@ -296,8 +296,8 @@ def test_migration_chain_single_head_includes_0027_0028():
     heads = sd.get_heads()
     assert len(heads) == 1
     revs = {r.revision for r in sd.walk_revisions()}
-    assert {"0027", "0028"} <= revs
-    assert heads[0] == "0028"
+    assert {"0027", "0028", "0029"} <= revs
+    assert heads[0] == "0029"   # P0-SAFETY-FIX-V1: emergency_stop_event.policy_version
 
 
 def test_migrations_upgrade_preserves_existing_rows(tmp_path):

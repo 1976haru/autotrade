@@ -187,6 +187,9 @@ class EmergencyStopEvent(Base):
     # 기존 의미와 동일한 LEVEL_1로 표시 (app/risk/emergency_stop.py
     # `normalize_legacy_level` 참고). 운영자가 단계 표시를 원하면 명시 권장.
     level:       Mapped[str | None]    = mapped_column(String(16), nullable=True)
+    # P0-SAFETY-FIX-V1: 단계별 주문 허용 범위 버전 (app/risk/kill_switch_policy.py).
+    # NULL = 이전 정책(LEVEL_1 도 모든 주문 차단)으로 기록된 정지 — 복원 시 legacy strict.
+    policy_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class AgentDecisionLog(Base):

@@ -35,6 +35,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import EmergencyStopEvent, OrderAuditLog, PendingApproval
+from app.risk.kill_switch_policy import KILL_SWITCH_POLICY_VERSION
 
 
 class KillSwitchLevel(StrEnum):
@@ -288,16 +289,20 @@ def build_status(
     )
 
 
-def apply_kill_switch_to_risk(risk, level: KillSwitchLevel) -> None:
+def apply_kill_switch_to_risk(risk, level: KillSwitchLevel, *,
+                              policy_version: int = KILL_SWITCH_POLICY_VERSION) -> None:
     """RiskManager에 level을 설정하고 emergency_stop boolean을 동기화.
 
-    - LEVEL_1+ → emergency_stop=True (기존 hard-stop 가드 활성화).
+    - LEVEL_1+ → emergency_stop=True (신규 BUY 차단 등 기존 consumer 의미 유지).
     - OFF → emergency_stop=False.
+    - policy_version: 단계별 주문 허용 범위 버전 (`kill_switch_policy`). 운영자가 지금
+      설정하는 정지는 현재 버전, DB 복원은 기록된 버전(없으면 legacy=1 → strict).
 
     in-memory 토글이라 process restart 시 OFF로 reset (기존 emergency_stop과
     동일 정책 — audit row가 영구화 source of truth).
     """
     risk.kill_switch_level = level
+    risk.kill_switch_policy_version = int(policy_version or 0)
     risk.emergency_stop = (level != KillSwitchLevel.OFF)
 
 
@@ -321,7 +326,10 @@ def restore_kill_switch_from_db(risk, db: Session) -> KillSwitchLevel:
                 level = KillSwitchLevel(row.level) if row.level else KillSwitchLevel.LEVEL_1
             except ValueError:
                 level = KillSwitchLevel.LEVEL_1
-            apply_kill_switch_to_risk(risk, level)   # 기존 함수 재사용(차단로직 그대로)
+            # P0-SAFETY-FIX-V1: 기록된 정책 버전 그대로 복원 — 버전 없는(이전 정책) 정지는
+            #   legacy strict 로 시작(자동 완화 금지, 운영자가 새 정책으로 재설정해야 완화).
+            apply_kill_switch_to_risk(
+                risk, level, policy_version=int(getattr(row, "policy_version", None) or 1))
             return level
     except Exception:  # noqa: BLE001 — 복원 실패는 기존 OFF 시작으로 안전 폴백.
         pass

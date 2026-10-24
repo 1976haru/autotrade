@@ -541,6 +541,12 @@ def get_kis_paper_eod_status(db: Session = Depends(get_db)) -> dict:
     out["background_driver_running"] = bool(drv.is_running)
     out["background_driver_enabled"] = bool(drv.status().get("enabled"))
     out["service_kind"] = "CONTINUOUS_BACKGROUND_DRIVER"
+    # P0-SAFETY-FIX-V1: EOD 를 실제로 관리하는 실행기 — driver(종일 운용) / guardian(청산 전용) / 없음.
+    from app.auto_paper.background_driver import get_eod_guardian
+    guardian = get_eod_guardian()
+    out["eod_guardian_running"] = bool(guardian.is_running)
+    out["eod_manager"] = ("BACKGROUND_DRIVER" if drv.is_running
+                          else "EOD_GUARDIAN" if guardian.is_running else "NONE")
     out["notice"] = (
         "정상 종일 운용은 백엔드 상시 서비스(background driver)가 수행합니다. "
         "설정 화면의 quick(3틱)/slow(20틱) 시험은 단발 점검이며 종일 운용이 아닙니다. "

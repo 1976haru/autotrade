@@ -117,4 +117,40 @@ describe("<KillSwitchBanner>", () => {
     ));
     await waitFor(() => expect(queryByTestId("kill-switch-banner")).toBeNull());
   });
+
+  // P0-SAFETY-FIX-V1: 실제 허용 범위(order_policy)에 맞춘 제목 — 새 정책 L1 은 청산 계속.
+  it("new-policy LEVEL_1 → '신규 매수 차단 (보유 청산…계속)' + 서버 안내 문구", async () => {
+    backendApi.emergencyStopStatus.mockResolvedValue(_status({
+      level: "LEVEL_1", emergency_stop: true,
+      order_policy: { active: true, level: "LEVEL_1", legacy_strict: false,
+                      allows_eod_forced_exit: true,
+                      operator_action_ko: "신규 매수만 차단 — 보유 청산·장마감 강제청산·미체결 매수 취소는 계속됩니다." },
+    }));
+    const { getByTestId } = render(<KillSwitchBanner now={_AFTER_HOURS_KST} />);
+    await waitFor(() => getByTestId("kill-switch-banner"));
+    expect(getByTestId("kill-switch-banner-title").textContent).toContain("신규 매수 차단");
+    expect(getByTestId("kill-switch-banner-title").textContent).not.toContain("모든 주문 차단");
+    expect(getByTestId("kill-switch-banner-policy").textContent).toContain("청산");
+  });
+
+  it("legacy(이전 정책) LEVEL_1 → '모든 주문 차단됨' + 재설정 안내", async () => {
+    backendApi.emergencyStopStatus.mockResolvedValue(_status({
+      level: "LEVEL_1", emergency_stop: true,
+      order_policy: { active: true, level: "LEVEL_1", legacy_strict: true,
+                      allows_eod_forced_exit: false,
+                      operator_action_ko: "모든 자동 주문·취소가 중단됐습니다. (이전 정책으로 켜진 긴급정지 — 청산을 허용하려면 LEVEL 1 을 다시 설정하세요.)" },
+    }));
+    const { getByTestId } = render(<KillSwitchBanner now={_AFTER_HOURS_KST} />);
+    await waitFor(() => getByTestId("kill-switch-banner"));
+    expect(getByTestId("kill-switch-banner-title").textContent).toContain("모든 주문 차단됨");
+    expect(getByTestId("kill-switch-banner-policy").textContent).toContain("다시 설정");
+  });
+
+  it("order_policy 없음(구버전 backend) → 가장 강한 의미로 표시", async () => {
+    backendApi.emergencyStopStatus.mockResolvedValue(_status({ level: "LEVEL_1" }));
+    const { getByTestId, queryByTestId } = render(<KillSwitchBanner now={_AFTER_HOURS_KST} />);
+    await waitFor(() => getByTestId("kill-switch-banner"));
+    expect(getByTestId("kill-switch-banner-title").textContent).toContain("모든 주문 차단됨");
+    expect(queryByTestId("kill-switch-banner-policy")).toBeNull();
+  });
 });

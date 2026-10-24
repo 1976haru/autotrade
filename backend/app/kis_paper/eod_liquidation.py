@@ -97,7 +97,8 @@ _MESSAGES_KO = {
     EOD_NOT_KIS_PAPER_MODE:   "KIS 실시간 모의 자동매매 모드가 아니라 장마감 청산을 실행하지 않습니다.",
     EOD_BROKER_NOT_KIS_PAPER: "브로커가 KIS 모의투자 어댑터가 아니라 청산 주문을 보내지 않습니다.",
     EOD_LIVE_TRADING_ENABLED: "실거래 플래그가 켜져 있어 차단합니다 (KIS 모의 전용 기능).",
-    EOD_EMERGENCY_STOP:       "긴급정지 ON — 자동 청산을 하지 않습니다. 남은 보유는 운영자가 직접 정리해야 합니다.",
+    EOD_EMERGENCY_STOP:       ("긴급정지(LEVEL 2/3 또는 이전 정책) ON — 자동 청산·취소를 하지 않습니다. "
+                               "남은 보유·미체결은 KIS 모의투자 MTS/HTS 에서 직접 정리하세요."),
     EOD_STAGED:               "15:00 사전점검 후 단계적 청산 진행 중 (손실 큰 종목부터).",
     EOD_CANCEL_FAILED:        "14:30 이후 미체결 매수 취소가 확인되지 않았습니다 — 운영자 확인 필요.",
     EOD_OWNERSHIP_UNKNOWN:    "프로그램 보유 원장 조회 실패 — 소유권이 불명확해 청산하지 않습니다(수동 확인 필요).",
@@ -223,6 +224,29 @@ def acquire_lease(db: Any, trading_date: str, owner: str, now: datetime,
     )
     db.commit()
     return int(res.rowcount or 0) == 1
+
+
+def release_owner_leases(db: Any, owner: str | None = None) -> int:
+    """이 프로세스가 쥔 EOD lease 전부 해제 — 정상 종료 시 (P0-SAFETY-FIX-V1).
+
+    해제하지 않으면 재시작한 새 프로세스가 lease 만료(≥45초)까지 EOD 를 못 잡는다.
+    다른 owner 의 lease 는 건드리지 않는다. 반환 = 해제한 행 수.
+    """
+    from sqlalchemy import update
+
+    from app.db.models import EodLiquidationState
+    res = db.execute(
+        update(EodLiquidationState)
+        .where(EodLiquidationState.lease_owner == (owner or process_owner_id()))
+        .values(lease_owner=None, lease_expires_at=None)
+    )
+    db.commit()
+    return int(res.rowcount or 0)
+
+
+def step_in_progress() -> bool:
+    """EOD coordinator 단계가 지금 실행 중인지 (프로세스 내 _STEP_LOCK)."""
+    return _STEP_LOCK.locked()
 
 
 def release_lease(db: Any, trading_date: str, owner: str) -> None:
@@ -630,8 +654,13 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
                       details={"trading_date": trading_date, "totals": rec.totals})
             return _out(verdict, reason, summary=summary)
 
-        # ── 14:30 ~ 15:30 : 긴급정지 → 주문/취소 0 + 수동 청산 경고 ────────────
-        emergency = bool(getattr(risk, "emergency_stop", False)) or loop_state == "EMERGENCY_STOP"
+        # ── 14:30 ~ 15:30 : 강한 긴급정지 → 주문/취소 0 + 수동 청산 경고 ────────
+        #   P0-SAFETY-FIX-V1: 새 정책 LEVEL_1(신규 매수만 차단)은 청산·BUY 취소를 계속 한다.
+        #   LEVEL_2/3·이전 정책(legacy strict) 정지·루프 EMERGENCY_STOP 만 차단.
+        from app.risk.kill_switch_policy import emergency_order_policy
+        ks = emergency_order_policy(risk)
+        summary["kill_switch"] = ks.to_dict()
+        emergency = (not ks.allows_eod_forced_exit) or loop_state == "EMERGENCY_STOP"
         summary["manual_liquidation_required"] = bool(
             emergency and int((summary.get("totals") or {}).get("managed_qty", 0) or 0) > 0)
         if emergency:
@@ -992,6 +1021,10 @@ def eod_status(db: Any, *, settings: Any = None, now: datetime | None = None,
         except Exception:  # noqa: BLE001
             risk = None
     emergency_on = bool(getattr(risk, "emergency_stop", False))
+    from app.risk.kill_switch_policy import emergency_order_policy
+    ks_policy = emergency_order_policy(risk)
+    # P0-SAFETY-FIX-V1: 수동 청산 필요 = *자동 청산이 막힌* 정지(LEVEL_2/3·legacy)일 때만.
+    strict_stop = emergency_on and not ks_policy.allows_eod_forced_exit
     try:
         ledger_holdings = [
             {"symbol": s, "quantity": q}
@@ -1054,8 +1087,9 @@ def eod_status(db: Any, *, settings: Any = None, now: datetime | None = None,
             "cancel_order_verified_on_kis_paper": False,
         },
         "emergency_stop": emergency_on,
+        "kill_switch": ks_policy.to_dict(),
         "program_ledger_holdings": ledger_holdings,
-        "manual_liquidation_required": bool(emergency_on and (
+        "manual_liquidation_required": bool(strict_stop and (
             ledger_holdings or int(((row.summary or {}) if row else {}).get(
                 "totals", {}).get("managed_qty", 0) or 0) > 0)),
         "auto_liquidation_guaranteed": False,
@@ -1152,7 +1186,7 @@ def acknowledge_incident(db: Any, *, trading_date: str, decided_by: str,
 
 __all__ = [
     "EodState", "run_eod_step", "reconcile", "eod_status", "acknowledge_incident",
-    "acquire_lease", "release_lease", "bot_net_quantities", "sell_quantity_for",
+    "acquire_lease", "release_lease", "release_owner_leases", "step_in_progress", "bot_net_quantities", "sell_quantity_for",
     "eod_client_order_prefix", "effective_policy", "process_owner_id", "eod_message_ko",
     "shutdown_check",
 ]

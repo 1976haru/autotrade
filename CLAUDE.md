@@ -47,6 +47,8 @@
 
 **INTRADAY-FLAT-BY-CLOSE-V1 (2026-10-23)** — `route_order`는 idempotency 직후, OrderGuard 전에 *프로그램*(`trade_reason="kis_paper_auto"`) 신규 BUY를 `intraday_buy_gate.program_buy_block_reason`으로 재검증한다(14:30 컷오프·휴장일·달력 미등록·직전일 EOD 미완료 → broker 호출 없이 REJECTED audit). `route_order`에 keyword-only `now`(기본 wall clock)가 추가됐다. `PermissionGate.approve`도 같은 helper로 재검증한다. 15:15 장마감 청산은 `app/kis_paper/eod_liquidation.py` coordinator가 같은 sanctioned 경로로만 수행한다. RiskManager의 보유수량 이내 reduce-only SELL은 진입 notional·일일손실 한도에서 면제된다(긴급정지는 유지). 상세: [`docs/kis_paper_intraday_flat_by_close.md`](docs/kis_paper_intraday_flat_by_close.md)
 
+**KIS-PAPER-P0-SAFETY-FIX-V1 (2026-10-24)** — 킬스위치 단계별 주문 정책의 단일 진실은 `app/risk/kill_switch_policy.py`. 새 정책(policy_version 2)의 LEVEL_1 = 신규 BUY 차단 + 프로그램 청산(NORMAL_EXIT·EOD_FORCED_EXIT)·미체결 BUY 취소 허용(PAPER/SIMULATION, 브로커 확인 보유·주문가능수량 이내 — RiskManager, 프로그램 소유 수량 이내 — `route_order`/`PermissionGate.approve`의 `emergency_sell_ownership_block`). LEVEL_2/3·`policy_version` 없는 이전 정지·level 미상 boolean 정지(자동정지 포함)는 legacy strict = 모든 주문·취소 차단(자동 완화 금지, 운영자가 LEVEL_1 재설정 시에만 전환). 킬스위치 자체는 여전히 청산·취소를 *트리거하지 않는다*(#37). EOD 는 `EodGuardian`이 상시 실행기 OFF 에서도 관리(KIS 모의 자동매매 승인 시에만, 신규 BUY 0). 데스크톱 안전 종료는 `POST /api/system/shutdown`(loopback+instance_id) 정상 종료 우선, 시간 초과 시에만 강제 종료.
+
 ### 핵심 아키텍처 불변식 (#34~#43)
 
 주문경로를 코드 단에서 고정하는 불변식. 전체 원문·테스트 가드는 [archive](docs/claude_md_changelog_archive.md) 블록1 참조.

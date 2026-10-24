@@ -290,9 +290,16 @@ class RiskManager:
         self.policy = policy or RiskPolicy()
         self.daily_realized_pnl = 0
         self.emergency_stop = False
+        # P0-SAFETY-FIX-V1: 단계(kill_switch_level)와 정책 버전. level 미상/버전<2 정지는
+        #   legacy strict(모든 주문 차단) — app/risk/kill_switch_policy.py.
+        self.kill_switch_level = None
+        self.kill_switch_policy_version = 0
 
     def set_emergency_stop(self, enabled: bool) -> None:
+        # level 없는 boolean 토글(자동정지·legacy 호출) — 단계 미상이므로 strict.
         self.emergency_stop = enabled
+        self.kill_switch_level = None
+        self.kill_switch_policy_version = 0
 
     def set_ai_disabled(self, enabled: bool) -> None:
         """178: 운영자 in-memory 토글. RiskPolicy의 default 외에도 런타임 변경
@@ -321,11 +328,22 @@ class RiskManager:
         # otherwise queue the order behind the alarm. Returning here also keeps
         # the audit row's reason list focused on the actual cause rather than
         # piling on incidental violations.
+        #
+        # P0-SAFETY-FIX-V1: 새 정책 LEVEL_1 만 예외 — 브로커 확인 보유 이내 reduce-only SELL
+        # (PAPER/SIMULATION)은 아래 일반 평가로 계속 진행. 그 외(BUY·LEVEL_2/3·legacy) 전부 거부.
         if self.emergency_stop:
-            return RiskCheckResult(
-                decision=RiskDecision.REJECTED,
-                reasons=["emergency stop is enabled"],
-            )
+            from app.risk.kill_switch_policy import emergency_block_reason
+            blocked = emergency_block_reason(
+                self, side=getattr(order.side, "value", order.side), symbol=order.symbol,
+                quantity=int(order.quantity), positions=positions, mode=mode)
+            if blocked is not None:
+                # 첫 사유는 기존 문자열 그대로(감사로그·UI·check_order BLOCKED 매핑 호환), 단계별
+                # 상세는 둘째 사유로.
+                from app.risk.kill_switch_policy import STRICT_REASON
+                return RiskCheckResult(
+                    decision=RiskDecision.REJECTED,
+                    reasons=[STRICT_REASON] + ([blocked] if blocked != STRICT_REASON else []),
+                )
 
         # 178: AI kill-switch — emergency_stop과 같은 hard short-circuit이지만
         # requested_by_ai=True인 주문에만 적용. 운영자가 strategy/manual은 두고

@@ -816,17 +816,16 @@ class BackgroundTickDriver:
         _log.info("[bg-tick] driver task created")
         return True
 
-    async def stop(self) -> None:
-        """task 안전 취소 — shutdown / 테스트 cleanup 용."""
+    async def stop(self, grace_seconds: float = 20.0) -> None:
+        """안전 종료 — shutdown / 테스트 cleanup 용.
+
+        P0-SAFETY-FIX-V1: 즉시 cancel 하면 EOD/주문 단계가 broker 호출과 audit commit 사이에서
+        끊길 수 있다 → stop 신호 후 *진행 중 tick 완료* 를 grace 동안 기다리고, 넘을 때만 cancel.
+        """
         if self._stop_event is not None:
             self._stop_event.set()
-        if self._task is not None:
-            self._task.cancel()
-            try:
-                await self._task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
-            self._task = None
+        await _finish_task(self._task, grace_seconds)
+        self._task = None
         self._stop_event = None
 
     @property
@@ -882,9 +881,110 @@ def get_background_tick_driver() -> BackgroundTickDriver:
     return BackgroundTickDriver()
 
 
+async def _finish_task(task: "asyncio.Task | None", grace_seconds: float) -> None:
+    """stop 신호를 받은 task 가 스스로 끝나길 grace 동안 기다리고, 넘으면 cancel."""
+    if task is None or task.done():
+        return
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=max(0.0, float(grace_seconds)))
+        return
+    except asyncio.TimeoutError:
+        _log.warning("[bg-tick] task did not finish within %.0fs — cancelling", grace_seconds)
+    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+        return
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+        pass
+
+
+class EodGuardian:
+    """장마감 청산 *전용* 실행기 — BackgroundTickDriver 가 꺼져 있어도 EOD 를 관리.
+
+    P0-SAFETY-FIX-V1: EOD coordinator 는 driver run loop 안에서만 호출됐다 → 상시 실행기 OFF
+    (EXE 기본·재실행 직후)면 프로그램 보유가 남아도 14:30 BUY 취소·15:00 단계청산·15:15
+    강제청산·15:30 대조가 전부 멈췄다. 본 guardian 은 driver 가 *돌고 있지 않을 때만*
+    `driver.maybe_eod_step` 을 같은 interval 로 호출한다 (중복 0: driver 실행 중엔 skip,
+    프로세스 간 중복은 EOD DB lease, 프로세스 내는 _STEP_LOCK).
+
+    신규 BUY·스캔·실전 주문 기능 없음. 실행 조건은 maybe_eod_step/run_eod_step 그대로:
+    ENABLE_KIS_PAPER_AUTO_TRADING(운영자가 승인한 당일 청산 정책) + 실거래 OFF + KIS 실시간
+    모의 모드 + 프로그램 소유 원장 수량만 (수동 보유 매도 0). 루프 PAUSED/STOPPED 여도
+    당일 청산은 V2 정책대로 관리되며, 루프 EMERGENCY_STOP·강한 킬스위치는 coordinator 가 차단.
+    """
+
+    def __init__(self, driver: BackgroundTickDriver, *,
+                 now_provider: Optional[Callable[[], datetime]] = None) -> None:
+        self._driver = driver
+        self._now = now_provider or (lambda: datetime.now(timezone.utc))
+        self._task: asyncio.Task | None = None
+        self._stop_event: asyncio.Event | None = None
+        self.last_result: dict[str, Any] | None = None
+
+    def _approved(self) -> bool:
+        s = self._driver._settings()
+        return (bool(getattr(s, "enable_kis_paper_auto_trading", False))
+                and not bool(getattr(s, "enable_live_trading", False)))
+
+    async def run_once(self, now: datetime | None = None) -> dict[str, Any] | None:
+        if self._driver.is_running:
+            return None   # driver 가 매 tick 스캔 전에 EOD step 을 수행한다.
+        res = await self._driver.maybe_eod_step(now or self._now())
+        if res is not None:
+            self.last_result = res
+        return res
+
+    async def _run(self) -> None:
+        assert self._stop_event is not None
+        _log.info("[eod-guardian] started (driver off → EOD managed independently)")
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    await self.run_once()
+                except Exception as exc:  # noqa: BLE001 — guardian 은 죽지 않는다.
+                    _log.warning("[eod-guardian] step raised: %s", _redact_secret(
+                        f"{type(exc).__name__}: {exc}"))
+                interval = max(1, int(getattr(
+                    self._driver._settings(), "ai_paper_tick_interval_seconds", 30) or 30))
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            _log.info("[eod-guardian] exited")
+
+    def start(self) -> bool:
+        if not self._approved():
+            _log.info("[eod-guardian] not started — KIS paper auto trading not approved")
+            return False
+        if self._task is not None and not self._task.done():
+            return True
+        self._stop_event = asyncio.Event()
+        self._task = asyncio.create_task(self._run())
+        return True
+
+    async def stop(self, grace_seconds: float = 20.0) -> None:
+        if self._stop_event is not None:
+            self._stop_event.set()
+        await _finish_task(self._task, grace_seconds)
+        self._task = None
+        self._stop_event = None
+
+    @property
+    def is_running(self) -> bool:
+        return self._task is not None and not self._task.done()
+
+
+@lru_cache(maxsize=1)
+def get_eod_guardian() -> EodGuardian:
+    return EodGuardian(get_background_tick_driver())
+
+
 def reset_background_tick_driver_for_tests() -> None:
     """테스트 격리용 — singleton cache clear."""
     get_background_tick_driver.cache_clear()
+    get_eod_guardian.cache_clear()
 
 
 __all__ = [
@@ -894,4 +994,6 @@ __all__ = [
     "BackgroundTickDriver",
     "get_background_tick_driver",
     "reset_background_tick_driver_for_tests",
+    "EodGuardian",
+    "get_eod_guardian",
 ]

@@ -229,8 +229,14 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
       )}
 
       <div className="isp-code" data-testid="isp-stop-vs-emergency">
-        ※ ⏸ 자동매매 정지 = 신규 매수만 중단(장마감 자동 청산은 계속) · 🛑 긴급정지 = 청산 매도·미체결 취소까지 전부 중단
+        ※ ⏸ 자동매매 정지 = 신규 매수만 중단(장마감 자동 청산은 계속) · 🛑 긴급정지 LEVEL 1 = 신규 매수 차단(청산·미체결 매수 취소는 계속) · LEVEL 2/3·이전 정책 긴급정지 = 청산 매도·미체결 취소까지 전부 중단(MTS/HTS 직접 조치)
       </div>
+
+      {st.kill_switch && st.kill_switch.active && (
+        <div className="isp-meta" data-testid="isp-kill-switch">
+          <span>긴급정지 {st.kill_switch.level}{st.kill_switch.legacy_strict ? " (이전 정책)" : ""}: {st.kill_switch.operator_action_ko}</span>
+        </div>
+      )}
 
       <div className="isp-code" data-testid="isp-not-guaranteed">
         ※ 창의 X 버튼은 트레이로 숨김(청산 계속) · PC 절전·전원 종료·강제 종료·네트워크 끊김이면 자동 청산이 실행되지 않을 수 있어요 (자동 보장 아님).

@@ -254,6 +254,16 @@ class PermissionGate:
                 re_eval.reasons.append(f"{block_code}: {block_msg}")
                 re_eval.decision = RiskDecision.REJECTED
 
+        # P0-SAFETY-FIX-V1: 긴급정지 LEVEL_1 의 SELL 승인도 프로그램 소유 수량 이내만
+        #   (route_order 와 동일 helper — 승인 큐는 route_order 를 다시 거치지 않는다).
+        from app.execution.order_router import emergency_sell_ownership_block
+        own_block = emergency_sell_ownership_block(
+            self.db, risk, side=order.side, symbol=order.symbol,
+            quantity=int(order.quantity), trade_reason=audit.trade_reason)
+        if own_block is not None:
+            re_eval.reasons.append(own_block)
+            re_eval.decision = RiskDecision.REJECTED
+
         if _approve_re_eval_blocks_execution(re_eval):
             # 076: persist the failed attempt on the row before raising.
             # JSON column needs reassignment for the change to be detected —

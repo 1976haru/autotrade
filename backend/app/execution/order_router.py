@@ -289,6 +289,15 @@ async def route_order(
         weekly_realized_pnl=weekly_pnl,
         consecutive_loss_count=consecutive_loss_count,
     )
+    # P0-SAFETY-FIX-V1: LEVEL_1 SELL 프로그램 소유권 (브로커 보유 확인은 RiskManager 가 수행).
+    _own_block = emergency_sell_ownership_block(
+        db, risk, side=order.side, symbol=order.symbol, quantity=int(order.quantity),
+        trade_reason=order.trade_reason)
+    if _own_block is not None and decision.decision != RiskDecision.REJECTED:
+        from app.risk.kill_switch_policy import STRICT_REASON
+        decision.decision = RiskDecision.REJECTED
+        decision.reasons = [STRICT_REASON, _own_block] + [
+            r for r in decision.reasons if r != STRICT_REASON]
 
     # #36: BLOCK_NEW_BUY 조건이 reason으로 누적된 경우 RiskCheckResult를
     # REJECTED로 명시적으로 덮어쓴다 (BUY only). evaluate_order의 마지막 줄이
@@ -433,6 +442,30 @@ async def route_order(
 
 
 CANCEL_TRADE_REASON = "kis_paper_cancel"
+PROGRAM_TRADE_REASON = "kis_paper_auto"
+
+
+def emergency_sell_ownership_block(db: Session, risk: RiskManager, *, side: OrderSide,
+                                   symbol: str, quantity: int,
+                                   trade_reason: str | None) -> str | None:
+    """P0-SAFETY-FIX-V1: 새 정책 LEVEL_1 의 SELL 은 *프로그램 소유 수량* 이내의 프로그램
+    청산(NORMAL_EXIT / EOD_FORCED_EXIT)만. RiskManager 는 브로커 보유만 확인하므로(DB 없음)
+    소유권은 여기서 원장(trade_reason=kis_paper_auto 체결 순수량)으로 검사한다 —
+    수동·타인 보유 매도 0. LEVEL_1(새 정책)이 아니면 None (기존 경로 무변경)."""
+    from app.risk.kill_switch_policy import STRICT_REASON, emergency_order_policy
+    pol = emergency_order_policy(risk)
+    if not pol.active or not pol.allows_reduce_only_sell:
+        return None
+    if getattr(side, "value", side) != OrderSide.SELL.value:
+        return None
+    tag = f"{STRICT_REASON} (LEVEL_1)"
+    if (trade_reason or "") != PROGRAM_TRADE_REASON:
+        return f"{tag}: only program exits may sell — manual/other-owned holdings are not sold"
+    from app.kis_paper.eod_liquidation import _program_audit_rows, bot_net_quantities
+    owned = int(bot_net_quantities(_program_audit_rows(db), {}).get(symbol, 0) or 0)
+    if quantity <= 0 or quantity > owned:
+        return f"{tag}: SELL exceeds program-owned quantity (owned={owned}, requested={quantity})"
+    return None
 
 
 async def route_cancel(
@@ -453,6 +486,7 @@ async def route_cancel(
 
     가드 → audit(항상 기록) → OrderExecutor.cancel (broker.cancel_order 유일 호출부).
     - 긴급정지 ON: 취소도 하지 않는다 (#37 — 킬스위치 중 자동 취소 금지, 운영자 수동).
+      단 새 정책 LEVEL_1 은 미체결 BUY 취소 허용 (P0-SAFETY-FIX-V1, kill_switch_policy).
     - PAPER 모드 + paper broker + 실거래 OFF 에서만 (실전 계좌 취소 0건).
     - client_order_id idempotency (DuplicateOrderError) — 재시작/중복 tick 재전송 차단.
     취소 *접수* 는 취소 완료가 아니다 — 호출자가 일별체결 잔량으로 대조한다.
@@ -465,7 +499,12 @@ async def route_cancel(
 
     reasons = [f"CANCEL original={original_order_id} reason={reason}"]
     blocked: str | None = None
-    if risk.emergency_stop:
+    from app.risk.kill_switch_policy import emergency_order_policy
+    es_policy = emergency_order_policy(risk)
+    if es_policy.active and not (es_policy.allows_buy_cancel
+                                 and getattr(side, "value", side) == OrderSide.BUY.value):
+        # P0-SAFETY-FIX-V1: 새 정책 LEVEL_1 은 미체결 *BUY* 취소만 허용(신규 노출 축소).
+        #   LEVEL_2/3·legacy strict·SELL 취소는 기존대로 금지 (#37 — 운영자 수동).
         blocked = "emergency stop is enabled — auto cancel prohibited (#37)"
     elif mode != OperationMode.PAPER:
         blocked = f"cancel allowed only in PAPER mode (mode={mode.value})"

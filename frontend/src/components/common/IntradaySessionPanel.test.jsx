@@ -122,6 +122,24 @@ describe("IntradaySessionPanel (INTRADAY-FLAT-BY-CLOSE-V1)", () => {
     const { getByTestId } = render(<IntradaySessionPanel api={api(base)} pollMs={60_000} />);
     await waitFor(() => expect(getByTestId("isp-stop-vs-emergency").textContent).toContain("청산은 계속"));
     expect(getByTestId("isp-stop-vs-emergency").textContent).toContain("미체결 취소까지 전부 중단");
+    // P0-SAFETY-FIX-V1: LEVEL 1 은 청산 계속, LEVEL 2/3·이전 정책만 전부 중단.
+    expect(getByTestId("isp-stop-vs-emergency").textContent).toContain("LEVEL 1 = 신규 매수 차단(청산·미체결 매수 취소는 계속)");
+    expect(getByTestId("isp-stop-vs-emergency").textContent).toContain("MTS/HTS");
+  });
+
+  it("P0: 긴급정지 상태 줄 — 단계·이전 정책 여부·서버 안내 그대로 표시", async () => {
+    const d = { ...base, kill_switch: { active: true, level: "LEVEL_1", legacy_strict: true,
+      operator_action_ko: "모든 자동 주문·취소가 중단됐습니다." } };
+    const { getByTestId } = render(<IntradaySessionPanel api={api(d)} pollMs={60_000} />);
+    await waitFor(() => expect(getByTestId("isp-kill-switch").textContent).toContain("LEVEL_1 (이전 정책)"));
+    expect(getByTestId("isp-kill-switch").textContent).toContain("모든 자동 주문·취소가 중단");
+  });
+
+  it("P0: 긴급정지 OFF 면 상태 줄 없음", async () => {
+    const d = { ...base, kill_switch: { active: false, level: "OFF" } };
+    const { queryByTestId, getByTestId } = render(<IntradaySessionPanel api={api(d)} pollMs={60_000} />);
+    await waitFor(() => getByTestId("isp-stop-vs-emergency"));
+    expect(queryByTestId("isp-kill-switch")).toBeNull();
   });
 
   it("V3: 점검 모드 판정은 '실제 청산 결과 아님' 표시", async () => {

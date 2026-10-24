@@ -27,14 +27,16 @@
 // 창/종료 정책 (WINDOWS-ONECLICK-EXE-V1):
 // - X 버튼 = 트레이로 숨김. 백엔드와 장마감(15:00~15:30) 청산은 계속 동작.
 // - 실제 종료 = 트레이 '안전 종료' → frontend 가 보유/미체결 경고 → 사용자가 선택 시
-//   `confirm_quit` → sidecar 정리 후 종료. 어떤 경로로 끝나든 RunEvent::Exit 에서 sidecar 정리.
+//   `confirm_quit` → 백엔드 정상 종료 요청(POST /api/system/shutdown) → 종료 확인 →
+//   시간 내 미종료 시에만 강제 종료(P0-SAFETY-FIX-V1). 어떤 경로로 끝나든 RunEvent::Exit 에서 sidecar 정리.
 // - PC 전원 종료/강제 종료/절전 시에는 자동 청산을 보장할 수 없다 (frontend 에 상시 표시).
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::async_runtime;
 use tauri::menu::{Menu, MenuItem};
@@ -45,6 +47,11 @@ use tauri_plugin_shell::ShellExt;
 
 // 백엔드 sidecar child handle — 앱 종료 시 부드러운 shutdown 위해 보관.
 struct BackendChild(Mutex<Option<CommandChild>>);
+
+// sidecar(부트로더) 종료 이벤트 수신 여부 — 부트로더는 python 자식이 끝나야 종료된다.
+static SIDECAR_EXITED: AtomicBool = AtomicBool::new(false);
+// 정상 종료(lifespan 정리: 진행 중 EOD 단계 완료 대기·lease 해제) 최대 대기 — 넘으면 강제 종료.
+const GRACEFUL_EXIT_TIMEOUT_SECS: u64 = 40;
 
 // 로그 파일 위치 / 크기 정책.
 const LOG_DIR_REL: &str = "Autotrade/logs";
@@ -298,6 +305,7 @@ pub fn run() {
                                         ));
                                     }
                                     CommandEvent::Terminated(payload) => {
+                                        SIDECAR_EXITED.store(true, Ordering::SeqCst);
                                         append_log(&format!(
                                             "TERMINATED: code={:?} signal={:?}",
                                             payload.code, payload.signal
@@ -436,12 +444,86 @@ fn read_backend_log() -> String {
     }
 }
 
+/// 포트 파일의 instance_id — 헤더 주입 방지를 위해 영숫자/하이픈만 허용.
+fn sanitize_instance_id(raw: &str) -> Option<String> {
+    let id = raw.trim();
+    if id.is_empty() || id.len() > 64 || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return None;
+    }
+    Some(id.to_string())
+}
+
+/// 이번 실행본 백엔드에 정상 종료 요청 (loopback, instance_id 헤더). 반환 = HTTP 상태코드.
+fn post_graceful_shutdown(port: u16, instance_id: &str) -> Result<u16, String> {
+    use std::net::{SocketAddr, TcpStream};
+    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+    let mut s = TcpStream::connect_timeout(&addr, Duration::from_secs(3)).map_err(|e| e.to_string())?;
+    let _ = s.set_read_timeout(Some(Duration::from_secs(10)));
+    let body = r#"{"confirm":true}"#;
+    let req = format!(
+        "POST /api/system/shutdown HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n\
+         Content-Type: application/json\r\nX-Autotrade-Instance: {}\r\n\
+         Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+        port, instance_id, body.len(), body
+    );
+    s.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+    let mut resp = String::new();
+    let _ = s.read_to_string(&mut resp);
+    resp.split_whitespace().nth(1).and_then(|c| c.parse::<u16>().ok())
+        .ok_or_else(|| "no HTTP status".to_string())
+}
+
+/// 정상 종료 → sidecar 종료 확인. true = 시간 내 스스로 종료(lifespan 정리 완료).
+fn graceful_stop_backend(timeout: Duration) -> bool {
+    if SIDECAR_EXITED.load(Ordering::SeqCst) {
+        return true;
+    }
+    let info = backend_port_info();
+    let port = info.get("port").and_then(|p| p.as_u64()).and_then(|p| u16::try_from(p).ok());
+    let inst = info.get("instance_id").and_then(|v| v.as_str()).and_then(sanitize_instance_id);
+    let (Some(port), Some(inst)) = (port, inst) else {
+        append_log("graceful shutdown skipped: port file unavailable");
+        return false;
+    };
+    match post_graceful_shutdown(port, &inst) {
+        Ok(200) => append_log("graceful shutdown accepted by backend"),
+        Ok(code) => {
+            append_log(&format!("graceful shutdown refused (HTTP {})", code));
+            return false;
+        }
+        Err(e) => {
+            append_log(&format!("graceful shutdown request failed: {}", e));
+            return false;
+        }
+    }
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if SIDECAR_EXITED.load(Ordering::SeqCst) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    false
+}
+
 /// '안전 종료' 확정 — frontend 가 보유/미체결 경고를 보여 준 *뒤* 사용자가 선택했을 때만.
+/// P0-SAFETY-FIX-V1: 정상 종료 요청 → 종료 확인 → 시간 내 미종료 시에만 프로세스 트리 강제 종료.
 #[tauri::command]
 fn confirm_quit(app: AppHandle) {
     append_log("safe quit confirmed by user");
-    kill_sidecar(&app, "safe quit");
-    app.exit(0);
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+    std::thread::spawn(move || {
+        let graceful = graceful_stop_backend(Duration::from_secs(GRACEFUL_EXIT_TIMEOUT_SECS));
+        append_log(if graceful {
+            "backend exited gracefully"
+        } else {
+            "backend did not exit gracefully - forcing process tree kill"
+        });
+        kill_sidecar(&app, if graceful { "safe quit (graceful)" } else { "safe quit (forced fallback)" });
+        app.exit(0);
+    });
 }
 
 /// 창만 트레이로 숨김 (frontend 의 '트레이로 계속 실행' 버튼).
@@ -476,7 +558,16 @@ fn backend_port_info() -> serde_json::Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{mask_secrets, purge_stale_service_worker};
+    use super::{mask_secrets, purge_stale_service_worker, sanitize_instance_id};
+
+    #[test]
+    fn instance_id_header_injection_refused() {
+        assert_eq!(sanitize_instance_id("2f9f0efe6c0842a8").as_deref(), Some("2f9f0efe6c0842a8"));
+        assert_eq!(sanitize_instance_id(" abc-123 ").as_deref(), Some("abc-123"));
+        assert!(sanitize_instance_id("abc\r\nX-Evil: 1").is_none());
+        assert!(sanitize_instance_id("").is_none());
+        assert!(sanitize_instance_id(&"a".repeat(65)).is_none());
+    }
 
     #[test]
     fn purges_only_service_worker_dir() {
