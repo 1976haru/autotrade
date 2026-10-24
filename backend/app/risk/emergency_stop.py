@@ -314,25 +314,46 @@ def restore_kill_switch_from_db(risk, db: Session) -> KillSwitchLevel:
     감지는 하지 않는다(과한 옵션 회피).
 
     ★기존 차단 로직(evaluate_order hard-reject)·apply_kill_switch_to_risk 매핑은
-    무변경 — 시작 시 *복원* 1회만 추가하는 안전강화. 실패해도 기존 동작(OFF 시작)으로
-    fail-safe(예외를 봇 startup 으로 전파하지 않음).
+    무변경 — 시작 시 *복원* 1회만 추가하는 안전강화. 예외를 봇 startup 으로 전파하지 않음.
+
+    P0-SAFETY-FIX-V1 (설치본 검증에서 발견): EXE 는 마이그레이션을 백그라운드로 돌려 본
+    복원이 0029(policy_version 컬럼) *적용 전* 에 실행된다 → 전체 행 조회가 실패해 OFF 로
+    폴백 = 걸려 있던 정지가 업그레이드만으로 풀렸다. 이제:
+      - policy_version 컬럼이 없으면 enabled/level 만 읽어 legacy strict 로 복원.
+      - 테이블 자체가 없으면(첫 설치·스키마 생성 전) 이전 정지가 있을 수 없으므로 OFF.
+      - 그 밖의 읽기 실패는 *해제하지 않고* LEVEL_1 legacy strict(모든 주문 차단)로 시작 —
+        운영자가 배너에서 확인 후 해제. (주문 차단이 안전한 실패 방향)
     """
+    from sqlalchemy import inspect as sa_inspect
+    from sqlalchemy.exc import OperationalError
+
+    order = EmergencyStopEvent.id.desc()
     try:
-        row = db.execute(
-            select(EmergencyStopEvent).order_by(EmergencyStopEvent.id.desc()).limit(1)
-        ).scalar_one_or_none()
-        if row is not None and bool(row.enabled):
+        if not sa_inspect(db.get_bind()).has_table(EmergencyStopEvent.__tablename__):
+            return KillSwitchLevel.OFF
+        try:
+            row = db.execute(
+                select(EmergencyStopEvent.enabled, EmergencyStopEvent.level,
+                       EmergencyStopEvent.policy_version).order_by(order).limit(1)
+            ).first()
+        except OperationalError:
+            db.rollback()   # 0029 이전 스키마 — policy_version 없음 → legacy.
+            old = db.execute(
+                select(EmergencyStopEvent.enabled, EmergencyStopEvent.level).order_by(order).limit(1)
+            ).first()
+            row = (old[0], old[1], None) if old is not None else None
+        if row is not None and bool(row[0]):
             try:
-                level = KillSwitchLevel(row.level) if row.level else KillSwitchLevel.LEVEL_1
+                level = KillSwitchLevel(row[1]) if row[1] else KillSwitchLevel.LEVEL_1
             except ValueError:
                 level = KillSwitchLevel.LEVEL_1
-            # P0-SAFETY-FIX-V1: 기록된 정책 버전 그대로 복원 — 버전 없는(이전 정책) 정지는
-            #   legacy strict 로 시작(자동 완화 금지, 운영자가 새 정책으로 재설정해야 완화).
-            apply_kill_switch_to_risk(
-                risk, level, policy_version=int(getattr(row, "policy_version", None) or 1))
+            # 기록된 정책 버전 그대로 복원 — 버전 없는(이전 정책) 정지는 legacy strict
+            #   (자동 완화 금지, 운영자가 새 정책으로 재설정해야 완화).
+            apply_kill_switch_to_risk(risk, level, policy_version=int(row[2] or 1))
             return level
-    except Exception:  # noqa: BLE001 — 복원 실패는 기존 OFF 시작으로 안전 폴백.
-        pass
+    except Exception:  # noqa: BLE001 — 상태를 알 수 없으면 해제하지 않고 차단 쪽으로.
+        apply_kill_switch_to_risk(risk, KillSwitchLevel.LEVEL_1, policy_version=1)
+        return KillSwitchLevel.LEVEL_1
     return KillSwitchLevel.OFF
 
 

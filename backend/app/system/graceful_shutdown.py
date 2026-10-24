@@ -58,9 +58,13 @@ def authorize(client_host: str | None, header_instance: str | None,
 
 
 def schedule_exit(delay_seconds: float = 0.3) -> None:
-    """응답이 나간 뒤 종료 신호 — uvicorn 이 정상 종료(lifespan finally) 하도록."""
-    loop = asyncio.get_event_loop()
-    loop.call_later(max(0.0, delay_seconds), request_process_exit)
+    """응답이 나간 뒤 종료 신호 — uvicorn 이 정상 종료(lifespan finally) 하도록.
+
+    반드시 이벤트 루프 스레드(async endpoint)에서 호출 — 설치본 검증에서 sync endpoint
+    (worker thread)의 get_event_loop() 가 RuntimeError(500) 를 낸 결함 수정."""
+    loop = asyncio.get_running_loop()
+    # 호출 시점의 함수를 조회(테스트 교체 반영).
+    loop.call_later(max(0.0, delay_seconds), lambda: request_process_exit())
 
 
 def release_process_eod_leases() -> int:

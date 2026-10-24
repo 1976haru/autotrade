@@ -378,8 +378,8 @@ class _ShutdownBody(BaseModel):
 
 
 @router.post("/system/shutdown")
-def request_graceful_shutdown(body: _ShutdownBody, request: Request,
-                              db: Session = Depends(get_db)) -> Any:
+async def request_graceful_shutdown(body: _ShutdownBody, request: Request,
+                                    db: Session = Depends(get_db)) -> Any:
     """P0-SAFETY-FIX-V1 — 데스크톱 앱의 *정상 종료* 요청 (강제 종료 대신).
 
     loopback + 이번 실행본 instance_id 헤더 필수. 보유·미체결·EOD 단계 진행 중이면 운영자

@@ -198,6 +198,45 @@ def test_api_reapplying_L1_converts_legacy_stop_and_records_version(client):
         apply_kill_switch_to_risk(risk, KillSwitchLevel.OFF)
 
 
+def _old_schema_session(with_table=True):
+    """0029 이전 스키마(policy_version 없음) — EXE 가 마이그레이션을 백그라운드로 돌려
+    복원이 먼저 실행되는 상황 재현."""
+    from sqlalchemy import text
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    with eng.begin() as c:
+        if with_table:
+            c.execute(text("create table emergency_stop_event (id integer primary key, "
+                           "created_at datetime, enabled boolean, decided_by varchar, note varchar, "
+                           "reason_code varchar, level varchar)"))
+            c.execute(text("insert into emergency_stop_event (created_at, enabled, level) "
+                           "values ('2026-05-26 02:29:31', 1, 'LEVEL_1')"))
+    return sessionmaker(bind=eng)()
+
+
+def test_restore_before_0029_migration_keeps_legacy_stop_active():
+    # 설치본 검증 결함: 컬럼 없는 스키마에서 복원 실패 → OFF(자동 해제)였다.
+    s = _old_schema_session()
+    rm = RiskManager(RiskPolicy())
+    assert restore_kill_switch_from_db(rm, s) == KillSwitchLevel.LEVEL_1
+    assert rm.emergency_stop is True and emergency_order_policy(rm).legacy_strict is True
+    assert evaluate(rm, "SELL", 1, held=1).decision == RiskDecision.REJECTED
+
+
+def test_restore_without_table_is_off():
+    rm = RiskManager(RiskPolicy())
+    assert restore_kill_switch_from_db(rm, _old_schema_session(with_table=False)) == KillSwitchLevel.OFF
+    assert rm.emergency_stop is False
+
+
+def test_restore_unreadable_state_blocks_instead_of_releasing(db, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("db locked")
+    monkeypatch.setattr(db, "execute", boom)
+    rm = RiskManager(RiskPolicy())
+    assert restore_kill_switch_from_db(rm, db) == KillSwitchLevel.LEVEL_1
+    assert rm.emergency_stop is True and emergency_order_policy(rm).legacy_strict is True
+
+
 def test_kill_switch_never_auto_released_on_restore(db):
     db.add(EmergencyStopEvent(enabled=True, level="LEVEL_2", policy_version=2))
     db.commit()
@@ -480,6 +519,24 @@ def test_shutdown_safe_state_accepted(client, shutdown_env):
     r = client.post("/api/system/shutdown", json={}, headers=shutdown_env.header)
     assert r.status_code == 200 and r.json()["accepted"] is True
     assert shutdown_env.calls == ["exit"]
+
+
+def test_shutdown_real_scheduling_path_no_500(client, monkeypatch):
+    # 설치본 검증 결함: sync endpoint 의 worker thread 에서 get_event_loop() → 500.
+    #   schedule_exit 는 교체하지 않고 실제 경로로 — 프로세스 신호만 가짜로.
+    import time as _t
+
+    from app.main import _INSTANCE_ID
+    from app.system import graceful_shutdown as gs
+    calls: list = []
+    monkeypatch.setattr(gs, "request_process_exit", lambda: calls.append("exit"))
+    monkeypatch.setattr(gs, "_LOOPBACK", gs._LOOPBACK | {"testclient"})
+    r = client.post("/api/system/shutdown", json={}, headers={gs.INSTANCE_HEADER: _INSTANCE_ID})
+    assert r.status_code == 200, r.text
+    deadline = _t.time() + 3
+    while not calls and _t.time() < deadline:
+        _t.sleep(0.05)
+    assert calls == ["exit"]
 
 
 def test_shutdown_with_risk_needs_confirmation(client, shutdown_env, monkeypatch):
