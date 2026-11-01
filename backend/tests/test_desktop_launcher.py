@@ -26,9 +26,19 @@ import app_desktop_launcher as launcher   # noqa: E402
 
 
 def test_candidate_env_paths_includes_appdata(monkeypatch):
+    # 설치 EXE(frozen) — 운영 .env 는 %APPDATA%\Autotrade\.env.
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setenv("APPDATA", r"C:\Users\test\AppData\Roaming")
     paths = launcher.candidate_env_paths()
     assert any("Autotrade" in str(p) for p in paths)
+
+
+def test_candidate_env_paths_source_run_excludes_ops_env(monkeypatch):
+    # P0-SAFETY-HARDENING P0-1: 소스 실행은 설치 앱의 운영 .env 를 자동으로 읽지 않는다.
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    monkeypatch.setenv("APPDATA", r"C:\Users\test\AppData\Roaming")
+    paths = launcher.candidate_env_paths()
+    assert not any("Roaming" in str(p) for p in paths)
 
 
 def test_candidate_env_paths_without_appdata(monkeypatch):
@@ -44,6 +54,7 @@ def test_resolve_env_path_returns_first_existing(tmp_path, monkeypatch):
     autotrade.mkdir(parents=True)
     target = autotrade / ".env"
     target.write_text("KIS_IS_PAPER=true\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setenv("APPDATA", str(appdata))
     # backend/.env 도 만들지만 우선순위가 낮음
     found = launcher.resolve_env_path()

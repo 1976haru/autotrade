@@ -98,6 +98,13 @@ async def lifespan(_app: FastAPI):
         "[startup] lifespan begin — migration_nonblocking=%s",
         cfg.migration_nonblocking,
     )
+    # P0-SAFETY-HARDENING P0-1: 소스 실행(런처를 거치지 않는 `uvicorn app.main:app` 포함)이 설치 앱의
+    #   운영 KIS 인증정보를 쓰면 DB·브로커·스케줄러를 만지기 전에 시작 거부(fail-closed).
+    from app.system.source_run_guard import source_run_block_reason
+    _src_block = source_run_block_reason(cfg)
+    if _src_block is not None:
+        _startup_logger.error("[startup] start refused (FAIL_CLOSED): %s", _src_block)
+        raise RuntimeError(_src_block)
 
     # PART1-3: capital_state 영속화 활성화를 env 로 동기화. capital_state 는
     # get_settings 를 import 하지 않는다는 원칙(안전 flag 결합 0건)을 지키기

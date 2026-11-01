@@ -80,7 +80,9 @@ def candidate_env_paths() -> list[Path]:
     """
     paths: list[Path] = []
     appdata = os.environ.get("APPDATA")
-    if appdata:
+    # P0-SAFETY-HARDENING P0-1: %APPDATA%\Autotrade\.env 는 설치 EXE 의 운영 설정 — 소스 실행
+    #   (비-frozen)은 자동으로 읽지 않는다(개발 실행은 backend\.env 등 별도 설정으로만).
+    if appdata and getattr(sys, "frozen", False):
         paths.append(Path(appdata) / APPDATA_DIR_NAME / ".env")
     # 개발 환경 기본
     paths.append(Path(r"C:\trade\autotrade\backend\.env"))
@@ -170,6 +172,14 @@ def _anchor_frozen_db_to_appdata(log: logging.Logger) -> None:
                 break
     os.environ["DATABASE_URL"] = "sqlite:///" + target.as_posix()
     log.info("database anchored for installed app: %s", os.environ["DATABASE_URL"])
+
+
+# P0-SAFETY-HARDENING P0-1: 소스 실행(비-frozen)이 설치 EXE 의 운영 인증정보를 쓰면 시작 거부.
+#   예전: scripts\run_watchdog.bat → watchdog_restart_backend.bat → 이 런처(소스)가
+#   %APPDATA%\Autotrade\.env(운영 계좌 키·계좌)를 먼저 로드하고, 나머지 키는 pydantic 이
+#   backend\.env 에서 채워(자동매매 플래그 ON) 소스 DB(긴급정지 OFF)로 운영 계좌를 거래할 수 있었다.
+#   판단은 app.system.source_run_guard (FastAPI lifespan 도 같은 함수로 재검사 — uvicorn 직접 실행 경로).
+EXIT_SOURCE_USES_OPS_CREDENTIALS = 7
 
 
 def _key_fingerprint(value: str) -> str:
@@ -627,6 +637,12 @@ def run(argv: list[str] | None = None) -> int:
     except Exception:  # noqa: BLE001
         pass
     _print_safety_snapshot(log, env_path)
+    from app.system.source_run_guard import source_run_block_reason
+    block = source_run_block_reason()
+    if block is not None:
+        # 포트 정리·backend-port.json 기록·uvicorn 기동 *전* 에 중단 — 설치 앱 상태에 손대지 않는다.
+        log.error("start refused (FAIL_CLOSED): %s", block)
+        return EXIT_SOURCE_USES_OPS_CREDENTIALS
     # readiness API 가 본 정보를 carry 할 수 있도록 process env 로 공개.
     # *secret 원문 아님* — 파일 경로 + 로드 성공 여부만.
     if env_path is not None:
@@ -688,11 +704,17 @@ def run(argv: list[str] | None = None) -> int:
     if reason == "reuse-backend":
         existing = read_backend_health(host, chosen_port) or {}
         port_instance = existing.get("instance_id") or instance_id
-    port_file = write_backend_port_file(host, chosen_port, reason,
-                                        instance_id=port_instance, build_commit=own_commit)
+    # P0-1: %APPDATA%\Autotrade\backend-port.json 은 설치 EXE(Tauri UI)가 어느 backend 에 붙을지
+    #   정하는 파일 — 소스 실행이 덮어쓰면 EXE 화면이 소스 backend 에 붙는다. frozen 일 때만 기록.
+    if getattr(sys, "frozen", False):
+        port_file = write_backend_port_file(host, chosen_port, reason,
+                                            instance_id=port_instance, build_commit=own_commit)
+    else:
+        port_file = None
+        log.info("source run — installed app's backend-port.json left untouched")
     if port_file is not None:
         log.info("backend-port.json written → %s", port_file)
-    else:
+    elif getattr(sys, "frozen", False):
         log.warning(
             "backend-port.json write skipped (APPDATA missing or write error)"
         )
