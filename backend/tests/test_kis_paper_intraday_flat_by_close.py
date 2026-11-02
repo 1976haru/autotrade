@@ -88,6 +88,7 @@ def db(session_factory):
 def make_settings(**kw):
     base = dict(
         enable_kis_paper_auto_trading=True, kis_paper_auto_order_dry_run=False,
+        kis_paper_fill_polling=True,
         kis_is_paper=True, enable_live_trading=False, enable_ai_execution=False,
         market_data_provider="kis", kis_paper_smoke_mode=False,
         kis_paper_auto_max_order_notional=1_000_000, kis_paper_auto_max_orders_per_day=10,
@@ -1669,6 +1670,7 @@ def run_once_env(monkeypatch):
     from app.core import config as cfg
     env = {
         "ENABLE_KIS_PAPER_AUTO_TRADING": "true", "KIS_PAPER_AUTO_ORDER_DRY_RUN": "false",
+        "KIS_PAPER_FILL_POLLING": "true",
         "MARKET_DATA_PROVIDER": "kis", "KIS_IS_PAPER": "true", "ENABLE_LIVE_TRADING": "false",
         "KIS_APP_KEY": "FAKE-KEY", "KIS_APP_SECRET": "FAKE-SECRET",
         "KIS_ACCOUNT_NO": "0000000001", "KIS_PRODUCT_CODE": "01",

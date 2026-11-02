@@ -51,6 +51,7 @@ class KisPaperPermReason(StrEnum):
     # V2: 실시간 KIS 시세가 아니면 실제 KIS 모의주문 전송 금지 (mock 시세 차단).
     KIS_REALTIME_PRICE_REQUIRED    = "KIS_REALTIME_PRICE_REQUIRED"
     KIS_PRICE_STALE                = "KIS_PRICE_STALE"
+    KIS_PAPER_FILL_POLLING_REQUIRED = "KIS_PAPER_FILL_POLLING_REQUIRED"
     # INTRADAY-FLAT-BY-CLOSE-V1: BUY/SELL 목적별 게이트 분리.
     BUY_CUTOFF_ACTIVE              = "BUY_CUTOFF_ACTIVE"
     BUY_BLOCKED_NON_TRADING_DAY    = "BUY_BLOCKED_NON_TRADING_DAY"
@@ -102,6 +103,8 @@ _REASON_MESSAGE_KO: dict[str, str] = {
         "실시간 KIS 시세 기준이 아니라 KIS 모의주문을 전송하지 않습니다 (mock 시세 주문 금지).",
     KisPaperPermReason.KIS_PRICE_STALE:
         "KIS 시세가 오래되어(stale) KIS 모의주문을 전송하지 않습니다.",
+    KisPaperPermReason.KIS_PAPER_FILL_POLLING_REQUIRED:
+        "실제 KIS 모의 매수 전송에는 체결 폴링 활성화가 필요합니다.",
     KisPaperPermReason.BUY_CUTOFF_ACTIVE:
         "신규 매수 마감(기본 14:30 KST) 이후라 신규 매수를 하지 않습니다. 보유 청산은 계속됩니다.",
     KisPaperPermReason.BUY_BLOCKED_NON_TRADING_DAY:
@@ -170,6 +173,9 @@ class KisPaperOrderPermissionInput:
     # 결정의 실제 price_source 를 명시 주입한다.
     price_source:                  str  = "kis"
     price_is_stale:                bool = False
+    # The production builder always injects the effective setting.  The
+    # backward-compatible default avoids changing advisory-only callers.
+    fill_polling_enabled:          bool = True
     # 시각 (UTC) — None 이면 now(UTC).
     now:                           datetime | None = None
     # ── INTRADAY-FLAT-BY-CLOSE-V1: 목적별 게이트 ────────────────────────────
@@ -338,6 +344,8 @@ def evaluate_kis_paper_order_permission(
             return _block(KisPaperPermReason.KIS_REALTIME_PRICE_REQUIRED)
         if inp.price_is_stale:
             return _block(KisPaperPermReason.KIS_PRICE_STALE)
+        if side == "BUY" and not inp.fill_polling_enabled:
+            return _block(KisPaperPermReason.KIS_PAPER_FILL_POLLING_REQUIRED)
 
     # 한도 — 목적별 분리.
     #   notional 1회 한도: BUY 는 max_order_notional, 청산은 max_exit_order_notional

@@ -38,6 +38,15 @@ def _bounded_entry_notional(configured: int, hard_limit: int) -> int:
     return min(configured, hard_limit) if hard_limit > 0 else configured
 
 
+def _entry_quantity(price: int, target_notional: int) -> int:
+    """Return a whole-share BUY quantity that never exceeds the target."""
+    price = int(price)
+    target_notional = max(0, int(target_notional))
+    if price <= 0 or target_notional <= 0:
+        return 0
+    return target_notional // price
+
+
 def _broker_is_kis_paper(broker) -> bool:
     return (
         type(broker).__name__ == "KisBrokerAdapter"
@@ -890,7 +899,16 @@ async def kis_paper_realtime_scan_tick(
             price = int(quote.price or 0)
             if final == CouncilAction.BUY:
                 # BUY 무변경 — 예산 ÷ 가격(신규 진입 사이징).
-                qty = smoke_qty if smoke else max(1, per_symbol_notional // max(1, price))
+                qty = smoke_qty if smoke else _entry_quantity(price, per_symbol_notional)
+                if qty <= 0:
+                    skipped.append({
+                        "symbol": symbol,
+                        "reason_code": "PRICE_EXCEEDS_ENTRY_NOTIONAL_LIMIT",
+                        "price_source": "kis",
+                        "price": price,
+                        "entry_notional_limit": per_symbol_notional,
+                    })
+                    continue
             else:
                 # ★SELL 수량 = KIS 보유 기준(예산 아님). min(보유, 주문가능) — 미결제분
                 #   대비. 예산÷가격으로 보내 보유의 3~4배를 주문하던 [40240000] 버그 수정

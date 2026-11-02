@@ -91,6 +91,7 @@ def test_daily_buy_limit_blocked():
 def _perm(**kw):
     base = dict(
         enable_kis_paper_auto_trading=True, kis_paper_auto_order_dry_run=False,
+        kis_paper_fill_polling=True,
         kis_is_paper=True, enable_live_trading=False,
         kis_paper_auto_max_order_notional=100_000_000,
         kis_paper_auto_max_orders_per_day=10,

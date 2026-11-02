@@ -96,6 +96,7 @@ def _scan_settings(**kw):
     base = dict(
         market_data_provider="kis", enable_kis_paper_auto_trading=True,
         kis_paper_auto_order_dry_run=False, kis_is_paper=True, enable_live_trading=False,
+        kis_paper_fill_polling=True,
         kis_paper_auto_max_order_notional=1_000_000, kis_paper_auto_max_orders_per_day=10,
         kis_paper_auto_order_window_start="09:05", kis_paper_auto_order_window_end="14:50",
         kis_paper_auto_min_confidence=0.6, kis_paper_auto_min_quality_score=60,

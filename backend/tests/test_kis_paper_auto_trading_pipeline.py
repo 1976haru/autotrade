@@ -116,6 +116,30 @@ def test_permission_sell_does_not_require_exit_plan():
     assert res.allowed is True
 
 
+def test_actual_buy_requires_fill_polling():
+    res = evaluate_kis_paper_order_permission(
+        _perm_input(fill_polling_enabled=False, dry_run=False)
+    )
+    assert res.allowed is False
+    assert res.reason_code == _R(
+        KisPaperPermReason.KIS_PAPER_FILL_POLLING_REQUIRED
+    )
+
+
+def test_dry_run_and_sell_do_not_require_fill_polling():
+    dry_buy = evaluate_kis_paper_order_permission(
+        _perm_input(fill_polling_enabled=False, dry_run=True)
+    )
+    sell = evaluate_kis_paper_order_permission(
+        _perm_input(
+            side="SELL", has_exit_plan=False,
+            fill_polling_enabled=False, dry_run=False,
+        )
+    )
+    assert dry_buy.allowed is True
+    assert sell.allowed is True
+
+
 @pytest.mark.parametrize("count", [10, 11, 100])
 def test_permission_sell_exempt_from_daily_order_cap(count):
     # A(2026-06-05 회귀): 일일 주문 횟수 한도는 *신규 진입(BUY)에만* 적용.
@@ -183,6 +207,7 @@ def _settings(**kw):
         kis_paper_auto_max_order_notional=1_000_000, kis_paper_auto_max_orders_per_day=10,
         kis_paper_auto_order_window_start="09:05", kis_paper_auto_order_window_end="14:50",
         kis_paper_auto_min_confidence=0.6, kis_paper_auto_min_quality_score=60,
+        kis_paper_fill_polling=True,
         market_data_provider="mock",
     )
     base.update(kw)
@@ -246,6 +271,21 @@ def test_executor_dry_run_no_route_order(db):
     assert r.broker_order_sent is False
     assert called["n"] == 0                       # route_order 호출 0건.
     assert db.query(AgentDecisionLog).count() == 1   # 기록은 남음.
+
+
+def test_executor_blocks_actual_buy_when_fill_polling_is_off(db):
+    called = {"n": 0}
+
+    async def _route(**kw):
+        called["n"] += 1
+        return SimpleNamespace(decision=RiskDecision.APPROVED, reasons=[],
+                               audit=SimpleNamespace(id=1))
+
+    r = _run(db, settings=_settings(kis_paper_fill_polling=False), route=_route)
+    assert r.reason_code == "KIS_PAPER_FILL_POLLING_REQUIRED"
+    assert r.submitted is False
+    assert r.broker_order_sent is False
+    assert called["n"] == 0
 
 
 def test_executor_submitted(db):

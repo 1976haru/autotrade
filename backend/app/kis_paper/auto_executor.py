@@ -268,6 +268,7 @@ def build_permission_input(
         ),
         price_source=str(getattr(decision, "price_source", "kis") or "kis"),
         price_is_stale=bool(getattr(decision, "price_is_stale", False)),
+        fill_polling_enabled=bool(getattr(settings, "kis_paper_fill_polling", False)),
         now=now,
         # INTRADAY-FLAT-BY-CLOSE-V1: 목적별 게이트 입력.
         order_purpose=str(getattr(decision, "order_purpose", "") or ""),
