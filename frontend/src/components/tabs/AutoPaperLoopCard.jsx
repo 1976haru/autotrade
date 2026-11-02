@@ -862,6 +862,10 @@ export function AutoPaperLoopCard({
           const lim = readiness?.paper_auto_limits;
           if (!m) return null;
           const mode = m.mode || "VIRTUAL_ONLY";
+          const operationalMode = m.operational_mode || (
+            m.broker_order_enabled ? "PAPER_TRADING"
+              : (m.kis_realtime && m.dry_run ? "PAPER_DRY_RUN" : "READ_ONLY")
+          );
           const smoke = m.smoke_mode === true;
           const scopeMsg = smoke
             ? "최초 안전 확인 — 1종목 / 1주 / 1건 제한 (정상 운용 아님)"
@@ -886,6 +890,9 @@ export function AutoPaperLoopCard({
                 운용 모드: <strong data-testid="paper-auto-mode-value">{mode}</strong>
                 {" · "}price_source: <strong>{m.price_source || "—"}</strong>
                 {" · "}market_data: <strong>{m.market_data_provider || "—"}</strong>
+              </div>
+              <div data-testid="paper-operational-mode-value" style={{ fontWeight: 800 }}>
+                {operationalMode}
               </div>
               <div style={{ color: "var(--c-text-2)" }}>{scopeMsg}</div>
               {m.kis_realtime === false && m.broker_order_enabled === false && (

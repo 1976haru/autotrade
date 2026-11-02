@@ -27,6 +27,14 @@ class PaperAutoMode(StrEnum):
     KIS_REALTIME_SMOKE_TEST = "KIS_REALTIME_SMOKE_TEST"
 
 
+class OperationalPaperMode(StrEnum):
+    """Stable operator-facing three-state contract."""
+
+    READ_ONLY = "READ_ONLY"
+    PAPER_DRY_RUN = "PAPER_DRY_RUN"
+    PAPER_TRADING = "PAPER_TRADING"
+
+
 _MODE_MESSAGE_KO: dict[str, str] = {
     PaperAutoMode.VIRTUAL_ONLY:
         "가상/진단 전용 — KIS 모의주문 전송 없음 (broker 호출 0).",
@@ -56,6 +64,16 @@ class PaperAutoModeResult:
     is_live_authorization: bool = False
     is_order_signal:       bool = False
 
+    @property
+    def operational_mode(self) -> str:
+        # Smoke is a constrained PAPER_TRADING subtype, not a fourth
+        # authorization state.
+        if self.broker_order_enabled:
+            return OperationalPaperMode.PAPER_TRADING.value
+        if self.kis_realtime and self.dry_run:
+            return OperationalPaperMode.PAPER_DRY_RUN.value
+        return OperationalPaperMode.READ_ONLY.value
+
     def __post_init__(self) -> None:
         if self.broker_order_type != "KIS_PAPER":
             raise ValueError("PaperAutoModeResult.broker_order_type must be KIS_PAPER")
@@ -67,6 +85,7 @@ class PaperAutoModeResult:
     def to_dict(self) -> dict[str, Any]:
         return {
             "mode":                  self.mode,
+            "operational_mode":      self.operational_mode,
             "message_ko":            self.message_ko,
             "market_data_provider":  self.market_data_provider,
             "price_source":          self.price_source,
@@ -77,6 +96,13 @@ class PaperAutoModeResult:
             "broker_order_type":     self.broker_order_type,
             "is_live_authorization": self.is_live_authorization,
             "is_order_signal":       self.is_order_signal,
+            "effective_gates": {
+                "kis_paper_only": self.broker_order_type == "KIS_PAPER",
+                "live_trading_authorized": self.is_live_authorization,
+                "dry_run": bool(self.dry_run),
+                "broker_order_enabled": bool(self.broker_order_enabled),
+                "smoke_limit_active": bool(self.smoke_mode),
+            },
         }
 
 
@@ -135,4 +161,7 @@ def resolve_paper_auto_mode(settings: Any) -> PaperAutoModeResult:
     )
 
 
-__all__ = ["PaperAutoMode", "PaperAutoModeResult", "resolve_paper_auto_mode"]
+__all__ = [
+    "OperationalPaperMode", "PaperAutoMode", "PaperAutoModeResult",
+    "resolve_paper_auto_mode",
+]

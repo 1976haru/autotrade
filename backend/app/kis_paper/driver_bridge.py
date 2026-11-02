@@ -31,6 +31,13 @@ _log = logging.getLogger("autotrade.kis_paper.bridge")
 _UNSET = object()  # sentinel: _bot_owned_override 미주입 구분용
 
 
+def _bounded_entry_notional(configured: int, hard_limit: int) -> int:
+    """Return a BUY sizing target that cannot exceed the order gate."""
+    configured = max(0, int(configured))
+    hard_limit = int(hard_limit)
+    return min(configured, hard_limit) if hard_limit > 0 else configured
+
+
 def _broker_is_kis_paper(broker) -> bool:
     return (
         type(broker).__name__ == "KisBrokerAdapter"
@@ -707,7 +714,16 @@ async def kis_paper_realtime_scan_tick(
         effective_max_concurrent_positions,
         effective_per_stock_budget,
     )
-    per_symbol_notional = int(effective_per_stock_budget())
+    configured_per_symbol_notional = int(effective_per_stock_budget())
+    # Keep position sizing consistent with the final fail-closed permission
+    # gate.  Previously a 1.6~2.0M allocation with a 1.0M hard order limit
+    # turned every valid Council BUY into NOTIONAL_LIMIT_EXCEEDED.
+    hard_order_notional = int(
+        getattr(settings, "kis_paper_auto_max_order_notional", 1_000_000) or 0
+    )
+    per_symbol_notional = _bounded_entry_notional(
+        configured_per_symbol_notional, hard_order_notional,
+    )
     max_concurrent = int(effective_max_concurrent_positions())
     # T2(2026-06-12): 일일 매수 한도도 런타임 오버라이드(R1 패턴 — config-read 계층,
     #   매 사이클 effective getter. BUY 사전 가드(아래 daily_buy_used 비교)는 무변경).
