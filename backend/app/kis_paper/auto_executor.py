@@ -314,6 +314,22 @@ async def execute_kis_paper_auto_order(
     chain_id = chain_id or f"kis-paper-{uuid.uuid4().hex[:12]}"
 
     daily_count = _today_kis_paper_order_count(db, now)
+    # P0 (2026-11-03): 실시간 스캔 호출자가 emergency_stop 인자를 빠뜨려도
+    # 실행기 자체가 권위 있는 런타임 RiskManager 상태를 읽어야 한다. 종전에는
+    # 기본값 False 때문에 dry-run 결과가 KIS_PAPER_DRY_RUN_OK 로 기록되어
+    # LEVEL_1 차단 원인이 가려졌다. 새 정책 LEVEL_1 의 reduce-only SELL/EOD 는
+    # 초기 permission gate 에서 통과시키고, route_order 가 브로커 보유수량으로
+    # 최종 검증한다. LEVEL_2/3 및 legacy strict 는 BUY/SELL 모두 조기 차단한다.
+    from app.risk.kill_switch_policy import emergency_order_policy
+    emergency_policy = emergency_order_policy(risk)
+    if emergency_policy.active:
+        permission_emergency_stop = (
+            True if str(decision.side).upper() == "BUY"
+            else not emergency_policy.allows_reduce_only_sell
+        )
+    else:
+        # 테스트/호환 호출자가 명시한 정지 신호도 절대 완화하지 않는다.
+        permission_emergency_stop = bool(emergency_stop)
     # INTRADAY-FLAT-BY-CLOSE-V1: 직전 거래일 EOD 미완료(운영자 미확인)면 신규 BUY 차단.
     #   여기선 조기 사유 표시용(조회 실패 시 미차단) — 권위 있는 fail-closed 재검증은
     #   route_order 의 program_buy_block_reason 이 수행한다.
@@ -328,7 +344,8 @@ async def execute_kis_paper_auto_order(
         settings=settings, decision=decision,
         broker_is_kis_paper=broker_is_kis_paper,
         credentials_present=credentials_present,
-        emergency_stop=emergency_stop, daily_order_count=daily_count, now=now,
+        emergency_stop=permission_emergency_stop,
+        daily_order_count=daily_count, now=now,
         buy_blocked_by_incident=eod_incident,
     ))
 

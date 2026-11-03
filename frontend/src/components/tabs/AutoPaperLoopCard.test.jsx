@@ -342,15 +342,16 @@ describe("<AutoPaperLoopCard>", () => {
   // ==========================================================
 
   describe("Market waiting mode", () => {
-    it("WAITING_MARKET → '장 시작 대기 중' 라벨 + 안내 배너 표시", async () => {
+    it("WAITING_MARKET → 시작 성공과 09:05 매수 대기 상태를 정확히 표시", async () => {
       const api = _mockApi({ state: "WAITING_MARKET", cycle_count: 0 });
       render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
       await waitFor(() =>
-        expect(screen.getByTestId("state-pill").textContent).toMatch(/장 시작 대기 중/)
+        expect(screen.getByTestId("state-pill").textContent).toMatch(/시작됨.*09:05 매수 시작 대기 중/)
       );
       const banner = screen.getByTestId("auto-paper-market-waiting-banner");
-      expect(banner.textContent).toMatch(/장 시작 대기 중/);
-      expect(banner.textContent).toMatch(/09:00 KST/);
+      expect(banner.textContent).toMatch(/자동매매 감시 시작됨/);
+      expect(banner.textContent).toMatch(/09:05 KST/);
+      expect(banner.textContent).toMatch(/Dry-run ON.*실제 KIS PAPER 주문이 전송되지 않습니다/);
     });
 
     it("WAITING_MARKET → 시작 버튼 비활성화 (이미 대기 중)", async () => {
@@ -418,7 +419,7 @@ describe("<AutoPaperLoopCard>", () => {
   describe("6-state canonical model lock", () => {
     const _SIX_CANONICAL_STATES = [
       { state: "PAUSED",         label: "대기" },
-      { state: "WAITING_MARKET", label: "장 시작 대기" },
+      { state: "WAITING_MARKET", label: "시작됨 · 09:05 매수 시작 대기" },
       { state: "RUNNING",        label: "AI Paper Auto Loop 진행" },
       { state: "STOPPED",        label: "정지" },
       { state: "EMERGENCY_STOP", label: "긴급정지" },

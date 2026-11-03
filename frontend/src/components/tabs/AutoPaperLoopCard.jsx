@@ -47,7 +47,7 @@ const _STATE_COLOR = {
 const _STATE_LABEL = {
   PAUSED:         "대기 (일시정지)",
   IDLE:           "대기 (일시정지)",
-  WAITING_MARKET: "장 시작 대기 중",
+  WAITING_MARKET: "시작됨 · 09:05 매수 시작 대기 중",
   RUNNING:        "AI Paper Auto Loop 진행 중",
   STOPPED:        "정지됨",
   EMERGENCY_STOP: "긴급정지됨",
@@ -558,12 +558,12 @@ export function AutoPaperLoopCard({
           }}
         >
           <div style={{ fontWeight: "var(--fw-bold)", marginBottom: 4 }}>
-            ⏳ 장 시작 대기 중
+            자동매매 감시 시작됨 · 09:05 매수 시작 대기 중
           </div>
           <div style={{ fontSize: "var(--fs-xs)" }}>
-            한국 주식시장 정규장(09:00 KST)이 시작되면 자동으로 AI Paper
-            Auto Loop가 RUNNING 상태로 전환됩니다. 그 전까지는 신규 가상
-            매매 후보를 생성하지 않습니다.
+            시작 요청은 정상 처리되었습니다. 09:00부터 시장 감시가 실행되고,
+            신규 BUY는 안전 시간 게이트에 따라 09:05 KST부터만 허용됩니다.
+            Dry-run ON 상태에서는 실제 KIS PAPER 주문이 전송되지 않습니다.
           </div>
         </div>
       )}

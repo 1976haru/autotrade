@@ -24,7 +24,10 @@ const _DAY  = 24 * _HOUR;
  *  emergencyStopOnSince/formatPendingAge의 "~전" 상대표현과는 의도가 달라
  *  (여기는 "얼마나 방치됐는지"가 핵심) 별도 포맷터로 둔다. */
 export function formatElapsedDuration(sinceIso, now = Date.now()) {
-  const elapsed = Math.max(0, now - new Date(sinceIso).getTime());
+  // 구버전 backend의 SQLite naive datetime은 UTC다. 브라우저가 로컬(KST)로
+  // 해석하면 09:17 활성화가 00:17로 표시된다. timezone이 없을 때만 Z를 붙인다.
+  const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(sinceIso) ? sinceIso : `${sinceIso}Z`;
+  const elapsed = Math.max(0, now - new Date(normalized).getTime());
   if (elapsed < _MIN) return "방금 경과";
   if (elapsed < _HOUR) return `${Math.floor(elapsed / _MIN)}분 경과`;
   if (elapsed < _DAY) return `${Math.floor(elapsed / _HOUR)}시간 경과`;
@@ -56,8 +59,11 @@ export function KillSwitchBanner({
   //   (구버전 backend 등) 가장 강한 의미("모든 주문 차단")로 표시 — 과소 경고 금지.
   const policy = status.order_policy || null;
   const exitsContinue = Boolean(policy && policy.allows_eod_forced_exit);
-  const activatedAt = status.active_since
-    ? new Date(status.active_since).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })
+  const normalizedSince = status.active_since &&
+    (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(status.active_since)
+      ? status.active_since : `${status.active_since}Z`);
+  const activatedAt = normalizedSince
+    ? new Date(normalizedSince).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" })
     : null;
 
   const handleDisable = async () => {

@@ -247,10 +247,10 @@ def _needs_approval_route():
     return _fn
 
 
-def _run(db, *, settings=None, decision=None, broker=None, route=None, **kw):
+def _run(db, *, settings=None, decision=None, broker=None, risk=None, route=None, **kw):
     return asyncio.run(execute_kis_paper_auto_order(
         db, decision=decision or _DEC, settings=settings or _settings(),
-        broker=broker or MockBrokerAdapter(), risk=object(),
+        broker=broker or MockBrokerAdapter(), risk=risk or object(),
         broker_is_kis_paper=True, credentials_present=True,
         route_order_fn=route or _approved_route(), now=OPEN_TIME, **kw,
     ))
@@ -271,6 +271,42 @@ def test_executor_dry_run_no_route_order(db):
     assert r.broker_order_sent is False
     assert called["n"] == 0                       # route_order 호출 0건.
     assert db.query(AgentDecisionLog).count() == 1   # 기록은 남음.
+
+
+def test_executor_reads_runtime_L1_and_records_buy_block_before_dry_run(db):
+    """호출자가 emergency_stop을 누락해도 런타임 L1 BUY를 조기 차단한다."""
+    from app.risk.emergency_stop import KillSwitchLevel, apply_kill_switch_to_risk
+    from app.risk.risk_manager import RiskManager, RiskPolicy
+    risk = RiskManager(RiskPolicy())
+    apply_kill_switch_to_risk(risk, KillSwitchLevel.LEVEL_1, policy_version=2)
+    r = _run(db, settings=_settings(kis_paper_auto_order_dry_run=True), risk=risk)
+    assert r.reason_code == "EMERGENCY_STOP_ENABLED"
+    assert r.broker_order_sent is False
+
+
+def test_executor_L1_keeps_reduce_only_sell_path_open(db):
+    """정책 v2 L1 SELL은 permission gate가 막지 않고 route_order 검증으로 보낸다."""
+    from app.risk.emergency_stop import KillSwitchLevel, apply_kill_switch_to_risk
+    from app.risk.risk_manager import RiskManager, RiskPolicy
+    risk = RiskManager(RiskPolicy())
+    apply_kill_switch_to_risk(risk, KillSwitchLevel.LEVEL_1, policy_version=2)
+    sell = KisPaperAutoDecision(symbol="005930", side="SELL", quantity=1, price=75_000,
+                                confidence=0.1, quality_score=10, held_position=True,
+                                position_quantity=1)
+    r = _run(db, decision=sell, risk=risk, route=_approved_route())
+    assert r.reason_code == "KIS_PAPER_SUBMITTED"
+
+
+def test_executor_strict_stop_blocks_sell_before_route(db):
+    from app.risk.emergency_stop import KillSwitchLevel, apply_kill_switch_to_risk
+    from app.risk.risk_manager import RiskManager, RiskPolicy
+    risk = RiskManager(RiskPolicy())
+    apply_kill_switch_to_risk(risk, KillSwitchLevel.LEVEL_2, policy_version=2)
+    sell = KisPaperAutoDecision(symbol="005930", side="SELL", quantity=1, price=75_000,
+                                confidence=0.9, quality_score=90, held_position=True,
+                                position_quantity=1)
+    r = _run(db, decision=sell, risk=risk)
+    assert r.reason_code == "EMERGENCY_STOP_ENABLED"
 
 
 def test_executor_blocks_actual_buy_when_fill_polling_is_off(db):

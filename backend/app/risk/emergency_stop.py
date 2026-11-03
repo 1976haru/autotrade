@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timezone
 from enum import StrEnum
 from typing import Any
 
@@ -281,7 +282,9 @@ def build_status(
         decided_by=getattr(last_active, "decided_by", None) if last_active else None,
         note=getattr(last_active, "note", None) if last_active else None,
         active_since=(
-            last_active.created_at.isoformat()
+            last_active.created_at.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+            if last_active and last_active.created_at and last_active.created_at.tzinfo is None
+            else last_active.created_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
             if last_active and last_active.created_at else None
         ),
         cancel_candidate_count=len(cc),

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
@@ -29,6 +29,15 @@ from app.risk.kill_switch_policy import KILL_SWITCH_POLICY_VERSION, emergency_or
 from app.risk.risk_manager import RiskManager, RiskPolicy
 
 router = APIRouter(prefix="/risk", tags=["risk"])
+
+
+def _utc_iso(value: datetime | None) -> str | None:
+    """SQLite의 naive UTC를 브라우저가 현지시각으로 오해하지 않게 명시한다."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class EmergencyStopRequest(BaseModel):
@@ -265,7 +274,7 @@ def emergency_stop_summary(
             .order_by(EmergencyStopEvent.id.desc()).limit(1)
         ).scalar_one_or_none()
         if latest_active is not None and latest_active.created_at is not None:
-            active_since = latest_active.created_at.isoformat()
+            active_since = _utc_iso(latest_active.created_at)
 
     return {
         "currently_active":   bool(risk.emergency_stop),

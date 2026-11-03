@@ -45,6 +45,10 @@ describe("formatElapsedDuration", () => {
     // 26h = 1일 2시간
     expect(formatElapsedDuration(since, now)).toBe("1일 2시간 경과");
   });
+  it("treats backend naive timestamps as UTC, not browser local time", () => {
+    const now = new Date("2026-11-03T01:17:51.000Z").getTime();
+    expect(formatElapsedDuration("2026-11-03T00:17:51", now)).toBe("1시간 경과");
+  });
 });
 
 
