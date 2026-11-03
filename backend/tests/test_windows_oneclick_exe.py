@@ -214,8 +214,10 @@ def test_bundle_contains_no_secrets_or_data():
     assert conf["bundle"]["targets"] == ["nsis"]
     sidecar = (ROOT / "scripts" / "build_backend_sidecar.ps1").read_text(encoding="utf-8")
     add_data = re.findall(r'--add-data\s+"([^"]+)"', sidecar)
-    assert add_data and all("alembic" in a for a in add_data)
-    for forbidden in (".env", "auto_trader.db", "token_cache", "quarantine", "data\\"):
+    assert add_data
+    assert any("alembic" in a for a in add_data)
+    assert any("data\\market\\theme_catalog.json;data\\market" in a for a in add_data)
+    for forbidden in (".env", "auto_trader.db", "token_cache", "quarantine"):
         assert all(forbidden not in a for a in add_data)
 
 

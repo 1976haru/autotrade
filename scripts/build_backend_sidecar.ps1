@@ -117,7 +117,7 @@ foreach ($h in $hiddenImports) {
     $hiArgs += $h
 }
 
-# data 파일: alembic.ini + alembic/ (DB 마이그레이션용).
+# data 파일: alembic.ini + alembic/ (DB 마이그레이션용) + 런타임 테마 카탈로그.
 # 본 스크립트는 backend/.env 를 *추가하지 않는다* — Secret bundle 0건 정책.
 $collectAll = @("--collect-submodules", "app")
 
@@ -133,6 +133,7 @@ try {
         @collectAll `
         --add-data "$backend\alembic;alembic" `
         --add-data "$backend\alembic.ini;." `
+        --add-data "$repoRoot\data\market\theme_catalog.json;data\market" `
         "$launcher"
     if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed (exit=$LASTEXITCODE)" }
 } catch {
