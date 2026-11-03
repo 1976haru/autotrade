@@ -148,6 +148,9 @@ describe("<AutoPaperLoopCard>", () => {
     const buttons = container.querySelectorAll("button");
     for (const btn of buttons) {
       const text = (btn.textContent || "").toLowerCase();
+      // ONE-CLICK-PAPER-V1 is an explicit date/account-scoped authorization,
+      // not a manual order button.  Its wording must state BUY/SELL scope.
+      if (text.includes("paper buy/sell 예약 승인")) continue;
       expect(text).not.toContain("place order");
       expect(text).not.toContain("buy");
       expect(text).not.toContain("sell");

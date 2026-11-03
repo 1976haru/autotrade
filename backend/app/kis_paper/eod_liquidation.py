@@ -944,6 +944,41 @@ async def _cancel_open_buys(db: Any, *, rec: Reconciliation, summary: dict[str, 
 
     book = dict(summary.get("buy_cancels") or {})
     sent = 0
+    # ONE-CLICK-PAPER-V1: unattended cancellation is a separate capability.
+    # The session approval intentionally sets it false.  Do not send a cancel;
+    # surface the incomplete state and keep subsequent BUY fail-closed.
+    if rec.program_open_buys and not dry_run:
+        from app.kis_paper.one_click_session import (
+            account_fingerprint, cancel_permission, load_approval,
+        )
+        session_approval = load_approval()
+        # Legacy/manual flows retain their established policy.  The stricter
+        # no-cancel capability applies to unattended one-click sessions only.
+        if session_approval is None:
+            cancel_ok, cancel_reason = True, "NO_ONE_CLICK_SESSION"
+        else:
+            fp = account_fingerprint(
+                str(getattr(settings, "kis_account_no", "")),
+                str(getattr(settings, "kis_product_code", "01")),
+            )
+            cancel_ok, cancel_reason = cancel_permission(
+                bot_owned=True, is_paper=bool(getattr(settings, "kis_is_paper", False)),
+                account_fingerprint_value=fp,
+            )
+        if not cancel_ok:
+            summary["last_failure_code"] = cancel_reason
+            summary["unattended_cancel_authorized"] = False
+            for b in rec.program_open_buys:
+                odno = str(b["odno"])
+                book[odno] = {
+                    "symbol": b["symbol"], "remaining": int(b["remaining"]),
+                    "status": "CANCEL_APPROVAL_REQUIRED",
+                }
+            summary["buy_cancels"] = book
+            _emit(event_sink, level="CRITICAL", code="KIS_PAPER_CANCEL_APPROVAL_REQUIRED",
+                  message="미체결 BUY 취소는 별도 승인이 없어 전송하지 않았습니다.",
+                  details={"trading_date": trading_date, "new_buy_blocked": True})
+            return 0
     for b in rec.program_open_buys:
         odno = str(b["odno"])
         entry = dict(book.get(odno) or {"symbol": b["symbol"], "critical_emitted": False})

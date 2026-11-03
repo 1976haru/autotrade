@@ -337,6 +337,16 @@ export function AutoPaperLoopCard({
   // 시작 버튼: pre-market 결과 + 선택된 risk_profile 을 backend 에 동봉.
   // 서버가 최종 거절 권한 (pre_market BLOCK / EMERGENCY_STOP 등).
   const onStart = useCallback(wrap(async () => {
+    // ONE-CLICK-PAPER-V1: localStorage/operatorName is not authentication.
+    // The native command keeps its desktop token outside the webview and adds
+    // the authenticated Windows session user to the audit record.
+    const nativeInvoke = window?.__TAURI_INTERNALS__?.invoke;
+    if (typeof nativeInvoke === "function") {
+      await nativeInvoke("approve_paper_session", {
+        targetDate: "2026-11-04",
+        explicitAck: true,
+      });
+    }
     // 항상 body 생성 — risk_profile 은 반드시 carry (기본값 BALANCED).
     const body = {
       risk_profile: riskProfile,
@@ -713,7 +723,7 @@ export function AutoPaperLoopCard({
             fontWeight: "var(--fw-bold)",
           }}
         >
-          시작 (AI Paper Auto Loop)
+          2026-11-04 KIS PAPER BUY/SELL 예약 승인 및 감시 시작
         </button>
         <button
           data-testid="btn-stop-auto-paper"

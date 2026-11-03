@@ -349,6 +349,37 @@ async def execute_kis_paper_auto_order(
         buy_blocked_by_incident=eod_incident,
     ))
 
+    # ONE-CLICK-PAPER-V1: `.env` dry-run remains the safe default.  It is
+    # lifted for exactly one date/account only after an authenticated desktop
+    # approval and fresh read-only KIS preflight.  Missing/broken approval is
+    # indistinguishable from ordinary dry-run and can never widen permission.
+    if perm.allowed and perm.dry_run:
+        try:
+            from dataclasses import replace
+            from app.kis_paper.one_click_session import authorize_order, load_approval
+            if load_approval() is not None:
+                approved, approval_reason = await authorize_order(
+                    db=db, settings=settings, broker=broker, risk=risk,
+                    side=str(decision.side), now=now,
+                    notional_krw=int(decision.notional_krw or 0),
+                    daily_order_count=int(daily_count),
+                )
+                if approved:
+                    perm = replace(perm, dry_run=False)
+                else:
+                    perm = replace(
+                        perm, allowed=False,
+                        reason_code="ONE_CLICK_PAPER_BLOCKED",
+                        reason_message=approval_reason,
+                    )
+        except Exception as exc:  # fail closed; never fall through to routing
+            from dataclasses import replace
+            perm = replace(
+                perm, allowed=False,
+                reason_code="ONE_CLICK_PAPER_GATE_ERROR",
+                reason_message=f"{type(exc).__name__}",
+            )
+
     # P-26: SELL 이면 매도 사유 reason_code 를 AgentDecisionLog / ledger 에 carry.
     # 2-11: Agent Council 이 sell_reason 을 이미 전달했으면(decision) 그 값을 우선,
     #       아니면 infer_sell_reason 으로 산출.

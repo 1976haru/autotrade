@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from app.db.session import get_db
@@ -188,6 +188,51 @@ class _StartBody(BaseModel):
     # P-15: Paper 자금 설정 advisory carry. broker 호출 / 안전 flag 변경
     # 0건 — frontend → backend audit / status 전달용.
     capital_settings:  Optional[_PaperCapitalSettingsBody]   = None
+
+
+class _PaperSessionApprovalBody(BaseModel):
+    target_date: str
+    explicit_ack: bool = False
+    actor: str = Field(default="", min_length=1, max_length=128)
+
+
+def _one_click_risk_dependency():
+    # Late import preserves the existing routes_auto_paper import topology.
+    from app.api.deps import get_risk_manager
+    return get_risk_manager()
+
+
+@_AP.get("/paper-session-approval")
+def get_paper_session_approval() -> dict:
+    from app.kis_paper.one_click_session import public_status
+    return public_status()
+
+
+@_AP.post("/paper-session-approval")
+def post_paper_session_approval(
+    body: _PaperSessionApprovalBody,
+    db=Depends(get_db),
+    risk=Depends(_one_click_risk_dependency),
+    x_autotrade_desktop_auth: str | None = Header(default=None),
+) -> dict:
+    """Desktop-session authenticated, one-trading-day PAPER authorization.
+
+    The browser cannot call this successfully: the bearer value exists only in
+    the Tauri process and sidecar environment.  Cancellation is always false.
+    """
+    from app.kis_paper.one_click_session import (
+        create_approval, desktop_token_valid, public_status,
+    )
+    if not desktop_token_valid(x_autotrade_desktop_auth):
+        raise HTTPException(status_code=401, detail="DESKTOP_SESSION_AUTH_REQUIRED")
+    try:
+        record = create_approval(
+            db=db, settings=get_settings(), risk=risk, target_date=body.target_date,
+            actor=body.actor, explicit_ack=body.explicit_ack,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return public_status(record)
 
 
 @_AP.get("/status")

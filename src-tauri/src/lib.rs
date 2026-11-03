@@ -36,6 +36,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::async_runtime;
@@ -50,6 +51,7 @@ struct BackendChild(Mutex<Option<CommandChild>>);
 
 // sidecar(부트로더) 종료 이벤트 수신 여부 — 부트로더는 python 자식이 끝나야 종료된다.
 static SIDECAR_EXITED: AtomicBool = AtomicBool::new(false);
+static DESKTOP_AUTH_TOKEN: OnceLock<String> = OnceLock::new();
 // 정상 종료(lifespan 정리: 진행 중 EOD 단계 완료 대기·lease 해제) 최대 대기 — 넘으면 강제 종료.
 const GRACEFUL_EXIT_TIMEOUT_SECS: u64 = 40;
 
@@ -58,6 +60,28 @@ const LOG_DIR_REL: &str = "Autotrade/logs";
 const LOG_FILE_NAME: &str = "desktop-backend.log";
 const LOG_MAX_BYTES: u64 = 64 * 1024; // 64KB — 너무 크면 frontend 가 무거워짐.
 const PORT_FILE_REL: &str = "Autotrade/backend-port.json";
+
+#[cfg(windows)]
+fn secure_desktop_token() -> Result<String, String> {
+    #[link(name = "bcrypt")]
+    extern "system" {
+        fn BCryptGenRandom(algorithm: *mut core::ffi::c_void, buffer: *mut u8,
+                           length: u32, flags: u32) -> i32;
+    }
+    const BCRYPT_USE_SYSTEM_PREFERRED_RNG: u32 = 0x00000002;
+    let mut bytes = [0u8; 32];
+    let status = unsafe {
+        BCryptGenRandom(core::ptr::null_mut(), bytes.as_mut_ptr(), bytes.len() as u32,
+                        BCRYPT_USE_SYSTEM_PREFERRED_RNG)
+    };
+    if status < 0 { return Err(format!("BCryptGenRandom failed: {status}")); }
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+#[cfg(not(windows))]
+fn secure_desktop_token() -> Result<String, String> {
+    Err("one-click PAPER authentication is Windows-only".into())
+}
 
 // 트레이 메뉴 → frontend 전역 훅 (정적 문자열만 — 외부 입력 0건).
 const JS_SHOW_STATUS: &str =
@@ -273,8 +297,11 @@ pub fn run() {
             // tauri.conf.json 의 externalBin 에 등록된 "binaries/autotrade-backend" 를 spawn.
             // .env / Secret / API Key 인자 전달 0건 — backend 가 %APPDATA%/Autotrade/.env
             // 등에서 직접 로드한다. (Windows 에서 shell plugin sidecar 는 콘솔 창 없이 실행)
+            let desktop_token = secure_desktop_token()
+                .expect("secure Windows desktop authentication token unavailable");
+            let _ = DESKTOP_AUTH_TOKEN.set(desktop_token.clone());
             match app.shell().sidecar("autotrade-backend") {
-                Ok(cmd) => match cmd.spawn() {
+                Ok(cmd) => match cmd.env("AUTOTRADE_DESKTOP_AUTH_TOKEN", desktop_token).spawn() {
                     Ok((mut rx, child)) => {
                         let pid = child.pid();
                         append_log(&format!("sidecar spawned (pid={})", pid));
@@ -392,6 +419,7 @@ pub fn run() {
             desktop_info,
             read_backend_log,
             backend_port_info,
+            approve_paper_session,
             confirm_quit,
             hide_to_tray
         ])
@@ -471,6 +499,49 @@ fn post_graceful_shutdown(port: u16, instance_id: &str) -> Result<u16, String> {
     let _ = s.read_to_string(&mut resp);
     resp.split_whitespace().nth(1).and_then(|c| c.parse::<u16>().ok())
         .ok_or_else(|| "no HTTP status".to_string())
+}
+
+fn post_desktop_json(port: u16, path: &str, token: &str, body: &str) -> Result<String, String> {
+    use std::net::{SocketAddr, TcpStream};
+    let addr: SocketAddr = ([127, 0, 0, 1], port).into();
+    let mut s = TcpStream::connect_timeout(&addr, Duration::from_secs(3)).map_err(|e| e.to_string())?;
+    let _ = s.set_read_timeout(Some(Duration::from_secs(15)));
+    let req = format!(
+        "POST {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\n\
+         X-Autotrade-Desktop-Auth: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        path, port, token, body.as_bytes().len(), body,
+    );
+    s.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+    let mut resp = String::new();
+    s.read_to_string(&mut resp).map_err(|e| e.to_string())?;
+    let code = resp.split_whitespace().nth(1).and_then(|v| v.parse::<u16>().ok())
+        .ok_or_else(|| "invalid backend HTTP response".to_string())?;
+    let payload = resp.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
+    if !(200..300).contains(&code) { return Err(format!("HTTP {code}: {payload}")); }
+    Ok(payload.to_string())
+}
+
+/// One explicit click in the authenticated Windows desktop session.  The
+/// secret is never returned to JavaScript/localStorage.
+#[tauri::command]
+fn approve_paper_session(target_date: String, explicit_ack: bool) -> Result<serde_json::Value, String> {
+    if !explicit_ack { return Err("explicit PAPER BUY/SELL approval required".into()); }
+    let info = backend_port_info();
+    let port = info.get("port").and_then(|v| v.as_u64()).and_then(|v| u16::try_from(v).ok())
+        .ok_or_else(|| "backend port unavailable".to_string())?;
+    let token = DESKTOP_AUTH_TOKEN.get().ok_or_else(|| "desktop auth unavailable".to_string())?;
+    let user = std::env::var("USERNAME").unwrap_or_else(|_| "unknown-windows-user".into());
+    let domain = std::env::var("USERDOMAIN").unwrap_or_default();
+    let actor = if domain.is_empty() { user } else { format!("{}\\{}", domain, user) };
+    let body = serde_json::json!({
+        "target_date": target_date,
+        "explicit_ack": true,
+        "actor": actor,
+    }).to_string();
+    let payload = post_desktop_json(
+        port, "/api/auto-paper/paper-session-approval", token, &body,
+    )?;
+    serde_json::from_str(&payload).map_err(|e| e.to_string())
 }
 
 /// 정상 종료 → sidecar 종료 확인. true = 시간 내 스스로 종료(lifespan 정리 완료).
