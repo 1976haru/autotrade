@@ -1,6 +1,7 @@
 """TOP402 정적 테마 catalog 불변식."""
 from collections import Counter
 
+from app.theme_filter import catalog as catalog_module
 from app.theme_filter.catalog import filter_new_entry_symbols, get_theme_catalog
 from app.universe.default_universe import FALLBACK_MARKET_CAP_TOP402
 
@@ -28,6 +29,14 @@ EXPECTED_TOP300_COUNTS = {
     "gaming": 6,
     "other": 5,
 }
+
+
+def test_frozen_catalog_path_uses_pyinstaller_meipass(monkeypatch, tmp_path):
+    monkeypatch.setattr(catalog_module.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(catalog_module.sys, "_MEIPASS", str(tmp_path), raising=False)
+    assert catalog_module._catalog_path() == (
+        tmp_path / "data" / "market" / "theme_catalog.json"
+    )
 
 
 def test_catalog_covers_top402_exactly():

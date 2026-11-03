@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -50,6 +51,11 @@ class ThemeCatalog:
 
 
 def _catalog_path() -> Path:
+    # PyInstaller onefile은 module __file__을 _MEIPASS/app/... 아래로 두므로
+    # 소스 트리용 parents[3]은 임시 루트의 *상위*를 가리킨다. 번들 data는
+    # PyInstaller가 보장하는 _MEIPASS 기준으로 찾는다.
+    if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None):
+        return Path(sys._MEIPASS) / "data" / "market" / "theme_catalog.json"
     return Path(__file__).resolve().parents[3] / "data" / "market" / "theme_catalog.json"
 
 
