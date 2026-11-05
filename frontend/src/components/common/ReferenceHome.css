@@ -1,7 +1,13 @@
 /* ReferenceHome 반응형 레이아웃 + 다크 토글.
  * 색/폰트는 전역 디자인 토큰(var(--c-*), var(--fs-*))을 사용 → 설정탭의 글자크기·
  * 테마가 새 홈에도 그대로 적용된다. 기본은 밝은 테마(앱 chrome과 통일).
- * 모바일(<=700): 1열(DOM 순서, 내 돈 먼저). 태블릿 2열, PC(>1024) 3열 풀폭. */
+ *
+ * 레이아웃: 3개 논리 컬럼(좌=자동매매, 중=모니터링, 우=수동관리)을 각각 세로
+ * flex(rh-col)로 쌓는다. 카드마다 grid-area를 맞춰 행 높이를 짜맞추던 이전 방식은
+ * 컨텐츠 높이가 서로 다를 때 컬럼 사이에 불필요한 빈 공간을 만들었다 — flex 컬럼은
+ * 각자 컨텐츠 높이대로 쌓이므로 그 문제가 없다(align-items:start로 셀에 늘어붙지 않음).
+ * 모바일(<=700): 1열(좌→중→우 순서). 태블릿: 좌+중 2열, 우측은 아래 풀폭.
+ * PC(>1024): 좌/중/우 3열 풀폭. */
 
 .rh-root {
   background: var(--c-bg);
@@ -26,30 +32,35 @@
 
 .rh-grid {
   display: grid;
-  gap: 12px;
-  grid-template-columns: 1fr;            /* 모바일 기본: 1열 */
+  gap: 10px;
+  grid-template-columns: 1fr;         /* 모바일 기본: 1열 */
+  grid-template-areas: "left" "center" "right";
   align-items: start;
 }
+
+.rh-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;                       /* flex/grid 자식 오버플로 방지 */
+}
+
+.rh-col-left   { grid-area: left; }
+.rh-col-center { grid-area: center; }
+.rh-col-right  { grid-area: right; }
 
 @media (min-width: 701px) and (max-width: 1024px) {
   .rh-grid {
     grid-template-columns: 1fr 1fr;
     grid-template-areas:
-      "hero    account"
-      "profile account"
-      "chips   kpi"
-      "strat   live"
-      "agent   shortcuts";
+      "left    center"
+      "right   right";
   }
 }
 
 @media (min-width: 1025px) {
   .rh-grid {
     grid-template-columns: 1.05fr 1.3fr 1fr;
-    grid-template-areas:
-      "hero    account  strat"
-      "profile account  agent"
-      "chips   kpi      shortcuts"
-      "chips   live     shortcuts";
+    grid-template-areas: "left center right";
   }
 }

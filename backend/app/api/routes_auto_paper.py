@@ -169,10 +169,10 @@ class _PaperCapitalSettingsBody(BaseModel):
     모든 필드는 *Paper 정책 입력값* 일 뿐 실거래 한도가 아님.
     """
 
-    total_paper_capital:    int   | None = Field(None, ge=1)
-    per_symbol_allocation:  int   | None = Field(None, ge=1)
-    max_positions:          int   | None = Field(None, ge=1, le=100)
-    max_daily_buy_amount:   int   | None = Field(None, ge=1)
+    total_paper_capital:    int   | None = Field(None, ge=1, le=10_000_000)
+    per_symbol_allocation:  int   | None = Field(None, ge=1, le=2_000_000)
+    max_positions:          int   | None = Field(None, ge=1, le=5)
+    max_daily_buy_amount:   int   | None = Field(None, ge=1, le=10_000_000)
     max_symbol_weight_pct:  float | None = Field(None, gt=0, le=1)
     allow_additional_buy:   bool  | None = Field(None)
     # AI 운용 성향 — CONSERVATIVE/BALANCED/AGGRESSIVE. 소문자/한국어/별칭/None
@@ -721,7 +721,7 @@ class _PaperCapitalBody(BaseModel):
     `fallback_used=True` carry (silent 가 아닌 *명시* 알림).
     """
 
-    initial_cash:        int  = Field(..., description="허용 옵션 중 하나의 KRW 정수")
+    initial_cash:        int  = Field(..., le=10_000_000, description="PAPER 운용 예산 최대 10,000,000 KRW")
     fallback_to_default: bool = Field(False, description="True 면 비허용 값을 default 로 대체")
 
 
@@ -737,13 +737,30 @@ def get_capital_config_endpoint() -> dict:
     #   히어로 '설정 종목 수'/'종목당 투자금' 과 런타임 설정 카드가 *동일 소스*를
     #   보도록 runtime_config 의 effective getter 를 사용(같은 화면 두 숫자 불일치 방지).
     from app.core.runtime_config import (
+        effective_daily_buy_limit,
         effective_max_concurrent_positions,
         effective_per_stock_budget,
+        effective_total_paper_budget,
     )
+    effective_positions = int(effective_max_concurrent_positions())
+    effective_symbol_budget = int(effective_per_stock_budget())
+    effective_total_budget = int(effective_total_paper_budget())
     return {
         **cfg.to_dict(),
-        "effective_max_concurrent_positions": int(effective_max_concurrent_positions()),
-        "effective_per_symbol_notional_krw":  int(effective_per_stock_budget()),
+        "initial_cash": effective_total_budget,
+        # The V2.4 internal PAPER exposure budget is capped at 10M. Do not
+        # offer larger simulator seed presets that the execution policy will
+        # never permit and the save endpoint cannot accept.
+        "allowed_initial_cash_options": [10_000_000],
+        "effective_total_budget_krw": effective_total_budget,
+        "daily_buy_limit_krw": int(effective_daily_buy_limit()),
+        "per_symbol_mode": "FIXED_KRW",
+        "per_symbol_max_krw": effective_symbol_budget,
+        "effective_per_symbol_cap_krw": effective_symbol_budget,
+        "allowed_per_symbol_max_krw_options": list(ALLOWED_PER_SYMBOL_MAX_KRW),
+        "max_concurrent_positions": effective_positions,
+        "effective_max_concurrent_positions": effective_positions,
+        "effective_per_symbol_notional_krw": effective_symbol_budget,
         # P-20: Paper capital ↔ Live capital 분리 안전 flag (read-only).
         "is_paper_capital":             True,
         "is_live_capital":              False,
@@ -782,8 +799,11 @@ def set_capital_config_endpoint(body: _PaperCapitalBody) -> dict:
                 "allowed_initial_cash_options": list(ALLOWED_PAPER_INITIAL_CASH),
             },
         )
+    from app.core.runtime_config import set_runtime_overrides
+    set_runtime_overrides(total_paper_budget_krw=min(10_000_000, int(cfg.initial_cash)))
     return {
         **cfg.to_dict(),
+        "allowed_initial_cash_options": [10_000_000],
         "fallback_used": fallback_used,
         "notice": (
             "Paper 시드머니는 *모의매매 전용* 이며 실전 계좌와 무관합니다."
@@ -843,6 +863,8 @@ def set_per_symbol_allocation_endpoint(body: _PerSymbolAllocationBody) -> dict:
                 "allowed_per_symbol_max_pct_options": list(ALLOWED_PER_SYMBOL_MAX_PCT),
             },
         )
+    from app.core.runtime_config import set_runtime_overrides
+    set_runtime_overrides(per_stock_budget=min(2_000_000, int(cfg.effective_per_symbol_cap_krw)))
     return {
         **cfg.to_dict(),
         "fallback_used": fallback_used,
@@ -888,6 +910,8 @@ def set_max_concurrent_positions_endpoint(body: _MaxConcurrentPositionsBody) -> 
                 ),
             },
         )
+    from app.core.runtime_config import set_runtime_overrides
+    set_runtime_overrides(max_concurrent_positions=min(5, int(cfg.max_concurrent_positions)))
     return {
         **cfg.to_dict(),
         "fallback_used": fallback_used,
@@ -943,8 +967,8 @@ class _AffordabilityPreviewBody(BaseModel):
     """advisory preview — caller 가 BUY 후보 *전* affordability 사전 시뮬.
 
     `effective_per_symbol_cap_krw` / `max_concurrent_positions` 가 입력에
-    없으면 *현재 PaperCapitalConfig 값* 을 자동 사용. 명시 override 도 허용
-    (테스트 / what-if 시뮬용).
+    없으면 *현재 PaperCapitalConfig 값* 을 자동 사용. 명시 override 는 더
+    엄격한 가정만 허용하며 PAPER 정책 상한을 넘지 않는다.
     """
 
     action:                       str             = Field("BUY", description="caller 의 매매 의도 — BUY 만 검사")
@@ -968,16 +992,19 @@ def preview_paper_affordability_endpoint(body: _AffordabilityPreviewBody) -> dic
     broker / route_order 호출 0건. 응답은 advisory — 실 주문은 별도 흐름.
     """
     cfg = get_paper_capital_config()
-    cap = (
+    requested_cap = (
         int(body.effective_per_symbol_cap_krw)
         if body.effective_per_symbol_cap_krw is not None
         else int(cfg.effective_per_symbol_cap_krw)
     )
-    max_pos = (
+    max_supported_cap = max(ALLOWED_PER_SYMBOL_MAX_KRW)
+    cap = min(max(requested_cap, 0), max_supported_cap)
+    requested_max_pos = (
         int(body.max_concurrent_positions)
         if body.max_concurrent_positions is not None
         else int(cfg.max_concurrent_positions)
     )
+    max_pos = min(max(requested_max_pos, 0), max(ALLOWED_MAX_CONCURRENT_POSITIONS))
     result = check_paper_affordability(
         action=body.action,
         symbol=body.symbol,
@@ -1897,6 +1924,9 @@ def validate_paper_capital_settings_endpoint(
     # risk_profile 정규화 — 소문자/한국어/별칭/None → 표준 RiskProfile (실패값
     # 없이 항상 유효 enum, default BALANCED). AGGRESSIVE 도 실거래 권한 아님.
     from app.agents.risk_profile import policy_for as _policy_for
+    if body.per_symbol_allocation is not None and body.total_paper_capital is not None \
+            and body.per_symbol_allocation > body.total_paper_capital:
+        raise HTTPException(status_code=422, detail="per_symbol_allocation_exceeds_total_budget")
     risk_profile_value = _policy_for(body.risk_profile).profile.value
     return {
         "total_paper_capital":   body.total_paper_capital,
@@ -1933,6 +1963,8 @@ from app.settings.persistent_settings import (   # noqa: E402
     load_paper_capital_settings,
     reset_paper_capital_settings,
     save_paper_capital_settings,
+    scan_for_secrets,
+    validate_paper_capital_settings,
 )
 
 _P16_NOTICE = (
@@ -1948,8 +1980,32 @@ def get_persistent_paper_capital_settings() -> dict:
 
     broker / OrderExecutor 호출 0건. secret 0건. is_live_authorization=False.
     """
-    res = load_paper_capital_settings()
-    return {**res.to_dict(), "ok": True, "notice": _P16_NOTICE}
+    return _paper_capital_settings_response(load_paper_capital_settings())
+
+
+def _paper_capital_settings_response(res) -> dict:
+    """Present effective persisted order limits from runtime's SSOT."""
+    from app.core.runtime_config import (
+        effective_daily_buy_limit, effective_max_concurrent_positions,
+        effective_per_stock_budget, effective_total_paper_budget,
+    )
+    payload = res.to_dict()
+    values = dict(payload.get("settings") or {})
+    values.update({
+        "max_positions": int(effective_max_concurrent_positions()),
+        "per_symbol_allocation": int(effective_per_stock_budget()),
+        "max_daily_buy_amount": int(effective_daily_buy_limit()),
+        "total_paper_capital": int(effective_total_paper_budget()),
+    })
+    payload["settings"] = values
+    payload["effective_order_policy"] = {
+        "total_paper_capital": values["total_paper_capital"],
+        "per_symbol_allocation": values["per_symbol_allocation"],
+        "max_positions": values["max_positions"],
+        "max_daily_buy_amount": values["max_daily_buy_amount"],
+        "source": "runtime_overrides_with_paper_hard_caps",
+    }
+    return {**payload, "ok": True, "notice": _P16_NOTICE}
 
 
 @_AP.post("/paper-capital-settings")
@@ -1962,7 +2018,37 @@ def save_persistent_paper_capital_settings(
     있어도 유효 필드만 저장하고 errors carry. broker / 실거래 변경 0건.
     """
     try:
-        res = save_paper_capital_settings(dict(body or {}))
+        scan_for_secrets(dict(body or {}))
+        from app.core.runtime_config import (
+            effective_daily_buy_limit, effective_max_concurrent_positions,
+            effective_per_stock_budget, effective_total_paper_budget,
+            set_runtime_overrides,
+        )
+        from app.settings.persistent_settings import load_paper_capital_settings
+        current = load_paper_capital_settings().settings
+        merged = {**current, **dict(body or {})}
+        normalized, validation_errors = validate_paper_capital_settings(merged)
+        if validation_errors:
+            raise ValueError("; ".join(validation_errors))
+        # This UI controls execution limits; persist those first through the
+        # runtime override SSOT and roll them back if the settings write fails.
+        previous = (effective_max_concurrent_positions(), effective_per_stock_budget(),
+                    effective_daily_buy_limit(), effective_total_paper_budget())
+        set_runtime_overrides(
+            max_concurrent_positions=normalized["max_positions"],
+            per_stock_budget=normalized["per_symbol_allocation"],
+            daily_buy_limit_krw=normalized["max_daily_buy_amount"],
+            total_paper_budget_krw=normalized["total_paper_capital"],
+        )
+        try:
+            res = save_paper_capital_settings(normalized)
+        except Exception:
+            set_runtime_overrides(
+                max_concurrent_positions=previous[0], per_stock_budget=previous[1],
+                daily_buy_limit_krw=previous[2],
+                total_paper_budget_krw=previous[3],
+            )
+            raise
     except SecretInSettingsError as exc:
         raise HTTPException(
             status_code=400,
@@ -1977,14 +2063,26 @@ def save_persistent_paper_capital_settings(
                 ),
             },
         )
-    return {**res.to_dict(), "ok": True, "notice": _P16_NOTICE}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={
+            "error": "invalid_paper_operating_limits",
+            "message": str(exc),
+        }) from exc
+    return _paper_capital_settings_response(res)
 
 
 @_AP.post("/paper-capital-settings/reset")
 def reset_persistent_paper_capital_settings() -> dict:
     """저장 파일 삭제 + 기본값 반환."""
     res = reset_paper_capital_settings()
-    return {**res.to_dict(), "ok": True, "notice": _P16_NOTICE}
+    from app.core.runtime_config import set_runtime_overrides
+    set_runtime_overrides(
+        max_concurrent_positions=int(res.settings["max_positions"]),
+        per_stock_budget=int(res.settings["per_symbol_allocation"]),
+        daily_buy_limit_krw=int(res.settings["max_daily_buy_amount"]),
+        total_paper_budget_krw=int(res.settings["total_paper_capital"]),
+    )
+    return _paper_capital_settings_response(res)
 
 
 def _build_price_diagnostics(freshness) -> dict:
@@ -2079,10 +2177,18 @@ def get_run_readiness() -> dict:
     kst = to_kst(now)
 
     uni = get_default_universe(user_symbols=None)
+    from app.core.runtime_config import effective_universe_mode, effective_universe_size
+    if effective_universe_mode() == "watchlist":
+        from app.watchlist.active import get_active_watchlist_symbols
+        effective_universe_count = len(get_active_watchlist_symbols()) or len(uni.symbols)
+    else:
+        effective_universe_count = int(effective_universe_size())
     cfg = get_paper_capital_config()
     cash_snap = get_capital_state().snapshot()
 
     health_code, health_msg = _loop_health_label(snap.state, snap.cycle_count)
+    from app.kis_paper.order_limits import resolve_kis_paper_order_limits
+    limits = resolve_kis_paper_order_limits(settings)
 
     return {
         "loop": {
@@ -2100,8 +2206,12 @@ def get_run_readiness() -> dict:
             "is_open":     phase.value == "OPEN",
         },
         "universe": {
-            "source":        uni.source.value,
-            "count":         uni.count,
+            "source":        (
+                "ACTIVE_WATCHLIST" if effective_universe_mode() == "watchlist"
+                else f"FALLBACK_MARKET_CAP_TOP{effective_universe_count}"
+            ),
+            "count":         effective_universe_count,
+            "configured_size": effective_universe_count,
             "fallback_used": uni.fallback_used,
             "warning_ko":    uni.warning_ko,
         },
@@ -2117,11 +2227,16 @@ def get_run_readiness() -> dict:
             "smoke_mode":               bool(getattr(settings, "kis_paper_smoke_mode", False)),
             "smoke_symbol":             str(getattr(settings, "kis_paper_smoke_symbol", "005930")),
             "smoke_qty":                int(getattr(settings, "kis_paper_smoke_qty", 1)),
-            "max_concurrent_positions": int(getattr(settings, "kis_paper_max_concurrent_positions", 5)),
-            "per_symbol_notional_krw":  int(getattr(settings, "kis_paper_per_symbol_notional_krw", 1_000_000)),
-            "daily_buy_limit_krw":      int(getattr(settings, "kis_paper_daily_buy_limit_krw", 3_000_000)),
+            "policy_version":           limits.policy_version,
+            "total_budget_krw":         limits.total_budget_krw,
+            "max_concurrent_positions": limits.max_positions,
+            "per_symbol_notional_krw":  limits.per_symbol_krw,
+            "daily_buy_limit_krw":      limits.daily_buy_krw,
+            "max_order_krw":            limits.max_order_krw,
+            "max_buys_per_day":         limits.daily_buy_count,
+            "cost_reserve_bps":         limits.cost_reserve_bps,
             "max_new_positions_per_tick": int(getattr(settings, "kis_paper_max_new_positions_per_tick", 1)),
-            "max_orders_per_day":       int(getattr(settings, "kis_paper_auto_max_orders_per_day", 10)),
+            "max_orders_per_day":       limits.daily_buy_count,
             "scan_max_symbols":         int(getattr(settings, "kis_paper_scan_max_symbols", 10)),
         },
         "permission": {
@@ -2159,7 +2274,9 @@ class _RunOnceDiagnosticBody(BaseModel):
     실거래 절대 불가 — 본 endpoint 는 PAPER 가상 후보까지만 생성한다.
     """
 
-    symbol:                 Optional[str]   = Field(None, description="진단 대상 종목 (없으면 fallback universe 첫 종목)")
+    symbol: Optional[str] = Field(
+        None, description="진단 대상 종목 (없으면 fallback universe 첫 종목)",
+    )
     price:                  Optional[float] = Field(None, description="현재가 (없고 force_mock=True 면 mock 생성)")
     quantity:               Optional[int]   = Field(None, description="수량 (없으면 종목당 한도 기준 자동 계산)")
     force_mock_market_data: bool            = Field(True, description="현재가 없을 때 진단용 mock 생성 허용")

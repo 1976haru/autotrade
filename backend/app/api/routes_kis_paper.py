@@ -375,6 +375,13 @@ def get_kis_paper_auto_status() -> dict:
         # 4-01: 자격 종합 + 4종 per-credential present + 누락 키 이름 목록.
         # *값 원문 0건* — boolean / 키 이름만.
         "credentials_present":      rd.credentials_present,
+        "market_data_provider":     str(settings.market_data_provider),
+        "account_connection_state": (
+            "CONNECTED" if rd.credentials_present and settings.kis_is_paper
+            else "QA_MODE_KIS_ACCOUNT_NOT_CONNECTED"
+            if str(settings.market_data_provider).lower() == "mock"
+            else "KIS_CREDENTIALS_MISSING"
+        ),
         "kis_app_key_present":      rd.kis_key_present,
         "kis_app_secret_present":   rd.kis_secret_present,
         "kis_account_no_present":   rd.kis_account_present,

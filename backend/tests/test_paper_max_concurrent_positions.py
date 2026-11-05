@@ -91,11 +91,11 @@ def api_client():
 
 
 class TestConstants:
-    def test_default_is_three(self):
-        assert DEFAULT_MAX_CONCURRENT_POSITIONS == 3
+    def test_default_is_five(self):
+        assert DEFAULT_MAX_CONCURRENT_POSITIONS == 5
 
-    def test_allowed_options(self):  # now (3,5,8,10)
-        assert ALLOWED_MAX_CONCURRENT_POSITIONS == (3, 5, 8, 10)
+    def test_allowed_options(self):
+        assert ALLOWED_MAX_CONCURRENT_POSITIONS == (3, 5)
 
     def test_default_is_in_allowed(self):
         assert DEFAULT_MAX_CONCURRENT_POSITIONS in ALLOWED_MAX_CONCURRENT_POSITIONS
@@ -103,7 +103,7 @@ class TestConstants:
     def test_is_allowed_helper(self):
         assert is_allowed_max_concurrent_positions(3) is True
         assert is_allowed_max_concurrent_positions(5) is True
-        assert is_allowed_max_concurrent_positions(10) is True
+        assert is_allowed_max_concurrent_positions(10) is False
         assert is_allowed_max_concurrent_positions(7) is False
         assert is_allowed_max_concurrent_positions(0) is False
         assert is_allowed_max_concurrent_positions(-1) is False
@@ -118,14 +118,14 @@ class TestConstants:
 class TestDataclassInvariants:
     def test_default_snapshot_carries_max_positions(self):
         cfg = get_paper_capital_config()
-        assert cfg.max_concurrent_positions == 3
-        assert cfg.allowed_max_concurrent_positions_options == (3, 5, 8, 10)
+        assert cfg.max_concurrent_positions == 5
+        assert cfg.allowed_max_concurrent_positions_options == (3, 5)
 
     def test_to_dict_includes_p03_fields(self):
         cfg = get_paper_capital_config()
         d = cfg.to_dict()
-        assert d["max_concurrent_positions"] == 3
-        assert d["allowed_max_concurrent_positions_options"] == [3, 5, 8, 10]
+        assert d["max_concurrent_positions"] == 5
+        assert d["allowed_max_concurrent_positions_options"] == [3, 5]
 
     def test_invalid_value_rejected_at_dataclass(self):
         with pytest.raises(ValueError, match="max_concurrent_positions"):
@@ -155,7 +155,7 @@ class TestDataclassInvariants:
 
 
 class TestSetMaxConcurrentPositions:
-    @pytest.mark.parametrize("value", [3, 5, 8, 10])
+    @pytest.mark.parametrize("value", [3, 5])
     def test_allowed_values(self, value):
         cfg, fallback = set_max_concurrent_positions(value)
         assert cfg.max_concurrent_positions == value
@@ -179,13 +179,13 @@ class TestSetMaxConcurrentPositions:
         assert fallback is True
 
     def test_roundtrip(self):
-        set_max_concurrent_positions(10)
-        assert get_paper_capital_config().max_concurrent_positions == 10
+        set_max_concurrent_positions(3)
+        assert get_paper_capital_config().max_concurrent_positions == 3
 
     def test_reset_restores_default(self):
-        set_max_concurrent_positions(10)
+        set_max_concurrent_positions(3)
         reset_paper_capital_for_tests()
-        assert get_paper_capital_config().max_concurrent_positions == 3
+        assert get_paper_capital_config().max_concurrent_positions == 5
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -397,10 +397,10 @@ class TestApiEndpoints:
         res = api_client.get("/api/auto-paper/capital-config")
         assert res.status_code == 200
         body = res.json()
-        assert body["max_concurrent_positions"] == 3
-        assert body["allowed_max_concurrent_positions_options"] == [3, 5, 8, 10]
+        assert body["max_concurrent_positions"] == 5
+        assert body["allowed_max_concurrent_positions_options"] == [3, 5]
 
-    @pytest.mark.parametrize("count", [3, 5, 8, 10])
+    @pytest.mark.parametrize("count", [3, 5])
     def test_post_accepts_allowed(self, api_client, count):
         res = api_client.post(
             "/api/auto-paper/max-concurrent-positions",
@@ -421,7 +421,7 @@ class TestApiEndpoints:
         assert res.status_code == 400
         detail = res.json().get("detail", {})
         assert detail.get("error") == "invalid_max_concurrent_positions"
-        assert detail.get("allowed_max_concurrent_positions_options") == [3, 5, 8, 10]
+        assert detail.get("allowed_max_concurrent_positions_options") == [3, 5]
 
     def test_post_fallback(self, api_client):
         res = api_client.post(
@@ -446,7 +446,7 @@ class TestApiEndpoints:
         body = res.json()
         assert body["verdict"] == "ALLOW"
         assert body["current_unique_symbol_count"] == 2
-        assert body["max_concurrent_positions"] == 3
+        assert body["max_concurrent_positions"] == 5
         assert body["is_paper_only"] is True
         assert body["is_live_authorization"] is False
 
@@ -456,13 +456,13 @@ class TestApiEndpoints:
             json={
                 "action": "BUY",
                 "symbol": "005930",
-                "current_held_symbols": ["000660", "035720", "035420"],
+                "current_held_symbols": ["000660", "035720", "035420", "207940", "005380"],
             },
         )
         assert res.status_code == 200
         body = res.json()
         assert body["verdict"] == "BLOCKED_MAX_POSITIONS"
-        assert body["current_unique_symbol_count"] == 3
+        assert body["current_unique_symbol_count"] == 5
 
     def test_preview_sell_skipped(self, api_client):
         res = api_client.post(
@@ -527,7 +527,7 @@ class TestSafetyFlagsUntouched:
     def test_settings_flags_untouched(self):
         from app.core.config import get_settings
         before = get_settings()
-        set_max_concurrent_positions(10)
+        set_max_concurrent_positions(5)
         after = get_settings()
         assert before.enable_live_trading == after.enable_live_trading is False
         assert before.enable_ai_execution == after.enable_ai_execution is False

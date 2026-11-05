@@ -75,6 +75,7 @@ def resolve_kis_paper_order_limits(settings) -> KisPaperOrderLimits:
         effective_daily_buy_limit,
         effective_max_concurrent_positions,
         effective_per_stock_budget,
+        effective_total_paper_budget,
     )
 
     configured_order_cap = int(
@@ -102,7 +103,7 @@ def resolve_kis_paper_order_limits(settings) -> KisPaperOrderLimits:
     )
     return KisPaperOrderLimits(
         policy_version=PAPER_ORDER_LIMITS_POLICY_VERSION,
-        total_budget_krw=PAPER_TOTAL_BUDGET_KRW,
+        total_budget_krw=min(PAPER_TOTAL_BUDGET_KRW, effective_total_paper_budget()),
         per_symbol_krw=per_symbol,
         max_order_krw=min(PAPER_MAX_ORDER_KRW, max(0, configured_order_cap), per_symbol),
         max_positions=positions,

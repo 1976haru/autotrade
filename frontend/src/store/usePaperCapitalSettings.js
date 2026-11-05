@@ -37,7 +37,7 @@ export const DEFAULT_PAPER_CAPITAL_SETTINGS = Object.freeze({
   totalPaperCapital:    10_000_000,  // 1,000만원
   perSymbolAllocation:  1_000_000,   // 100만원
   maxPositions:         5,
-  maxDailyBuyAmount:    3_000_000,   // 300만원
+  maxDailyBuyAmount:    10_000_000, // 1,000만원
   maxSymbolWeightPct:   0.2,         // 20%
   allowAdditionalBuy:   false,
   riskProfile:          "BALANCED",  // AI 운용 성향 (CONSERVATIVE/BALANCED/AGGRESSIVE)
@@ -46,10 +46,10 @@ export const DEFAULT_PAPER_CAPITAL_SETTINGS = Object.freeze({
 
 // 사용자 요청서 §6 validation 정책.
 export const PAPER_CAPITAL_LIMITS = Object.freeze({
-  totalPaperCapital:   { min: 100_000,   max: 10_000_000_000 },
-  perSymbolAllocation: { min: 10_000,    max: 10_000_000_000 },
-  maxPositions:        { min: 1,         max: 100 },
-  maxDailyBuyAmount:   { min: 10_000,    max: 10_000_000_000 },
+  totalPaperCapital:   { min: 100_000,   max: 10_000_000 },
+  perSymbolAllocation: { min: 1_000_000, max: 2_000_000 },
+  maxPositions:        { min: 1,         max: 5 },
+  maxDailyBuyAmount:   { min: 10_000,    max: 10_000_000 },
   maxSymbolWeightPct:  { min: 0,         max: 1,   exclusiveMin: true },
 });
 
@@ -60,23 +60,19 @@ export const PAPER_CAPITAL_LIMITS = Object.freeze({
 export const PAPER_CAPITAL_PRESETS = Object.freeze({
   totalPaperCapital: [
     { label: "1,000만원", value: 10_000_000 },
-    { label: "3,000만원", value: 30_000_000 },
-    { label: "5,000만원", value: 50_000_000 },
   ],
   perSymbolAllocation: [
-    { label: "50만원",  value: 500_000 },
     { label: "100만원", value: 1_000_000 },
     { label: "200만원", value: 2_000_000 },
   ],
   maxPositions: [
     { label: "3개", value: 3 },
     { label: "5개", value: 5 },
-    { label: "8개", value: 8 },
   ],
   maxDailyBuyAmount: [
-    { label: "100만원", value: 1_000_000 },
     { label: "300만원", value: 3_000_000 },
     { label: "500만원", value: 5_000_000 },
+    { label: "1,000만원", value: 10_000_000 },
   ],
   maxSymbolWeightPct: [
     { label: "10%", value: 0.10 },
@@ -146,7 +142,7 @@ export function normalizePaperCapitalSettings(input) {
     if (_isInt(v) && v >= min && v <= max) {
       out.maxPositions = v;
     } else {
-      errors.push("최대 보유 종목 수는 1개 이상 100개 이하의 정수여야 합니다.");
+      errors.push("최대 보유 종목 수는 1개 이상 5개 이하의 정수여야 합니다.");
     }
   }
 

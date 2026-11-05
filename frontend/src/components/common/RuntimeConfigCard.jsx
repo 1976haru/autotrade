@@ -22,7 +22,7 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
   const effBud = budMeta?.value;
   const effSl = slMeta?.value;
   const effTp = tpMeta?.value;
-  const effDl = dlMeta ? dlMeta.value : Number(dlRaw ?? 3_000_000);
+  const effDl = dlMeta ? dlMeta.value : Number(dlRaw ?? 10_000_000);
   // 종목 풀 확장 — universe_size(100/200/400) + universe_mode(auto/watchlist).
   //   meta 없으면(구 백엔드) 컨트롤 미표시(추가 전 동작 무변경).
   const uszMeta = config?.universe_size;
@@ -36,13 +36,13 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
   const BUD_MIN = budMeta?.min ?? 100_000, BUD_MAX = budMeta?.max ?? 10_000_000;
   const SL_MIN = slMeta?.min ?? 0.5, SL_MAX = slMeta?.max ?? 10;
   const TP_MIN = tpMeta?.min ?? 0.5, TP_MAX = tpMeta?.max ?? 20;
-  const DL_MIN = dlMeta?.min ?? 3_000_000, DL_MAX = dlMeta?.max ?? 300_000_000;
+  const DL_MIN = dlMeta?.min ?? 3_000_000, DL_MAX = dlMeta?.max ?? 10_000_000;
 
   const [mc, setMc] = useState(effMc ?? 5);
   const [bud, setBud] = useState(effBud ?? 1_000_000);
   const [sl, setSl] = useState(effSl ?? 2);
   const [tp, setTp] = useState(effTp ?? 3.5);
-  const [dl, setDl] = useState(effDl ?? 3_000_000);
+  const [dl, setDl] = useState(effDl ?? 10_000_000);
   const [usz, setUsz] = useState(effUsz ?? 100);
   const [um, setUm] = useState(effUm ?? "auto");
   const [note, setNote] = useState(null); // { kind: "ok"|"err", text }

@@ -13,6 +13,8 @@
  *   - 접기/무시 컨트롤 없음 — 킬스위치가 켜져 있는 한 항상 최상단에 노출.
  */
 
+import { useEffect, useState } from "react";
+
 import { useKillSwitchStatus } from "../../store/useKillSwitchStatus";
 import { isMarketOpen } from "../../utils/marketHours";
 
@@ -45,15 +47,25 @@ const _LEVEL_LABEL = {
 export function KillSwitchBanner({
   testId = "kill-switch-banner",
   operatorName,
-  now = Date.now(),
+  now: suppliedNow,
 }) {
   const { status, loading, error, busy, disable } = useKillSwitchStatus();
+  const [clockNow, setClockNow] = useState(() => suppliedNow ?? Date.now());
+
+  useEffect(() => {
+    if (suppliedNow != null) {
+      setClockNow(suppliedNow);
+      return undefined;
+    }
+    const timer = window.setInterval(() => setClockNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, [suppliedNow]);
 
   // 조회 실패/로딩 중엔 조용히 숨김 — 오탐으로 화면을 막지 않는다. 실제 ON
   // 여부는 다음 폴링 tick에서 다시 반영된다.
   if (loading || error || !status || status.level === "OFF") return null;
 
-  const marketHours = isMarketOpen(new Date(now));
+  const marketHours = isMarketOpen(new Date(clockNow));
   const levelLabel = _LEVEL_LABEL[status.level] || status.level;
   // P0-SAFETY-FIX-V1: 실제 허용 범위는 backend order_policy 가 단일 진실. 정보가 없으면
   //   (구버전 backend 등) 가장 강한 의미("모든 주문 차단")로 표시 — 과소 경고 금지.
@@ -107,7 +119,7 @@ export function KillSwitchBanner({
           {levelLabel}
           {activatedAt && (
             <span data-testid={`${testId}-since`}>
-              {" · "}{activatedAt}부터, {formatElapsedDuration(status.active_since, now)}
+              {" · "}{activatedAt}부터, {formatElapsedDuration(status.active_since, clockNow)}
             </span>
           )}
           {status.decided_by && <span>{" · "}{status.decided_by}</span>}

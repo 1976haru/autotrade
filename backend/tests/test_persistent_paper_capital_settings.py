@@ -72,18 +72,18 @@ class TestLoadSaveReset:
 
     def test_save_then_reload_round_trip(self, config_dir):
         save_paper_capital_settings({
-            "total_paper_capital":  30_000_000,
+            "total_paper_capital":  10_000_000,
             "per_symbol_allocation": 2_000_000,
-            "max_positions":        8,
-            "max_daily_buy_amount": 5_000_000,
+            "max_positions":        5,
+            "max_daily_buy_amount": 10_000_000,
             "max_symbol_weight_pct": 0.3,
             "allow_additional_buy": True,
             "risk_profile":         "AGGRESSIVE",
         })
         res = load_paper_capital_settings()
         assert res.source == "PERSISTED"
-        assert res.settings["total_paper_capital"] == 30_000_000
-        assert res.settings["max_positions"] == 8
+        assert res.settings["total_paper_capital"] == 10_000_000
+        assert res.settings["max_positions"] == 5
         assert res.settings["allow_additional_buy"] is True
         assert res.settings["risk_profile"] == "AGGRESSIVE"
 
@@ -151,21 +151,22 @@ class TestValidation:
         assert out["per_symbol_allocation"] == DEFAULT_SETTINGS["per_symbol_allocation"]
         assert any("per_symbol_allocation" in e for e in errors)
 
-    def test_daily_over_total_rejected(self):
+    def test_daily_limit_is_independent_from_total_budget(self):
         out, errors = validate_paper_capital_settings({
             "total_paper_capital": 1_000_000,
             "max_daily_buy_amount": 5_000_000,
         })
-        assert out["max_daily_buy_amount"] == DEFAULT_SETTINGS["max_daily_buy_amount"]
-        assert any("max_daily_buy_amount" in e for e in errors)
+        assert out["max_daily_buy_amount"] == 5_000_000
+        assert errors == []
 
     def test_max_positions_must_be_int_in_range(self):
         assert validate_paper_capital_settings({"max_positions": 0})[1]
         assert validate_paper_capital_settings({"max_positions": 101})[1]
         # bool is not a valid int here.
         assert validate_paper_capital_settings({"max_positions": True})[1]
-        out, errors = validate_paper_capital_settings({"max_positions": 10})
-        assert out["max_positions"] == 10 and errors == []
+        out, errors = validate_paper_capital_settings({"max_positions": 5})
+        assert out["max_positions"] == 5 and errors == []
+        assert validate_paper_capital_settings({"max_positions": 10})[1]
 
     def test_weight_pct_bounds(self):
         assert validate_paper_capital_settings({"max_symbol_weight_pct": 0})[1]
@@ -276,19 +277,75 @@ class TestApi:
         r = api_client.post(
             "/api/auto-paper/paper-capital-settings",
             json={
-                "total_paper_capital": 30_000_000,
-                "max_positions": 8,
+                "total_paper_capital": 10_000_000,
+                "max_positions": 5,
                 "risk_profile": "AGGRESSIVE",
             },
         )
         assert r.status_code == 200
         assert r.json()["source"] == "PERSISTED"
-        assert r.json()["settings"]["total_paper_capital"] == 30_000_000
+        assert r.json()["settings"]["total_paper_capital"] == 10_000_000
 
         r2 = api_client.get("/api/auto-paper/paper-capital-settings")
         assert r2.json()["source"] == "PERSISTED"
-        assert r2.json()["settings"]["max_positions"] == 8
+        assert r2.json()["settings"]["max_positions"] == 5
         assert r2.json()["settings"]["risk_profile"] == "AGGRESSIVE"
+
+    def test_saved_limits_drive_runtime_and_order_resolver_after_reload(
+        self, api_client, tmp_path, monkeypatch,
+    ):
+        import app.core.runtime_config as runtime_config
+        monkeypatch.setattr(runtime_config, "overrides_path", lambda: tmp_path / "runtime.json")
+        runtime_config._cache = None
+        response = api_client.post(
+            "/api/auto-paper/paper-capital-settings",
+            json={
+                "total_paper_capital": 8_000_000,
+                "per_symbol_allocation": 2_000_000,
+                "max_positions": 5,
+                "max_daily_buy_amount": 10_000_000,
+            },
+        )
+        assert response.status_code == 200
+        paper = response.json()["settings"]
+        runtime = api_client.get("/api/runtime-config").json()
+        assert paper["total_paper_capital"] == runtime["total_paper_budget_krw"]["value"] == 8_000_000
+        assert paper["per_symbol_allocation"] == runtime["per_stock_budget"]["value"] == 2_000_000
+        assert paper["max_positions"] == runtime["max_concurrent_positions"]["value"] == 5
+        assert paper["max_daily_buy_amount"] == runtime["daily_buy_limit_krw"]["value"] == 10_000_000
+        capital = api_client.get("/api/auto-paper/capital-config").json()
+        assert capital["daily_buy_limit_krw"] == 10_000_000
+        assert capital["effective_total_budget_krw"] == 8_000_000
+        assert capital["per_symbol_max_krw"] == 2_000_000
+        assert capital["max_concurrent_positions"] == 5
+
+        runtime_config._cache = None  # simulate backend restart/reload from disk
+        assert runtime_config.effective_total_paper_budget() == 8_000_000
+        from types import SimpleNamespace
+        from app.kis_paper.order_limits import resolve_kis_paper_order_limits
+        limits = resolve_kis_paper_order_limits(SimpleNamespace(
+            kis_paper_auto_max_order_notional=2_000_000,
+            kis_paper_auto_max_orders_per_day=10,
+            kis_paper_max_new_positions_per_tick=1,
+        ))
+        assert limits.total_budget_krw == 8_000_000
+        assert limits.per_symbol_krw == 2_000_000
+        assert limits.max_positions == 5
+        assert limits.daily_buy_krw == 10_000_000
+
+    def test_effective_daily_limit_defaults_to_ui_policy_without_override(
+        self, tmp_path, monkeypatch,
+    ):
+        import app.core.runtime_config as runtime_config
+        from types import SimpleNamespace
+        monkeypatch.setattr(runtime_config, "overrides_path", lambda: tmp_path / "missing.json")
+        monkeypatch.setattr(runtime_config, "_legacy_overrides_path", lambda: tmp_path / "none.json")
+        monkeypatch.setattr(runtime_config, "get_settings", lambda: SimpleNamespace(
+            kis_paper_daily_buy_limit_krw=3_000_000,
+        ))
+        runtime_config._cache = None
+        assert runtime_config.effective_daily_buy_limit() == 10_000_000
+        assert runtime_config._source("daily_buy_limit_krw") == "paper_policy_default"
 
     def test_post_secret_blocked_400(self, api_client, config_dir):
         r = api_client.post(
@@ -305,7 +362,7 @@ class TestApi:
     def test_reset_endpoint(self, api_client, config_dir):
         api_client.post(
             "/api/auto-paper/paper-capital-settings",
-            json={"max_positions": 9},
+            json={"max_positions": 5},
         )
         assert (config_dir / "paper_capital_settings.json").exists()
         r = api_client.post("/api/auto-paper/paper-capital-settings/reset")
@@ -316,7 +373,7 @@ class TestApi:
     def test_saved_file_has_no_secret_fields(self, api_client, config_dir):
         api_client.post(
             "/api/auto-paper/paper-capital-settings",
-            json={"max_positions": 6, "risk_profile": "CONSERVATIVE"},
+            json={"max_positions": 5, "risk_profile": "CONSERVATIVE"},
         )
         raw = (config_dir / "paper_capital_settings.json").read_text(encoding="utf-8")
         low = raw.lower()

@@ -5,12 +5,13 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.brokers.base import OrderRequest, OrderSide, OrderType, Position
+from app.brokers.base import Balance, OrderRequest, OrderResult, OrderSide, OrderStatus, OrderType, Position, Quote
+from app.brokers.kis import KisBrokerAdapter
 from app.brokers.mock_broker import MockBrokerAdapter
 from app.core.modes import OperationMode
 from app.db.base import Base
 from app.db.models import OrderAuditLog, PendingApproval
-from app.execution.order_router import route_order
+from app.execution.order_router import _paper_daily_buy_limit_reason, route_order
 from app.risk.risk_manager import RiskDecision, RiskManager, RiskPolicy
 
 
@@ -342,3 +343,98 @@ def test_audit_records_requested_by_ai_flag():
     with Session() as db2:
         audit = db2.execute(select(OrderAuditLog)).scalar_one()
         assert audit.requested_by_ai is True
+
+
+def test_paper_daily_buy_limit_helper_is_account_scoped_and_reserves_costs():
+    from app.kis_paper.account_scope import account_id_for
+
+    Session = _session_factory()
+    scope_a = account_id_for("1234567801", is_paper=True)
+    scope_b = account_id_for("1234567802", is_paper=True)
+    when = datetime(2026, 11, 6, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+    with Session() as db:
+        db.add(OrderAuditLog(
+            mode="PAPER", symbol="000001", side="BUY", quantity=9,
+            order_type="MARKET", latest_price=1_000_000,
+            decision="APPROVED", reasons=[], executed=True,
+            broker_order_id="paper-a-1", account_id=scope_a, created_at=when,
+        ))
+        db.flush()
+        reason = _paper_daily_buy_limit_reason(
+            db, account_scope=scope_a, order=_order(), current_price=1_000_000,
+            daily_limit_krw=10_000_000, now=when,
+        )
+        assert reason is not None and "PAPER_DAILY_BUY_LIMIT_EXCEEDED" in reason
+        assert _paper_daily_buy_limit_reason(
+            db, account_scope=scope_b, order=_order(), current_price=1_000_000,
+            daily_limit_krw=10_000_000, now=when,
+        ) is None
+
+
+def test_paper_daily_buy_limit_is_enforced_before_kis_order_submission(monkeypatch):
+    from dataclasses import dataclass
+
+    from app.kis_paper.account_scope import account_id_for
+
+    @dataclass
+    class Limits:
+        policy_version: str = "test"
+        total_budget_krw: int = 10_000_000
+        per_symbol_krw: int = 2_000_000
+        max_order_krw: int = 2_000_000
+        max_positions: int = 5
+        daily_buy_count: int = 10
+        daily_buy_krw: int = 10_000_000
+        buys_per_tick: int = 1
+        cost_reserve_bps: int = 100
+
+    class FakeKisBroker(KisBrokerAdapter):
+        def __init__(self):
+            super().__init__(app_key="mock", app_secret="mock", account_no="1234567801", is_paper=True)
+            self.sent = 0
+
+        async def get_price(self, symbol):
+            return Quote(symbol=symbol, price=100_000,
+                         timestamp="2026-11-06T10:00:00+09:00", source="kis")
+
+        async def get_balance(self):
+            return Balance(cash=20_000_000, equity=20_000_000, buying_power=20_000_000)
+
+        async def get_positions(self):
+            return []
+
+        async def place_order(self, order):
+            self.sent += 1
+            return OrderResult(order_id="mock", status=OrderStatus.FILLED,
+                               symbol=order.symbol, side=order.side, quantity=order.quantity,
+                               filled_quantity=order.quantity, avg_fill_price=100_000)
+
+        async def cancel_order(self, order_id):
+            raise AssertionError("cancel must not be called")
+
+        async def get_order_status(self, order_id):
+            raise AssertionError("status lookup not expected")
+
+    import app.kis_paper.order_limits as order_limits_module
+    monkeypatch.setattr(order_limits_module, "resolve_kis_paper_order_limits", lambda _settings: Limits())
+    Session = _session_factory()
+    scope = account_id_for("1234567801", is_paper=True)
+    when = datetime(2026, 11, 6, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+    with Session() as db:
+        db.add(OrderAuditLog(
+            mode="PAPER", symbol="000001", side="BUY", quantity=99,
+            order_type="MARKET", latest_price=100_000, decision="APPROVED",
+            reasons=[], executed=True, broker_order_id="existing", account_id=scope,
+            created_at=when,
+        ))
+        db.commit()
+        broker = FakeKisBroker()
+        result = run(route_order(
+            order=OrderRequest(symbol="005930", side=OrderSide.BUY, quantity=1,
+                               order_type=OrderType.MARKET, client_order_id="daily-cap-test"),
+            requested_by_ai=False, mode=OperationMode.PAPER, broker=broker,
+            risk=RiskManager(RiskPolicy(max_order_notional=2_000_000)), db=db, now=when,
+        ))
+        assert result.decision == RiskDecision.REJECTED
+        assert any("PAPER_DAILY_BUY_LIMIT_EXCEEDED" in reason for reason in result.reasons)
+        assert broker.sent == 0

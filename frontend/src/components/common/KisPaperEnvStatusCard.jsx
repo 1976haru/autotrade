@@ -75,6 +75,9 @@ export function KisPaperEnvStatusCard({
   const dryRun = s?.dry_run === true;
   const fillPolling = s?.fill_polling === true;
   const credsPresent = s?.credentials_present === true;
+  const qaDisconnected = !credsPresent
+    && (s?.account_connection_state === "QA_MODE_KIS_ACCOUNT_NOT_CONNECTED"
+      || s?.market_data_provider === "mock");
   const brokerOrderType = s?.broker_order_type ?? "—";
   const liveAuth = s?.is_live_authorization === true;
   // 4-01: 4종 per-credential 존재 여부 (값 원문 0건 — boolean 만).
@@ -115,6 +118,14 @@ export function KisPaperEnvStatusCard({
           ? "KIS 모의투자 자동주문 READY — 자격 구성 + 안전 flag 정상 (실거래 OFF)"
           : "KIS 모의투자 자동주문 BLOCKED — 자격 미구성 시 자동주문은 차단됩니다."}
       </div>
+
+      {qaDisconnected && (
+        <div data-testid="kis-env-qa-disconnected" role="status"
+          style={{ padding: "6px 10px", borderRadius: 6, marginBottom: 8,
+            fontSize: "var(--fs-xs)", background: "#e0f2fe", color: "#075985" }}>
+          QA 모드 — KIS 계좌 미연결. Mock 데이터이며 실제 시세·주문은 사용할 수 없습니다.
+        </div>
+      )}
 
       {error && (
         <div data-testid="kis-env-error"

@@ -121,10 +121,25 @@ def public_status(record: dict[str, Any] | None = None) -> dict[str, Any]:
     r = record or load_approval()
     if not r:
         return {"status": "NONE", "authorized": False, "cancel_authorized": False}
-    return {k: r.get(k) for k in (
+    out = {k: r.get(k) for k in (
         "status", "target_date", "expires_at", "account_fingerprint", "allowed_sides",
         "limits", "approved_by", "auth_method", "approved_at", "cancel_authorized",
         "cancel_scope", "last_preflight_at", "block_reason")}
+    try:
+        today = datetime.now(KST).date().isoformat()
+        expires = datetime.fromisoformat(str(r.get("expires_at", "")))
+        target_date = str(r.get("target_date", ""))
+        if target_date < today or expires <= datetime.now(timezone.utc):
+            out.update(status="EXPIRED", authorized=False, block_reason="APPROVAL_DATE_EXPIRED")
+            return out
+        if target_date > today:
+            out.update(authorized=False, block_reason="WAITING_FOR_APPROVED_DATE")
+            return out
+    except (TypeError, ValueError):
+        out.update(status="INVALID", authorized=False, block_reason="APPROVAL_EXPIRY_INVALID")
+        return out
+    out["authorized"] = r.get("status") == "ACTIVE"
+    return out
 
 
 def _block(record: dict[str, Any], reason: str) -> tuple[bool, str]:

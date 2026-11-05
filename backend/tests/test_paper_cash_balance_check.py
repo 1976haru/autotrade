@@ -796,4 +796,5 @@ def test_capital_config_carries_effective_config_values_u4():
     body = r.json()
     s = get_settings()
     assert body["effective_max_concurrent_positions"] == int(s.kis_paper_max_concurrent_positions)
-    assert body["effective_per_symbol_notional_krw"] == int(s.kis_paper_per_symbol_notional_krw)
+    from app.kis_paper.order_limits import resolve_kis_paper_order_limits
+    assert body["effective_per_symbol_notional_krw"] == resolve_kis_paper_order_limits(s).per_symbol_krw

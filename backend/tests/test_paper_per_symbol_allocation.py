@@ -95,7 +95,7 @@ class TestConstants:
         assert DEFAULT_PER_SYMBOL_MAX_KRW == 1_000_000
 
     def test_allowed_per_symbol_max_krw_options(self):
-        assert ALLOWED_PER_SYMBOL_MAX_KRW == (1_000_000, 2_000_000, 3_000_000, 5_000_000)
+        assert ALLOWED_PER_SYMBOL_MAX_KRW == (1_000_000, 2_000_000)
 
     def test_default_pct_is_10_percent(self):
         assert DEFAULT_PER_SYMBOL_MAX_PCT == 0.10
@@ -175,7 +175,7 @@ class TestDataclassInvariants:
         assert cfg.per_symbol_max_krw == DEFAULT_PER_SYMBOL_MAX_KRW
         assert cfg.per_symbol_max_pct == DEFAULT_PER_SYMBOL_MAX_PCT
         assert cfg.effective_per_symbol_cap_krw == 1_000_000  # FIXED_KRW default
-        assert list(cfg.allowed_per_symbol_max_krw_options) == [1_000_000, 2_000_000, 3_000_000, 5_000_000]
+        assert list(cfg.allowed_per_symbol_max_krw_options) == [1_000_000, 2_000_000]
         assert 0.10 in cfg.allowed_per_symbol_max_pct_options
 
     def test_to_dict_carries_per_symbol_fields(self):
@@ -252,20 +252,20 @@ class TestSetPerSymbolAllocation:
         assert cfg.effective_per_symbol_cap_krw == 1_000_000
 
     def test_pct_mode_recomputes_when_initial_cash_changes(self):
-        # 시드머니를 3000만원으로 바꾸고 mode 를 PCT 로 → 300만원 effective.
-        set_paper_capital_config(30_000_000)
+        # PAPER seed는 1000만원으로 고정되어 10%는 100만원이다.
+        set_paper_capital_config(10_000_000)
         cfg, _ = set_per_symbol_allocation(
             mode=PerSymbolAllocationMode.PCT_OF_EQUITY,
         )
-        assert cfg.effective_per_symbol_cap_krw == 3_000_000
+        assert cfg.effective_per_symbol_cap_krw == 1_000_000
 
     def test_fixed_krw_mode_ignores_initial_cash(self):
-        set_paper_capital_config(50_000_000)
+        set_paper_capital_config(10_000_000)
         cfg, _ = set_per_symbol_allocation(
             mode=PerSymbolAllocationMode.FIXED_KRW,
             per_symbol_max_krw=2_000_000,
         )
-        # 시드머니 5000만원이어도 FIXED_KRW 모드에서는 200만원 그대로.
+        # FIXED_KRW 모드는 선택한 200만원 한도를 적용한다.
         assert cfg.effective_per_symbol_cap_krw == 2_000_000
 
     def test_reject_unknown_mode(self):
@@ -363,6 +363,8 @@ class TestNoBrokerOrLiveImports:
 
 class TestApiEndpoints:
     def test_get_returns_default_per_symbol_fields(self, api_client):
+        from app.core.runtime_config import set_runtime_overrides
+        set_runtime_overrides(per_stock_budget=1_000_000)
         res = api_client.get("/api/auto-paper/capital-config")
         assert res.status_code == 200
         body = res.json()
@@ -371,7 +373,7 @@ class TestApiEndpoints:
         assert body["per_symbol_max_krw"] == 1_000_000
         assert body["per_symbol_max_pct"] == 0.10
         assert body["effective_per_symbol_cap_krw"] == 1_000_000
-        assert body["allowed_per_symbol_max_krw_options"] == [1_000_000, 2_000_000, 3_000_000, 5_000_000]
+        assert body["allowed_per_symbol_max_krw_options"] == [1_000_000, 2_000_000]
         assert 0.10 in body["allowed_per_symbol_max_pct_options"]
 
     @pytest.mark.parametrize("krw", [1_000_000, 2_000_000])
@@ -398,27 +400,19 @@ class TestApiEndpoints:
         assert body["per_symbol_mode"] == "PCT_OF_EQUITY"
         assert body["effective_per_symbol_cap_krw"] == 1_000_000
 
-    def test_post_pct_mode_with_30m_equity_yields_3m(self, api_client):
-        api_client.post(
+    def test_post_pct_mode_rejects_unapproved_30m_seed(self, api_client):
+        seed = api_client.post(
             "/api/auto-paper/capital-config",
             json={"initial_cash": 30_000_000, "fallback_to_default": False},
         )
-        res = api_client.post(
-            "/api/auto-paper/per-symbol-allocation",
-            json={"mode": "PCT_OF_EQUITY"},
-        )
-        assert res.json()["effective_per_symbol_cap_krw"] == 3_000_000
+        assert seed.status_code == 422
 
-    def test_post_pct_mode_with_50m_equity_yields_5m(self, api_client):
-        api_client.post(
+    def test_post_pct_mode_rejects_unapproved_50m_seed(self, api_client):
+        seed = api_client.post(
             "/api/auto-paper/capital-config",
             json={"initial_cash": 50_000_000, "fallback_to_default": False},
         )
-        res = api_client.post(
-            "/api/auto-paper/per-symbol-allocation",
-            json={"mode": "PCT_OF_EQUITY"},
-        )
-        assert res.json()["effective_per_symbol_cap_krw"] == 5_000_000
+        assert seed.status_code == 422
 
     def test_post_invalid_mode_400(self, api_client):
         res = api_client.post(
@@ -438,9 +432,7 @@ class TestApiEndpoints:
         )
         assert res.status_code == 400
         detail = res.json().get("detail", {})
-        assert detail.get("allowed_per_symbol_max_krw_options") == [
-            1_000_000, 2_000_000, 3_000_000, 5_000_000,
-        ]
+        assert detail.get("allowed_per_symbol_max_krw_options") == [1_000_000, 2_000_000]
 
     def test_post_fallback_to_default(self, api_client):
         res = api_client.post(

@@ -37,7 +37,14 @@ _log = logging.getLogger("autotrade.runtime_config")
 
 # 런타임 오버라이드 정수 키. T2(2026-06-12): daily_buy_limit_krw 추가 — 100종목
 #   확장 대응(종목수·투자금과 동일 메커니즘, 화이트리스트 확장). 안전 플래그 미포함.
-_INT_KEYS = ("max_concurrent_positions", "per_stock_budget", "daily_buy_limit_krw")
+_INT_KEYS = ("max_concurrent_positions", "per_stock_budget", "daily_buy_limit_krw",
+             "total_paper_budget_krw")
+_INT_RANGES = {
+    "max_concurrent_positions": (1, 5),
+    "per_stock_budget": (1_000_000, 2_000_000),
+    "daily_buy_limit_krw": (10_000, 10_000_000),
+    "total_paper_budget_krw": (100_000, 10_000_000),
+}
 # C1(2026-06-10): 손절/익절 % 도 런타임 오버라이드 대상(양수 magnitude — 손절 2.0=−2%).
 _FLOAT_KEYS = ("stop_loss_pct", "take_profit_pct")
 _PROFILE_KEY = "active_profile"
@@ -58,11 +65,12 @@ DEFAULT_UNIVERSE_MODE = "auto"
 # 검증 범위 (서버 측 필수 — 프론트 검증만으로 불충분).
 # 2026-06-15: 동시진입 상한 10→15 (분산 확대 — 종목당 200만×15=3,000만, 일일한도 내).
 MAX_CONCURRENT_MIN, MAX_CONCURRENT_MAX = 1, 5
-PER_STOCK_BUDGET_MIN, PER_STOCK_BUDGET_MAX = 100_000, 2_000_000  # 10만 ~ 200만 원
+PER_STOCK_BUDGET_MIN, PER_STOCK_BUDGET_MAX = 1_000_000, 2_000_000  # 100만 ~ 200만 원
 STOP_LOSS_PCT_MIN, STOP_LOSS_PCT_MAX = 0.5, 10.0     # 손절 -0.5% ~ -10% (magnitude)
 TAKE_PROFIT_PCT_MIN, TAKE_PROFIT_PCT_MAX = 0.5, 20.0  # 익절 +0.5% ~ +20%
 # T2: 일일 매수금액 한도 300만 ~ 3억(100종목×300만 수용), 스테퍼 100만 단위.
-DAILY_BUY_LIMIT_MIN, DAILY_BUY_LIMIT_MAX = 3_000_000, 10_000_000
+DAILY_BUY_LIMIT_MIN, DAILY_BUY_LIMIT_MAX = 10_000, 10_000_000
+DEFAULT_DAILY_BUY_LIMIT_KRW = 10_000_000
 
 # S1: AI 운용 성향 — 런타임 전환 대상(보수/안정/공격).
 VALID_PROFILES = ("conservative", "balanced", "aggressive")
@@ -146,7 +154,12 @@ def _load() -> dict[str, Any]:
         clean: dict[str, Any] = {}
         for k in _INT_KEYS:
             if k in raw and raw[k] is not None:
-                clean[k] = int(raw[k])
+                value = int(raw[k])
+                low, high = _INT_RANGES[k]
+                if low <= value <= high:
+                    clean[k] = value
+                else:
+                    _log.warning("[runtime_config] invalid persisted %s ignored", k)
         for k in _FLOAT_KEYS:
             if k in raw and raw[k] is not None:
                 clean[k] = float(raw[k])
@@ -225,13 +238,21 @@ def effective_per_stock_budget() -> int:
 
 
 def effective_daily_buy_limit() -> int:
-    """일일 매수금액 한도 = kis_paper_daily_buy_limit_krw 의 런타임 오버라이드.
+    """일일 PAPER 매수 한도. 저장된 override 또는 V2.4 기본 정책을 사용.
     ★봇이 매 사이클 이 getter 로 읽어 BUY 사전 가드(driver_bridge)에 반영(R1 패턴,
     재시작 불요). 주문 경로 route_order/RiskManager/Gate/Executor 는 미접촉."""
     ov = _load().get("daily_buy_limit_krw")
     if ov is not None:
         return int(ov)
-    return int(getattr(get_settings(), "kis_paper_daily_buy_limit_krw", 3_000_000))
+    # Ignore a legacy environment value (for example 3M) when there is no
+    # operator-saved runtime override; it caused the UI/runtime split.
+    return DEFAULT_DAILY_BUY_LIMIT_KRW
+
+
+def effective_total_paper_budget() -> int:
+    """Internal PAPER exposure ceiling, bounded by the immutable hard cap."""
+    ov = _load().get("total_paper_budget_krw")
+    return min(10_000_000, max(0, int(ov))) if ov is not None else 10_000_000
 
 
 def effective_active_profile() -> str:
@@ -360,7 +381,11 @@ def set_theme_enabled(
 
 
 def _source(key: str) -> str:
-    return "override" if _load().get(key) is not None else "env"
+    if _load().get(key) is not None:
+        return "override"
+    if key == "daily_buy_limit_krw":
+        return "paper_policy_default"
+    return "env"
 
 
 def get_runtime_config() -> dict[str, Any]:
@@ -403,6 +428,11 @@ def get_runtime_config() -> dict[str, Any]:
             "source": _source("daily_buy_limit_krw"),
             "min":    DAILY_BUY_LIMIT_MIN, "max": DAILY_BUY_LIMIT_MAX,
         },
+        "total_paper_budget_krw": {
+            "value": effective_total_paper_budget(),
+            "source": _source("total_paper_budget_krw"),
+            "min": 100_000, "max": 10_000_000,
+        },
         "active_profile": {
             "value":  effective_active_profile(),
             "source": _source(_PROFILE_KEY),
@@ -430,6 +460,7 @@ def _validate(max_concurrent_positions: int | None, per_stock_budget: int | None
               stop_loss_pct: float | None = None,
               take_profit_pct: float | None = None,
               daily_buy_limit_krw: int | None = None,
+              total_paper_budget_krw: int | None = None,
               universe_size: int | None = None,
               universe_mode: str | None = None) -> None:
     if max_concurrent_positions is not None:
@@ -442,14 +473,16 @@ def _validate(max_concurrent_positions: int | None, per_stock_budget: int | None
         v = int(per_stock_budget)
         if not (PER_STOCK_BUDGET_MIN <= v <= PER_STOCK_BUDGET_MAX):
             raise RuntimeConfigValidationError(
-                "종목당 투자금은 10만 원 ~ 200만 원 사이여야 해요."
+                "종목당 투자금은 100만 원 ~ 200만 원 사이여야 해요."
             )
     if daily_buy_limit_krw is not None:
         v = int(daily_buy_limit_krw)
         if not (DAILY_BUY_LIMIT_MIN <= v <= DAILY_BUY_LIMIT_MAX):
             raise RuntimeConfigValidationError(
-                "일일 매수 한도는 300만 원 ~ 1,000만 원 사이여야 해요."
+                "일일 매수 한도는 1만 원 ~ 1,000만 원 사이여야 해요."
             )
+    if total_paper_budget_krw is not None and not (100_000 <= int(total_paper_budget_krw) <= 10_000_000):
+        raise RuntimeConfigValidationError("총 PAPER 운용 예산은 10만 원 ~ 1,000만 원 사이여야 해요.")
     if stop_loss_pct is not None:
         try:
             v = float(stop_loss_pct)
@@ -495,6 +528,7 @@ def set_runtime_overrides(
     stop_loss_pct: float | None = None,
     take_profit_pct: float | None = None,
     daily_buy_limit_krw: int | None = None,
+    total_paper_budget_krw: int | None = None,
     universe_size: int | None = None,
     universe_mode: str | None = None,
     now: datetime | None = None,
@@ -505,7 +539,7 @@ def set_runtime_overrides(
     """
     _validate(max_concurrent_positions, per_stock_budget, active_profile,
               stop_loss_pct, take_profit_pct, daily_buy_limit_krw,
-              universe_size, universe_mode)
+              total_paper_budget_krw, universe_size, universe_mode)
     now = now or datetime.now(timezone.utc)
     with _lock:
         before = {
@@ -515,6 +549,7 @@ def set_runtime_overrides(
             "stop_loss_pct": effective_stop_loss_pct(),
             "take_profit_pct": effective_take_profit_pct(),
             "daily_buy_limit_krw": effective_daily_buy_limit(),
+            "total_paper_budget_krw": effective_total_paper_budget(),
             "universe_size": effective_universe_size(),
             "universe_mode": effective_universe_mode(),
         }
@@ -529,6 +564,8 @@ def set_runtime_overrides(
             cur["take_profit_pct"] = float(take_profit_pct)
         if daily_buy_limit_krw is not None:
             cur["daily_buy_limit_krw"] = int(daily_buy_limit_krw)
+        if total_paper_budget_krw is not None:
+            cur["total_paper_budget_krw"] = int(total_paper_budget_krw)
         if active_profile is not None:
             cur[_PROFILE_KEY] = str(active_profile).strip().lower()
         if universe_size is not None:
@@ -553,12 +590,14 @@ def set_runtime_overrides(
         "stop_loss_pct": effective_stop_loss_pct(),
         "take_profit_pct": effective_take_profit_pct(),
         "daily_buy_limit_krw": effective_daily_buy_limit(),
+        "total_paper_budget_krw": effective_total_paper_budget(),
         "universe_size": effective_universe_size(),
         "universe_mode": effective_universe_mode(),
     }
     changes: list[dict[str, Any]] = []
     for key in ("max_concurrent_positions", "per_stock_budget", "active_profile",
                 "stop_loss_pct", "take_profit_pct", "daily_buy_limit_krw",
+                "total_paper_budget_krw",
                 "universe_size", "universe_mode"):
         if before[key] != after[key]:
             changes.append({"key": key, "before": before[key], "after": after[key]})

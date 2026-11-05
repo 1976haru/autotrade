@@ -296,7 +296,7 @@ export function PaperCapitalSettingsCard({
       {/* 4. 일일 최대 매수금액 */}
       <_Field
         label="일일 최대 매수금액"
-        hint={`현재: ${formatKrwLabel(settings.maxDailyBuyAmount)} · 기본 300만원`}
+        hint={`현재: ${formatKrwLabel(settings.maxDailyBuyAmount)} · 기본 1,000만원`}
         testid="field-max-daily-buy-amount"
       >
         <_PresetRow

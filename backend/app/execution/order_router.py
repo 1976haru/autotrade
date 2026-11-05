@@ -5,13 +5,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ai.rate_limit import check_global_rate_limit, check_rate_limit
-from app.risk.auto_stop import maybe_trigger_auto_stop
 from app.brokers.base import BrokerAdapter, OrderRequest, OrderResult, OrderSide
 from app.core.modes import OperationMode
 from app.db.models import OrderAuditLog, PendingApproval, ShadowTrade
 from app.execution.executor import OrderExecutor
 from app.execution.order_executor import derive_order_source
 from app.permission.gate import PermissionGate
+from app.risk.auto_stop import maybe_trigger_auto_stop
 from app.risk.daily_pnl import (
     compute_today_realized_pnl,
     compute_weekly_realized_pnl_kst,
@@ -28,6 +28,72 @@ from app.risk.risk_manager import (
     RiskDecision,
     RiskManager,
 )
+
+_KST = timezone(timedelta(hours=9))
+
+
+def _paper_daily_buy_limit_reason(
+    db: Session, *, account_scope: str, order: OrderRequest,
+    current_price: int, daily_limit_krw: int, now: datetime | None = None,
+    cost_reserve_bps: int = 100,
+) -> str | None:
+    """Final account-scoped daily BUY notional gate for every KIS PAPER caller.
+
+    Accepted/pending orders reserve their full notional; filled orders count
+    actual fills; canceled orders retain only their filled amount. Unknown
+    prices/status fail closed so a missing audit value cannot free budget.
+    """
+    if order.side != OrderSide.BUY:
+        return None
+    moment = now or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    today = moment.astimezone(_KST).date()
+    rows = db.execute(
+        select(OrderAuditLog).where(
+            OrderAuditLog.account_id == account_scope,
+            OrderAuditLog.mode == OperationMode.PAPER.value,
+            OrderAuditLog.side == OrderSide.BUY.value,
+        )
+    ).scalars().all()
+    committed = 0
+    for row in rows:
+        created = row.created_at
+        if created is None:
+            return "PAPER_DAILY_BUY_STATE_UNKNOWN: order audit timestamp missing"
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if created.astimezone(_KST).date() != today:
+            continue
+        status = str(row.broker_status or "").upper()
+        accepted = (
+            bool(row.executed) or bool(row.broker_order_id)
+            or row.decision in {RiskDecision.APPROVED.value, RiskDecision.NEEDS_APPROVAL.value}
+        )
+        if not accepted or row.decision == RiskDecision.REJECTED.value:
+            continue
+        if status in {"CANCELLED", "CANCELED", "REJECTED", "REJECT"}:
+            quantity = max(0, int(row.filled_quantity or 0))
+        else:
+            quantity = max(0, int(row.quantity or 0))
+        if quantity == 0:
+            continue
+        prices = [int(value) for value in (row.limit_price, row.latest_price, row.avg_fill_price)
+                  if value is not None and int(value) > 0]
+        if not prices:
+            return "PAPER_DAILY_BUY_STATE_UNKNOWN: accepted order price missing"
+        committed += quantity * max(prices) * (10_000 + cost_reserve_bps) // 10_000
+
+    order_price = int(order.limit_price or current_price or 0)
+    if order_price <= 0:
+        return "PAPER_DAILY_BUY_STATE_UNKNOWN: current order price missing"
+    requested = int(order.quantity) * order_price * (10_000 + cost_reserve_bps) // 10_000
+    if committed + requested > int(daily_limit_krw):
+        return (
+            f"PAPER_DAILY_BUY_LIMIT_EXCEEDED: committed {committed} + requested "
+            f"{requested} > daily limit {int(daily_limit_krw)} KRW"
+        )
+    return None
 
 
 # #43: LIVE_SHADOW shadow trade 추정 체결가 산출 메서드 식별자. 본 PR은
@@ -302,13 +368,14 @@ async def route_order(
         quote_ts = None
 
     paper_position_limits = None
+    paper_daily_buy_limit_violation: str | None = None
     if mode == OperationMode.PAPER:
         from app.brokers.kis import KisBrokerAdapter
 
         if isinstance(broker, KisBrokerAdapter) and bool(getattr(broker, "is_paper", False)):
+            from app.core.config import get_settings
             from app.kis_paper.order_limits import resolve_kis_paper_order_limits
             from app.risk.position_limits import policy_from_risk_policy
-            from app.core.config import get_settings
 
             limits = resolve_kis_paper_order_limits(get_settings())
             paper_position_limits = replace(
@@ -317,6 +384,18 @@ async def route_order(
                 max_symbol_exposure=limits.per_symbol_krw,
                 max_positions=limits.max_positions,
                 max_total_exposure=limits.total_budget_krw,
+            )
+            # The driver-level daily budget is advisory for scan flow. Enforce
+            # the same account-scoped cap here so manual/direct BUY callers
+            # cannot bypass it at the final common order route.
+            paper_daily_buy_limit_violation = _paper_daily_buy_limit_reason(
+                db,
+                account_scope=account_scope,
+                order=order,
+                current_price=int(quote.price or 0),
+                daily_limit_krw=limits.daily_buy_krw,
+                now=now,
+                cost_reserve_bps=limits.cost_reserve_bps,
             )
 
     decision = risk.evaluate_order(
@@ -331,6 +410,9 @@ async def route_order(
         consecutive_loss_count=consecutive_loss_count,
         paper_position_limits=paper_position_limits,
     )
+    if paper_daily_buy_limit_violation is not None:
+        decision.reasons.append(paper_daily_buy_limit_violation)
+        decision.decision = RiskDecision.REJECTED
     # P0-SAFETY-FIX-V1: LEVEL_1 SELL 프로그램 소유권 (브로커 보유 확인은 RiskManager 가 수행).
     _own_block = emergency_sell_ownership_block(
         db, risk, side=order.side, symbol=order.symbol, quantity=int(order.quantity),
@@ -508,10 +590,12 @@ def emergency_sell_ownership_block(db: Session, risk: RiskManager, *, side: Orde
             return f"{tag}: only program exits may sell; manual/unowned sell blocked"
         return None
     try:
-        from app.kis_paper.account_scope import (
-            account_scope_block_reason, current_account_scope, program_holdings,
-        )
         from app.core.config import get_settings
+        from app.kis_paper.account_scope import (
+            account_scope_block_reason,
+            current_account_scope,
+            program_holdings,
+        )
         settings = get_settings()
         if account_scope_block_reason(settings) is not None:
             return "ACCOUNT_SCOPE_UNKNOWN: program SELL blocked"
@@ -546,9 +630,9 @@ async def route_cancel(
     - client_order_id idempotency (DuplicateOrderError) — 재시작/중복 tick 재전송 차단.
     취소 *접수* 는 취소 완료가 아니다 — 호출자가 일별체결 잔량으로 대조한다.
     """
+    from app.brokers.kis import KisBrokerAdapter
     from app.execution.paper_trader import is_live_broker
     from app.kis_paper.account_scope import account_scope_for_broker
-    from app.brokers.kis import KisBrokerAdapter
     cancel_scope = account_scope_for_broker(broker)
 
     duplicate_query = select(OrderAuditLog.id).where(OrderAuditLog.client_order_id == client_order_id)

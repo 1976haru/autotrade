@@ -129,7 +129,7 @@ describe("RuntimeConfigCard (R3/R4)", () => {
 
   // ── T2: 일일 매수 한도 스테퍼 ───────────────────────────────────────────────
   const cfgDl = (over = {}) => cfg({
-    daily_buy_limit_krw: { value: 3_000_000, min: 3_000_000, max: 300_000_000 },
+    daily_buy_limit_krw: { value: 3_000_000, min: 3_000_000, max: 10_000_000 },
     ...over,
   });
 
@@ -144,7 +144,7 @@ describe("RuntimeConfigCard (R3/R4)", () => {
   });
 
   it("T2: 일일 한도 변경 저장 → PUT 에 daily_buy_limit_krw 포함", async () => {
-    const put = vi.fn(async () => cfgDl({ daily_buy_limit_krw: { value: 4_000_000, min: 3_000_000, max: 300_000_000 } }));
+    const put = vi.fn(async () => cfgDl({ daily_buy_limit_krw: { value: 4_000_000, min: 3_000_000, max: 10_000_000 } }));
     const { getByTestId } = render(<RuntimeConfigCard config={cfgDl()} api={{ runtimeConfigPut: put }} />);
     fireEvent.click(getByTestId("rtcfg-dl-inc")); // 3,000,000 → 4,000,000 (100만 단위)
     fireEvent.click(getByTestId("rtcfg-save"));

@@ -50,6 +50,15 @@ const F = {
   md: "var(--fs-md)", lg: "var(--fs-lg)", xl: "var(--fs-xl)", xxl: "var(--fs-2xl)",
 };
 
+function StatCell({ k, v, testid }) {
+  return (
+    <div style={{ textAlign: "center" }} data-testid={testid}>
+      <div style={{ fontSize: F.sm, color: "rgba(40,20,24,.78)", fontWeight: 600 }}>{k}</div>
+      <div style={{ fontSize: F.md, fontWeight: 800, color: "#2a1418", marginTop: 3 }}>{v}</div>
+    </div>
+  );
+}
+
 // P0-SAFETY-FIX-V1: 이 버튼은 긴급정지 LEVEL 1 — 신규 매수만 막고 청산은 계속한다.
 export const EMERGENCY_CONFIRM_TEXT =
   "정말 긴급정지(LEVEL 1)할까요?\n" +
@@ -209,7 +218,7 @@ export function ReferenceHome({
   //   (스테퍼 meta). 구 평수(plain int)·capital-config 폴백도 호환.
   const _rtDaily = rtConfig?.daily_buy_limit_krw;
   const buyMax = (_rtDaily && typeof _rtDaily === "object" ? _rtDaily.value : _rtDaily)
-    ?? alloc?.daily_buy_limit_krw ?? 3_000_000;
+    ?? alloc?.daily_buy_limit_krw ?? 10_000_000;
   const prog = dailyProgress({ orders, today, buyMaxKrw: buyMax });
   const balanceFailed = !!portfolio?.error;
   const masked = maskAccountNo(accountNo);
@@ -240,13 +249,6 @@ export function ReferenceHome({
     flex: 1, padding: "16px 10px", border: "none", borderRadius: 14, cursor: "pointer",
     fontFamily: "inherit", fontSize: F.md, fontWeight: 800, color: "#fff", minHeight: 56,
   };
-
-  const StatCell = ({ k, v, testid }) => (
-    <div style={{ textAlign: "center" }} data-testid={testid}>
-      <div style={{ fontSize: F.sm, color: "rgba(40,20,24,.78)", fontWeight: 600 }}>{k}</div>
-      <div style={{ fontSize: F.md, fontWeight: 800, color: "#2a1418", marginTop: 3 }}>{v}</div>
-    </div>
-  );
 
   return (
     <div data-testid="reference-home" className={`rh-root${theme === "dark" ? " rh-dark" : ""}`}>

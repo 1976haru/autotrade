@@ -35,6 +35,7 @@ class _RuntimeConfigBody(BaseModel):
     take_profit_pct:          float | None = Field(None)
     # T2(2026-06-12): 일일 매수금액 한도(원) — 종목수·투자금과 동일 메커니즘.
     daily_buy_limit_krw:      int | None = Field(None)
+    total_paper_budget_krw:  int | None = Field(None, ge=100_000, le=10_000_000)
     # 종목 풀 확장 — 단계(100/200/400) + 소스(auto/watchlist). cap 은 미포함(고정).
     universe_size:            int | None = Field(None)
     universe_mode:            str | None = Field(None)
@@ -119,6 +120,7 @@ def put_runtime_config_endpoint(
     if (body.max_concurrent_positions is None and body.per_stock_budget is None
             and body.stop_loss_pct is None and body.take_profit_pct is None
             and body.daily_buy_limit_krw is None
+            and body.total_paper_budget_krw is None
             and body.universe_size is None and body.universe_mode is None):
         raise HTTPException(
             status_code=400,
@@ -131,6 +133,7 @@ def put_runtime_config_endpoint(
             stop_loss_pct=body.stop_loss_pct,
             take_profit_pct=body.take_profit_pct,
             daily_buy_limit_krw=body.daily_buy_limit_krw,
+            total_paper_budget_krw=body.total_paper_budget_krw,
             universe_size=body.universe_size,
             universe_mode=body.universe_mode,
         )

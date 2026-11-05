@@ -517,10 +517,10 @@ class TestCalculateTodayBuyUsed:
 
 class TestResolveDailyBuyLimit:
     def test_default_system_value(self):
-        # 사용자 요청서 §2: 시스템 기본값 3,000,000원.
-        assert DEFAULT_DAILY_BUY_LIMIT_KRW == 3_000_000
+        # V2.4 기본 PAPER 일일 한도 10,000,000원.
+        assert DEFAULT_DAILY_BUY_LIMIT_KRW == 10_000_000
         amount, source = resolve_daily_buy_limit()
-        assert amount == 3_000_000
+        assert amount == 10_000_000
         assert source == "system_default"
 
     def test_manual_value_takes_priority(self):
@@ -721,7 +721,7 @@ class TestApiEndpoints:
         )
         body = r.json()
         assert body["resolved_source"] == "system_default"
-        assert body["max_daily_buy_amount"] == 3_000_000
+        assert body["max_daily_buy_amount"] == 10_000_000
 
     def test_preview_sell_not_applicable(self, api_client):
         r = api_client.post(

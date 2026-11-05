@@ -88,10 +88,8 @@ class TestConstantsAndDefaults:
     def test_default_initial_cash_is_10m(self):
         assert DEFAULT_PAPER_INITIAL_CASH == 10_000_000
 
-    def test_allowed_options_include_1eok(self):
-        assert ALLOWED_PAPER_INITIAL_CASH == (
-            10_000_000, 30_000_000, 50_000_000, 100_000_000,
-        )
+    def test_allowed_options_are_capped_at_10m(self):
+        assert ALLOWED_PAPER_INITIAL_CASH == (10_000_000,)
 
     def test_default_is_in_allowed(self):
         assert DEFAULT_PAPER_INITIAL_CASH in ALLOWED_PAPER_INITIAL_CASH
@@ -99,12 +97,11 @@ class TestConstantsAndDefaults:
     def test_currency_is_krw(self):
         assert PAPER_CAPITAL_CURRENCY == "KRW"
 
-    def test_1eok_seed_is_selectable(self):
+    def test_seed_above_internal_budget_is_not_selectable(self):
         """1억(100,000,000) 시드머니가 선택 가능해야 한다 — KIS 모의계좌 1억 반영."""
-        assert is_allowed_initial_cash(100_000_000) is True
-        assert 100_000_000 in ALLOWED_PAPER_INITIAL_CASH
+        assert is_allowed_initial_cash(100_000_000) is False
 
-    def test_1eok_combo_applies_and_stays_paper_only(self):
+    def test_v24_order_policy_stays_within_limits(self):
         """1억 시드 + 종목당 500만 + 동시 8 조합이 모두 수용되고, paper 전용
         불변(실거래 무관)이 유지되는지."""
         from app.auto_paper.capital_config import (
@@ -113,23 +110,25 @@ class TestConstantsAndDefaults:
             set_max_concurrent_positions,
             set_per_symbol_allocation,
         )
-        assert is_allowed_per_symbol_max_krw(5_000_000) is True
-        assert is_allowed_max_concurrent_positions(8) is True
+        assert is_allowed_per_symbol_max_krw(2_000_000) is True
+        assert is_allowed_per_symbol_max_krw(5_000_000) is False
+        assert is_allowed_max_concurrent_positions(5) is True
+        assert is_allowed_max_concurrent_positions(8) is False
 
-        cfg, fb = set_paper_capital_config(100_000_000, fallback_to_default=False)
-        assert cfg.initial_cash == 100_000_000 and fb is False
-        cfg2, _ = set_per_symbol_allocation(per_symbol_max_krw=5_000_000)
-        assert cfg2.per_symbol_max_krw == 5_000_000
-        cfg3, _ = set_max_concurrent_positions(8)
-        assert cfg3.max_concurrent_positions == 8
+        cfg, fb = set_paper_capital_config(10_000_000, fallback_to_default=False)
+        assert cfg.initial_cash == 10_000_000 and fb is False
+        cfg2, _ = set_per_symbol_allocation(per_symbol_max_krw=2_000_000)
+        assert cfg2.per_symbol_max_krw == 2_000_000
+        cfg3, _ = set_max_concurrent_positions(5)
+        assert cfg3.max_concurrent_positions == 5
         d = cfg3.to_dict()
         assert d["is_paper_only"] is True
         assert d["is_live_authorization"] is False
 
     def test_is_allowed_helper(self):
         assert is_allowed_initial_cash(10_000_000) is True
-        assert is_allowed_initial_cash(30_000_000) is True
-        assert is_allowed_initial_cash(50_000_000) is True
+        assert is_allowed_initial_cash(30_000_000) is False
+        assert is_allowed_initial_cash(50_000_000) is False
         assert is_allowed_initial_cash(20_000_000) is False
         assert is_allowed_initial_cash(0) is False
         assert is_allowed_initial_cash(-1) is False
@@ -189,9 +188,7 @@ class TestDataclassInvariants:
             "is_paper_only", "is_live_authorization", "updated_at",
         ):
             assert key in d, f"missing key: {key}"
-        assert d["allowed_initial_cash_options"] == [
-            10_000_000, 30_000_000, 50_000_000, 100_000_000,
-        ]
+        assert d["allowed_initial_cash_options"] == [10_000_000]
         assert d["is_paper_only"] is True
         assert d["is_live_authorization"] is False
 
@@ -202,7 +199,7 @@ class TestDataclassInvariants:
 
 
 class TestSetCapitalConfig:
-    @pytest.mark.parametrize("value", [10_000_000, 30_000_000, 50_000_000])
+    @pytest.mark.parametrize("value", [10_000_000])
     def test_allowed_values_succeed(self, value):
         cfg, fallback_used = set_paper_capital_config(value)
         assert cfg.initial_cash == value
@@ -234,13 +231,13 @@ class TestSetCapitalConfig:
             set_paper_capital_config(10_000_000_000)
 
     def test_set_then_get_roundtrip(self):
-        set_paper_capital_config(30_000_000)
-        assert get_paper_capital_config().initial_cash == 30_000_000
-        set_paper_capital_config(50_000_000)
-        assert get_paper_capital_config().initial_cash == 50_000_000
+        set_paper_capital_config(10_000_000)
+        assert get_paper_capital_config().initial_cash == 10_000_000
+        set_paper_capital_config(10_000_000)
+        assert get_paper_capital_config().initial_cash == 10_000_000
 
     def test_reset_for_tests_restores_default(self):
-        set_paper_capital_config(50_000_000)
+        set_paper_capital_config(10_000_000)
         reset_paper_capital_for_tests()
         assert get_paper_capital_config().initial_cash == DEFAULT_PAPER_INITIAL_CASH
 
@@ -310,9 +307,7 @@ class TestCapitalConfigAPI:
         assert res.status_code == 200
         body = res.json()
         assert body["initial_cash"] == DEFAULT_PAPER_INITIAL_CASH
-        assert body["allowed_initial_cash_options"] == [
-            10_000_000, 30_000_000, 50_000_000, 100_000_000,
-        ]
+        assert body["allowed_initial_cash_options"] == [10_000_000]
         assert body["currency"] == "KRW"
         assert body["is_paper_only"] is True
         assert body["is_live_authorization"] is False
@@ -320,7 +315,7 @@ class TestCapitalConfigAPI:
         assert "모의매매 전용" in body["notice"]
         assert "실전 계좌와 무관" in body["notice"]
 
-    @pytest.mark.parametrize("value", [10_000_000, 30_000_000, 50_000_000, 100_000_000])
+    @pytest.mark.parametrize("value", [10_000_000])
     def test_post_accepts_allowed(self, api_client, value):
         res = api_client.post(
             "/api/auto-paper/capital-config",
@@ -329,6 +324,7 @@ class TestCapitalConfigAPI:
         assert res.status_code == 200, res.text
         body = res.json()
         assert body["initial_cash"] == value
+        assert body["allowed_initial_cash_options"] == [10_000_000]
         assert body["fallback_used"] is False
         assert body["is_paper_only"] is True
         assert body["is_live_authorization"] is False
@@ -338,14 +334,7 @@ class TestCapitalConfigAPI:
             "/api/auto-paper/capital-config",
             json={"initial_cash": 20_000_000, "fallback_to_default": False},
         )
-        assert res.status_code == 400
-        body = res.json()
-        # FastAPI HTTPException wraps in "detail"
-        detail = body.get("detail", body)
-        assert detail.get("error") == "invalid_paper_initial_cash"
-        assert detail.get("allowed_initial_cash_options") == [
-            10_000_000, 30_000_000, 50_000_000, 100_000_000,
-        ]
+        assert res.status_code == 422
         # store 는 변경되지 않음.
         res2 = api_client.get("/api/auto-paper/capital-config")
         assert res2.json()["initial_cash"] == DEFAULT_PAPER_INITIAL_CASH
@@ -353,7 +342,7 @@ class TestCapitalConfigAPI:
     def test_post_fallback_to_default_when_requested(self, api_client):
         res = api_client.post(
             "/api/auto-paper/capital-config",
-            json={"initial_cash": 99_999_999, "fallback_to_default": True},
+            json={"initial_cash": 9_999_999, "fallback_to_default": True},
         )
         assert res.status_code == 200
         body = res.json()
@@ -363,10 +352,10 @@ class TestCapitalConfigAPI:
     def test_set_then_get_roundtrip(self, api_client):
         api_client.post(
             "/api/auto-paper/capital-config",
-            json={"initial_cash": 50_000_000, "fallback_to_default": False},
+            json={"initial_cash": 10_000_000, "fallback_to_default": False},
         )
         res = api_client.get("/api/auto-paper/capital-config")
-        assert res.json()["initial_cash"] == 50_000_000
+        assert res.json()["initial_cash"] == 10_000_000
 
     def test_payload_contains_no_secret_strings(self, api_client):
         res = api_client.get("/api/auto-paper/capital-config")
@@ -392,7 +381,7 @@ class TestSafetyFlagsUntouched:
         # invariant 를 확보. settings runtime mutation 0건 확인.
         from app.core.config import get_settings
         before = get_settings()
-        set_paper_capital_config(50_000_000)
+        set_paper_capital_config(10_000_000)
         after = get_settings()
         assert before.enable_live_trading == after.enable_live_trading is False
         assert before.enable_ai_execution == after.enable_ai_execution is False

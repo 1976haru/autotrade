@@ -138,11 +138,11 @@ class TestValidateEndpoint:
     def test_partial_body_echoes_none(self, api_client):
         r = api_client.post(
             "/api/auto-paper/paper-capital-settings/validate",
-            json={"max_positions": 8},
+            json={"max_positions": 5},
         )
         assert r.status_code == 200
         b = r.json()
-        assert b["max_positions"] == 8
+        assert b["max_positions"] == 5
         assert b["total_paper_capital"] is None
         # allow_additional_buy None → False default carry.
         assert b["allow_additional_buy"] is False
@@ -220,10 +220,10 @@ class TestStartBodyCarriesCapitalSettings:
             json={
                 "risk_profile": "BALANCED",
                 "capital_settings": {
-                    "total_paper_capital":   30_000_000,
+                    "total_paper_capital":   10_000_000,
                     "per_symbol_allocation": 2_000_000,
-                    "max_positions":         8,
-                    "max_daily_buy_amount":  5_000_000,
+                    "max_positions":         5,
+                    "max_daily_buy_amount":  10_000_000,
                     "max_symbol_weight_pct": 0.10,
                     "allow_additional_buy":  True,
                 },

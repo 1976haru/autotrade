@@ -70,6 +70,49 @@ async def manual_order(
     side = body.side.upper()
     qty  = int(body.quantity)
     name = _resolve_name(symbol) or symbol
+    settings = get_settings()
+    mode_value = str(getattr(settings.default_mode, "value", settings.default_mode)).upper()
+    if bool(getattr(settings, "enable_live_trading", False)) or mode_value.startswith("LIVE"):
+        raise HTTPException(status_code=403, detail="LIVE_ORDER_PERMANENTLY_BLOCKED")
+    if mode_value == "PAPER":
+        from app.brokers.kis import KisBrokerAdapter
+        credentials_present = all((
+            getattr(settings, "kis_app_key", ""),
+            getattr(settings, "kis_app_secret", ""),
+            getattr(settings, "kis_account_no", ""),
+        ))
+        if (not bool(getattr(settings, "kis_is_paper", False))
+                or not credentials_present
+                or str(getattr(settings, "market_data_provider", "")).lower() != "kis"
+                or not isinstance(broker, KisBrokerAdapter)):
+            raise HTTPException(
+                status_code=409,
+                detail="KIS_PAPER_ACCOUNT_NOT_CONNECTED_OR_NOT_READY",
+            )
+        # A direct order is still subject to the same date/account-bound
+        # operator approval and fresh KIS preflight as automatic PAPER orders.
+        # It may bypass Council signal selection, never the shared safety gates.
+        from app.kis_paper.one_click_session import authorize_order
+        from app.execution.order_router import count_orders_today_kst
+
+        quote = await broker.get_price(symbol)
+        approved, reason = await authorize_order(
+            db=db,
+            settings=settings,
+            broker=broker,
+            risk=risk,
+            side=side,
+            symbol=symbol,
+            quantity=qty,
+            now=datetime.now(timezone.utc),
+            notional_krw=(int(quote.price) * qty if side == "BUY" else 0),
+            daily_order_count=count_orders_today_kst(db),
+        )
+        if not approved:
+            raise HTTPException(
+                status_code=409,
+                detail=f"KIS_PAPER_APPROVAL_OR_PREFLIGHT_BLOCKED:{reason}",
+            )
 
     # ── naked SELL 차단 — KIS 잔고 재확인 ──────────────────────────────────────
     if side == "SELL":
@@ -109,7 +152,7 @@ async def manual_order(
     try:
         routing = await route_order(
             order=order, requested_by_ai=False,
-            mode=get_settings().default_mode, broker=broker, risk=risk, db=db,
+            mode=settings.default_mode, broker=broker, risk=risk, db=db,
         )
     except DuplicateOrderError as e:
         raise HTTPException(status_code=409, detail=str(e))

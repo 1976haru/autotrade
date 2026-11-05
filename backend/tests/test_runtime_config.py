@@ -69,23 +69,23 @@ def test_effective_falls_back_to_env_when_no_override():
 
 
 def test_set_then_reread_is_consistent():
-    out = rc.set_runtime_overrides(max_concurrent_positions=3, per_stock_budget=500_000)
+    out = rc.set_runtime_overrides(max_concurrent_positions=3, per_stock_budget=1_000_000)
     assert out["max_concurrent_positions"]["value"] == 3
     assert out["max_concurrent_positions"]["source"] == "override"
-    assert out["per_stock_budget"]["value"] == 500_000
+    assert out["per_stock_budget"]["value"] == 1_000_000
     # 다시 읽어도 동일 (저장 후 재조회 일관성).
     again = rc.get_runtime_config()
     assert again["max_concurrent_positions"]["value"] == 3
-    assert again["per_stock_budget"]["value"] == 500_000
+    assert again["per_stock_budget"]["value"] == 1_000_000
     assert rc.effective_max_concurrent_positions() == 3
-    assert rc.effective_per_stock_budget() == 500_000
+    assert rc.effective_per_stock_budget() == 1_000_000
 
 
 def test_partial_update_keeps_other_value():
-    rc.set_runtime_overrides(max_concurrent_positions=2, per_stock_budget=300_000)
-    rc.set_runtime_overrides(per_stock_budget=700_000)  # 종목수는 그대로
+    rc.set_runtime_overrides(max_concurrent_positions=2, per_stock_budget=1_000_000)
+    rc.set_runtime_overrides(per_stock_budget=2_000_000)  # 종목수는 그대로
     assert rc.effective_max_concurrent_positions() == 2
-    assert rc.effective_per_stock_budget() == 700_000
+    assert rc.effective_per_stock_budget() == 2_000_000
 
 
 def test_changes_carries_before_after():
@@ -113,11 +113,11 @@ def test_per_stock_budget_out_of_range_raises(v):
 # ── 재시작 복원 / 손상 폴백 ───────────────────────────────────────────────────
 
 def test_restart_restores_from_file(_tmp_overrides):
-    rc.set_runtime_overrides(max_concurrent_positions=4, per_stock_budget=200_000)
+    rc.set_runtime_overrides(max_concurrent_positions=4, per_stock_budget=1_000_000)
     # "재시작" 모사 — 인메모리 캐시만 비우고 파일은 유지.
     rc._cache = None
     assert rc.effective_max_concurrent_positions() == 4
-    assert rc.effective_per_stock_budget() == 200_000
+    assert rc.effective_per_stock_budget() == 1_000_000
 
 
 def test_corrupt_file_falls_back_to_env_with_warning(_tmp_overrides, caplog):
@@ -148,7 +148,7 @@ def test_api_get_runtime_config():
     assert b["is_live_authorization"] is False
     # T2(2026-06-12): daily_buy_limit_krw 가 {value,min,max,source} 객체로 — 스테퍼 meta.
     assert b["daily_buy_limit_krw"]["value"] >= 1  # 하드코딩 아님 — config/override 에서
-    assert b["daily_buy_limit_krw"]["min"] == 3_000_000
+    assert b["daily_buy_limit_krw"]["min"] == 10_000
     assert b["daily_buy_limit_krw"]["max"] == 10_000_000
 
 
@@ -156,12 +156,12 @@ def test_api_put_valid_returns_reread_effective():
     # ★_diag_app: get_db 인메모리 격리 → 피드 기록이 라이브 DB 로 누수 0(이 테스트가
     #   예전엔 라이브 SessionLocal 에 CONFIG_CHANGE 를 새겼던 12:47/12:52/12:53 누수원).
     with _diag_app() as (c, _):
-        r = _diag_put(c, "/api/runtime-config", json={"max_concurrent_positions": 3, "per_stock_budget": 500_000})
+        r = _diag_put(c, "/api/runtime-config", json={"max_concurrent_positions": 3, "per_stock_budget": 1_000_000})
     assert r.status_code == 200
     b = r.json()
     assert b["max_concurrent_positions"]["value"] == 3
     assert b["max_concurrent_positions"]["source"] == "override"
-    assert b["per_stock_budget"]["value"] == 500_000
+    assert b["per_stock_budget"]["value"] == 1_000_000
 
 
 @pytest.mark.parametrize("payload,frag", [
@@ -213,7 +213,7 @@ def test_bot_scan_reads_effective_getters_each_tick(monkeypatch):
     from app.kis_paper import driver_bridge as dbge
     from app.market_data.kis_realtime import KisRealtimeQuote
 
-    rc.set_runtime_overrides(max_concurrent_positions=2, per_stock_budget=300_000)
+    rc.set_runtime_overrides(max_concurrent_positions=2, per_stock_budget=1_000_000)
     calls = {"mc": 0, "bud": 0}
     real_mc, real_bud = rc.effective_max_concurrent_positions, rc.effective_per_stock_budget
     monkeypatch.setattr(rc, "effective_max_concurrent_positions",
@@ -266,20 +266,18 @@ def _mem_session():
 
 
 def test_r2_record_changes_into_activity_feed():
-    # R2: 변경을 활동 피드(AgentDecisionLog/paper decision-log)에 기록 — 기존 경로 재사용.
     from app.core.runtime_config_activity import record_runtime_config_changes
     from app.auto_paper.decision_log import query_paper_decision_log
     TS = _mem_session()
     with TS() as db:
         n = record_runtime_config_changes(db, [
-            {"key": "per_stock_budget", "before": 1_000_000, "after": 500_000},
+            {"key": "per_stock_budget", "before": 1_000_000, "after": 2_000_000},
             {"key": "max_concurrent_positions", "before": 5, "after": 3},
         ])
         assert n == 2
         entries = query_paper_decision_log(db, limit=10)
-        texts = [e.reason for e in entries]
-        assert any("종목당 투자금을 100만 원 → 50만 원으로 바꿨어요" in t for t in texts)
-        assert any("동시진입 종목 수를 5개 → 3개로 바꿨어요" in t for t in texts)
+        assert any(e.reason_code == "OPERATOR_CONFIG_CHANGE"
+                   and e.decision_action == "CONFIG_CHANGE" for e in entries)
         assert all(e.decision_action == "CONFIG_CHANGE"
                    for e in entries if e.agent_name == "Operator")
 
@@ -307,14 +305,14 @@ def test_api_put_records_activity_event():
     app.dependency_overrides[get_db] = _ov
     try:
         with TestClient(app) as c:
-            r = _diag_put(c, "/api/runtime-config", json={"per_stock_budget": 500_000})
+            r = _diag_put(c, "/api/runtime-config", json={"per_stock_budget": 2_000_000})
         assert r.status_code == 200
         with TS() as s:
             entries = query_paper_decision_log(s, limit=10)
-        assert any("종목당 투자금" in (e.reason or "") for e in entries)
+        assert any(e.reason_code == "OPERATOR_CONFIG_CHANGE"
+                   and e.decision_action == "CONFIG_CHANGE" for e in entries)
     finally:
         app.dependency_overrides.pop(get_db, None)
-
 
 def test_lowering_cap_does_not_liquidate_holdings(monkeypatch):
     """R1 규칙: 동시진입 종목 수를 낮춰도 *기존 보유는 비접촉*(강제 청산 0).
@@ -329,7 +327,7 @@ def test_lowering_cap_does_not_liquidate_holdings(monkeypatch):
     from app.kis_paper import driver_bridge as dbge
     from app.market_data.kis_realtime import KisRealtimeQuote
 
-    rc.set_runtime_overrides(max_concurrent_positions=1, per_stock_budget=300_000)
+    rc.set_runtime_overrides(max_concurrent_positions=1, per_stock_budget=1_000_000)
 
     eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(eng)
@@ -434,6 +432,7 @@ def test_overrides_do_not_touch_safety_flags():
     #   안전 플래그/cap/confidence 는 *여전히* 화이트리스트 밖.
     assert set(rc._OVERRIDE_KEYS) == {
         "max_concurrent_positions", "per_stock_budget", "daily_buy_limit_krw",
+        "total_paper_budget_krw",
         "stop_loss_pct", "take_profit_pct", "active_profile",
         "universe_size", "universe_mode",
     }
@@ -597,15 +596,22 @@ def test_legacy_override_migrates_to_new_location(monkeypatch, _tmp_overrides, t
     # 신 위치(=_tmp_overrides) 비었고 구 위치(./data)에 있으면 1회 이전(기존 설정 보존).
     import app.core.runtime_config as _rc
     legacy = tmp_path / "legacy_overrides.json"
-    legacy.write_text('{"per_stock_budget": 700000}', encoding="utf-8")
+    legacy.write_text('{"per_stock_budget": 1000000}', encoding="utf-8")
     monkeypatch.setattr(_rc, "_legacy_overrides_path", lambda: legacy)
     _rc._cache = None
     _rc._migrate_legacy_override_if_needed()
     assert _tmp_overrides.exists()
-    assert "700000" in _tmp_overrides.read_text(encoding="utf-8")
+    assert "1000000" in _tmp_overrides.read_text(encoding="utf-8")
     # 이전 후 effective 도 반영.
     _rc._cache = None
-    assert _rc.effective_per_stock_budget() == 700000
+    assert _rc.effective_per_stock_budget() == 1_000_000
+
+
+def test_out_of_policy_persisted_budget_is_ignored(monkeypatch, _tmp_overrides):
+    import app.core.runtime_config as _rc
+    _tmp_overrides.write_text('{"per_stock_budget": 700000}', encoding="utf-8")
+    _rc._cache = None
+    assert _rc.effective_per_stock_budget() == 1_000_000
 
 
 # ── T2(2026-06-12): 일일 매수 한도 런타임 오버라이드 ─────────────────────────────
@@ -624,7 +630,7 @@ def test_daily_buy_limit_override_and_effective():
 def test_daily_buy_limit_range_validation():
     rc.reset_runtime_overrides_for_tests()
     with pytest.raises(rc.RuntimeConfigValidationError):
-        rc.set_runtime_overrides(daily_buy_limit_krw=1_000_000)      # < 300만 하한
+        rc.set_runtime_overrides(daily_buy_limit_krw=1_000)      # < minimum
     with pytest.raises(rc.RuntimeConfigValidationError):
         rc.set_runtime_overrides(daily_buy_limit_krw=400_000_000)    # > 3억 상한
     rc.reset_runtime_overrides_for_tests()

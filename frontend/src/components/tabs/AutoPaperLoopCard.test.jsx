@@ -1323,9 +1323,9 @@ describe("<AutoPaperLoopCard> — P-15 capital settings", () => {
         apiClient={api}
         pollIntervalMs={0}
         paperCapitalSettings={{
-          totalPaperCapital: 30_000_000,
+          totalPaperCapital: 10_000_000,
           perSymbolAllocation: 2_000_000,
-          maxPositions: 8,
+          maxPositions: 5,
           maxDailyBuyAmount: 5_000_000,
           maxSymbolWeightPct: 0.10,
           allowAdditionalBuy: true,
@@ -1339,9 +1339,9 @@ describe("<AutoPaperLoopCard> — P-15 capital settings", () => {
     await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
     const body = api.autoPaperStart.mock.calls[0][0];
     expect(body.capital_settings).toEqual({
-      total_paper_capital:    30_000_000,
+      total_paper_capital:    10_000_000,
       per_symbol_allocation:  2_000_000,
-      max_positions:          8,
+      max_positions:          5,
       max_daily_buy_amount:   5_000_000,
       max_symbol_weight_pct:  0.10,
       allow_additional_buy:   true,
@@ -1362,7 +1362,7 @@ describe("<AutoPaperLoopCard> — P-15 capital settings", () => {
       total_paper_capital:    10_000_000,
       per_symbol_allocation:  1_000_000,
       max_positions:          5,
-      max_daily_buy_amount:   3_000_000,
+      max_daily_buy_amount:   10_000_000,
       max_symbol_weight_pct:  0.2,
       allow_additional_buy:   false,
     });

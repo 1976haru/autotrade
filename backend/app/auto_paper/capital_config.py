@@ -68,9 +68,6 @@ DEFAULT_PAPER_INITIAL_CASH: int = 10_000_000  # 1,000만원
 # PR 에서 옵션 추가는 별도 마이그레이션 (예: P-16 영구화) 후에만 허용.
 ALLOWED_PAPER_INITIAL_CASH: tuple[int, ...] = (
     10_000_000,    # 1,000만원
-    30_000_000,    # 3,000만원
-    50_000_000,    # 5,000만원
-    100_000_000,   # 1억원 — KIS 모의계좌 1억 반영 (2026-06-03)
 )
 
 # 통화 — P-01 시점 KRW 한정. 다른 통화 (USD 등) 는 별도 PR.
@@ -97,8 +94,6 @@ DEFAULT_PER_SYMBOL_MAX_KRW: int = 1_000_000  # 100만원
 ALLOWED_PER_SYMBOL_MAX_KRW: tuple[int, ...] = (
     1_000_000,   # 100만원 (기본값)
     2_000_000,   # 200만원
-    3_000_000,   # 300만원
-    5_000_000,   # 500만원 — 1억 시드 기준 권장 (2026-06-03)
 )
 
 # 종목당 한도 (시드머니 대비 비율) — 0.10 = 10%.
@@ -115,12 +110,12 @@ DEFAULT_PER_SYMBOL_MODE: PerSymbolAllocationMode = PerSymbolAllocationMode.FIXED
 # 상수 — 최대 동시 보유 종목 수 (P-03)
 # ============================================================================
 
-DEFAULT_MAX_CONCURRENT_POSITIONS: int = 3
+DEFAULT_MAX_CONCURRENT_POSITIONS: int = 5
 
 # 사용자가 *Paper 전용* 으로 선택 가능한 최대 동시 보유 종목 수.
 # 과도한 분산 / 과도한 동시 진입 / 자금 과다 사용 방지용 안전장치.
 # 8 추가 (2026-06-03): 1억 시드 + 종목당 500만 기준 권장 동시보유.
-ALLOWED_MAX_CONCURRENT_POSITIONS: tuple[int, ...] = (3, 5, 8, 10)
+ALLOWED_MAX_CONCURRENT_POSITIONS: tuple[int, ...] = (3, 5)
 
 
 # ============================================================================
@@ -666,7 +661,7 @@ def is_allowed_max_concurrent_positions(value: int) -> bool:
 # default 의 우선순위 단일 진실 (사용자 요청서 §2).
 
 # system 기본값 — 사용자 요청서 §2 권장.
-DEFAULT_DAILY_BUY_LIMIT_KRW: int = 3_000_000
+DEFAULT_DAILY_BUY_LIMIT_KRW: int = 10_000_000
 
 # ============================================================================
 # P-11: 종목별 최대 비중 — capital_config 측 helper

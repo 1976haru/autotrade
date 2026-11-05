@@ -14,6 +14,7 @@ from app.db.models import EmergencyStopEvent
 from app.brokers.base import Balance, Position
 from app.kis_paper.one_click_session import (
     KST, authorize_order, cancel_permission, create_approval, load_approval,
+    public_status,
 )
 
 
@@ -77,6 +78,34 @@ def risk():
 
 def _at(day, hh, mm):
     return datetime.combine(day, time(hh, mm), KST).astimezone(timezone.utc)
+
+
+def test_past_date_approval_is_not_reported_as_active():
+    from datetime import timedelta
+    yesterday = (datetime.now(KST).date() - timedelta(days=1))
+    record = {
+        "status": "ACTIVE", "target_date": yesterday.isoformat(),
+        "expires_at": datetime.combine(yesterday + timedelta(days=1), time(0), KST)
+        .astimezone(timezone.utc).isoformat(),
+    }
+    status = public_status(record)
+    assert status["status"] == "EXPIRED"
+    assert status["authorized"] is False
+    assert status["block_reason"] == "APPROVAL_DATE_EXPIRED"
+
+
+def test_future_date_approval_waits_until_approved_session():
+    from datetime import timedelta
+    tomorrow = datetime.now(KST).date() + timedelta(days=1)
+    record = {
+        "status": "SCHEDULED", "target_date": tomorrow.isoformat(),
+        "expires_at": datetime.combine(tomorrow + timedelta(days=1), time(0), KST)
+        .astimezone(timezone.utc).isoformat(),
+    }
+    status = public_status(record)
+    assert status["status"] == "SCHEDULED"
+    assert status["authorized"] is False
+    assert status["block_reason"] == "WAITING_FOR_APPROVED_DATE"
 
 
 def test_date_account_scoped_and_cancel_denied(db, tmp_path, monkeypatch):

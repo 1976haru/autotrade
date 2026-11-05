@@ -164,6 +164,22 @@ def test_route_does_not_call_broker_place_order_directly():
     assert "route_order" in src
 
 
+def test_kis_paper_manual_order_blocks_when_credentials_or_market_data_missing(client, monkeypatch):
+    from types import SimpleNamespace
+    import app.api.routes_manual_order as route
+    monkeypatch.setattr(route, "get_settings", lambda: SimpleNamespace(
+        default_mode="PAPER", enable_live_trading=False, kis_is_paper=True,
+        kis_app_key="", kis_app_secret="", kis_account_no="",
+        market_data_provider="mock",
+    ))
+    res = client.post("/api/manual-order", json={
+        "symbol": "005930", "side": "BUY", "quantity": 1,
+    })
+    assert res.status_code == 409
+    assert res.json()["detail"] == "KIS_PAPER_ACCOUNT_NOT_CONNECTED_OR_NOT_READY"
+    assert not client.test_broker.orders
+
+
 # ─────────────────────────────────────────────────────────
 # 8. 유효성 검증
 # ─────────────────────────────────────────────────────────
