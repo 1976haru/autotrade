@@ -3,6 +3,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -21,6 +22,55 @@ _TOKEN_RATELIMIT_BACKOFF = timedelta(seconds=60)
 
 _log = logging.getLogger("autotrade.kis_token")
 
+_URL_ACCOUNT_RE = re.compile(r"(?i)\b(CANO|ACNT_NO|ACCOUNT_NO)=([^&\s\"']+)")
+
+
+def redact_account_in_text(text: str) -> str:
+    return _URL_ACCOUNT_RE.sub(lambda match: f"{match.group(1)}=****", text)
+
+
+class _AccountRedactingFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001
+            return True
+        redacted = redact_account_in_text(message)
+        if redacted != message:
+            record.msg, record.args = redacted, ()
+        return True
+
+
+_ACCOUNT_FILTER = _AccountRedactingFilter()
+for _logger_name in ("httpx", "httpcore"):
+    _logger = logging.getLogger(_logger_name)
+    if not any(isinstance(item, _AccountRedactingFilter) for item in _logger.filters):
+        _logger.addFilter(_ACCOUNT_FILTER)
+
+
+def _safe_protocol_code(value: object) -> str | None:
+    text = str(value or "")
+    return text[:32] if text and all(ch.isalnum() or ch in "_-" for ch in text) else None
+
+
+def _safe_request_id(headers: httpx.Headers) -> str | None:
+    for name in ("x-request-id", "x-correlation-id", "x-amzn-requestid", "x-amz-cf-id"):
+        value = headers.get(name, "").strip()
+        if value and len(value) <= 128 and all(ch.isalnum() or ch in "-_.:" for ch in value):
+            return value
+    return None
+
+
+def _safe_orderable_error_summary(http_status: int, message_code: object) -> str:
+    code = _safe_protocol_code(message_code)
+    if code == "EGW00201":
+        return "KIS rate limit rejected the read-only inquiry."
+    if http_status >= 500:
+        return "KIS server returned an HTTP 5xx error; response body omitted."
+    if http_status != 200:
+        return "KIS HTTP request failed; response body omitted."
+    return "KIS returned an application-level error for the read-only inquiry."
+
 
 class KisAuthError(RuntimeError):
     pass
@@ -32,7 +82,11 @@ class KisTokenRateLimitedError(KisAuthError):
 
 
 class KisApiError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, diagnostic: dict | None = None):
+        super().__init__(message)
+        # Only explicitly sanitized protocol metadata belongs here. Never retain
+        # response bodies, request headers, credentials, or account identifiers.
+        self.diagnostic = diagnostic or {}
 
 
 # ── 토큰 디스크 캐시 (이 모듈 단일 reader/writer) ──────────────────────────────
@@ -126,6 +180,15 @@ class KisClient:
         if self._rate_limiter is not None:
             await self._rate_limiter.acquire()
 
+    @staticmethod
+    def _raise_kis_response_error(endpoint: str, data: dict) -> None:
+        """Do not let HTTP 200 application errors become empty/zero account data."""
+        if str(data.get("rt_cd", "0")) == "0":
+            return
+        code = str(data.get("msg_cd") or "")[:32]
+        message = str(data.get("msg1") or "")[:160]
+        raise KisApiError(f"KIS {endpoint} rt_cd={data.get('rt_cd')} msg_cd={code} msg1={message}")
+
     def _client(self) -> httpx.AsyncClient:
         kwargs = {"base_url": self.base_url, "timeout": self._timeout}
         if self._transport is not None:
@@ -209,7 +272,9 @@ class KisClient:
             )
         if r.status_code != 200:
             raise KisApiError(f"KIS quote endpoint returned {r.status_code}: {r.text[:200]}")
-        return r.json()
+        data = r.json()
+        self._raise_kis_response_error("quote", data)
+        return data
 
     async def inquire_index_price(self, index_code: str) -> dict:
         """국내 업종(지수) 현재가 — read-only. KOSPI='0001', KOSDAQ='1001'.
@@ -355,7 +420,136 @@ class KisClient:
             )
         if r.status_code != 200:
             raise KisApiError(f"KIS balance endpoint returned {r.status_code}: {r.text[:200]}")
-        return r.json()
+        data = r.json()
+        self._raise_kis_response_error("balance", data)
+        if not isinstance(data.get("output2"), list) or not data["output2"]:
+            raise KisApiError("KIS balance response missing output2; account state is unknown")
+        return data
+
+    async def inquire_orderable_cash(
+        self, cano: str, prdt_cd: str, *, symbol: str, price: int,
+        order_division: str = "00",
+    ) -> dict:
+        """Return KIS's orderable-cash quote for a cash BUY.
+
+        ``01`` is required when interpreting the returned maximum quantity as
+        market-order capacity; the default ``00`` preserves limit-order callers.
+        """
+        if order_division not in {"00", "01"}:
+            raise ValueError("order_division must be 00 (limit) or 01 (market)")
+        if isinstance(price, bool) or not isinstance(price, int) or price <= 0:
+            raise ValueError("price must be a positive integer")
+        path = "/uapi/domestic-stock/v1/trading/inquire-psbl-order"
+        tr_id = "VTTC8908R" if self.is_paper else "TTTC8908R"
+        token = await self._ensure_token()
+        await self._throttle()
+        async with self._client() as client:
+            response = await client.get(
+                path,
+                params={
+                    "CANO": cano,
+                    "ACNT_PRDT_CD": prdt_cd,
+                    "PDNO": symbol,
+                    "ORD_UNPR": str(int(price)),
+                    "ORD_DVSN": order_division,
+                    "CMA_EVLU_AMT_ICLD_YN": "N",
+                    "OVRS_ICLD_YN": "N",
+                },
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "appkey": self.app_key,
+                    "appsecret": self.app_secret,
+                    "tr_id": tr_id,
+                    "custtype": "P",
+                },
+            )
+        if response.status_code != 200:
+            # Parse only allowlisted KIS codes. The body itself is never exposed
+            # in exception text or diagnostic output.
+            body: dict = {}
+            try:
+                parsed = response.json()
+                if isinstance(parsed, dict):
+                    body = parsed
+            except (ValueError, json.JSONDecodeError):
+                pass
+            raise KisApiError(
+                f"KIS orderable-cash endpoint returned {response.status_code}",
+                diagnostic={
+                    "http_status": response.status_code,
+                    "kis_rt_cd": _safe_protocol_code(body.get("rt_cd")),
+                    "kis_msg_cd": _safe_protocol_code(body.get("msg_cd")),
+                    "sanitized_error_summary": _safe_orderable_error_summary(
+                        response.status_code, body.get("msg_cd")
+                    ),
+                    "server_request_id": _safe_request_id(response.headers),
+                    "api_path": path,
+                    "tr_id": tr_id,
+                    "order_division": order_division,
+                },
+            )
+        try:
+            data = response.json()
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise KisApiError(
+                "KIS orderable-cash response is not valid JSON",
+                diagnostic={
+                    "http_status": response.status_code,
+                    "kis_rt_cd": None,
+                    "kis_msg_cd": None,
+                    "sanitized_error_summary": "KIS returned an unreadable response for the read-only inquiry.",
+                    "server_request_id": _safe_request_id(response.headers),
+                    "api_path": path,
+                    "tr_id": tr_id,
+                    "order_division": order_division,
+                },
+            ) from exc
+        if not isinstance(data, dict):
+            raise KisApiError(
+                "KIS orderable-cash response has an unexpected shape",
+                diagnostic={
+                    "http_status": response.status_code,
+                    "kis_rt_cd": None,
+                    "kis_msg_cd": None,
+                    "sanitized_error_summary": "KIS returned an unexpected response shape for the read-only inquiry.",
+                    "server_request_id": _safe_request_id(response.headers),
+                    "api_path": path,
+                    "tr_id": tr_id,
+                    "order_division": order_division,
+                },
+            )
+        if str(data.get("rt_cd", "0")) != "0":
+            raise KisApiError(
+                "KIS orderable-cash application error",
+                diagnostic={
+                    "http_status": response.status_code,
+                    "kis_rt_cd": _safe_protocol_code(data.get("rt_cd")),
+                    "kis_msg_cd": _safe_protocol_code(data.get("msg_cd")),
+                    "sanitized_error_summary": _safe_orderable_error_summary(
+                        response.status_code, data.get("msg_cd")
+                    ),
+                    "server_request_id": _safe_request_id(response.headers),
+                    "api_path": path,
+                    "tr_id": tr_id,
+                    "order_division": order_division,
+                },
+            )
+        output = data.get("output")
+        if not isinstance(output, dict) or not output:
+            raise KisApiError(
+                "KIS orderable-cash response missing output; account state is unknown",
+                diagnostic={
+                    "http_status": response.status_code,
+                    "kis_rt_cd": _safe_protocol_code(data.get("rt_cd")),
+                    "kis_msg_cd": _safe_protocol_code(data.get("msg_cd")),
+                    "sanitized_error_summary": "KIS response is missing the orderable-cash output fields.",
+                    "server_request_id": _safe_request_id(response.headers),
+                    "api_path": path,
+                    "tr_id": tr_id,
+                    "order_division": order_division,
+                },
+            )
+        return output
 
     async def inquire_daily_ccld(
         self,
@@ -402,7 +596,9 @@ class KisClient:
             )
         if r.status_code != 200:
             raise KisApiError(f"KIS daily-ccld endpoint returned {r.status_code}: {r.text[:200]}")
-        return r.json()
+        data = r.json()
+        self._raise_kis_response_error("daily-ccld", data)
+        return data
 
     async def cancel_order_paper(
         self,
@@ -503,7 +699,8 @@ class KisClient:
             body = r.json()
             if str(body.get("rt_cd", "0")) != "0":
                 raise KisApiError(
-                    f"KIS daily-ccld rt_cd={body.get('rt_cd')} msg={body.get('msg1', '')}")
+                    f"KIS daily-ccld rt_cd={body.get('rt_cd')} "
+                    f"msg_cd={body.get('msg_cd', '')} msg={body.get('msg1', '')}")
             rows.extend(body.get("output1") or [])
             tr_cont = str(r.headers.get("tr_cont", "") or "").strip().upper()
             fk = str(body.get("ctx_area_fk100", "") or "").strip()

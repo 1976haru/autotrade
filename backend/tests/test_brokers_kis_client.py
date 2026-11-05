@@ -263,6 +263,116 @@ def test_inquire_balance_paper_uses_paper_tr_id():
     assert bal["params"]["INQR_DVSN"] == "02"
 
 
+def test_inquire_orderable_cash_uses_paper_read_only_endpoint():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        return httpx.Response(200, json={
+            "rt_cd": "0", "output": {"ord_psbl_cash": "2500000", "nrcvb_buy_amt": "2400000"},
+        })
+
+    client = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    output = run(client.inquire_orderable_cash(
+        "12345678", "01", symbol="005930", price=70000,
+    ))
+    request = next(r for r in seen if r.url.path.endswith("/inquire-psbl-order"))
+    assert output["ord_psbl_cash"] == "2500000"
+    assert request.headers["tr_id"] == "VTTC8908R"
+    assert request.url.params["PDNO"] == "005930"
+    assert request.url.params["ORD_UNPR"] == "70000"
+    assert request.url.params["ORD_DVSN"] == "00"
+
+
+def test_inquire_orderable_cash_market_capacity_uses_ord_dvsn_01():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        return httpx.Response(200, json={
+            "rt_cd": "0", "output": {
+                "ord_psbl_cash": "2500000", "nrcvb_buy_amt": "2400000",
+                "nrcvb_buy_qty": "32", "max_buy_amt": "3000000", "max_buy_qty": "40",
+                "psbl_qty_calc_unpr": "70000",
+            },
+        })
+
+    client = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    output = run(client.inquire_orderable_cash(
+        "12345678", "01", symbol="005930", price=70000, order_division="01",
+    ))
+    request = next(r for r in seen if r.url.path.endswith("/inquire-psbl-order"))
+    assert output["nrcvb_buy_qty"] == "32"
+    assert request.headers["tr_id"] == "VTTC8908R"
+    assert request.url.params["ORD_DVSN"] == "01"
+    assert request.url.params["ORD_UNPR"] == "70000"
+
+
+def test_orderable_cash_rejects_missing_or_invalid_price_before_network():
+    seen = []
+    client = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(lambda r: seen.append(r)))
+    with pytest.raises(ValueError, match="positive integer"):
+        run(client.inquire_orderable_cash("12345678", "01", symbol="005930", price=0))
+    with pytest.raises(ValueError, match="positive integer"):
+        run(client.inquire_orderable_cash("12345678", "01", symbol="005930", price=1.5))
+    assert seen == []
+
+
+def test_orderable_cash_http_500_exposes_only_safe_diagnostics():
+    def handler(request):
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        return httpx.Response(
+            500,
+            json={"rt_cd": "1", "msg_cd": "SERVER500", "msg1": "account=12345678 secret=do-not-log"},
+            headers={"X-Request-Id": "req-safe-123"},
+        )
+
+    client = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    with pytest.raises(KisApiError) as caught:
+        run(client.inquire_orderable_cash(
+            "12345678", "01", symbol="005930", price=218000, order_division="01",
+        ))
+    error = caught.value
+    assert error.diagnostic["http_status"] == 500
+    assert error.diagnostic["kis_msg_cd"] == "SERVER500"
+    assert error.diagnostic["server_request_id"] == "req-safe-123"
+    assert error.diagnostic["tr_id"] == "VTTC8908R"
+    assert "12345678" not in str(error)
+    assert "do-not-log" not in str(error)
+
+
+def test_orderable_cash_http_200_kis_error_has_business_code():
+    def handler(request):
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        return httpx.Response(200, json={"rt_cd": "1", "msg_cd": "EGW00201", "msg1": "private detail"})
+
+    client = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    with pytest.raises(KisApiError) as caught:
+        run(client.inquire_orderable_cash("12345678", "01", symbol="005930", price=218000))
+    assert caught.value.diagnostic["http_status"] == 200
+    assert caught.value.diagnostic["kis_msg_cd"] == "EGW00201"
+    assert "private detail" not in str(caught.value)
+
+
+def test_orderable_cash_missing_output_is_unknown_not_zero():
+    def handler(request):
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        return httpx.Response(200, json={"rt_cd": "0"})
+
+    client = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    with pytest.raises(KisApiError) as caught:
+        run(client.inquire_orderable_cash("12345678", "01", symbol="005930", price=218000))
+    assert caught.value.diagnostic["http_status"] == 200
+    assert "missing" in caught.value.diagnostic["sanitized_error_summary"]
+
+
 def test_inquire_balance_live_uses_live_tr_id():
     seen = []
     c = KisClient("k", "s", is_paper=False, transport=httpx.MockTransport(_balance_handler(seen)))
@@ -278,6 +388,15 @@ def test_inquire_balance_endpoint_failure_raises_api_error():
         return httpx.Response(500, text="internal error")
     c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
     with pytest.raises(KisApiError, match="500"):
+        run(c.inquire_balance("12345678", "01"))
+
+
+def test_inquire_balance_http_200_kis_error_does_not_look_like_zero_balance():
+    response = {"rt_cd": "1", "msg_cd": "EGW00201", "msg1": "rate limited"}
+    seen = []
+    c = KisClient("k", "s", is_paper=True,
+                  transport=httpx.MockTransport(_balance_handler(seen, response)))
+    with pytest.raises(KisApiError, match="EGW00201"):
         run(c.inquire_balance("12345678", "01"))
 
 

@@ -247,10 +247,7 @@ class KisBrokerAdapter(BrokerAdapter):
 
     def _split_account(self) -> tuple[str, str]:
         if not self.account_no or len(self.account_no) < 10:
-            raise RuntimeError(
-                "KIS account number must be at least 10 chars (8 + 2 split); "
-                f"got {self.account_no!r}"
-            )
+            raise RuntimeError("KIS account number must be at least 10 chars (8 + 2 split)")
         return self.account_no[:-2], self.account_no[-2:]
 
     async def get_balance(self) -> Balance:
@@ -259,6 +256,48 @@ class KisBrokerAdapter(BrokerAdapter):
         cash   = int(output2.get("dnca_tot_amt", "0"))
         equity = int(output2.get("tot_evlu_amt", "0"))
         return Balance(cash=cash, equity=equity, buying_power=cash, currency="KRW")
+
+    async def get_orderable_cash(self, *, symbol: str, price: int) -> int:
+        """Read KIS's symbol/price-specific cash orderability; fail closed."""
+        cano, prdt = self._split_account()
+        output = await self.client.inquire_orderable_cash(
+            cano, prdt, symbol=symbol, price=int(price),
+        )
+        raw = output.get("ord_psbl_cash")
+        no_credit = output.get("nrcvb_buy_amt")
+        if raw in (None, ""):
+            raise KisApiError("KIS orderable-cash response missing ord_psbl_cash")
+        cash = int(raw)
+        if no_credit not in (None, ""):
+            cash = min(cash, int(no_credit))
+        return cash
+
+    async def get_orderable_buy_capacity(self, *, symbol: str, price: int) -> dict[str, int]:
+        """Read market-order capacity using KIS no-credit amount and quantity."""
+        cano, prdt = self._split_account()
+        output = await self.client.inquire_orderable_cash(
+            cano, prdt, symbol=symbol, price=int(price), order_division="01",
+        )
+        fields = {
+            "orderable_cash_krw": "ord_psbl_cash",
+            "no_credit_buy_amount_krw": "nrcvb_buy_amt",
+            "no_credit_buy_quantity": "nrcvb_buy_qty",
+            "calculation_price_krw": "psbl_qty_calc_unpr",
+        }
+        parsed: dict[str, int] = {}
+        for target, source in fields.items():
+            value = output.get(source)
+            if value in (None, ""):
+                raise KisApiError(f"KIS orderable-cash response missing {source}")
+            try:
+                parsed[target] = int(value)
+            except (TypeError, ValueError) as exc:
+                raise KisApiError(f"KIS orderable-cash response invalid {source}") from exc
+            if parsed[target] < 0:
+                raise KisApiError(f"KIS orderable-cash response invalid {source}")
+        if parsed["calculation_price_krw"] <= 0:
+            raise KisApiError("KIS orderable-cash response invalid psbl_qty_calc_unpr")
+        return parsed
 
     async def get_positions(self) -> list[Position]:
         raw = await self._cached_inquire_balance()

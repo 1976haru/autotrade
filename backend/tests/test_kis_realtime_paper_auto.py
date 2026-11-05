@@ -89,6 +89,14 @@ def _paper_broker_no_holdings():
     async def _no_pos():
         return []
     b.get_positions = _no_pos
+    async def _buy_capacity(*, symbol, price):
+        return {
+            "orderable_cash_krw": 500_000_000,
+            "no_credit_buy_amount_krw": 500_000_000,
+            "no_credit_buy_quantity": 500_000_000 // max(1, int(price)),
+            "calculation_price_krw": int(price),
+        }
+    b.get_orderable_buy_capacity = _buy_capacity
     return b
 
 
