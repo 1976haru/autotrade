@@ -82,17 +82,26 @@ def eod_incident_block(db: Any, now: datetime) -> str | None:
     오늘보다 *이전* 날짜 중 가장 최근 행만 본다. 운영자가 acknowledge 하면 해제.
     """
     from app.db.models import EodLiquidationState
+    from app.kis_paper.account_scope import current_account_scope, kis_scope_required
+    from app.kis_paper.eod_liquidation import LEGACY_EOD_KEY
     today = to_kst(now).date().isoformat()
-    row = (
-        db.query(EodLiquidationState)
-        .filter(EodLiquidationState.trading_date < today)
-        .order_by(EodLiquidationState.trading_date.desc())
-        .first()
-    )
-    if row is None:
-        return None
-    if row.state in _UNRESOLVED_STATES and not bool(row.incident_acknowledged):
+    scope = current_account_scope()
+    if scope is None and kis_scope_required():
+        return "ACCOUNT_SCOPE_UNKNOWN"
+
+    def latest(key: str):
+        return (db.query(EodLiquidationState)
+                .filter(EodLiquidationState.trading_date < today)
+                .filter(EodLiquidationState.account_key == key)
+                .order_by(EodLiquidationState.trading_date.desc()).first())
+
+    row = latest(scope or LEGACY_EOD_KEY)
+    if row and row.state in _UNRESOLVED_STATES and not bool(row.incident_acknowledged):
         return str(row.trading_date)
+    if scope is not None:
+        legacy = latest(LEGACY_EOD_KEY)
+        if legacy and legacy.state in _UNRESOLVED_STATES and not bool(legacy.incident_acknowledged):
+            return f"LEGACY_ACCOUNT {legacy.trading_date}"
     return None
 
 
@@ -108,16 +117,17 @@ def rehearsal_enabled(settings: Any) -> bool:
 def _today_program_buy_qty(db: Any, now: datetime) -> int:
     """오늘(KST) 프로그램 BUY 로 *전송된* 수량 합 (접수 기준 — 체결 전이라도 카운트)."""
     from app.db.models import OrderAuditLog
+    from app.kis_paper.account_scope import current_account_scope, scope_query
     day = to_kst(now).date()
     start_utc = datetime(day.year, day.month, day.day) - timedelta(hours=9)
-    rows = (
+    rows = scope_query(
         db.query(OrderAuditLog.quantity)
         .filter(OrderAuditLog.trade_reason.in_(tuple(PROGRAM_TRADE_REASONS)))
         .filter(OrderAuditLog.side == "BUY")
         .filter(OrderAuditLog.executed.is_(True))
-        .filter(OrderAuditLog.created_at >= start_utc)
-        .all()
-    )
+        .filter(OrderAuditLog.created_at >= start_utc),
+        OrderAuditLog, current_account_scope(),
+    ).all()
     return sum(int(q or 0) for (q,) in rows)
 
 
@@ -153,6 +163,16 @@ def program_buy_block_reason(
             return code, buy_reason_message_ko(code)
         assert code == BUY_ALLOWED
         if db is not None:
+            from app.kis_paper.account_scope import (
+                ACCOUNT_SCOPE_UNKNOWN, account_scope_block_reason,
+                kis_scope_required, legacy_unverified_holdings,
+            )
+            if account_scope_block_reason(settings) is not None:
+                return ACCOUNT_SCOPE_UNKNOWN, "KIS 계좌 범위를 확인할 수 없어 신규 매수를 차단합니다."
+            if kis_scope_required(settings) and legacy_unverified_holdings(db):
+                return "LEGACY_ACCOUNT_HOLDINGS_UNVERIFIED", (
+                    "계좌 귀속을 확인할 수 없는 과거 원장 보유가 있어 신규 매수를 차단합니다."
+                )
             prev = eod_incident_block(db, now)
             if prev is not None:
                 return BUY_BLOCKED_BY_EOD_INCIDENT, (

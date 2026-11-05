@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -72,10 +72,17 @@ class OrderAuditLog(Base):
     broker_order_id: Mapped[str | None]     = mapped_column(String(64), nullable=True)
     # V3: 정정/취소용 KRX 전송 주문조직번호 (KIS order-cash 응답). NULL = 미제공/구버전 행.
     broker_org_no:   Mapped[str | None]     = mapped_column(String(16), nullable=True)
+    # Account scope hash only; NULL rows are legacy/unattributed and must not
+    # be adopted as holdings for a KIS account.
+    account_id:      Mapped[str | None]     = mapped_column(String(48), nullable=True, index=True)
     broker_status:   Mapped[str | None]     = mapped_column(String(32), nullable=True)
     filled_quantity: Mapped[int]            = mapped_column(Integer, default=0)
     avg_fill_price:  Mapped[int | None]     = mapped_column(Integer, nullable=True)
     message:         Mapped[str]            = mapped_column(String(255), default="")
+
+    __table_args__ = (
+        UniqueConstraint("account_id", "client_order_id", name="uq_order_audit_account_client_order"),
+    )
 
 
 class BacktestRun(Base):
@@ -805,7 +812,8 @@ class EodLiquidationState(Base):
     __tablename__ = "eod_liquidation_state"
 
     id:               Mapped[int]             = mapped_column(primary_key=True)
-    trading_date:     Mapped[str]             = mapped_column(String(10), unique=True, index=True)
+    trading_date:     Mapped[str]             = mapped_column(String(10), index=True)
+    account_key:      Mapped[str]             = mapped_column(String(48), default="", server_default="")
     state:            Mapped[str]             = mapped_column(String(32), index=True)
     created_at:       Mapped[datetime]        = mapped_column(DateTime, default=_utcnow)
     updated_at:       Mapped[datetime]        = mapped_column(DateTime, default=_utcnow)
@@ -823,3 +831,7 @@ class EodLiquidationState(Base):
     acknowledged_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     ack_note:         Mapped[str | None]      = mapped_column(String(255), nullable=True)
     is_live_authorization: Mapped[bool]       = mapped_column(Boolean, default=False)
+
+    __table_args__ = (
+        Index("uq_eod_liquidation_state_date_account", "trading_date", "account_key", unique=True),
+    )

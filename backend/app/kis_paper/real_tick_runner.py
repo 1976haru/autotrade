@@ -323,12 +323,14 @@ def build_real_kis_paper_tick_runner(
         try:
             from sqlalchemy import select
             from app.db.models import OrderAuditLog
-            rows = db.execute(
-                select(OrderAuditLog.id).where(
+            from app.kis_paper.account_scope import current_account_scope, scope_query
+            stmt = scope_query(
+                select(OrderAuditLog.id), OrderAuditLog, current_account_scope(),
+            ).where(
                     OrderAuditLog.broker_status == "FILLED",
                     OrderAuditLog.executed.is_(True),
                 )
-            ).scalars().all()
+            rows = db.execute(stmt).scalars().all()
             ids = {int(i) for i in rows if i is not None}
             new_ids = ids - _seen_filled_audit_ids
             _seen_filled_audit_ids.update(new_ids)

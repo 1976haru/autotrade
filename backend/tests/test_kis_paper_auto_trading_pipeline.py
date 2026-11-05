@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,7 +37,7 @@ from app.brokers.kis_client import KisApiError
 from app.brokers.mock_broker import MockBrokerAdapter
 from app.core.config import Settings
 from app.db.base import Base
-from app.db.models import AgentDecisionLog, OrderAuditLog
+from app.db.models import AgentDecisionLog, EmergencyStopEvent, OrderAuditLog
 from app.execution.paper_trader import NotPaperBrokerError
 from app.kis_paper.auto_executor import (
     KisPaperAutoDecision,
@@ -48,7 +49,6 @@ from app.kis_paper.auto_permission import (
     evaluate_kis_paper_order_permission,
 )
 from app.risk.risk_manager import RiskDecision
-
 
 _KST = timezone(timedelta(hours=9))
 
@@ -247,13 +247,34 @@ def _needs_approval_route():
     return _fn
 
 
+async def _test_authorization(**kwargs):
+    return True, "TEST_APPROVAL"
+
+
 def _run(db, *, settings=None, decision=None, broker=None, risk=None, route=None, **kw):
-    return asyncio.run(execute_kis_paper_auto_order(
-        db, decision=decision or _DEC, settings=settings or _settings(),
-        broker=broker or MockBrokerAdapter(), risk=risk or object(),
-        broker_is_kis_paper=True, credentials_present=True,
-        route_order_fn=route or _approved_route(), now=OPEN_TIME, **kw,
-    ))
+    run_settings = settings or _settings()
+    no_approval = kw.pop("no_approval", False)
+    needs_test_approval = (
+        not no_approval
+        and not bool(getattr(run_settings, "kis_paper_auto_order_dry_run", True))
+    )
+    if needs_test_approval:
+        from unittest.mock import patch
+
+        approval_patch = patch("app.kis_paper.one_click_session.load_approval", return_value={"status": "ACTIVE"})
+        auth_patch = patch(
+            "app.kis_paper.one_click_session.authorize_order",
+            new=_test_authorization,
+        )
+    else:
+        approval_patch = auth_patch = nullcontext()
+    with approval_patch, auth_patch:
+        return asyncio.run(execute_kis_paper_auto_order(
+            db, decision=decision or _DEC, settings=run_settings,
+            broker=broker or MockBrokerAdapter(), risk=risk or object(),
+            broker_is_kis_paper=True, credentials_present=True,
+            route_order_fn=route or _approved_route(), now=OPEN_TIME, **kw,
+        ))
 
 
 def test_executor_dry_run_no_route_order(db):
@@ -282,6 +303,31 @@ def test_executor_reads_runtime_L1_and_records_buy_block_before_dry_run(db):
     r = _run(db, settings=_settings(kis_paper_auto_order_dry_run=True), risk=risk)
     assert r.reason_code == "EMERGENCY_STOP_ENABLED"
     assert r.broker_order_sent is False
+
+
+def test_executor_refreshes_new_persisted_L1_before_dry_run(db):
+    """A stop written after backend startup must block BUY even if RAM is stale."""
+    from app.risk.risk_manager import RiskManager, RiskPolicy
+
+    db.add(EmergencyStopEvent(
+        enabled=True, level="LEVEL_1", policy_version=2,
+        reason_code="test_external_emergency",
+    ))
+    db.commit()
+    called = {"n": 0}
+
+    async def _route(**kw):
+        called["n"] += 1
+        return SimpleNamespace(decision=RiskDecision.APPROVED, reasons=[],
+                               audit=SimpleNamespace(id=1))
+
+    risk = RiskManager(RiskPolicy())  # process-local state is still OFF
+    r = _run(db, settings=_settings(kis_paper_auto_order_dry_run=True),
+             risk=risk, route=_route)
+    assert r.reason_code == "EMERGENCY_STOP_ENABLED"
+    assert r.broker_order_sent is False
+    assert called["n"] == 0
+    assert risk.emergency_stop is True
 
 
 def test_executor_L1_keeps_reduce_only_sell_path_open(db):
@@ -339,6 +385,26 @@ def test_executor_submitted(db):
     assert log.meta["broker_order_type"] == "KIS_PAPER"
     assert log.meta["broker_order_no"] == "PAPER-0001"
     assert log.meta["is_live_authorization"] is False
+
+
+def test_executor_blocks_actual_order_without_one_click_approval(db, monkeypatch):
+    from app.kis_paper import one_click_session
+
+    monkeypatch.setattr(one_click_session, "load_approval", lambda: None)
+    called = {"n": 0}
+
+    async def _route(**kwargs):
+        called["n"] += 1
+        return await _approved_route()(**kwargs)
+
+    r = _run(
+        db, broker=KisBrokerAdapter(is_paper=True), route=_route,
+        no_approval=True,
+    )
+    assert r.reason_code == "ONE_CLICK_PAPER_BLOCKED"
+    assert r.submitted is False
+    assert r.broker_order_sent is False
+    assert called["n"] == 0
 
 
 def test_executor_sell(db):
@@ -618,8 +684,9 @@ def test_build_permission_input_is_risk_exit_for_held_and_risk_exits():
     #   게이트 면제. 종전엔 sell_reason∈{STOP_LOSS,TAKE_PROFIT}만 면제해, avg=0 등으로
     #   강제손절이 죽고 vote(VWAP) 청산만 나올 때 게이트에 막혀 손실 포지션 미청산
     #   (STOP_LOSS 0건). 이제 held_position 이거나 청산성 reason 이면 면제한다.
-    from app.kis_paper.auto_executor import build_permission_input, KisPaperAutoDecision
     from types import SimpleNamespace
+
+    from app.kis_paper.auto_executor import KisPaperAutoDecision, build_permission_input
     st = SimpleNamespace(enable_kis_paper_auto_trading=True, kis_paper_auto_order_dry_run=False,
                          kis_is_paper=True, enable_live_trading=False,
                          kis_paper_auto_max_order_notional=1_000_000,
@@ -636,7 +703,9 @@ def test_build_permission_input_is_risk_exit_for_held_and_risk_exits():
     assert build_permission_input(decision=_mk("SELL", "STOP_LOSS"), **kw).is_risk_exit is True
     assert build_permission_input(decision=_mk("SELL", "TAKE_PROFIT"), **kw).is_risk_exit is True
     assert build_permission_input(decision=_mk("SELL", "TRAILING_STOP"), **kw).is_risk_exit is True
-    assert build_permission_input(decision=_mk("SELL", "MARKET_CLOSE_EXIT"), **kw).is_risk_exit is True   # 장마감도 청산
+    assert build_permission_input(
+        decision=_mk("SELL", "MARKET_CLOSE_EXIT"), **kw
+    ).is_risk_exit is True  # 장마감도 청산
     # 보유 청산 SELL 은 reason 무관 면제(핵심 변경) — vote(VWAP 등) 청산도 안 막힘.
     assert build_permission_input(decision=_mk("SELL", "MOMENTUM_REVERSAL", held=True), **kw).is_risk_exit is True
     # 미보유 + 청산성 reason 아님 → 면제 아님(naked 성 일반 SELL).

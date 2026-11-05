@@ -43,6 +43,7 @@ from app.kis_paper.auto_permission import (
     KisPaperPermReason,
     evaluate_kis_paper_order_permission,
 )
+from app.kis_paper.account_scope import account_id_for
 from app.kis_paper.eod_liquidation import (
     EodState,
     acknowledge_incident,
@@ -197,6 +198,7 @@ def seed_bot_position(db, symbol: str, qty: int, *, odno: str | None = None) -> 
         trade_reason="kis_paper_auto", executed=True,
         broker_order_id=odno or f"OLD-{symbol}", broker_status="FILLED",
         filled_quantity=qty,
+        account_id=account_id_for("1234567801"),
     ))
     db.commit()
 
@@ -945,6 +947,7 @@ def seed_today_program_buy(db, symbol: str, qty: int, odno: str, *, filled: int 
         symbol=symbol, side="BUY", quantity=qty, order_type="MARKET", latest_price=10_000,
         decision="APPROVED", reasons=[], trade_reason="kis_paper_auto", executed=True,
         broker_order_id=odno, broker_status="RECEIVED", filled_quantity=filled,
+        account_id=account_id_for("1234567801"),
     ))
     db.commit()
 
@@ -1073,6 +1076,13 @@ def test_V2_route_cancel_guards(db):
     for r in (r1, r2, r3, r4):
         assert r.decision == RiskDecision.REJECTED and r.audit.executed is False
     assert broker.cancel_calls == []
+    from app.kis_paper.account_scope import account_id_for
+    db.add(OrderAuditLog(
+        mode="PAPER", requested_by_ai=False, symbol="005930", side="BUY", quantity=1,
+        order_type="MARKET", latest_price=10_000, decision="APPROVED", reasons=[],
+        executed=True, broker_order_id="0000000001", account_id=account_id_for("1234567801"),
+    ))
+    db.commit()
     ok = _rc(db, broker, client_order_id="c5")
     assert ok.decision == RiskDecision.APPROVED and broker.cancel_calls == [("0000000001", "06010")]
     with pytest.raises(DuplicateOrderError):
@@ -1570,7 +1580,8 @@ def test_V3_cancel_prefers_order_response_org_no(session_factory, db):
         symbol="005930", side="BUY", quantity=10, order_type="MARKET", latest_price=10_000,
         decision="APPROVED", reasons=[], trade_reason="kis_paper_auto", executed=True,
         broker_order_id="0000000950", broker_org_no="91252", broker_status="RECEIVED",
-        filled_quantity=0))
+        filled_quantity=0,
+        account_id=account_id_for("1234567801")))
     db.commit()
     broker = FakeKisPaperBroker({})
     broker.rows.append(open_buy_row("0000000950", "005930", 10, org="06010"))
@@ -1783,6 +1794,10 @@ def test_PF_run_once_buy_becomes_eod_managed_and_is_liquidated(run_once_env, ses
     audit = db.query(OrderAuditLog).filter(OrderAuditLog.side == "BUY").one()
     assert audit.trade_reason == "kis_paper_auto"         # 프로그램 소유 원장에 기록
     monkeypatch.undo()                                     # 시계 고정 해제 후 EOD 진행
+    from app.kis_paper import one_click_session
+    async def _test_authorized_sell(**_kwargs):
+        return True, "TEST_OPERATOR_APPROVAL"
+    monkeypatch.setattr(one_click_session, "authorize_order", _test_authorized_sell)
     s = make_settings()
     pre = step(session_factory, broker, kst(14, 45), settings=s)
     assert pre["summary"]["symbols"]["005930"]["managed_qty"] == 1   # EOD 관리 대상
@@ -1869,6 +1884,10 @@ def test_PF_rehearsal_second_buy_blocked_but_eod_sell_allowed(run_once_env, sess
     assert other["submitted"] is False
     assert len([o for o in broker.place_calls if o.side == OrderSide.BUY]) == 1
     monkeypatch.undo()
+    from app.kis_paper import one_click_session
+    async def _test_authorized_sell(**_kwargs):
+        return True, "TEST_OPERATOR_APPROVAL"
+    monkeypatch.setattr(one_click_session, "authorize_order", _test_authorized_sell)
     out = step(session_factory, broker, kst(15, 0, 5), settings=_rehearsal())
     assert [(o.side, o.quantity) for o in broker.place_calls][-1] == (OrderSide.SELL, 1)
     assert out["orders_submitted_this_step"] == 1

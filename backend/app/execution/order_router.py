@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -90,16 +90,37 @@ async def route_order(
     Caller decides the surface (HTTP status, log entry, etc.).
     """
     # 140: idempotency 첫 검사 — broker/risk 호출 비용을 들이기 전에 차단.
+    from app.kis_paper.account_scope import account_scope_for_broker
+    query_scope = account_scope_for_broker(broker)
     if order.client_order_id:
-        existing = db.execute(
-            select(OrderAuditLog.id).where(
-                OrderAuditLog.client_order_id == order.client_order_id
-            )
-        ).first()
+        query = select(OrderAuditLog.id).where(OrderAuditLog.client_order_id == order.client_order_id)
+        if query_scope is not None:
+            query = query.where(OrderAuditLog.account_id == query_scope)
+        existing = db.execute(query).first()
         if existing is not None:
             raise DuplicateOrderError(
                 f"client_order_id={order.client_order_id} already processed"
             )
+
+    from app.brokers.kis import KisBrokerAdapter
+    from app.kis_paper.account_scope import ACCOUNT_SCOPE_UNKNOWN, account_scope_for_broker
+    account_scope = account_scope_for_broker(broker)
+    if isinstance(broker, KisBrokerAdapter) and account_scope is None:
+        audit = OrderAuditLog(
+            mode=mode.value, requested_by_ai=requested_by_ai, symbol=order.symbol,
+            side=order.side.value, quantity=order.quantity, order_type=order.order_type.value,
+            limit_price=order.limit_price, latest_price=0,
+            decision=RiskDecision.REJECTED.value,
+            reasons=[f"{ACCOUNT_SCOPE_UNKNOWN}: KIS account scope unavailable"],
+            trade_reason=order.trade_reason, strategy=order.strategy,
+            client_order_id=order.client_order_id,
+            source=derive_order_source(order, requested_by_ai=requested_by_ai).value,
+            account_id=account_scope,
+        )
+        db.add(audit)
+        db.commit()
+        return OrderRoutingResult(decision=RiskDecision.REJECTED,
+                                  reasons=list(audit.reasons), audit=audit)
 
     # #38: OrderGuard pre-trade 검사 — duplicate fingerprint / cooldown /
     # pending. 모든 cooldown / window가 0(default)이면 본 가드는 사실상 no-op
@@ -146,6 +167,7 @@ async def route_order(
                 client_order_id=order.client_order_id,
                 ai_decision_meta=order.ai_decision_meta,
                 source=derive_order_source(order, requested_by_ai=requested_by_ai).value,
+                account_id=account_scope,
             )
             db.add(cutoff_audit)
             db.commit()
@@ -191,6 +213,7 @@ async def route_order(
             ai_decision_meta=order.ai_decision_meta,
             # #40: 주문 source 분류
             source=derive_order_source(order, requested_by_ai=requested_by_ai).value,
+            account_id=account_scope,
         )
         db.add(guard_audit)
         db.commit()
@@ -278,6 +301,24 @@ async def route_order(
     except (TypeError, ValueError):
         quote_ts = None
 
+    paper_position_limits = None
+    if mode == OperationMode.PAPER:
+        from app.brokers.kis import KisBrokerAdapter
+
+        if isinstance(broker, KisBrokerAdapter) and bool(getattr(broker, "is_paper", False)):
+            from app.kis_paper.order_limits import resolve_kis_paper_order_limits
+            from app.risk.position_limits import policy_from_risk_policy
+            from app.core.config import get_settings
+
+            limits = resolve_kis_paper_order_limits(get_settings())
+            paper_position_limits = replace(
+                policy_from_risk_policy(risk.policy),
+                max_order_notional=limits.max_order_krw,
+                max_symbol_exposure=limits.per_symbol_krw,
+                max_positions=limits.max_positions,
+                max_total_exposure=limits.total_budget_krw,
+            )
+
     decision = risk.evaluate_order(
         order=order,
         mode=mode,
@@ -288,6 +329,7 @@ async def route_order(
         latest_price_timestamp=quote_ts,
         weekly_realized_pnl=weekly_pnl,
         consecutive_loss_count=consecutive_loss_count,
+        paper_position_limits=paper_position_limits,
     )
     # P0-SAFETY-FIX-V1: LEVEL_1 SELL 프로그램 소유권 (브로커 보유 확인은 RiskManager 가 수행).
     _own_block = emergency_sell_ownership_block(
@@ -360,8 +402,11 @@ async def route_order(
         source=derive_order_source(order, requested_by_ai=requested_by_ai).value,
         # 152: AI decision metadata도 같은 row에 carry.
         ai_decision_meta=order.ai_decision_meta,
+        account_id=account_scope,
     )
     db.add(audit)
+    # Force account-scoped unique-key checks before any external order call.
+    db.flush()
 
     if decision.decision == RiskDecision.REJECTED:
         # #43: LIVE_SHADOW 추정 기록 — RiskManager가 LIVE_SHADOW 주문을 항상
@@ -453,16 +498,26 @@ def emergency_sell_ownership_block(db: Session, risk: RiskManager, *, side: Orde
     소유권은 여기서 원장(trade_reason=kis_paper_auto 체결 순수량)으로 검사한다 —
     수동·타인 보유 매도 0. LEVEL_1(새 정책)이 아니면 None (기존 경로 무변경)."""
     from app.risk.kill_switch_policy import STRICT_REASON, emergency_order_policy
-    pol = emergency_order_policy(risk)
-    if not pol.active or not pol.allows_reduce_only_sell:
-        return None
     if getattr(side, "value", side) != OrderSide.SELL.value:
         return None
+    pol = emergency_order_policy(risk)
     tag = f"{STRICT_REASON} (LEVEL_1)"
-    if (trade_reason or "") != PROGRAM_TRADE_REASON:
-        return f"{tag}: only program exits may sell — manual/other-owned holdings are not sold"
-    from app.kis_paper.eod_liquidation import _program_audit_rows, bot_net_quantities
-    owned = int(bot_net_quantities(_program_audit_rows(db), {}).get(symbol, 0) or 0)
+    is_program_sell = (trade_reason or "") == PROGRAM_TRADE_REASON
+    if not is_program_sell:
+        if pol.active and pol.allows_reduce_only_sell:
+            return f"{tag}: only program exits may sell; manual/unowned sell blocked"
+        return None
+    try:
+        from app.kis_paper.account_scope import (
+            account_scope_block_reason, current_account_scope, program_holdings,
+        )
+        from app.core.config import get_settings
+        settings = get_settings()
+        if account_scope_block_reason(settings) is not None:
+            return "ACCOUNT_SCOPE_UNKNOWN: program SELL blocked"
+        owned = int(program_holdings(db, current_account_scope(settings)).get(symbol, 0) or 0)
+    except Exception as exc:  # noqa: BLE001
+        return f"ACCOUNT_LEDGER_UNAVAILABLE: program SELL blocked ({type(exc).__name__})"
     if quantity <= 0 or quantity > owned:
         return f"{tag}: SELL exceeds program-owned quantity (owned={owned}, requested={quantity})"
     return None
@@ -492,13 +547,28 @@ async def route_cancel(
     취소 *접수* 는 취소 완료가 아니다 — 호출자가 일별체결 잔량으로 대조한다.
     """
     from app.execution.paper_trader import is_live_broker
+    from app.kis_paper.account_scope import account_scope_for_broker
+    from app.brokers.kis import KisBrokerAdapter
+    cancel_scope = account_scope_for_broker(broker)
 
-    if db.execute(select(OrderAuditLog.id).where(
-            OrderAuditLog.client_order_id == client_order_id)).first() is not None:
+    duplicate_query = select(OrderAuditLog.id).where(OrderAuditLog.client_order_id == client_order_id)
+    if cancel_scope is not None:
+        duplicate_query = duplicate_query.where(OrderAuditLog.account_id == cancel_scope)
+    if db.execute(duplicate_query).first() is not None:
         raise DuplicateOrderError(f"client_order_id={client_order_id} already processed")
 
     reasons = [f"CANCEL original={original_order_id} reason={reason}"]
     blocked: str | None = None
+    if isinstance(broker, KisBrokerAdapter) and cancel_scope is None:
+        blocked = "ACCOUNT_SCOPE_UNKNOWN: cancel refused"
+    elif isinstance(broker, KisBrokerAdapter) and db.execute(
+        select(OrderAuditLog.id).where(
+            OrderAuditLog.account_id == cancel_scope,
+            OrderAuditLog.broker_order_id == original_order_id,
+            OrderAuditLog.side == side.value,
+        ).limit(1)
+    ).first() is None:
+        blocked = "ORDER_NOT_OWNED_BY_CURRENT_ACCOUNT: cancel refused"
     from app.risk.kill_switch_policy import emergency_order_policy
     es_policy = emergency_order_policy(risk)
     if es_policy.active and not (es_policy.allows_buy_cancel
@@ -519,6 +589,7 @@ async def route_cancel(
         reasons=reasons + ([blocked] if blocked else []),
         trade_reason=CANCEL_TRADE_REASON, strategy="EOD_CANCEL",
         client_order_id=client_order_id, source="STRATEGY",
+        account_id=cancel_scope,
     )
     db.add(audit)
     if blocked:

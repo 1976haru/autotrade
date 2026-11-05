@@ -82,8 +82,15 @@ async def poll_once(
     tests that don't pass it are unaffected.
     """
     now = now or datetime.now(timezone.utc)
+    from app.kis_paper.account_scope import account_scope_for_broker, kis_scope_required
+    scope = account_scope_for_broker(broker)
+    if scope is None and kis_scope_required():
+        logger.error("fill poll skipped: KIS account scope unavailable")
+        return 0
+    account_filter = [OrderAuditLog.account_id == scope] if scope is not None else []
     candidates = db.execute(
         select(OrderAuditLog).where(
+            *account_filter,
             OrderAuditLog.executed.is_(True),
             OrderAuditLog.broker_order_id.isnot(None),
             OrderAuditLog.broker_status.in_(_OPEN_STATUSES),

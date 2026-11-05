@@ -24,6 +24,7 @@ from app.core.config import get_settings
 from app.db.models import OrderAuditLog
 from app.db.session import get_db
 from app.execution.order_router import DuplicateOrderError, route_order
+from app.kis_paper.account_scope import current_account_scope, scope_query
 from app.risk.risk_manager import RiskDecision, RiskManager
 from app.universe.default_universe import FALLBACK_MARKET_CAP_TOP50_NAMES
 
@@ -52,7 +53,7 @@ def _symbol_has_open_sell_today(db: Session, symbol: str, now: datetime) -> bool
     """
     start = _kst_today_start_utc(now)
     rows = (
-        db.query(OrderAuditLog)
+        scope_query(db.query(OrderAuditLog), OrderAuditLog, current_account_scope())
         .filter(
             OrderAuditLog.symbol == symbol,
             OrderAuditLog.side == "SELL",

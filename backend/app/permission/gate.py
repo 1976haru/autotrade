@@ -183,6 +183,15 @@ class PermissionGate:
             raise RuntimeError(
                 f"audit {approval.audit_id} for approval {approval_id} not found"
             )
+        from app.kis_paper.account_scope import (
+            ACCOUNT_SCOPE_UNKNOWN, account_scope_block_reason, current_account_scope,
+        )
+        from app.brokers.kis import KisBrokerAdapter
+        if isinstance(broker, KisBrokerAdapter):
+            if account_scope_block_reason() is not None:
+                raise RuntimeError(ACCOUNT_SCOPE_UNKNOWN)
+            if audit.account_id != current_account_scope():
+                raise RuntimeError("APPROVAL_ACCOUNT_SCOPE_MISMATCH")
 
         # 160: AI invariants(158/159)도 approve 시점 re-eval에 적용되려면
         # OrderRequest 재구성 시 audit row에서 AI 메타데이터를 복원해야 한다.

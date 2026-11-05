@@ -19,6 +19,10 @@ from pathlib import Path
 _HERMETIC_DIR = Path(tempfile.mkdtemp(prefix="autotrade-pytest-"))
 os.environ["DATABASE_URL"] = "sqlite:///" + (_HERMETIC_DIR / "test.db").as_posix()
 os.environ["AGENT_TRADER_CONFIG_DIR"] = str(_HERMETIC_DIR / "config")
+os.environ["AUTOTRADE_PAPER_APPROVAL_FILE"] = str(
+    _HERMETIC_DIR / "paper-session-approval.json"
+)
+
 os.environ.update({
     "DEFAULT_MODE": "SIMULATION", "MARKET_DATA_PROVIDER": "mock",
     "USE_REAL_TICK_RUNNER": "false", "PAPER_CAPITAL_PERSIST": "false",
@@ -78,6 +82,25 @@ def safe_default_flags(monkeypatch):
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _fake_paper_operator_approval_for_non_auth_tests(request, monkeypatch):
+    """Authorize isolated FakeBroker workflows, never real gate tests."""
+    module_name = request.module.__name__.rsplit(".", 1)[-1]
+    if module_name in {
+        "test_one_click_paper_session",
+        "test_kis_paper_auto_trading_pipeline",
+        "test_kis_paper_v22_multisymbol_integration",
+    }:
+        return
+    from app.kis_paper import one_click_session
+    monkeypatch.setattr(one_click_session, "load_approval", lambda: None)
+
+    async def _approve_fake_paper_workflow(**_kwargs):
+        return True, "TEST_OPERATOR_APPROVAL"
+
+    monkeypatch.setattr(one_click_session, "authorize_order", _approve_fake_paper_workflow)
 
 
 class _FakeAiClient(AiClient):

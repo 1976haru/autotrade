@@ -36,7 +36,6 @@ from app.kis_paper.auto_permission import (
     evaluate_kis_paper_order_permission,
 )
 
-
 _log = logging.getLogger("autotrade.kis_paper.auto")
 
 # route_order 와 동일 시그니처의 콜러블 — 테스트는 mock 주입.
@@ -204,16 +203,18 @@ def _today_kis_paper_order_count(db: Session, now: datetime) -> int:
     """
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     try:
-        return (
+        from app.kis_paper.account_scope import current_account_scope, scope_query
+        query = scope_query(
             db.query(OrderAuditLog)
             .filter(OrderAuditLog.trade_reason == "kis_paper_auto")
             .filter(OrderAuditLog.created_at >= start)
             .filter(OrderAuditLog.executed.is_(True))
             .filter(OrderAuditLog.side == "BUY")   # ★BUY 만 — SELL 은 횟수 면제(A수정 정합)
-            .count()
+            , OrderAuditLog, current_account_scope(),
         )
+        return query.count()
     except Exception:  # noqa: BLE001
-        return 0
+        return 2**31 - 1
 
 
 def build_permission_input(
@@ -229,6 +230,8 @@ def build_permission_input(
 ) -> KisPaperOrderPermissionInput:
     """settings + decision → 게이트 입력 DTO (secret 값 없음)."""
     _pos_qty = int(getattr(decision, "position_quantity", 0) or 0)
+    from app.kis_paper.order_limits import resolve_kis_paper_order_limits
+    paper_limits = resolve_kis_paper_order_limits(settings)
     return KisPaperOrderPermissionInput(
         enable_kis_paper_auto_trading=bool(getattr(settings, "enable_kis_paper_auto_trading", False)),
         dry_run=bool(getattr(settings, "kis_paper_auto_order_dry_run", True)),
@@ -242,9 +245,9 @@ def build_permission_input(
         confidence=float(decision.confidence),
         quality_score=int(decision.quality_score),
         has_exit_plan=bool(decision.has_exit_plan),
-        max_order_notional=int(getattr(settings, "kis_paper_auto_max_order_notional", 1_000_000)),
+        max_order_notional=paper_limits.max_order_krw,
         daily_order_count=int(daily_order_count),
-        max_orders_per_day=int(getattr(settings, "kis_paper_auto_max_orders_per_day", 10)),
+        max_orders_per_day=paper_limits.daily_buy_count,
         window_start=str(getattr(settings, "kis_paper_auto_order_window_start", "09:05")),
         window_end=str(getattr(settings, "kis_paper_auto_order_window_end", "14:50")),
         min_confidence=float(getattr(settings, "kis_paper_auto_min_confidence", 0.6)),
@@ -320,8 +323,8 @@ async def execute_kis_paper_auto_order(
     # LEVEL_1 차단 원인이 가려졌다. 새 정책 LEVEL_1 의 reduce-only SELL/EOD 는
     # 초기 permission gate 에서 통과시키고, route_order 가 브로커 보유수량으로
     # 최종 검증한다. LEVEL_2/3 및 legacy strict 는 BUY/SELL 모두 조기 차단한다.
-    from app.risk.kill_switch_policy import emergency_order_policy
-    emergency_policy = emergency_order_policy(risk)
+    from app.risk.emergency_stop import synchronize_kill_switch_for_order
+    emergency_policy = synchronize_kill_switch_for_order(risk, db)
     if emergency_policy.active:
         permission_emergency_stop = (
             True if str(decision.side).upper() == "BUY"
@@ -349,18 +352,25 @@ async def execute_kis_paper_auto_order(
         buy_blocked_by_incident=eod_incident,
     ))
 
-    # ONE-CLICK-PAPER-V1: `.env` dry-run remains the safe default.  It is
-    # lifted for exactly one date/account only after an authenticated desktop
-    # approval and fresh read-only KIS preflight.  Missing/broken approval is
-    # indistinguishable from ordinary dry-run and can never widen permission.
-    if perm.allowed and perm.dry_run:
+    # Only the real KIS adapter can carry a real external order. Every such
+    # order requires a date/account-bound approval and fresh read-only KIS
+    # preflight; a config switch must never bypass this. FakeBroker tests and
+    # internal simulation remain usable without an operator KIS approval.
+    if perm.allowed:
         try:
             from dataclasses import replace
+
+            from app.brokers.kis import KisBrokerAdapter
             from app.kis_paper.one_click_session import authorize_order, load_approval
-            if load_approval() is not None:
+            approval_present = load_approval() is not None
+            is_real_kis_paper_adapter = (
+                isinstance(broker, KisBrokerAdapter) and bool(broker.is_paper)
+            )
+            if is_real_kis_paper_adapter and (not perm.dry_run or approval_present):
                 approved, approval_reason = await authorize_order(
                     db=db, settings=settings, broker=broker, risk=risk,
-                    side=str(decision.side), now=now,
+                    side=str(decision.side), symbol=str(decision.symbol),
+                    quantity=int(decision.quantity), now=now,
                     notional_krw=int(decision.notional_krw or 0),
                     daily_order_count=int(daily_count),
                 )

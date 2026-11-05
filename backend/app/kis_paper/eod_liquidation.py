@@ -175,21 +175,36 @@ def effective_policy(settings: Any, now: datetime) -> tuple[IntradayPolicy, bool
 # ── DB helpers (state row / lease) ─────────────────────────────────────────
 
 
-def get_state_row(db: Any, trading_date: str):
+LEGACY_EOD_KEY = ""
+
+
+def eod_account_key(account_key: str | None = None) -> str:
+    if account_key is not None:
+        return account_key
+    from app.kis_paper.account_scope import current_account_scope, kis_scope_required
+    scope = current_account_scope()
+    if scope is None and kis_scope_required():
+        raise RuntimeError("ACCOUNT_SCOPE_UNKNOWN")
+    return scope or LEGACY_EOD_KEY
+
+
+def get_state_row(db: Any, trading_date: str, account_key: str | None = None):
     from app.db.models import EodLiquidationState
     return (db.query(EodLiquidationState)
-            .filter(EodLiquidationState.trading_date == trading_date).first())
+            .filter(EodLiquidationState.trading_date == trading_date)
+            .filter(EodLiquidationState.account_key == eod_account_key(account_key)).first())
 
 
-def _get_or_create_row(db: Any, trading_date: str, now: datetime):
+def _get_or_create_row(db: Any, trading_date: str, now: datetime, account_key: str | None = None):
     from sqlalchemy.exc import IntegrityError
 
     from app.db.models import EodLiquidationState
-    row = get_state_row(db, trading_date)
+    key = eod_account_key(account_key)
+    row = get_state_row(db, trading_date, key)
     if row is not None:
         return row
     row = EodLiquidationState(
-        trading_date=trading_date, state=EodState.IDLE.value,
+        trading_date=trading_date, account_key=key, state=EodState.IDLE.value,
         created_at=_naive_utc(now), updated_at=_naive_utc(now), summary={},
     )
     db.add(row)
@@ -198,21 +213,23 @@ def _get_or_create_row(db: Any, trading_date: str, now: datetime):
     except IntegrityError:
         # 다른 프로세스가 동시에 생성 — 그 행을 사용.
         db.rollback()
-        row = get_state_row(db, trading_date)
+        row = get_state_row(db, trading_date, key)
     return row
 
 
 def acquire_lease(db: Any, trading_date: str, owner: str, now: datetime,
-                  ttl_seconds: int) -> bool:
+                  ttl_seconds: int, account_key: str | None = None) -> bool:
     """원자적 UPDATE 로 lease 획득/갱신. True = 이 프로세스가 단독 실행권 보유."""
     from sqlalchemy import or_, update
 
     from app.db.models import EodLiquidationState
-    _get_or_create_row(db, trading_date, now)
+    key = eod_account_key(account_key)
+    _get_or_create_row(db, trading_date, now, key)
     n = _naive_utc(now)
     res = db.execute(
         update(EodLiquidationState)
         .where(EodLiquidationState.trading_date == trading_date)
+        .where(EodLiquidationState.account_key == key)
         .where(or_(
             EodLiquidationState.lease_owner.is_(None),
             EodLiquidationState.lease_owner == owner,
@@ -238,6 +255,7 @@ def release_owner_leases(db: Any, owner: str | None = None) -> int:
     res = db.execute(
         update(EodLiquidationState)
         .where(EodLiquidationState.lease_owner == (owner or process_owner_id()))
+        .where(EodLiquidationState.account_key == eod_account_key())
         .values(lease_owner=None, lease_expires_at=None)
     )
     db.commit()
@@ -249,13 +267,14 @@ def step_in_progress() -> bool:
     return _STEP_LOCK.locked()
 
 
-def release_lease(db: Any, trading_date: str, owner: str) -> None:
+def release_lease(db: Any, trading_date: str, owner: str, account_key: str | None = None) -> None:
     from sqlalchemy import update
 
     from app.db.models import EodLiquidationState
     db.execute(
         update(EodLiquidationState)
         .where(EodLiquidationState.trading_date == trading_date)
+        .where(EodLiquidationState.account_key == eod_account_key(account_key))
         .where(EodLiquidationState.lease_owner == owner)
         .values(lease_owner=None, lease_expires_at=None)
     )
@@ -276,23 +295,18 @@ class Reconciliation:
 
 
 def _program_audit_rows(db: Any) -> list[Any]:
-    from app.db.models import OrderAuditLog
-    return (
-        db.query(OrderAuditLog)
-        .filter(OrderAuditLog.trade_reason == "kis_paper_auto")
-        .filter(OrderAuditLog.decision == "APPROVED")
-        .all()
-    )
+    from app.kis_paper.account_scope import current_account_scope, program_ledger_rows
+    return program_ledger_rows(db, current_account_scope())
 
 
 def _eod_audit_rows(db: Any, trading_date: str) -> list[Any]:
     from app.db.models import OrderAuditLog
-    return (
+    from app.kis_paper.account_scope import current_account_scope, scope_query
+    return scope_query(
         db.query(OrderAuditLog)
-        .filter(OrderAuditLog.client_order_id.like(f"eod-d{_yyyymmdd(trading_date)}-%"))
-        .order_by(OrderAuditLog.id.asc())
-        .all()
-    )
+        .filter(OrderAuditLog.client_order_id.like(f"eod-d{_yyyymmdd(trading_date)}-%")),
+        OrderAuditLog, current_account_scope(),
+    ).order_by(OrderAuditLog.id.asc()).all()
 
 
 def bot_net_quantities(rows: list[Any], ccld_filled: dict[str, int]) -> dict[str, int]:
@@ -342,6 +356,20 @@ async def reconcile(db: Any, broker: Any, *, trading_date: str) -> Reconciliatio
 
     ccld_by_odno = {o["odno"]: o for o in orders if o.get("odno")}
     ccld_filled = {k: int(v.get("filled", 0) or 0) for k, v in ccld_by_odno.items()}
+    # Persist only broker-confirmed fills for this account before the SELL
+    # ownership gate reads the ledger. This closes the gap where EOD saw a
+    # partial KIS fill but the local fill poller had not yet refreshed it.
+    fills_changed = False
+    for audit in rows:
+        odno = str(getattr(audit, "broker_order_id", "") or "")
+        if not odno or odno not in ccld_filled:
+            continue
+        confirmed = min(int(getattr(audit, "quantity", 0) or 0), ccld_filled[odno])
+        if confirmed > int(getattr(audit, "filled_quantity", 0) or 0):
+            audit.filled_quantity = confirmed
+            fills_changed = True
+    if fills_changed:
+        db.commit()
     net = bot_net_quantities(rows, ccld_filled)
     program_odnos = {str(getattr(r, "broker_order_id", "") or "") for r in rows} - {""}
     org_by_odno = {str(r.broker_order_id): str(getattr(r, "broker_org_no", "") or "")
@@ -916,9 +944,12 @@ def estimate_eod_capacity(settings: Any, n_symbols: int) -> dict[str, Any]:
 
 def _cancel_audit_rows(db: Any, trading_date: str, odno: str) -> list[Any]:
     from app.db.models import OrderAuditLog
+    from app.kis_paper.account_scope import current_account_scope, scope_query
+    query = scope_query(
+        db.query(OrderAuditLog), OrderAuditLog, current_account_scope(),
+    ).filter(OrderAuditLog.client_order_id.like(f"cxl-d{_yyyymmdd(trading_date)}-o{odno}-n%"))
     return (
-        db.query(OrderAuditLog)
-        .filter(OrderAuditLog.client_order_id.like(f"cxl-d{_yyyymmdd(trading_date)}-o{odno}-n%"))
+        query
         .order_by(OrderAuditLog.id.asc())
         .all()
     )
@@ -1068,6 +1099,12 @@ def eod_status(db: Any, *, settings: Any = None, now: datetime | None = None,
         ]
     except Exception:  # noqa: BLE001
         ledger_holdings = []
+    try:
+        from app.kis_paper.account_scope import current_account_scope, label, legacy_unverified_holdings
+        legacy_holdings = legacy_unverified_holdings(db)
+        account_label = label(current_account_scope(settings))
+    except Exception:  # noqa: BLE001
+        legacy_holdings, account_label = [], "UNKNOWN"
     if now is None:
         now = datetime.now(timezone.utc)
     if settings is None:
@@ -1124,6 +1161,8 @@ def eod_status(db: Any, *, settings: Any = None, now: datetime | None = None,
         "emergency_stop": emergency_on,
         "kill_switch": ks_policy.to_dict(),
         "program_ledger_holdings": ledger_holdings,
+        "account_scope": account_label,
+        "legacy_unverified_holdings": legacy_holdings,
         "manual_liquidation_required": bool(strict_stop and (
             ledger_holdings or int(((row.summary or {}) if row else {}).get(
                 "totals", {}).get("managed_qty", 0) or 0) > 0)),
@@ -1190,6 +1229,8 @@ def shutdown_check(db: Any, *, settings: Any = None, now: datetime | None = None
         "safe_to_quit": not needs or after_close,
         "needs_running_for_eod": needs and not after_close,
         "program_holdings": holdings,
+        "account_scope": st.get("account_scope"),
+        "legacy_unverified_holdings": list(st.get("legacy_unverified_holdings") or []),
         "open_order_qty": open_qty,
         "phase": phase,
         "eod_state": st.get("eod_state"),
@@ -1203,14 +1244,16 @@ def shutdown_check(db: Any, *, settings: Any = None, now: datetime | None = None
 
 
 def acknowledge_incident(db: Any, *, trading_date: str, decided_by: str,
-                         note: str | None = None, now: datetime | None = None) -> Any:
+                         note: str | None = None, now: datetime | None = None,
+                         account_key: str | None = None) -> Any:
     """운영자 확인 — FLATTEN_INCOMPLETE/미판정 행을 확인 처리(다음 BUY 차단 해제).
     상태 자체는 바꾸지 않는다(사고 기록 보존). 주문 0건."""
     if now is None:
         now = datetime.now(timezone.utc)
-    row = get_state_row(db, trading_date)
+    row = get_state_row(db, trading_date, account_key)
     if row is None:
-        raise LookupError(f"no EOD state for {trading_date}")
+        account = eod_account_key(account_key) or "LEGACY_ACCOUNT"
+        raise LookupError(f"no EOD state for {trading_date} (account={account})")
     row.incident_acknowledged = True
     row.acknowledged_by = (decided_by or "operator")[:64]
     row.acknowledged_at = _naive_utc(now)
@@ -1221,7 +1264,8 @@ def acknowledge_incident(db: Any, *, trading_date: str, decided_by: str,
 
 __all__ = [
     "EodState", "run_eod_step", "reconcile", "eod_status", "acknowledge_incident",
-    "acquire_lease", "release_lease", "release_owner_leases", "step_in_progress", "bot_net_quantities", "sell_quantity_for",
+    "acquire_lease", "release_lease", "release_owner_leases", "step_in_progress",
+    "bot_net_quantities", "sell_quantity_for",
     "eod_client_order_prefix", "effective_policy", "process_owner_id", "eod_message_ko",
     "shutdown_check",
 ]

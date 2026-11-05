@@ -57,7 +57,11 @@ def compute_holding_source(db: Any) -> dict[str, dict[str, int]]:
     """
     try:
         from app.db.models import OrderAuditLog
-        rows = db.query(OrderAuditLog).filter(OrderAuditLog.executed.is_(True)).all()
+        from app.kis_paper.account_scope import current_account_scope, scope_query
+        rows = scope_query(
+            db.query(OrderAuditLog).filter(OrderAuditLog.executed.is_(True)),
+            OrderAuditLog, current_account_scope(),
+        ).all()
     except Exception:  # noqa: BLE001 — 집계 실패는 빈 dict(보수적: 분류 불가 → UNTAGGED 처리).
         return {}
     return _net_by_source(rows)

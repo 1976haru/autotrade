@@ -319,6 +319,39 @@ def test_scan_recognizes_held_when_positions_fetch_fails(engine):
     assert "SELL_NOT_ORDERABLE" not in codes
 
 
+def test_scan_blocks_new_buy_when_kis_positions_are_unverified(engine, monkeypatch):
+    """A stale/DB holding fallback must never authorize a new account BUY."""
+    from app.agents.agent_council import CouncilAction
+    import app.agents.agent_council as council_module
+
+    Session = sessionmaker(bind=engine)
+
+    class _BuyCouncil:
+        final_action = CouncilAction.BUY
+
+    monkeypatch.setattr(council_module, "run_agent_council", lambda *a, **kw: _BuyCouncil())
+
+    async def _buy_input(symbol, *, client, now, market_is_open, **kwargs):
+        return StrategyMarketInput(
+            symbol=symbol, current_price=10_000.0, prev_close=9_900.0,
+            open_price=9_950.0, vwap=9_980.0, opening_range_high=10_100.0,
+            opening_range_low=9_800.0, recent_closes=(9_900.0, 9_950.0, 9_980.0),
+            current_volume=200.0, avg_volume=100.0,
+        ), KisRealtimeQuote(
+            symbol=symbol, status=KIS_PRICE_OK, price=10_000, is_stale=False,
+        )
+
+    out = asyncio.run(kis_paper_realtime_scan_tick(
+        session_factory=Session, broker=_FakePosBroker(raise_error=RuntimeError("KIS down")),
+        risk=object(), route_order_fn=_route_should_not_be_called(),
+        settings=_scan_settings(), market_input_fn=_buy_input,
+        universe_symbols=["005930"], client=object(), now=OPEN_TIME,
+    ))
+
+    assert out["orders_submitted"] == 0
+    assert any(item.get("reason_code") == "KIS_POSITIONS_UNVERIFIED" for item in out["skipped"])
+
+
 # ── S2: SELL 주문수량이 보유 기준으로 캡되는지 (스캔 → route_order spy) ──────────
 
 def test_sell_skipped_when_orderable_qty_zero(engine):

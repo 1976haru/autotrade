@@ -258,11 +258,20 @@ def _run_scan(kis_avg, seed_snapshot, ret_pct, bot_owned=None):
     if bot_owned is None:
         bot_owned = frozenset([_SYM])
     calls = []
-    out = asyncio.run(kis_paper_realtime_scan_tick(
-        session_factory=Session, broker=_real_paper_broker(kis_avg), risk=object(),
-        route_order_fn=_recording_route(calls), settings=_scan_settings(),
-        market_input_fn=_exit_only_input_fn(ret_pct), universe_symbols=[_SYM],
-        client=object(), now=_OPEN_NOW, _bot_owned_override=bot_owned))
+    from unittest.mock import patch
+
+    async def _authorized(**kwargs):
+        return True, "TEST_APPROVAL"
+
+    with (
+        patch("app.kis_paper.one_click_session.load_approval", return_value={"status": "ACTIVE"}),
+        patch("app.kis_paper.one_click_session.authorize_order", new=_authorized),
+    ):
+        out = asyncio.run(kis_paper_realtime_scan_tick(
+            session_factory=Session, broker=_real_paper_broker(kis_avg), risk=object(),
+            route_order_fn=_recording_route(calls), settings=_scan_settings(),
+            market_input_fn=_exit_only_input_fn(ret_pct), universe_symbols=[_SYM],
+            client=object(), now=_OPEN_NOW, _bot_owned_override=bot_owned))
     sells = [o for o in calls if str(getattr(o, "side", "")).upper().endswith("SELL")]
     return out, sells
 

@@ -11,6 +11,7 @@ from app.brokers.base import BrokerAdapter, OrderResult, OrderSide, OrderStatus
 from app.db.base import Base
 from app.db.models import OrderAuditLog
 from app.execution.fill_poller import FillPoller, poll_once
+from app.kis_paper.account_scope import account_id_for
 
 
 def run(coro):
@@ -56,6 +57,7 @@ def _audit(
         filled_quantity=filled_quantity,
         avg_fill_price=avg_fill_price,
         created_at=created_at,
+        account_id=account_id_for("1234567801"),
     )
     db.add(a)
     db.commit()

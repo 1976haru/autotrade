@@ -22,6 +22,7 @@ from app.brokers.base import Balance, OrderRequest, OrderSide, Position
 from app.core.modes import OperationMode
 from app.db.models import EmergencyStopEvent, EodLiquidationState, OrderAuditLog
 from app.execution.order_router import route_cancel, route_order
+from app.kis_paper.account_scope import account_id_for
 from app.kis_paper.eod_liquidation import (
     EodState,
     acquire_lease,
@@ -330,6 +331,13 @@ def test_L1_restart_does_not_duplicate_eod_sell(session_factory, db):
 def _cancel(db, rm, side, cid):
     broker = FakeKisPaperBroker({})
     broker.rows.append(open_buy_row("0000000900", "005930", 3))
+    db.add(OrderAuditLog(
+        mode="PAPER", symbol="005930", side=side.value, quantity=3,
+        order_type="MARKET", latest_price=10_000, decision="APPROVED",
+        trade_reason="kis_paper_auto", broker_order_id="0000000900",
+        account_id=account_id_for("1234567801"),
+    ))
+    db.commit()
     res = asyncio.run(route_cancel(
         original_order_id="0000000900", org_no="06010", symbol="005930", side=side,
         reason="test", mode=OperationMode.PAPER, broker=broker, risk=rm, db=db,
@@ -368,7 +376,8 @@ def test_route_order_L1_buy_rejected_program_sell_executed(db):
     sell = _route(db, broker, rm, OrderSide.SELL, 1, "kis_paper_auto")
     assert sell.decision == RiskDecision.APPROVED, sell.reasons
     assert [(o.side.value, o.quantity) for o in broker.place_calls] == [("SELL", 1)]
-    audits = db.query(OrderAuditLog).filter(OrderAuditLog.created_at.isnot(None))         .order_by(OrderAuditLog.id).all()
+    audits = (db.query(OrderAuditLog).filter(OrderAuditLog.created_at.isnot(None))
+              .order_by(OrderAuditLog.id).all())
     assert [a.side for a in audits][-2:] == ["BUY", "SELL"]    # 거부도 감사로그 기록
 
 
@@ -377,7 +386,7 @@ def test_route_order_L1_manual_or_other_owned_sell_rejected(db):
     rm = rm_at(KillSwitchLevel.LEVEL_1)
     manual = _route(db, broker, rm, OrderSide.SELL, 1, "manual")
     assert manual.decision == RiskDecision.REJECTED
-    assert "manual/other-owned" in " ".join(manual.reasons)
+    assert "manual/unowned" in " ".join(manual.reasons)
     no_owner = _route(db, broker, rm, OrderSide.SELL, 1, "kis_paper_auto")
     assert no_owner.decision == RiskDecision.REJECTED
     assert "owned=0" in " ".join(no_owner.reasons)

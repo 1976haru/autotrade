@@ -331,11 +331,20 @@ def _resolve_paper_broker_kind(settings) -> str:
 
 def _kis_auto_config(settings) -> dict:
     from app.kis_paper.real_tick_runner import should_use_real_tick_runner
+    from app.kis_paper.order_limits import resolve_kis_paper_order_limits
+    limits = resolve_kis_paper_order_limits(settings)
     return {
         "enable_kis_paper_auto_trading": bool(settings.enable_kis_paper_auto_trading),
         "dry_run":                       bool(settings.kis_paper_auto_order_dry_run),
         "max_orders_per_day":            int(settings.kis_paper_auto_max_orders_per_day),
-        "max_order_notional":            int(settings.kis_paper_auto_max_order_notional),
+        "max_order_notional":            limits.max_order_krw,
+        "paper_order_limits_policy":     limits.policy_version,
+        "paper_total_budget_krw":        limits.total_budget_krw,
+        "paper_per_symbol_krw":          limits.per_symbol_krw,
+        "paper_max_positions":           limits.max_positions,
+        "paper_daily_buy_count":         limits.daily_buy_count,
+        "paper_daily_buy_krw":           limits.daily_buy_krw,
+        "paper_buys_per_tick":           limits.buys_per_tick,
         "window_start":                  settings.kis_paper_auto_order_window_start,
         "window_end":                    settings.kis_paper_auto_order_window_end,
         "min_confidence":                float(settings.kis_paper_auto_min_confidence),
@@ -567,6 +576,7 @@ class _EodAckBody(BaseModel):
     trading_date: str
     decided_by:   str
     note:         Optional[str] = None
+    account:      Optional[str] = None
 
 
 @router.post("/eod/acknowledge")
@@ -579,13 +589,18 @@ def post_kis_paper_eod_acknowledge(body: _EodAckBody, db: Session = Depends(get_
     from app.kis_paper.eod_liquidation import acknowledge_incident
     if not (body.decided_by or "").strip():
         raise HTTPException(status_code=400, detail="decided_by is required")
+    account = (body.account or "").strip()
+    if account and account not in ("LEGACY_ACCOUNT", "CURRENT"):
+        raise HTTPException(status_code=400, detail="account must be LEGACY_ACCOUNT, CURRENT or omitted")
     try:
         row = acknowledge_incident(db, trading_date=body.trading_date,
-                                   decided_by=body.decided_by.strip(), note=body.note)
+                                   decided_by=body.decided_by.strip(), note=body.note,
+                                   account_key="" if account == "LEGACY_ACCOUNT" else None)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {
         "trading_date": row.trading_date, "state": row.state,
         "incident_acknowledged": True, "acknowledged_by": row.acknowledged_by,
+        "account": row.account_key or "LEGACY_ACCOUNT",
         "is_live_authorization": False, "broker_order_sent": False,
     }

@@ -360,6 +360,51 @@ def restore_kill_switch_from_db(risk, db: Session) -> KillSwitchLevel:
     return KillSwitchLevel.OFF
 
 
+def synchronize_kill_switch_for_order(risk: Any, db: Session):
+    """Return the stricter of in-memory and persisted emergency policies.
+
+    Startup restoration alone is insufficient when another backend process or
+    safety coordinator writes an emergency event after this process starts.
+    Never let an older/off DB row clear a stricter in-memory stop; that keeps
+    this refresh fail-closed and prevents implicit emergency-stop release.
+    """
+    from types import SimpleNamespace
+
+    from app.risk.kill_switch_policy import emergency_order_policy
+
+    current = emergency_order_policy(risk)
+    persisted_risk = SimpleNamespace(
+        emergency_stop=False,
+        kill_switch_level=KillSwitchLevel.OFF,
+        kill_switch_policy_version=KILL_SWITCH_POLICY_VERSION,
+    )
+    restore_kill_switch_from_db(persisted_risk, db)
+    persisted = emergency_order_policy(persisted_risk)
+
+    def strictness(policy) -> int:
+        if not policy.active:
+            return 0
+        if policy.level == KillSwitchLevel.LEVEL_1.value:
+            return 2 if policy.legacy_strict else 1
+        if policy.level == KillSwitchLevel.LEVEL_2.value:
+            return 3
+        return 4  # LEVEL_3 / unknown states fail closed.
+
+    if strictness(persisted) <= strictness(current):
+        return current
+
+    # Keep shared RiskManager consumers (route_order/EOD) synchronized too.
+    try:
+        apply_kill_switch_to_risk(
+            risk, KillSwitchLevel(persisted.level),
+            policy_version=int(getattr(persisted_risk, "kill_switch_policy_version", 0) or 0),
+        )
+    except (AttributeError, TypeError):
+        # Read-only/mock policy objects still get the persisted pre-gate below.
+        pass
+    return persisted
+
+
 # ---------- module invariants (코드 단 안전 보장) ----------
 #
 # 본 모듈은 broker.place_order, broker.cancel_order, route_order 어떤 함수도

@@ -3,7 +3,7 @@
 dry-run 3종 (커밋 전 필수):
   (a) 봇 포지션(원장 내) + 현재가 -2% → STOP_LOSS 여전히 발동
   (b) 수동 보유(원장 밖) + 현재가 -5% → 청산 평가 제외, SELL 0건, SELL_NOT_BOT_OWNED
-  (c) 원장 조회 실패(_bot_owned=None) → fail-open → 손절 발동 유지
+  # Ledger ownership unavailable is fail-closed: do not auto-sell.
 
 ★보호 4계층(RiskManager/PermissionGate/OrderExecutor/route_order) 미접촉.
   broker.place_order 호출 0건. 손절 로직(PositionContext/council/sell_reason) 무변경.
@@ -138,8 +138,7 @@ class TestDryRunA_BotOwnedStopLoss:
             positions=[_pos(_BOT_SYM, _AVG_BOT)],
             bot_owned_override=frozenset([_BOT_SYM]),
         )
-        assert out["orders_submitted"] == 1, \
-            f"봇 소유 손절 발동해야 함. submitted={out['orders_submitted']}, skipped={out.get('skipped',[])}"
+        assert out["orders_submitted"] == 1
         assert len(sells) == 1
 
     def test_a2_no_misfire_when_above_stop(self):
@@ -266,35 +265,29 @@ class TestDryRunB_ManualNotSold:
 
 
 # ════════════════════════════════════════════════════════════════════
-# DRY-RUN (c): 원장 조회 실패(_bot_owned=None) → fail-open → 손절 유지
+# Ledger ownership unavailable is fail-closed: do not auto-sell.
 # ════════════════════════════════════════════════════════════════════
 
-class TestDryRunC_FailOpen:
+class TestDryRunC_FailClosed:
     """(c): 원장 None(조회 실패) → 전부 봇소유 간주 → 손절 발동 유지."""
 
-    def test_c1_failopen_stoploss_still_fires(self):
-        """_bot_owned=None(조회 실패) 시에도 봇 손절이 발동돼야 함 — 06-25 재발 방지."""
+    def test_c1_unknown_ownership_blocks_stoploss_sell(self):
         out, sells = _run(
             _BOT_SYM, _AVG_BOT, ret_pct=-0.02,
             positions=[_pos(_BOT_SYM, _AVG_BOT)],
-            bot_owned_override=None,   # None = fail-open 시뮬레이션
+            bot_owned_override=None,
         )
-        assert out["orders_submitted"] == 1, \
-            f"fail-open: 원장 None 이어도 손절 발동해야 함. submitted={out['orders_submitted']}"
-        assert len(sells) == 1
+        assert out["orders_submitted"] == 0
+        assert sells == []
 
-    def test_c2_failopen_also_evaluates_manual_sym(self):
-        """fail-open 시 수동 종목도 봇소유로 간주 → SELL 평가됨 (의도된 trade-off)."""
+    def test_c2_unknown_ownership_blocks_manual_symbol_sell(self):
         out, sells = _run(
             _MAN_SYM, _AVG_MAN, ret_pct=-0.05,
             positions=[_pos(_MAN_SYM, _AVG_MAN)],
-            bot_owned_override=None,   # fail-open
+            bot_owned_override=None,
         )
-        # fail-open에서는 수동 종목도 손절 평가 대상
-        # → 이건 의도된 동작: 원장 실패 시 수동 보호보다 손절 유지 우선
-        assert "SELL_NOT_BOT_OWNED" not in \
-            [s.get("reason_code") for s in out.get("skipped", [])], \
-            "fail-open에서는 SELL_NOT_BOT_OWNED 차단 없어야 함"
+        assert out["orders_submitted"] == 0
+        assert sells == []
 
 
 # ════════════════════════════════════════════════════════════════════

@@ -12,7 +12,6 @@ import hmac
 import json
 import os
 import tempfile
-from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -61,11 +60,6 @@ def desktop_token_valid(candidate: str | None) -> bool:
     return bool(expected and candidate and hmac.compare_digest(expected, candidate))
 
 
-def latest_emergency_id(db: Any) -> int:
-    row = db.execute(select(EmergencyStopEvent).order_by(EmergencyStopEvent.id.desc())).scalars().first()
-    return int(row.id) if row is not None else 0
-
-
 def create_approval(*, db: Any, settings: Any, risk: Any, target_date: str, actor: str,
                     explicit_ack: bool) -> dict[str, Any]:
     if not explicit_ack:
@@ -81,20 +75,14 @@ def create_approval(*, db: Any, settings: Any, risk: Any, target_date: str, acto
     account = str(getattr(settings, "kis_account_no", "") or "")
     if len(account) < 8:
         raise ValueError("PAPER_ACCOUNT_MISSING")
+    latest = db.execute(
+        select(EmergencyStopEvent).order_by(EmergencyStopEvent.id.desc())
+    ).scalars().first()
+    if bool(getattr(risk, "emergency_stop", False)) or (latest is not None and bool(latest.enabled)):
+        raise ValueError("EMERGENCY_STOP_ACTIVE")
     approved_at = datetime.now(timezone.utc)
-    # The click is the explicit authenticated operator action.  Record the OFF
-    # transition now; never defer/auto-release it at 09:05.  Any later safety
-    # stop gets a larger event id and invalidates this approval.
-    from app.risk.emergency_stop import KillSwitchLevel, apply_kill_switch_to_risk
-    from app.risk.kill_switch_policy import KILL_SWITCH_POLICY_VERSION
-    db.add(EmergencyStopEvent(
-        enabled=False, level=KillSwitchLevel.OFF.value,
-        policy_version=KILL_SWITCH_POLICY_VERSION,
-        decided_by=actor[:64], reason_code="operator_one_click_paper_approval",
-        note=f"authenticated PAPER approval for {target.isoformat()}",
-    ))
-    db.flush()
-    apply_kill_switch_to_risk(risk, KillSwitchLevel.OFF)
+    from app.kis_paper.order_limits import resolve_kis_paper_order_limits
+    limits = resolve_kis_paper_order_limits(settings)
     record = {
         "schema_version": 1,
         "status": "SCHEDULED",
@@ -103,16 +91,22 @@ def create_approval(*, db: Any, settings: Any, risk: Any, target_date: str, acto
         "account_fingerprint": account_fingerprint(account, str(getattr(settings, "kis_product_code", "01"))),
         "allowed_sides": ["BUY", "SELL"],
         "limits": {
-            "max_positions": 5, "per_symbol_krw": 1_000_000,
-            "max_order_krw": 1_000_000, "daily_buy_count": 10,
-            "daily_buy_krw": 10_000_000, "tick_buy_count": 1,
+            "policy_version": limits.policy_version,
+            "total_budget_krw": limits.total_budget_krw,
+            "max_positions": limits.max_positions,
+            "per_symbol_krw": limits.per_symbol_krw,
+            "max_order_krw": limits.max_order_krw,
+            "daily_buy_count": limits.daily_buy_count,
+            "daily_buy_krw": limits.daily_buy_krw,
+            "tick_buy_count": limits.buys_per_tick,
+            "cost_reserve_bps": limits.cost_reserve_bps,
             "buy_cutoff": "14:30", "stop_loss_pct": 1.5,
             "take_profit_pct": 2.5,
         },
         "approved_by": actor[:128],
         "auth_method": "WINDOWS_DESKTOP_SESSION",
         "approved_at": approved_at.isoformat(),
-        "emergency_baseline_id": latest_emergency_id(db),
+        "emergency_baseline_id": int(latest.id) if latest is not None else 0,
         "cancel_authorized": False,
         "cancel_scope": "BOT_OWNED_KIS_PAPER_ONLY_REQUIRES_SEPARATE_APPROVAL",
         "last_preflight_at": None,
@@ -141,7 +135,8 @@ def _block(record: dict[str, Any], reason: str) -> tuple[bool, str]:
 
 
 async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
-                          side: str, now: datetime, notional_krw: int = 0,
+                          side: str, now: datetime, symbol: str = "",
+                          quantity: int = 0, notional_krw: int = 0,
                           daily_order_count: int = 0) -> tuple[bool, str]:
     """Final fail-closed gate.  Read-only KIS checks run before first order."""
     r = load_approval()
@@ -157,29 +152,125 @@ async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
     if side.upper() not in set(r.get("allowed_sides") or []):
         return _block(r, "ORDER_SIDE_NOT_APPROVED")
     limits = r.get("limits") or {}
-    if int(notional_krw or 0) > int(limits.get("max_order_krw", 0) or 0):
+    from app.kis_paper.order_limits import resolve_kis_paper_order_limits
+    current_limits = resolve_kis_paper_order_limits(settings)
+    approved_order_limit = min(
+        int(limits.get("max_order_krw", 0) or 0), current_limits.max_order_krw,
+    )
+    if int(notional_krw or 0) > approved_order_limit:
         return _block(r, "APPROVED_ORDER_LIMIT_EXCEEDED")
     if side.upper() == "BUY" and int(daily_order_count) >= int(limits.get("daily_buy_count", 0) or 0):
         return _block(r, "APPROVED_DAILY_BUY_COUNT_EXCEEDED")
     if not bool(getattr(settings, "kis_is_paper", False)) or bool(getattr(settings, "enable_live_trading", False)):
         return _block(r, "PAPER_LIVE_MODE_MISMATCH")
-    current_fp = account_fingerprint(str(getattr(settings, "kis_account_no", "")), str(getattr(settings, "kis_product_code", "01")))
+    current_fp = account_fingerprint(
+        str(getattr(settings, "kis_account_no", "")),
+        str(getattr(settings, "kis_product_code", "01")),
+    )
     if not hmac.compare_digest(str(r.get("account_fingerprint", "")), current_fp):
         return _block(r, "PAPER_ACCOUNT_CHANGED")
     if bool(getattr(risk, "emergency_stop", False)):
         return _block(r, "EMERGENCY_STOP_ACTIVE")
-    latest = db.execute(select(EmergencyStopEvent).order_by(EmergencyStopEvent.id.desc())).scalars().first()
-    if latest is not None and int(latest.id) > int(r.get("emergency_baseline_id", 0)) and bool(latest.enabled):
+    newer_stop = db.execute(
+        select(EmergencyStopEvent.id).where(
+            EmergencyStopEvent.id > int(r.get("emergency_baseline_id", 0)),
+            EmergencyStopEvent.enabled.is_(True),
+        ).limit(1)
+    ).first()
+    if newer_stop is not None:
         return _block(r, "NEW_EMERGENCY_STOP_AFTER_APPROVAL")
     if not bool(getattr(settings, "kis_paper_fill_polling", False)):
         return _block(r, "FILL_POLLER_DISABLED")
     try:
-        await broker.get_positions()
+        positions = await broker.get_positions()
         orders = await broker.list_today_orders(kst_date=local.date().strftime("%Y%m%d"))
+        balance = await broker.get_balance() if side.upper() == "BUY" else None
+        buy_capacity = None
+        order_price = max(1, int(notional_krw) // max(1, int(quantity)))
+        capacity_reader = getattr(broker, "get_orderable_buy_capacity", None)
+        if side.upper() == "BUY" and callable(capacity_reader):
+            buy_capacity = await capacity_reader(symbol=symbol, price=order_price)
+            orderable_cash = min(
+                int(buy_capacity["orderable_cash_krw"]),
+                int(buy_capacity["no_credit_buy_amount_krw"]),
+            )
+        else:
+            orderable_cash = (
+                await broker.get_orderable_cash(symbol=symbol, price=order_price)
+                if side.upper() == "BUY" and callable(getattr(broker, "get_orderable_cash", None))
+                else None
+            )
     except Exception as exc:  # no order is sent on read failure
         return _block(r, f"KIS_PREFLIGHT_FAILED:{type(exc).__name__}")
-    if any(int(o.get("remaining", 0) or 0) > 0 for o in orders):
+    if side.upper() == "BUY" and any(
+        str(o.get("side", "")).upper() == "BUY"
+        and int(o.get("remaining", 0) or 0) > 0 for o in orders
+    ):
         return _block(r, "OPEN_ORDER_PRESENT_CANCEL_NOT_AUTHORIZED")
+    if side.upper() == "SELL":
+        position = next((p for p in (positions or [])
+                         if str(getattr(p, "symbol", "")) == symbol), None)
+        held = int(getattr(position, "quantity", 0) or 0) if position else 0
+        orderable = getattr(position, "sellable_quantity", None) if position else 0
+        orderable = held if orderable is None else int(orderable or 0)
+        if not symbol or int(quantity or 0) <= 0 or int(quantity) > min(held, orderable):
+            return _block(r, "KIS_SELL_QUANTITY_UNVERIFIED")
+    if side.upper() == "BUY":
+        notional = int(notional_krw or 0)
+        effective_unit_price = notional // max(1, int(quantity))
+        if buy_capacity is not None:
+            kis_qty = int(buy_capacity["no_credit_buy_quantity"])
+            calc_price = int(buy_capacity["calculation_price_krw"])
+            if int(quantity) <= 0 or calc_price <= 0:
+                return _block(r, "KIS_ORDERABLE_CAPACITY_UNVERIFIED")
+            if int(quantity) > kis_qty:
+                return _block(r, "KIS_NO_CREDIT_BUY_QUANTITY_EXCEEDED")
+            effective_unit_price = max(effective_unit_price, calc_price)
+        risk_notional = int(quantity) * effective_unit_price
+        if risk_notional > approved_order_limit:
+            return _block(r, "APPROVED_ORDER_LIMIT_EXCEEDED_AT_KIS_CALC_PRICE")
+        positions_by_symbol = {
+            str(getattr(p, "symbol", "")): p for p in (positions or [])
+            if int(getattr(p, "quantity", 0) or 0) > 0
+        }
+        current_total = 0
+        for p in positions_by_symbol.values():
+            qty = int(getattr(p, "quantity", 0) or 0)
+            price = int(getattr(p, "market_price", 0) or getattr(p, "avg_price", 0) or 0)
+            if price <= 0:
+                return _block(r, "KIS_POSITION_VALUE_UNAVAILABLE")
+            current_total += qty * price
+        if not symbol:
+            return _block(r, "PAPER_SYMBOL_REQUIRED")
+        symbol_position = positions_by_symbol.get(symbol)
+        symbol_price = int(
+            getattr(symbol_position, "market_price", 0)
+            or getattr(symbol_position, "avg_price", 0)
+            or 0
+        ) if symbol_position else 0
+        symbol_exposure = (
+            int(getattr(symbol_position, "quantity", 0) or 0) * symbol_price
+            if symbol_position else 0
+        )
+        symbol_cap = min(
+            int(limits.get("per_symbol_krw", 0) or 0),
+            current_limits.per_symbol_krw,
+        )
+        reserve_bps = int(limits.get("cost_reserve_bps", current_limits.cost_reserve_bps))
+        cash_required = risk_notional + (risk_notional * reserve_bps + 9_999) // 10_000
+        if symbol_exposure + cash_required > symbol_cap:
+            return _block(r, "PAPER_SYMBOL_EXPOSURE_EXCEEDED")
+        if orderable_cash is None:
+            return _block(r, "KIS_ORDERABLE_CASH_UNAVAILABLE")
+        available_cash = min(
+            int(orderable_cash), int(getattr(balance, "buying_power", 0) or 0),
+        )
+        if available_cash < cash_required:
+            return _block(r, "KIS_ORDERABLE_CASH_INSUFFICIENT")
+        if current_total + cash_required > min(
+            int(limits.get("total_budget_krw", 0) or 0), current_limits.total_budget_krw,
+        ):
+            return _block(r, "PAPER_TOTAL_BUDGET_OR_COST_RESERVE_EXCEEDED")
     r["status"] = "ACTIVE"
     r["last_preflight_at"] = datetime.now(timezone.utc).isoformat()
     r["block_reason"] = None

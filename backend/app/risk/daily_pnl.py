@@ -35,6 +35,11 @@ from sqlalchemy.orm import Session
 from app.db.models import OrderAuditLog
 
 
+def _scoped(query):
+    from app.kis_paper.account_scope import current_account_scope, scope_query
+    return scope_query(query, OrderAuditLog, current_account_scope())
+
+
 KST = timezone(timedelta(hours=9))
 
 
@@ -62,7 +67,7 @@ def count_orders_today_kst(
     if today is None:
         today = today_kst()
 
-    rows = db.query(OrderAuditLog.created_at).all()
+    rows = _scoped(db.query(OrderAuditLog.created_at)).all()
     count = 0
     for (ts,) in rows:
         if ts is None:
@@ -89,7 +94,7 @@ def compute_today_realized_pnl(
         today = datetime.now(tz).date()
 
     rows = (
-        db.query(OrderAuditLog)
+        _scoped(db.query(OrderAuditLog))
           .filter(
               OrderAuditLog.executed.is_(True),
               OrderAuditLog.avg_fill_price.isnot(None),
@@ -178,7 +183,7 @@ def compute_weekly_realized_pnl_kst(
     week_start = week_start_kst(today)
 
     rows = (
-        db.query(OrderAuditLog)
+        _scoped(db.query(OrderAuditLog))
           .filter(
               OrderAuditLog.executed.is_(True),
               OrderAuditLog.avg_fill_price.isnot(None),
@@ -252,7 +257,7 @@ def get_consecutive_loss_state(
         return 0, None, None
 
     rows = (
-        db.query(OrderAuditLog)
+        _scoped(db.query(OrderAuditLog))
           .filter(
               OrderAuditLog.executed.is_(True),
               OrderAuditLog.avg_fill_price.isnot(None),
