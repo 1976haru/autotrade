@@ -170,7 +170,8 @@ class Settings(BaseSettings):
     kis_paper_rehearsal_mode:          bool = False
     kis_paper_rehearsal_symbol:        str  = "005930"
     kis_paper_rehearsal_max_buy_qty:   int  = 1
-    kis_paper_auto_max_order_notional: int = 1_000_000
+    # PAPER-only hard ceiling; user-selected per-symbol budget defaults to 1M.
+    kis_paper_auto_max_order_notional: int = 2_000_000
     # 주문 허용 시간창 (KST "HH:MM"). 장 시작 직후/마감 직전 변동성 회피.
     kis_paper_auto_order_window_start: str = "09:05"
     # E1(2026-06-10): 14:50→15:20 — 동시호가(15:20~30) 직전까지 연속매매 허용(하루 승인).
@@ -215,7 +216,7 @@ class Settings(BaseSettings):
     # 아니다 — is_live_authorization 은 항상 False.
     kis_paper_max_concurrent_positions: int = 5
     kis_paper_per_symbol_notional_krw:  int = 1_000_000
-    kis_paper_daily_buy_limit_krw:      int = 3_000_000
+    kis_paper_daily_buy_limit_krw:      int = 10_000_000
     # 손절/익절 기본 % (양수 magnitude — 손절 2.0=−2%, 익절 3.5=+3.5%). 런타임
     #   오버라이드(stop_loss_pct/take_profit_pct, %APPDATA% override)로 장중 변경 가능.
     #   봇 council 이 *매 사이클* effective getter 로 읽어 신규 진입 + 보유 포지션

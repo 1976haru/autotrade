@@ -98,13 +98,13 @@ def test_changes_carries_before_after():
 
 # ── 검증 (서버 측 필수) ───────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("v", [0, 16, -1, 100])   # 2026-06-15: 상한 15 → 16 부터 out-of-range
+@pytest.mark.parametrize("v", [0, 6, -1, 100])
 def test_max_concurrent_out_of_range_raises(v):
     with pytest.raises(rc.RuntimeConfigValidationError):
         rc.set_runtime_overrides(max_concurrent_positions=v)
 
 
-@pytest.mark.parametrize("v", [99_999, 10_000_001, 0])
+@pytest.mark.parametrize("v", [99_999, 2_000_001, 0])
 def test_per_stock_budget_out_of_range_raises(v):
     with pytest.raises(rc.RuntimeConfigValidationError):
         rc.set_runtime_overrides(per_stock_budget=v)
@@ -126,7 +126,8 @@ def test_corrupt_file_falls_back_to_env_with_warning(_tmp_overrides, caplog):
     import logging
     with caplog.at_level(logging.WARNING):
         val = rc.effective_max_concurrent_positions()  # 폴백 — raise 안 함
-    assert val == int(__import__("app.core.config", fromlist=["get_settings"]).get_settings().kis_paper_max_concurrent_positions)
+    configured = __import__("app.core.config", fromlist=["get_settings"]).get_settings()
+    assert val == int(configured.kis_paper_max_concurrent_positions)
     assert any("runtime_config" in r.message or "손상" in r.message for r in caplog.records)
 
 
@@ -148,7 +149,7 @@ def test_api_get_runtime_config():
     # T2(2026-06-12): daily_buy_limit_krw 가 {value,min,max,source} 객체로 — 스테퍼 meta.
     assert b["daily_buy_limit_krw"]["value"] >= 1  # 하드코딩 아님 — config/override 에서
     assert b["daily_buy_limit_krw"]["min"] == 3_000_000
-    assert b["daily_buy_limit_krw"]["max"] == 300_000_000
+    assert b["daily_buy_limit_krw"]["max"] == 10_000_000
 
 
 def test_api_put_valid_returns_reread_effective():
@@ -165,7 +166,7 @@ def test_api_put_valid_returns_reread_effective():
 
 @pytest.mark.parametrize("payload,frag", [
     ({"max_concurrent_positions": 0}, "동시진입"),
-    ({"max_concurrent_positions": 16}, "동시진입"),   # 2026-06-15: 상한 15 → 16 거부
+    ({"max_concurrent_positions": 6}, "동시진입"),
     ({"per_stock_budget": 50_000}, "종목당"),
     ({"per_stock_budget": 20_000_000}, "종목당"),
 ])
@@ -612,10 +613,10 @@ def test_legacy_override_migrates_to_new_location(monkeypatch, _tmp_overrides, t
 def test_daily_buy_limit_override_and_effective():
     rc.reset_runtime_overrides_for_tests()
     try:
-        out = rc.set_runtime_overrides(daily_buy_limit_krw=50_000_000)
-        assert out["daily_buy_limit_krw"]["value"] == 50_000_000
+        out = rc.set_runtime_overrides(daily_buy_limit_krw=10_000_000)
+        assert out["daily_buy_limit_krw"]["value"] == 10_000_000
         assert out["daily_buy_limit_krw"]["source"] == "override"
-        assert rc.effective_daily_buy_limit() == 50_000_000
+        assert rc.effective_daily_buy_limit() == 10_000_000
     finally:
         rc.reset_runtime_overrides_for_tests()
 

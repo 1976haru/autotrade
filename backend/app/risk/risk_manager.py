@@ -321,6 +321,7 @@ class RiskManager:
         # 시그니처 호환 — keyword-only + default None.
         weekly_realized_pnl:    int | None = None,
         consecutive_loss_count: int | None = None,
+        paper_position_limits=None,
     ) -> RiskCheckResult:
         # Hard short-circuit: emergency_stop is the operator's "stop everything"
         # signal. It must REJECT across every mode — including LIVE_MANUAL_APPROVAL
@@ -420,7 +421,9 @@ class RiskManager:
         # of truth. evaluate_order의 inline 로직 대신 본 rule이 담당. 기존
         # reason/passed 문자열은 그대로 유지 (기존 26+ 테스트 호환).
         order_notional = latest_price * order.quantity
-        pl_rule = PositionLimitRule(policy_from_risk_policy(self.policy))
+        pl_rule = PositionLimitRule(
+            paper_position_limits or policy_from_risk_policy(self.policy)
+        )
         pl_input = PositionLimitInput(
             order=order, balance=balance, positions=positions, latest_price=latest_price,
         )
@@ -522,7 +525,9 @@ class RiskManager:
         if requested_by_ai and not can_ai_execute(mode, enable_ai_execution=self.policy.enable_ai_execution):
             result.reasons.append("AI execution is not allowed in current mode")
 
-        if mode.name.startswith("LIVE") and not can_place_live_order(mode, enable_live_trading=self.policy.enable_live_trading):
+        if mode.name.startswith("LIVE") and not can_place_live_order(
+            mode, enable_live_trading=self.policy.enable_live_trading,
+        ):
             result.reasons.append("live trading is disabled by global safety flag")
 
         if result.reasons:

@@ -57,12 +57,12 @@ DEFAULT_UNIVERSE_MODE = "auto"
 
 # 검증 범위 (서버 측 필수 — 프론트 검증만으로 불충분).
 # 2026-06-15: 동시진입 상한 10→15 (분산 확대 — 종목당 200만×15=3,000만, 일일한도 내).
-MAX_CONCURRENT_MIN, MAX_CONCURRENT_MAX = 1, 15
-PER_STOCK_BUDGET_MIN, PER_STOCK_BUDGET_MAX = 100_000, 10_000_000  # 10만 ~ 1,000만 원
+MAX_CONCURRENT_MIN, MAX_CONCURRENT_MAX = 1, 5
+PER_STOCK_BUDGET_MIN, PER_STOCK_BUDGET_MAX = 100_000, 2_000_000  # 10만 ~ 200만 원
 STOP_LOSS_PCT_MIN, STOP_LOSS_PCT_MAX = 0.5, 10.0     # 손절 -0.5% ~ -10% (magnitude)
 TAKE_PROFIT_PCT_MIN, TAKE_PROFIT_PCT_MAX = 0.5, 20.0  # 익절 +0.5% ~ +20%
 # T2: 일일 매수금액 한도 300만 ~ 3억(100종목×300만 수용), 스테퍼 100만 단위.
-DAILY_BUY_LIMIT_MIN, DAILY_BUY_LIMIT_MAX = 3_000_000, 300_000_000
+DAILY_BUY_LIMIT_MIN, DAILY_BUY_LIMIT_MAX = 3_000_000, 10_000_000
 
 # S1: AI 운용 성향 — 런타임 전환 대상(보수/안정/공격).
 VALID_PROFILES = ("conservative", "balanced", "aggressive")
@@ -442,13 +442,13 @@ def _validate(max_concurrent_positions: int | None, per_stock_budget: int | None
         v = int(per_stock_budget)
         if not (PER_STOCK_BUDGET_MIN <= v <= PER_STOCK_BUDGET_MAX):
             raise RuntimeConfigValidationError(
-                "종목당 투자금은 10만 원 ~ 1,000만 원 사이여야 해요."
+                "종목당 투자금은 10만 원 ~ 200만 원 사이여야 해요."
             )
     if daily_buy_limit_krw is not None:
         v = int(daily_buy_limit_krw)
         if not (DAILY_BUY_LIMIT_MIN <= v <= DAILY_BUY_LIMIT_MAX):
             raise RuntimeConfigValidationError(
-                "일일 매수 한도는 300만 원 ~ 3억 원 사이여야 해요."
+                "일일 매수 한도는 300만 원 ~ 1,000만 원 사이여야 해요."
             )
     if stop_loss_pct is not None:
         try:
