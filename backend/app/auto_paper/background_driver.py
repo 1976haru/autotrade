@@ -652,7 +652,9 @@ class BackgroundTickDriver:
         if now is None:
             now = self._now_provider()
         s = self._settings()
-        if not bool(getattr(s, "enable_kis_paper_auto_trading", False)):
+        from app.kis_paper.one_click_session import session_trading_authorized
+        if not (bool(getattr(s, "enable_kis_paper_auto_trading", False))
+                or session_trading_authorized(s)):
             return None
         if bool(getattr(s, "enable_live_trading", False)):
             return None
@@ -779,7 +781,10 @@ class BackgroundTickDriver:
                 #   스캔과 동시 매도 0). 루프 상태 무관, wall-clock 트리거.
                 await self.maybe_eod_step(self._now_provider())
                 try:
-                    if bool(getattr(self._settings(), "enable_kis_paper_auto_trading", False)):
+                    _settings = self._settings()
+                    from app.kis_paper.one_click_session import session_trading_authorized
+                    if (bool(getattr(_settings, "enable_kis_paper_auto_trading", False))
+                            or session_trading_authorized(_settings)):
                         await self.kis_paper_tick()
                     else:
                         self.tick_once()

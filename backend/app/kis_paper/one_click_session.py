@@ -193,6 +193,55 @@ def public_status(record: dict[str, Any] | None = None) -> dict[str, Any]:
     return out
 
 
+def session_trading_authorized(settings: Any, *, db: Any | None = None) -> bool:
+    """True only for today's explicit approval and the same PAPER account.
+
+    This is the narrow replacement for global AUTO/dry-run switches.  It does
+    not authorize an order by itself; ``authorize_order`` still performs all
+    fresh broker/risk checks immediately before routing.
+    """
+    if not bool(getattr(settings, "kis_is_paper", False)):
+        return False
+    if bool(getattr(settings, "enable_live_trading", False)):
+        return False
+    account = str(getattr(settings, "kis_account_no", "") or "")
+    if not account:
+        return False
+    try:
+        record = load_approval(db)
+    except TypeError:  # compatibility with injected zero-argument test readers
+        record = load_approval()
+    status = public_status(record)
+    if status.get("status") not in {"SCHEDULED", "ACTIVE"}:
+        return False
+    expected = account_fingerprint(
+        account, str(getattr(settings, "kis_product_code", "01")),
+    )
+    return hmac.compare_digest(
+        str(status.get("account_fingerprint", "")), expected,
+    )
+
+
+class ApprovedPaperSettings:
+    """Read-only settings view enabling PAPER orders for an approved session."""
+
+    def __init__(self, base: Any):
+        self._base = base
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "enable_kis_paper_auto_trading":
+            return True
+        if name == "kis_paper_auto_order_dry_run":
+            return False
+        return getattr(self._base, name)
+
+
+def effective_session_settings(settings: Any, *, db: Any | None = None) -> Any:
+    return ApprovedPaperSettings(settings) if session_trading_authorized(
+        settings, db=db,
+    ) else settings
+
+
 def _block(record: dict[str, Any], reason: str) -> tuple[bool, str]:
     record["status"] = "BLOCKED"
     record["block_reason"] = reason
@@ -205,7 +254,10 @@ async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
                           quantity: int = 0, notional_krw: int = 0,
                           daily_order_count: int = 0) -> tuple[bool, str]:
     """Final fail-closed gate.  Read-only KIS checks run before first order."""
-    r = load_approval(db)
+    try:
+        r = load_approval(db)
+    except TypeError:  # compatibility with injected zero-argument test readers
+        r = load_approval()
     if not r:
         return False, "ONE_CLICK_APPROVAL_MISSING"
     local = now.astimezone(KST)

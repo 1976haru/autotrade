@@ -699,6 +699,8 @@ async def kis_paper_realtime_scan_tick(
         from app.market_data.kis_realtime import build_kis_market_input
         market_input_fn = build_kis_market_input
 
+    from app.kis_paper.one_click_session import effective_session_settings
+    settings = effective_session_settings(settings)
     mode = resolve_paper_auto_mode(settings)
     market_is_open = current_market_phase(now) == MarketPhase.OPEN
     smoke = bool(getattr(settings, "kis_paper_smoke_mode", False))
