@@ -362,7 +362,7 @@ async def execute_kis_paper_auto_order(
 
             from app.brokers.kis import KisBrokerAdapter
             from app.kis_paper.one_click_session import authorize_order, load_approval
-            approval_present = load_approval() is not None
+            approval_present = load_approval(db) is not None
             is_real_kis_paper_adapter = (
                 isinstance(broker, KisBrokerAdapter) and bool(broker.is_paper)
             )

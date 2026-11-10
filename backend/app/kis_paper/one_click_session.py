@@ -18,7 +18,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from app.db.models import EmergencyStopEvent
+from app.db.models import EmergencyStopEvent, PaperSessionApproval
 
 KST = timezone(timedelta(hours=9))
 SESSION_FILE = "paper-session-approval.json"
@@ -47,12 +47,51 @@ def _write_atomic(data: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-def load_approval() -> dict[str, Any] | None:
+def load_approval(db: Any | None = None) -> dict[str, Any] | None:
     try:
         value = json.loads(approval_path().read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else None
+        if isinstance(value, dict):
+            return value
     except (OSError, ValueError, TypeError):
+        pass
+    if db is None:
         return None
+    try:
+        row = db.execute(
+            select(PaperSessionApproval)
+            .order_by(PaperSessionApproval.id.desc()).limit(1)
+        ).scalars().first()
+        value = dict(row.record or {}) if row is not None else None
+        if value:
+            _write_atomic(value)
+        return value
+    except Exception:
+        return None
+
+
+def _persist_approval(db: Any, record: dict[str, Any]) -> None:
+    fp = str(record["account_fingerprint"])
+    day = str(record["target_date"])
+    row = db.execute(
+        select(PaperSessionApproval).where(
+            PaperSessionApproval.trading_date == day,
+            PaperSessionApproval.account_fingerprint == fp,
+        )
+    ).scalars().first()
+    expires = datetime.fromisoformat(str(record["expires_at"]))
+    approved = datetime.fromisoformat(str(record["approved_at"]))
+    if row is None:
+        row = PaperSessionApproval(
+            trading_date=day, account_fingerprint=fp,
+            status=str(record["status"]), approved_by=str(record["approved_by"]),
+            approved_at=approved, expires_at=expires, record=dict(record),
+        )
+        db.add(row)
+    else:
+        row.status = str(record["status"])
+        row.record = dict(record)
+        row.expires_at = expires
+    db.commit()
 
 
 def desktop_token_valid(candidate: str | None) -> bool:
@@ -75,6 +114,18 @@ def create_approval(*, db: Any, settings: Any, risk: Any, target_date: str, acto
     account = str(getattr(settings, "kis_account_no", "") or "")
     if len(account) < 8:
         raise ValueError("PAPER_ACCOUNT_MISSING")
+    fp = account_fingerprint(account, str(getattr(settings, "kis_product_code", "01")))
+    existing = db.execute(
+        select(PaperSessionApproval).where(
+            PaperSessionApproval.trading_date == target.isoformat(),
+            PaperSessionApproval.account_fingerprint == fp,
+        )
+    ).scalars().first()
+    if existing is not None:
+        prior = dict(existing.record or {})
+        if public_status(prior).get("status") in {"SCHEDULED", "ACTIVE"}:
+            _write_atomic(prior)
+            return prior
     latest = db.execute(
         select(EmergencyStopEvent).order_by(EmergencyStopEvent.id.desc())
     ).scalars().first()
@@ -88,7 +139,7 @@ def create_approval(*, db: Any, settings: Any, risk: Any, target_date: str, acto
         "status": "SCHEDULED",
         "target_date": target.isoformat(),
         "expires_at": datetime.combine(target + timedelta(days=1), time(0), KST).astimezone(timezone.utc).isoformat(),
-        "account_fingerprint": account_fingerprint(account, str(getattr(settings, "kis_product_code", "01"))),
+        "account_fingerprint": fp,
         "allowed_sides": ["BUY", "SELL"],
         "limits": {
             "policy_version": limits.policy_version,
@@ -112,7 +163,7 @@ def create_approval(*, db: Any, settings: Any, risk: Any, target_date: str, acto
         "last_preflight_at": None,
         "block_reason": None,
     }
-    db.commit()
+    _persist_approval(db, record)
     _write_atomic(record)
     return record
 
@@ -154,7 +205,7 @@ async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
                           quantity: int = 0, notional_krw: int = 0,
                           daily_order_count: int = 0) -> tuple[bool, str]:
     """Final fail-closed gate.  Read-only KIS checks run before first order."""
-    r = load_approval()
+    r = load_approval(db)
     if not r:
         return False, "ONE_CLICK_APPROVAL_MISSING"
     local = now.astimezone(KST)

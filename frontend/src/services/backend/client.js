@@ -419,6 +419,8 @@ export const backendApi = {
       ...(body != null ? { body: JSON.stringify(body) } : {}),
     },
   ),
+  paperSessionApprovalGet: () =>
+    backendFetch("/api/auto-paper/paper-session-approval"),
   autoPaperStop:          () => backendFetch("/api/auto-paper/stop", { method: "POST" }),
   autoPaperEmergencyStop: () =>
     backendFetch("/api/auto-paper/emergency-stop", { method: "POST" }),

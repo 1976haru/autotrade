@@ -835,3 +835,31 @@ class EodLiquidationState(Base):
     __table_args__ = (
         Index("uq_eod_liquidation_state_date_account", "trading_date", "account_key", unique=True),
     )
+
+
+class PaperSessionApproval(Base):
+    """Explicit, date/account-scoped authorization for real KIS PAPER orders.
+
+    The account is stored only as a one-way fingerprint.  ``record`` is the
+    exact authorization envelope mirrored to the local fail-closed file, so a
+    desktop/backend restart can restore the approved session without asking
+    the operator to approve the same trading day twice.
+    """
+
+    __tablename__ = "paper_session_approval"
+
+    id:                  Mapped[int]      = mapped_column(primary_key=True)
+    trading_date:        Mapped[str]      = mapped_column(String(10), index=True)
+    account_fingerprint: Mapped[str]      = mapped_column(String(32), index=True)
+    status:              Mapped[str]      = mapped_column(String(16), index=True)
+    approved_by:         Mapped[str]      = mapped_column(String(128))
+    approved_at:         Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    expires_at:          Mapped[datetime] = mapped_column(DateTime, index=True)
+    record:              Mapped[dict]     = mapped_column(JSON)
+
+    __table_args__ = (
+        Index(
+            "uq_paper_session_approval_date_account",
+            "trading_date", "account_fingerprint", unique=True,
+        ),
+    )

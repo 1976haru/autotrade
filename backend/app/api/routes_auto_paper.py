@@ -203,9 +203,9 @@ def _one_click_risk_dependency():
 
 
 @_AP.get("/paper-session-approval")
-def get_paper_session_approval() -> dict:
-    from app.kis_paper.one_click_session import public_status
-    return public_status()
+def get_paper_session_approval(db=Depends(get_db)) -> dict:
+    from app.kis_paper.one_click_session import load_approval, public_status
+    return public_status(load_approval(db))
 
 
 @_AP.post("/paper-session-approval")
