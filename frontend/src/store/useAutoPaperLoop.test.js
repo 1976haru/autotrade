@@ -7,12 +7,19 @@ function makeApi(overrides = {}) {
     autoPaperStatus: vi.fn(async () => ({ state: "PAUSED" })),
     autoPaperStart: vi.fn(async () => ({ ok: true })),
     autoPaperStop: vi.fn(async () => ({ ok: true })),
+    paperSessionApprovalGet: vi.fn(async () => ({
+      target_date: new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" }).format(new Date()),
+      status: "ACTIVE",
+    })),
     ...overrides,
   };
 }
 
 describe("useAutoPaperLoop — 실제 루프 배선(기존 client 함수 재사용)", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.__TAURI_INTERNALS__ = { invoke: vi.fn(async () => ({})) };
+  });
 
   it("start(): 기존 autoPaperStart 를 risk_profile + capital_settings payload로 호출", async () => {
     const api = makeApi();

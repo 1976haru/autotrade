@@ -21,6 +21,7 @@ import {
   canStartAutoPaper,
   canStopAutoPaper,
 } from "../components/tabs/AutoPaperLoopCard";
+import { ensurePaperSessionApproval } from "../services/paperSessionApproval";
 
 /** err.detail에서 차단 사유 배열 추출 (서버 pre-market gate 409 등). */
 function extractReasons(err) {
@@ -66,10 +67,20 @@ export function useAutoPaperLoop({
   const start = useCallback(async () => {
     setBusy(true);
     try {
+      const resolvedCapital = capitalSettings || loadPaperCapitalSettings();
+      const approval = await ensurePaperSessionApproval({
+        api,
+        capitalSettings: resolvedCapital,
+      });
+      if (!approval.ok) {
+        const res = { ok: false, reasons: [approval.reason], cancelled: approval.cancelled === true };
+        setStartResult(res);
+        return res;
+      }
       const body = {
         risk_profile: normalizeRiskProfile(riskProfile),
         capital_settings: toStartPayloadCapitalSettings(
-          capitalSettings || loadPaperCapitalSettings(),
+          resolvedCapital,
         ),
       };
       const snap = await api.autoPaperStart(body);

@@ -369,9 +369,21 @@ def get_kis_paper_auto_status() -> dict:
     .env 에서만 변경.
     """
     settings = get_settings()
+    from app.kis_paper.one_click_session import (
+        effective_session_settings,
+        session_trading_authorized,
+    )
+    session_approved = session_trading_authorized(settings)
+    effective_settings = effective_session_settings(settings)
     rd = evaluate_readiness(settings)
     return {
-        **_kis_auto_config(settings),
+        # The configured fail-safe remains OFF/dry-run.  A current, account-scoped
+        # desktop approval grants only this PAPER session its effective order mode.
+        **_kis_auto_config(effective_settings),
+        "configured_enable_kis_paper_auto_trading": bool(
+            settings.enable_kis_paper_auto_trading),
+        "configured_dry_run": bool(settings.kis_paper_auto_order_dry_run),
+        "paper_session_approved": session_approved,
         # 4-01: 자격 종합 + 4종 per-credential present + 누락 키 이름 목록.
         # *값 원문 0건* — boolean / 키 이름만.
         "credentials_present":      rd.credentials_present,
@@ -397,7 +409,7 @@ def get_kis_paper_auto_status() -> dict:
         # 자격 미설정이면 False (= BLOCKED). 실거래 권한과 무관.
         "kis_paper_auto_ready": bool(
             rd.can_run_kis_paper
-            and settings.enable_kis_paper_auto_trading
+            and effective_settings.enable_kis_paper_auto_trading
             and not settings.enable_live_trading
             and not settings.enable_ai_execution
         ),
