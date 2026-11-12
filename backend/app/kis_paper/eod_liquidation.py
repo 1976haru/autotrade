@@ -1118,7 +1118,8 @@ def eod_status(db: Any, *, settings: Any = None, now: datetime | None = None,
     buy_code, buy_msg = program_buy_block_reason(db, settings=settings, now=now)
     row = get_state_row(db, sch.trading_date)
     prev_incident = eod_incident_block(db, now)
-    mode = resolve_paper_auto_mode(settings)
+    from app.kis_paper.one_click_session import effective_session_settings
+    mode = resolve_paper_auto_mode(effective_session_settings(settings, db=db))
     state = row.state if row is not None else (
         EodState.BUY_CUTOFF_ACTIVE.value if phase in (IntradayPhase.BUY_CUTOFF, IntradayPhase.EOD_PRECHECK)
         else EodState.IDLE.value)

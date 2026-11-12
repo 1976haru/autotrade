@@ -841,6 +841,11 @@ class BackgroundTickDriver:
 
     def status(self) -> dict[str, Any]:
         s = self._settings()
+        # Status must describe the same session-scoped settings used by the
+        # order path.  The configured fail-safe remains OFF/dry-run, while a
+        # current desktop PAPER approval creates an effective settings view.
+        from app.kis_paper.one_click_session import effective_session_settings
+        effective = effective_session_settings(s)
         enabled = bool(getattr(s, "enable_ai_paper_background_tick", False))
         return {
             "enabled":          enabled,
@@ -865,8 +870,8 @@ class BackgroundTickDriver:
             "last_cash_after":        self._last_cash_after,
             "last_position_quantity": int(self._last_position_quantity),
             # KIS_PAPER_AUTO carry.
-            "kis_paper_auto_enabled": bool(getattr(s, "enable_kis_paper_auto_trading", False)),
-            "kis_paper_auto_dry_run": bool(getattr(s, "kis_paper_auto_order_dry_run", True)),
+            "kis_paper_auto_enabled": bool(getattr(effective, "enable_kis_paper_auto_trading", False)),
+            "kis_paper_auto_dry_run": bool(getattr(effective, "kis_paper_auto_order_dry_run", True)),
             "last_broker_order_no":   self._last_broker_order_no,
             "last_order_status":      self._last_order_status,
             # INTRADAY-FLAT-BY-CLOSE-V1: 마지막 EOD coordinator 단계 요약.

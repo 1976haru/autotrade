@@ -164,7 +164,15 @@ export function ReferenceHome({
       //   둔갑한다(실패 ≠ 빈 목록). available=false 면 카드가 '불러오기 실패' 분기.
       setLivePos(pos.status === "fulfilled" && pos.value ? pos.value : { available: false, positions: [] });
       if (aud.status === "fulfilled") { const v = aud.value; setOrders(Array.isArray(v) ? v : (v?.items ?? [])); }
-      if (dec.status === "fulfilled") setLatestAi(pickLatestChiefDecision(dec.value));
+      if (dec.status === "fulfilled") {
+        const latest = pickLatestChiefDecision(dec.value);
+        const stamp = latest?.created_at || latest?.timestamp || latest?.decided_at;
+        const todayKst = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" }).format(new Date());
+        const decisionDayKst = stamp
+          ? new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" }).format(new Date(stamp))
+          : null;
+        setLatestAi(decisionDayKst === todayKst ? latest : null);
+      }
       if (cs.status === "fulfilled") setCashState(cs.value);
       if (strat.status === "fulfilled") setStratReport(strat.value);
       // 방어: 응답이 배열 등 예상 외 형태면 `.entries`가 함수(Array.prototype.entries)일

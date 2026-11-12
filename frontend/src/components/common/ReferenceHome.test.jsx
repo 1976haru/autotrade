@@ -55,6 +55,10 @@ vi.mock("../../services/backend/client", () => ({
     autoPaperStatus: vi.fn(async () => ({ state: "PAUSED" })),
     autoPaperStart: vi.fn(async () => ({ ok: true })),
     autoPaperStop: vi.fn(async () => ({ ok: true })),
+    paperSessionApprovalGet: vi.fn(async () => ({
+      target_date: new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Seoul" }).format(new Date()),
+      status: "ACTIVE",
+    })),
     // 홈에 배치된 ThemeFilterCard용.
     themeFilterGet: vi.fn(async () => ({
       catalog_version: "kr-theme-v2", effective_blocked_symbol_count: 0, unmapped_symbol_count: 0, themes: [],
@@ -91,6 +95,7 @@ function renderHome(overrides = {}) {
 describe("ReferenceHome", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.__TAURI_INTERNALS__ = { invoke: vi.fn(async () => ({})) };
     backendApi.autoPaperStatus.mockResolvedValue({ state: "PAUSED" });
     backendApi.autoPaperStart.mockResolvedValue({ ok: true });
     backendApi.autoPaperStop.mockResolvedValue({ ok: true });

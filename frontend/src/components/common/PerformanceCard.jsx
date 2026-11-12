@@ -116,7 +116,11 @@ export function PerformanceCard({ api = backendApi }) {
 
       {/* 2행: 봇 vs 지수 */}
       <div style={{ marginTop: 10, fontSize: 13, color: "#2a1418", fontWeight: 700, lineHeight: 1.5 }}>
-        {failed || !market || market.available === false ? (
+        {!data && !failed ? (
+          <span data-testid="perf-market-loading" style={{ color: "rgba(40,20,24,.6)" }}>
+            시장 데이터 불러오는 중
+          </span>
+        ) : failed || market?.available === false ? (
           <span data-testid="perf-market-fail" style={{ color: "rgba(40,20,24,.6)" }}>
             시장 데이터 불러오기 실패({nowKstHm()})
           </span>

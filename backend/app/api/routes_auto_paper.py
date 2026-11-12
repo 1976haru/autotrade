@@ -2170,6 +2170,8 @@ def get_run_readiness() -> dict:
     broker / route_order / OrderExecutor 호출 0건, DB write 0건.
     """
     settings = get_settings()
+    from app.kis_paper.one_click_session import effective_session_settings
+    effective_settings = effective_session_settings(settings)
     loop = get_auto_paper_loop()
     snap = loop.status()
     now = datetime.now(timezone.utc)
@@ -2222,7 +2224,7 @@ def get_run_readiness() -> dict:
         },
         # V2: 4-모드 분류 (VIRTUAL_ONLY / KIS_REALTIME_DRYRUN /
         # KIS_REALTIME_PAPER_AUTO / KIS_REALTIME_SMOKE_TEST) + 정상/스모크 한도.
-        "paper_auto_mode": resolve_paper_auto_mode(settings).to_dict(),
+        "paper_auto_mode": resolve_paper_auto_mode(effective_settings).to_dict(),
         "paper_auto_limits": {
             "smoke_mode":               bool(getattr(settings, "kis_paper_smoke_mode", False)),
             "smoke_symbol":             str(getattr(settings, "kis_paper_smoke_symbol", "005930")),
