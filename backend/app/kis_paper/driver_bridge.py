@@ -736,7 +736,33 @@ async def kis_paper_realtime_scan_tick(
             reason_message="장마감 청산 구간 — 신규 매수 0, 청산은 EOD coordinator 가 단독 수행합니다.",
         )
 
+    # Keep the full-pool/filter/window counts next to the result.  Previously
+    # only the ten-symbol window count survived, which made a rotating scan
+    # look like the same ten symbols were being scanned forever.
+    if universe_symbols is not None:
+        _pool = list(universe_symbols)
+    else:
+        _pool = _full_universe_pool(settings)
+    from app.core.runtime_config import effective_disabled_theme_ids
+    from app.theme_filter.catalog import filter_new_entry_symbols
+    _theme_passed = filter_new_entry_symbols(_pool, effective_disabled_theme_ids(now))
     symbols = _scan_universe_symbols(settings, override=universe_symbols, now=now)
+    diagnostics: dict[str, Any] = {
+        "universe_pool_size": len(_pool),
+        "theme_filter_passed": len(_theme_passed),
+        "theme_filter_excluded": max(0, len(_pool) - len(_theme_passed)),
+        "scan_window_size": len(symbols),
+        "scanned_symbols": [],
+        "quotes_requested": 0,
+        "quotes_ok": 0,
+        "quotes_failed": 0,
+        "quotes_stale": 0,
+        "market_inputs_ready": 0,
+        "market_inputs_failed": 0,
+        "council_evaluated": 0,
+        "council_actions": {"BUY": 0, "HOLD": 0, "SELL": 0},
+        "strategy_signals": {},
+    }
 
     db = session_factory()
     out_orders: list[dict[str, Any]] = []
@@ -801,25 +827,42 @@ async def kis_paper_realtime_scan_tick(
             )
 
         for symbol in symbols:
+            diagnostics["quotes_requested"] += 1
             mi, quote = await market_input_fn(
                 symbol, client=client, now=now, market_is_open=market_is_open,
             )
             symbols_scanned += 1
+            diagnostics["scanned_symbols"].append(symbol)
+            if quote.ok:
+                diagnostics["quotes_ok"] += 1
+                if bool(getattr(quote, "is_stale", False)):
+                    diagnostics["quotes_stale"] += 1
+            else:
+                diagnostics["quotes_failed"] += 1
             # ⓑ-fix(2026-06-18 손절 갭): 60분봉 fetch 실패(mi=None)여도 *보유종목 청산평가*는
             #   실시간 현재가(quote.price)로 계속한다. 청산(infer_position_sell_reason)은
             #   PositionContext(현재가)만 의존 — mi(60분봉) 무관. 신규 진입만 mi 필요.
             #   ★집계·투표·리스크·승인·손절임계 로직 무수정 — 청산평가가 *skip 되지 않게* 만 한다.
             _exit_only = False
             if mi is None:
+                diagnostics["market_inputs_failed"] += 1
                 if (symbol in held_symbols) and quote.ok and float(quote.price or 0) > 0:
                     # 최소 입력(현재가만) — 진입 voter 는 데이터 부족→HOLD, 청산은 position 으로 평가.
                     mi = StrategyMarketInput(symbol=symbol, current_price=float(quote.price))
                     _exit_only = True   # 열화 데이터 → 진입(BUY) 금지, 청산(SELL)만 허용
                 else:
                     # 보유 아님 or 현재가도 없음 → 평가 불가 → skip(다음 틱 재시도, 합성가 안 만듦).
-                    skipped.append({"symbol": symbol, "reason_code": quote.status,
+                    # A successful current-price response can still fail the
+                    # historical-bar input build.  Do not misreport that as
+                    # KIS_PRICE_OK; it is the key distinction for NO_CANDIDATE.
+                    _input_reason = (
+                        "MARKET_INPUT_UNAVAILABLE" if quote.ok else str(quote.status)
+                    )
+                    skipped.append({"symbol": symbol, "reason_code": _input_reason,
                                     "price_source": "kis", "exit_eval": "skipped_no_price"})
                     continue
+            else:
+                diagnostics["market_inputs_ready"] += 1
 
             # S1(2026-06-15): 보유 종목은 PositionContext 를 구성해 council 에 전달 →
             #   run_agent_council 의 *기존* stop_loss/take_profit 강제청산 트리거가 비로소
@@ -867,6 +910,18 @@ async def kis_paper_realtime_scan_tick(
                 min_confidence_floor=float(getattr(settings, "kis_paper_auto_min_confidence", 0.6)),
             )
             final = council.final_action
+            diagnostics["council_evaluated"] += 1
+            _final_name = str(getattr(final, "value", final)).upper()
+            diagnostics["council_actions"][_final_name] = (
+                diagnostics["council_actions"].get(_final_name, 0) + 1
+            )
+            for _vote in council.votes:
+                _strategy = str(_vote.strategy)
+                _signal = str(getattr(_vote.signal, "value", _vote.signal)).upper()
+                _bucket = diagnostics["strategy_signals"].setdefault(
+                    _strategy, {"BUY": 0, "HOLD": 0, "SELL": 0},
+                )
+                _bucket[_signal] = _bucket.get(_signal, 0) + 1
             if _exit_only and final != CouncilAction.SELL:
                 # ⓑ-fix: 열화 데이터(60분봉 없음)에선 진입 금지 — 청산(SELL)만 진행.
                 #   재진입은 정상 60분봉 틱에서만. (mi=None 의 BUY 는 부실신호이므로 차단)
@@ -1021,6 +1076,7 @@ async def kis_paper_realtime_scan_tick(
                 f"KIS 실시간 스캔 완료 — {symbols_scanned}종목 조회, "
                 f"{candidates_found}후보, {orders_submitted}건 전송."
             ),
+            diagnostics=diagnostics,
         )
     except Exception as exc:  # noqa: BLE001 — 스캔 오류는 loop 를 죽이지 않음.
         try:
@@ -1033,6 +1089,7 @@ async def kis_paper_realtime_scan_tick(
             candidates_found=candidates_found, orders_attempted=orders_attempted,
             orders_submitted=orders_submitted, orders=out_orders, skipped=skipped,
             reason_code="KIS_PAPER_ERROR", reason_message=f"{type(exc).__name__}",
+            diagnostics=diagnostics,
         )
     finally:
         try:
@@ -1044,9 +1101,20 @@ async def kis_paper_realtime_scan_tick(
 def _scan_summary(
     *, mode, symbols_scanned, candidates_found, orders_attempted,
     orders_submitted, orders, skipped, reason_code, reason_message,
+    diagnostics=None,
 ) -> dict[str, Any]:
     """다종목 스캔 집계 결과 — driver / UI 가 읽는 표준 shape."""
     first_submitted = next((o for o in orders if o.get("submitted")), None)
+    diagnostics = dict(diagnostics or {})
+    excluded: dict[str, int] = {}
+    for item in skipped:
+        code = str(item.get("reason_code") or "UNKNOWN")
+        excluded[code] = excluded.get(code, 0) + 1
+    diagnostics["excluded_reasons"] = dict(
+        sorted(excluded.items(), key=lambda kv: (-kv[1], kv[0]))
+    )
+    diagnostics["order_gate_evaluated"] = int(orders_attempted)
+    diagnostics["orders_submitted"] = int(orders_submitted)
     return {
         "reason_code":      reason_code,
         "reason_message":   reason_message,
@@ -1068,6 +1136,7 @@ def _scan_summary(
         "broker_order_type": "KIS_PAPER",
         "orders":           orders,
         "skipped":          skipped,
+        "scan_diagnostics": diagnostics,
         "is_live_authorization": False,
         "is_order_signal":  False,
     }

@@ -1107,6 +1107,41 @@ export function AutoPaperLoopCard({
                   {bt.last_tick_at ? ` (${String(bt.last_tick_at).slice(11, 19)})` : ""}
                 </div>
               )}
+              {bt?.recent_scan_diagnostics?.completed_cycles > 0 && (() => {
+                const scan = bt.recent_scan_diagnostics;
+                const last = bt.last_scan_diagnostics || {};
+                const actions = scan.council_actions || {};
+                const excluded = Object.entries(scan.excluded_reasons || {}).slice(0, 3);
+                return (
+                  <div
+                    data-testid="kis-scan-diagnostics"
+                    style={{ marginTop: 6, padding: "6px 8px", background: "#f8fafc", borderRadius: "var(--r-sm)" }}
+                  >
+                    <div>
+                      오늘 tick {bt.tick_count_today ?? 0}회 / 최근 완료 스캔 {scan.completed_cycles}회 /
+                      감시 고유 종목 {scan.unique_symbols_count} / 시세 정상 {scan.quotes_ok}
+                    </div>
+                    <div>
+                      최근 풀 {last.universe_pool_size ?? "-"} / 테마 통과 {last.theme_filter_passed ?? "-"} /
+                      시장입력 통과 {scan.market_inputs_ready} / Council {scan.council_evaluated}
+                    </div>
+                    <div>
+                      Council BUY {actions.BUY || 0} / HOLD {actions.HOLD || 0} / SELL {actions.SELL || 0} /
+                      주문 게이트 {scan.orders_attempted} / KIS 요청 {scan.orders_submitted}
+                    </div>
+                    {excluded.length > 0 && (
+                      <div data-testid="kis-scan-excluded-reasons" style={{ color: "var(--c-text-2)" }}>
+                        주요 제외: {excluded.map(([code, count]) => `${code} ${count}`).join(" · ")}
+                      </div>
+                    )}
+                    {scan.candidates_found === 0 && (
+                      <div data-testid="kis-no-candidate-detail" style={{ color: "#92400e" }}>
+                        {last.universe_pool_size ?? 0}종목 풀 / 시세 정상 {scan.quotes_ok} / 전략 조건 통과 0 / 현재 매수 후보 없음
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               <div data-testid="bg-tick-safety" style={{ marginTop: 2, color: "var(--c-text-3)" }}>
                 실제 주문 아님 · broker_order_sent=false · is_live_authorization=false
               </div>

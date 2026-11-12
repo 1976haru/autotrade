@@ -288,6 +288,10 @@ class BackgroundTickDriver:
         # KIS_PAPER_AUTO 최근 주문 결과 carry.
         self._last_broker_order_no: str | None = None
         self._last_order_status: str | None = None
+        # Completed KIS scan summaries only.  A bounded in-memory history is
+        # enough for operational diagnosis and never changes order behavior.
+        self._last_scan_diagnostics: dict[str, Any] = {}
+        self._scan_history: list[dict[str, Any]] = []
 
     # ── settings / loop accessors ──────────────────────────────────────────
 
@@ -731,6 +735,15 @@ class BackgroundTickDriver:
         self._last_fill_status = res.get("fill_status")
         self._last_quantity = int(res.get("quantity") or 0)
         self._last_notional_krw = int(res.get("notional_krw") or 0)
+        scan = dict(res.get("scan_diagnostics") or {})
+        scan["completed_at"] = now.isoformat()
+        scan["cycle"] = cycle
+        scan["candidates_found"] = int(res.get("candidates_found") or 0)
+        scan["orders_attempted"] = int(res.get("orders_attempted") or 0)
+        scan["orders_submitted"] = int(res.get("orders_submitted") or 0)
+        self._last_scan_diagnostics = scan
+        self._scan_history.append(scan)
+        self._scan_history = self._scan_history[-40:]
         recorded = self._emit(
             level="INFO", code=f"KIS_PAPER_TICK_{rc}",
             message=self._last_reason_message,
@@ -847,6 +860,39 @@ class BackgroundTickDriver:
         from app.kis_paper.one_click_session import effective_session_settings
         effective = effective_session_settings(s)
         enabled = bool(getattr(s, "enable_ai_paper_background_tick", False))
+        recent = list(self._scan_history)
+        unique_symbols = sorted({
+            symbol for scan in recent
+            for symbol in (scan.get("scanned_symbols") or [])
+        })
+        totals: dict[str, int] = {}
+        for key in ("quotes_requested", "quotes_ok", "quotes_failed", "quotes_stale",
+                    "market_inputs_ready", "market_inputs_failed", "council_evaluated",
+                    "candidates_found", "orders_attempted", "orders_submitted"):
+            totals[key] = sum(int(scan.get(key) or 0) for scan in recent)
+        excluded: dict[str, int] = {}
+        strategy: dict[str, dict[str, int]] = {}
+        actions = {"BUY": 0, "HOLD": 0, "SELL": 0}
+        for scan in recent:
+            for code, count in (scan.get("excluded_reasons") or {}).items():
+                excluded[code] = excluded.get(code, 0) + int(count or 0)
+            for action, count in (scan.get("council_actions") or {}).items():
+                actions[action] = actions.get(action, 0) + int(count or 0)
+            for name, counts in (scan.get("strategy_signals") or {}).items():
+                bucket = strategy.setdefault(name, {"BUY": 0, "HOLD": 0, "SELL": 0})
+                for signal, count in counts.items():
+                    bucket[signal] = bucket.get(signal, 0) + int(count or 0)
+        recent_scan = {
+            "completed_cycles": len(recent),
+            "unique_symbols_count": len(unique_symbols),
+            "unique_symbols": unique_symbols,
+            **totals,
+            "council_actions": actions,
+            "strategy_signals": strategy,
+            "excluded_reasons": dict(sorted(
+                excluded.items(), key=lambda kv: (-kv[1], kv[0])
+            )),
+        }
         return {
             "enabled":          enabled,
             "running":          self.is_running,
@@ -874,6 +920,8 @@ class BackgroundTickDriver:
             "kis_paper_auto_dry_run": bool(getattr(effective, "kis_paper_auto_order_dry_run", True)),
             "last_broker_order_no":   self._last_broker_order_no,
             "last_order_status":      self._last_order_status,
+            "last_scan_diagnostics":  self._last_scan_diagnostics,
+            "recent_scan_diagnostics": recent_scan,
             # INTRADAY-FLAT-BY-CLOSE-V1: 마지막 EOD coordinator 단계 요약.
             "last_eod_state":         (self._last_eod or {}).get("state"),
             "last_eod_reason_code":   (self._last_eod or {}).get("reason_code"),
