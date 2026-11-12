@@ -197,6 +197,27 @@ async def lifespan(_app: FastAPI):
             "/api/status, /api/kis-paper/readiness"
         )
 
+    # Restore an explicitly approved, account-scoped PAPER session after a
+    # desktop restart. This never creates approval: it only reuses today's
+    # persisted Windows-desktop approval, keeps LIVE blocked, and respects the
+    # restored emergency stop. start() chooses RUNNING or WAITING_MARKET.
+    try:
+        from app.api.deps import get_risk_manager
+        from app.auto_paper.loop import get_auto_paper_loop
+        from app.kis_paper.one_click_session import session_trading_authorized
+        if (session_trading_authorized(cfg)
+                and not bool(getattr(get_risk_manager(), "emergency_stop", False))):
+            restored = get_auto_paper_loop().start()
+            _startup_logger.info(
+                "[startup] approved PAPER session restored: state=%s",
+                restored.state.value,
+            )
+    except Exception as exc:  # fail closed; readiness exposes the reason
+        _startup_logger.warning(
+            "[startup] approved PAPER session restore skipped (error_type=%s)",
+            type(exc).__name__,
+        )
+
     # Emit operator-facing event — backend ready.
     try:
         from app.system.event_log import log_event
