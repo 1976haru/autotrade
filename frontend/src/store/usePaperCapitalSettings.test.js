@@ -316,8 +316,9 @@ describe("usePaperCapitalSettings backend 영속 (P-16)", () => {
     const { result } = renderHook(() =>
       usePaperCapitalSettings({ storage, api }));
     await waitFor(() => {
-      expect(result.current.settings.totalPaperCapital).toBe(10_000_000);
+      expect(result.current.source).toBe("PERSISTED");
     });
+    expect(result.current.settings.totalPaperCapital).toBe(10_000_000);
     expect(result.current.settings.maxPositions).toBe(5);
     expect(result.current.source).toBe("PERSISTED");
     expect(result.current.persisted).toBe(true);
