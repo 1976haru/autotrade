@@ -134,8 +134,8 @@ export function PerformanceCard({ api = backendApi }) {
           </span>
         ) : (
           <span data-testid="perf-market" style={{ color: "rgba(40,20,24,.6)" }}>
-            {market.kospi_return_pct != null
-              ? <>코스피 {_pct(market.kospi_return_pct)}{market.kosdaq_return_pct != null && <> · 코스닥 {_pct(market.kosdaq_return_pct)}</>}</>
+            {market?.kospi_return_pct != null
+              ? <>코스피 {_pct(market.kospi_return_pct)}{market?.kosdaq_return_pct != null && <> · 코스닥 {_pct(market.kosdaq_return_pct)}</>}</>
               : "시장 비교 준비 중"}
           </span>
         )}

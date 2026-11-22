@@ -64,4 +64,11 @@ describe("PerformanceCard (P3/P4)", () => {
     const { getByTestId } = render(<PerformanceCard api={api} />);
     await waitFor(() => expect(getByTestId("perf-market-fail")).toBeTruthy());
   });
+
+  it("partial response without market data renders a safe placeholder", async () => {
+    const api = { performanceGet: vi.fn(async () => ({ no_data: true })) };
+    const { getByTestId } = render(<PerformanceCard api={api} />);
+    await waitFor(() => expect(getByTestId("perf-market").textContent).toBeTruthy());
+    expect(getByTestId("perf-card")).toBeTruthy();
+  });
 });
