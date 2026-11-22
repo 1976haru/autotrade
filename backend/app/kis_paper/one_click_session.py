@@ -99,10 +99,47 @@ def desktop_token_valid(candidate: str | None) -> bool:
     return bool(expected and candidate and hmac.compare_digest(expected, candidate))
 
 
+# 승인을 반영해도 KIS 모의주문이 실제로 나갈 수 없는 설정 — 사유 코드 (UI 정합).
+ORDER_PATH_NOT_READY = "ORDER_PATH_NOT_READY"
+BLOCKER_PROVIDER_NOT_KIS = "MARKET_DATA_PROVIDER_NOT_KIS"
+BLOCKER_BACKGROUND_TICK_DISABLED = "BACKGROUND_TICK_DISABLED"
+BLOCKER_KIS_CREDENTIALS_MISSING = "KIS_CREDENTIALS_MISSING"
+BLOCKER_FILL_POLLER_DISABLED = "FILL_POLLER_DISABLED"
+BLOCKER_SMOKE_MODE_ON = "KIS_PAPER_SMOKE_MODE_ON"
+
+
+def order_path_blockers(settings: Any) -> list[str]:
+    """Pure check: would an approved session actually route KIS PAPER orders?
+
+    Evaluated on the approval-applied view (``ApprovedPaperSettings``) so the
+    answer matches what the background driver will see after approval.  It
+    only *reports* reasons; every order still passes ``authorize_order`` and
+    ``route_order``.  Returns ``[]`` when the order path is ready.
+    """
+    s = ApprovedPaperSettings(settings)
+    codes: list[str] = []
+    provider = str(getattr(s, "market_data_provider", "mock") or "mock").strip().lower()
+    if provider != "kis":
+        codes.append(BLOCKER_PROVIDER_NOT_KIS)
+    if not bool(getattr(s, "enable_ai_paper_background_tick", False)):
+        codes.append(BLOCKER_BACKGROUND_TICK_DISABLED)
+    if not all(str(getattr(s, k, "") or "").strip()
+               for k in ("kis_app_key", "kis_app_secret", "kis_account_no")):
+        codes.append(BLOCKER_KIS_CREDENTIALS_MISSING)
+    if not bool(getattr(s, "kis_paper_fill_polling", False)):
+        codes.append(BLOCKER_FILL_POLLER_DISABLED)
+    if bool(getattr(s, "kis_paper_smoke_mode", False)):
+        codes.append(BLOCKER_SMOKE_MODE_ON)
+    return codes
+
+
 def create_approval(*, db: Any, settings: Any, risk: Any, target_date: str, actor: str,
                     explicit_ack: bool) -> dict[str, Any]:
     if not explicit_ack:
         raise ValueError("EXPLICIT_APPROVAL_REQUIRED")
+    blockers = order_path_blockers(settings)
+    if blockers:
+        raise ValueError(f"{ORDER_PATH_NOT_READY}:" + ",".join(blockers))
     target = datetime.strptime(target_date, "%Y-%m-%d").date()
     today = datetime.now(KST).date()
     if target < today or target > today + timedelta(days=1):

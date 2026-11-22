@@ -45,6 +45,8 @@ export function useAutoPaperLoop({
   const [busy, setBusy] = useState(false);
   // 마지막 시작 시도 결과(게이트 결과 표시용). {ok, reasons[], message}
   const [startResult, setStartResult] = useState(null);
+  // P1-A: 마지막 start 응답의 주문 모드 (KIS_REALTIME_PAPER_AUTO 가 아니면 KIS 주문 0건).
+  const [orderMode, setOrderMode] = useState(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -73,7 +75,10 @@ export function useAutoPaperLoop({
         capitalSettings: resolvedCapital,
       });
       if (!approval.ok) {
-        const res = { ok: false, reasons: [approval.reason], cancelled: approval.cancelled === true };
+        const res = {
+          ok: false, reasons: [approval.reason], cancelled: approval.cancelled === true,
+          blockers: Array.isArray(approval.blockers) ? approval.blockers : [],
+        };
         setStartResult(res);
         return res;
       }
@@ -92,7 +97,12 @@ export function useAutoPaperLoop({
         buyAllowed: snap?.intraday_buy_allowed !== false,
         buyReasonCode: snap?.intraday_buy_reason_code || null,
         buyReasonMessage: snap?.intraday_buy_reason_message || null,
+        orderMode: snap?.order_mode || null,
+        orderBlockers: Array.isArray(snap?.order_blockers) ? snap.order_blockers : [],
+        armedFor: snap?.armed_for || null,
+        targetDate: approval.targetDate || null,
       };
+      setOrderMode(res.orderMode);
       setStartResult(res);
       return res;
     } catch (err) {
@@ -112,6 +122,7 @@ export function useAutoPaperLoop({
       await api.autoPaperStop();
       await refresh();
       setStartResult(null);
+      setOrderMode(null);
       return { ok: true };
     } catch (err) {
       return { ok: false, message: err && err.message };
@@ -129,6 +140,7 @@ export function useAutoPaperLoop({
     stopAllowed: canStopAutoPaper(state),
     busy,
     startResult,
+    orderMode,
     clearStartResult,
     start,
     stop,

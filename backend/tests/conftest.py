@@ -92,6 +92,7 @@ def _fake_paper_operator_approval_for_non_auth_tests(request, monkeypatch):
         "test_one_click_paper_session",
         "test_kis_paper_auto_trading_pipeline",
         "test_kis_paper_v22_multisymbol_integration",
+        "test_autopaper_start_readiness",
     }:
         return
     from app.kis_paper import one_click_session

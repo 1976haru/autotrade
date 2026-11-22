@@ -68,6 +68,9 @@ def settings(account="1234567801"):
     return SimpleNamespace(
         kis_is_paper=True, enable_live_trading=False, kis_account_no=account,
         kis_product_code="01", kis_paper_fill_polling=True,
+        # P1-A: 승인은 실제 KIS 모의주문 경로가 준비된 설정에서만 허용된다.
+        market_data_provider="kis", enable_ai_paper_background_tick=True,
+        kis_app_key="FAKE-KEY", kis_app_secret="FAKE-SECRET", kis_paper_smoke_mode=False,
     )
 
 

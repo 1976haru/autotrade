@@ -282,7 +282,6 @@ def post_start(body: _StartBody | None = None) -> dict:
     #   직전일 EOD 사고 차단 포함 상세는 GET /api/kis-paper/eod/status).
     try:
         from datetime import datetime as _dt, timezone as _tz
-        from app.core.config import get_settings
         from app.scheduler.intraday_session import IntradayPolicy, buy_reason_message_ko
         _ok, _code = IntradayPolicy.from_settings(get_settings()).buy_entry_decision(
             _dt.now(_tz.utc))
@@ -291,6 +290,18 @@ def post_start(body: _StartBody | None = None) -> dict:
         out["intraday_buy_reason_message"] = buy_reason_message_ko(_code)
     except Exception:  # noqa: BLE001 — 표시용, 시작 자체엔 영향 없음.
         pass
+    # P1-A: 실제로 KIS 모의주문이 나갈 수 있는 모드인지 + 차단 사유 (추가 필드).
+    try:
+        from app.kis_paper.one_click_session import (
+            effective_session_settings, order_path_blockers,
+        )
+        _settings = get_settings()
+        out["order_mode"] = resolve_paper_auto_mode(
+            effective_session_settings(_settings)).mode
+        out["order_blockers"] = order_path_blockers(_settings)
+    except Exception:  # noqa: BLE001 — fail closed 표시.
+        out["order_mode"] = "VIRTUAL_ONLY"
+        out["order_blockers"] = ["ORDER_MODE_UNAVAILABLE"]
     return out
 
 
@@ -2161,6 +2172,14 @@ def _loop_health_label(state: str, cycle_count: int) -> tuple[str, str]:
     return "NOT_RUNNING", "자동 루프가 실행 중이 아닙니다 — 시작 버튼을 누르세요."
 
 
+def _order_blockers_safe(settings) -> list[str]:
+    try:
+        from app.kis_paper.one_click_session import order_path_blockers
+        return order_path_blockers(settings)
+    except Exception:  # noqa: BLE001
+        return ["ORDER_MODE_UNAVAILABLE"]
+
+
 @_AP.get("/run-readiness")
 def get_run_readiness() -> dict:
     """자동매매 실행 *준비 상태* 한눈에 — read-only.
@@ -2225,6 +2244,8 @@ def get_run_readiness() -> dict:
         # V2: 4-모드 분류 (VIRTUAL_ONLY / KIS_REALTIME_DRYRUN /
         # KIS_REALTIME_PAPER_AUTO / KIS_REALTIME_SMOKE_TEST) + 정상/스모크 한도.
         "paper_auto_mode": resolve_paper_auto_mode(effective_settings).to_dict(),
+        # P1-A: 승인해도 KIS 모의주문이 나갈 수 없는 사유 ([] = 준비됨).
+        "order_blockers": _order_blockers_safe(settings),
         "paper_auto_limits": {
             "smoke_mode":               bool(getattr(settings, "kis_paper_smoke_mode", False)),
             "smoke_symbol":             str(getattr(settings, "kis_paper_smoke_symbol", "005930")),

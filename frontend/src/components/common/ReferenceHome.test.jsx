@@ -164,6 +164,50 @@ describe("ReferenceHome", () => {
     expect(backendApi.autoPaperStop).not.toHaveBeenCalled();
   });
 
+  it("P1-A: 주문 경로 차단 사유가 있으면 승인 팝업 없이 차단 문구 표시, start 호출 0", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockImplementation(() => true);
+    backendApi.autoPaperRunReadiness = vi.fn(async () => ({ order_blockers: ["MARKET_DATA_PROVIDER_NOT_KIS"] }));
+    try {
+      const { getByTestId, findByTestId } = renderHome();
+      await act(async () => { fireEvent.click(getByTestId("refhome-startstop")); });
+      const note = await findByTestId("refhome-start-note");
+      expect(note.textContent).toContain("MARKET_DATA_PROVIDER=kis");
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(backendApi.autoPaperStart).not.toHaveBeenCalled();
+    } finally {
+      delete backendApi.autoPaperRunReadiness;
+      confirmSpy.mockRestore();
+    }
+  });
+
+  it("P1-A: start 응답 order_mode 가 PAPER_AUTO 가 아니면 '가상 전용' 배지 고정", async () => {
+    backendApi.autoPaperStart.mockResolvedValue({ state: "RUNNING", order_mode: "VIRTUAL_ONLY", order_blockers: [] });
+    const { getByTestId, findByTestId } = renderHome();
+    backendApi.autoPaperStatus.mockResolvedValue({ state: "RUNNING" });
+    await act(async () => { fireEvent.click(getByTestId("refhome-startstop")); });
+    const badge = await findByTestId("refhome-virtual-only-badge");
+    expect(badge.textContent).toContain("가상 전용 — KIS 주문 안 나감");
+  });
+
+  it("P1-A: order_mode=KIS_REALTIME_PAPER_AUTO 면 배지 없음", async () => {
+    backendApi.autoPaperStart.mockResolvedValue({ state: "RUNNING", order_mode: "KIS_REALTIME_PAPER_AUTO", order_blockers: [] });
+    const { getByTestId, queryByTestId } = renderHome();
+    backendApi.autoPaperStatus.mockResolvedValue({ state: "RUNNING" });
+    await act(async () => { fireEvent.click(getByTestId("refhome-startstop")); });
+    await waitFor(() => expect(backendApi.autoPaperStart).toHaveBeenCalled());
+    expect(queryByTestId("refhome-virtual-only-badge")).toBeNull();
+  });
+
+  it("P2: 다음 거래일 대기 → 'OO월 OO일(요일) 09:00에 자동 시작해요'", async () => {
+    backendApi.autoPaperStart.mockResolvedValue({
+      state: "WAITING_MARKET", armed_for: "2026-11-30", order_mode: "KIS_REALTIME_PAPER_AUTO",
+    });
+    const { getByTestId, findByTestId } = renderHome();
+    await act(async () => { fireEvent.click(getByTestId("refhome-startstop")); });
+    const note = await findByTestId("refhome-start-note");
+    expect(note.textContent).toContain("11월 30일(월) 09:00에 자동 시작해요");
+  });
+
   it("가동(RUNNING) 상태: ⏸정지가 실제 루프 정지(autoPaperStop) 호출", async () => {
     backendApi.autoPaperStatus.mockResolvedValue({ state: "RUNNING" });
     const { getByTestId } = renderHome();
