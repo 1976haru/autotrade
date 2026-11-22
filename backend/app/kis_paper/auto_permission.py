@@ -25,10 +25,11 @@ from typing import Any
 from app.scheduler.intraday_session import (
     BUY_ALLOWED,
     BUY_BLOCKED_BEFORE_ENTRY,
+    CalendarStatus,
     IntradayPolicy,
     load_krx_calendar,
 )
-from app.scheduler.market_clock import MarketPhase, current_market_phase
+from app.scheduler.market_clock import MarketPhase, current_market_phase, to_kst
 
 
 class KisPaperPermReason(StrEnum):
@@ -283,8 +284,11 @@ def evaluate_kis_paper_order_permission(
     if inp.emergency_stop:
         return _block(KisPaperPermReason.EMERGENCY_STOP_ENABLED)
 
-    # 장 OPEN (평일 09:00~15:30).
-    if current_market_phase(now) != MarketPhase.OPEN:
+    # 장 OPEN (KRX 달력 기준 거래일 정규장). 휴장일은 아래 intraday 정책이 더 구체적인
+    #   사유(BUY_BLOCKED_NON_TRADING_DAY / EXIT_WINDOW_CLOSED)로 차단하도록 통과시킨다.
+    _calendar = load_krx_calendar(inp.calendar_override_path or None)
+    if (current_market_phase(now, calendar=_calendar) != MarketPhase.OPEN
+            and _calendar.status(to_kst(now).date()) != CalendarStatus.HOLIDAY):
         return _block(KisPaperPermReason.MARKET_CLOSED)
 
     # 신호.
@@ -301,7 +305,7 @@ def evaluate_kis_paper_order_permission(
         window_start=inp.window_start, window_end=inp.window_end,
         buy_cutoff_minutes_before_close=inp.buy_cutoff_minutes_before_close,
         flatten_minutes_before_close=inp.flatten_minutes_before_close,
-        calendar=load_krx_calendar(inp.calendar_override_path or None),
+        calendar=_calendar,
     )
     if purpose == PURPOSE_BUY_ENTRY:
         ok, code = policy.buy_entry_decision(now)
