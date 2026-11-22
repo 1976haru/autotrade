@@ -42,7 +42,9 @@ def _restore_main_apply_migrations():
     import app.db.migration_runner as runner
     import app.main as main_module
     from app.db.session import apply_migrations as real_apply
+    original_app = main_module.app
     yield
+    main_module.app = original_app
     main_module.apply_migrations = real_apply  # type: ignore[assignment]
     runner.reset_status_for_tests()
 
