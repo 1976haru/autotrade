@@ -135,7 +135,10 @@ KIS Developers/모의투자 포털에서 같은 계좌의 주문 내역을 보�
 
 - **휴장일:** `market_clock.current_market_phase`가 KRX 휴장일 달력을 반영한다. 휴장일은 `WEEKEND`와 똑같이 휴장으로 처리하고, 특수 세션(지연 개장)은 달력의 개장·마감 시각을 따른다.
 - **다음 거래일 대기:** 장 마감 후·주말·휴장일에는 승인 대상이 `GET /api/auto-paper/next-trading-day`(KRX 달력 기준)가 된다. 그 날짜로 승인한 뒤 시작하면 루프가 `WAITING_MARKET`(`armed_for`=대상일)으로 기다렸다가 그날 09:00에 `RUNNING`이 된다. 대상일을 놓치면 `MARKET_CLOSED`가 된다. 대기는 주문 권한이 아니다. `authorize_order`가 `target_date == 오늘`을 그대로 검사하므로 대기 중 주문은 0건이다. 승인 가능 날짜는 오늘 또는 다음 거래일뿐이다.
-- **긴급정지:** 대기 중 `POST /api/auto-paper/emergency-stop`을 호출하면 대기가 풀리고 승인 기록이 `BLOCKED`로 바뀐다. 재시작해도 복원되지 않으며, 다시 시작하려면 새로 승인해야 한다.
+- **긴급정지:** `POST /api/auto-paper/emergency-stop`을 호출하면 대기가 풀리고, 승인 기록을 **승인 파일과 운영 DB 양쪽에** `BLOCKED` + `emergency_blocked=true`로 저장한다. 응답의 `session_block` / `session_block_persisted`에 저장 결과가 담긴다.
+  - `load_approval`은 파일과 DB(같은 날짜·계좌) 중 **더 제한적인 기록**을 쓴다. 따라서 어느 한쪽만 저장돼도, 또는 파일이 삭제·손상돼 DB에서 복구해도 차단이 유지된다. `db` 인자 없이 호출되는 재시작 복원 경로도 기본 DB를 읽기 전용으로 확인한다.
+  - 저장이 양쪽 모두 실패하면 응답은 `session_block_persisted=false`가 되고 CRITICAL 로그를 남긴다. 이 경우에도 현재 프로세스는 즉시 차단된다(`authorize_order` → `EMERGENCY_STOP_SESSION_BLOCKED`). 다만 재시작 후 복원을 막을 기록은 없다.
+  - 차단은 새 **명시적 승인**(`explicit_ack=true`)으로만 풀린다. 긴급정지된 기록은 재사용하지 않고 새 기록을 만든다.
 
 ## PAPER 다음 단계
 

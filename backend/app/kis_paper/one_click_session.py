@@ -47,26 +47,106 @@ def _write_atomic(data: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
-def load_approval(db: Any | None = None) -> dict[str, Any] | None:
+# 상태 제한도: 긴급정지 차단(2) > 그 밖의 비활성 상태 BLOCKED/EXPIRED/INVALID…(1) > SCHEDULED/ACTIVE(0).
+_USABLE_STATUSES = frozenset({"SCHEDULED", "ACTIVE"})
+EMERGENCY_SESSION_BLOCK_REASON = "AUTO_PAPER_EMERGENCY_STOP"
+
+# 긴급정지 차단을 파일·DB 어디에도 저장하지 못했을 때의 프로세스 내 fail-closed 표식.
+# 새 *명시적* 승인(create_approval)으로만 해제된다.
+_PROCESS_EMERGENCY_BLOCK = False
+
+
+class EmergencyBlockPersistError(RuntimeError):
+    """긴급정지 세션 차단을 승인 파일·DB 어디에도 영속 저장하지 못함."""
+
+
+def _restrictiveness(record: dict[str, Any] | None) -> int:
+    if not record:
+        return -1
+    if record.get("emergency_blocked"):
+        return 2
+    return 0 if record.get("status") in _USABLE_STATUSES else 1
+
+
+def _read_file_record() -> dict[str, Any] | None:
     try:
         value = json.loads(approval_path().read_text(encoding="utf-8"))
-        if isinstance(value, dict):
-            return value
+        return value if isinstance(value, dict) else None
     except (OSError, ValueError, TypeError):
-        pass
-    if db is None:
         return None
+
+
+def _open_default_db() -> Any | None:
     try:
-        row = db.execute(
-            select(PaperSessionApproval)
-            .order_by(PaperSessionApproval.id.desc()).limit(1)
-        ).scalars().first()
-        value = dict(row.record or {}) if row is not None else None
-        if value:
-            _write_atomic(value)
-        return value
-    except Exception:
+        from app.db.session import SessionLocal
+        return SessionLocal()
+    except Exception:  # noqa: BLE001 — DB 미구성: 파일 기록만 사용 (기존 동작).
         return None
+
+
+def _db_record(db: Any, *, target_date: str | None = None,
+               fingerprint: str | None = None) -> dict[str, Any] | None:
+    query = select(PaperSessionApproval)
+    if target_date is not None and fingerprint is not None:
+        query = query.where(
+            PaperSessionApproval.trading_date == target_date,
+            PaperSessionApproval.account_fingerprint == fingerprint,
+        )
+    row = db.execute(query.order_by(PaperSessionApproval.id.desc()).limit(1)).scalars().first()
+    if row is None:
+        return None
+    value = dict(row.record or {})
+    if not value:
+        return None
+    # 컬럼 status 가 기록 JSON 보다 제한적이면 컬럼을 따른다.
+    if str(row.status or "") not in _USABLE_STATUSES and value.get("status") in _USABLE_STATUSES:
+        value["status"] = str(row.status)
+    return value
+
+
+def load_approval(db: Any | None = None) -> dict[str, Any] | None:
+    """승인 파일 + 운영 DB 를 함께 읽고 *더 제한적인* 기록을 반환한다.
+
+    - 파일이 있으면 같은 (target_date, 계좌) DB 기록과 비교해 제한적인 쪽을 쓴다
+      (BLOCKED/긴급정지 차단이 SCHEDULED/ACTIVE 보다 우선). DB 가 더 제한적이면
+      파일도 그 상태로 맞춘다.
+    - 파일이 없거나 손상되면 DB 최신 기록으로 복구한다 (BLOCKED 도 그대로 복구).
+    - ``db`` 가 없으면 기본 DB 세션을 읽기 전용으로 연다. DB 읽기 실패는 파일
+      기록만 사용한다 (기존 동작).
+    """
+    file_record = _read_file_record()
+    own = None
+    session = db
+    if session is None:
+        session = own = _open_default_db()
+    try:
+        if session is None:
+            return file_record
+        try:
+            if file_record is not None:
+                db_rec = _db_record(
+                    session, target_date=str(file_record.get("target_date", "")),
+                    fingerprint=str(file_record.get("account_fingerprint", "")),
+                )
+                if _restrictiveness(db_rec) > _restrictiveness(file_record):
+                    try:
+                        _write_atomic(db_rec)
+                    except OSError:
+                        pass
+                    return db_rec
+                return file_record
+            value = _db_record(session)
+            if value:
+                try:
+                    _write_atomic(value)
+                except OSError:
+                    pass
+            return value
+        except Exception:  # noqa: BLE001
+            return file_record
+    finally:
+        if own is not None:
+            own.close()
 
 
 def _persist_approval(db: Any, record: dict[str, Any]) -> None:
@@ -162,17 +242,58 @@ def armed_session_date(settings: Any, *, now: datetime | None = None,
     return target if target == next_trading_day(now, calendar=calendar) else None
 
 
-def block_session_for_emergency(reason: str = "AUTO_PAPER_EMERGENCY_STOP") -> bool:
-    """Mark the current session approval BLOCKED (stricter only, never loosens).
+def block_session_for_emergency(db: Any | None = None,
+                                reason: str = EMERGENCY_SESSION_BLOCK_REASON) -> dict[str, Any]:
+    """긴급정지: 현재 세션 승인을 BLOCKED + ``emergency_blocked`` 로 영속 저장.
 
-    Used by the auto-paper loop emergency stop so a pending/next-day session
-    is not restored after a restart; a fresh explicit approval is required.
+    승인 파일과 운영 DB 기록 *둘 다* 에 기록한다 (어느 한쪽만 남아도
+    ``load_approval`` 의 제한 우선 규칙으로 재시작 후 차단 유지). 이 프로세스는
+    저장 결과와 무관하게 즉시 fail-closed 가 된다. 둘 다 실패하면
+    ``EmergencyBlockPersistError`` 를 던진다. 해제는 새 명시적 승인만 가능.
     """
-    record = load_approval()
-    if not record or record.get("status") not in {"SCHEDULED", "ACTIVE"}:
-        return False
-    _block(record, reason)
-    return True
+    global _PROCESS_EMERGENCY_BLOCK
+    _PROCESS_EMERGENCY_BLOCK = True
+    own = None
+    session = db
+    if session is None:
+        session = own = _open_default_db()
+    try:
+        record = load_approval(session)
+        if not record:
+            return {"blocked": False, "reason": "NO_APPROVAL", "file": False, "db": False,
+                    "errors": []}
+        record = dict(record)
+        record.update(
+            status="BLOCKED", block_reason=reason, emergency_blocked=True,
+            emergency_blocked_at=datetime.now(timezone.utc).isoformat(),
+        )
+        errors: list[str] = []
+        file_ok = db_ok = False
+        try:
+            _write_atomic(record)
+            file_ok = True
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"file:{type(exc).__name__}")
+        if session is None:
+            errors.append("db:UNAVAILABLE")
+        else:
+            try:
+                _persist_approval(session, record)
+                db_ok = True
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"db:{type(exc).__name__}")
+                try:
+                    session.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+        result = {"blocked": True, "reason": reason, "file": file_ok, "db": db_ok,
+                  "errors": errors}
+        if not (file_ok or db_ok):
+            raise EmergencyBlockPersistError(",".join(errors) or "PERSIST_FAILED")
+        return result
+    finally:
+        if own is not None:
+            own.close()
 
 
 def _calendar_for(settings: Any):
@@ -183,6 +304,7 @@ def _calendar_for(settings: Any):
 
 def create_approval(*, db: Any, settings: Any, risk: Any, target_date: str, actor: str,
                     explicit_ack: bool) -> dict[str, Any]:
+    global _PROCESS_EMERGENCY_BLOCK
     if not explicit_ack:
         raise ValueError("EXPLICIT_APPROVAL_REQUIRED")
     blockers = order_path_blockers(settings)
@@ -212,7 +334,10 @@ def create_approval(*, db: Any, settings: Any, risk: Any, target_date: str, acto
     ).scalars().first()
     if existing is not None:
         prior = dict(existing.record or {})
-        if public_status(prior).get("status") in {"SCHEDULED", "ACTIVE"}:
+        if (public_status(prior).get("status") in _USABLE_STATUSES
+                and str(existing.status or "") in _USABLE_STATUSES
+                and not prior.get("emergency_blocked")
+                and not _PROCESS_EMERGENCY_BLOCK):
             _write_atomic(prior)
             return prior
     latest = db.execute(
@@ -254,6 +379,7 @@ def create_approval(*, db: Any, settings: Any, risk: Any, target_date: str, acto
     }
     _persist_approval(db, record)
     _write_atomic(record)
+    _PROCESS_EMERGENCY_BLOCK = False   # 새 *명시적* 승인만이 긴급정지 차단을 해제한다.
     return record
 
 
@@ -265,6 +391,7 @@ def public_status(record: dict[str, Any] | None = None) -> dict[str, Any]:
         "status", "target_date", "expires_at", "account_fingerprint", "allowed_sides",
         "limits", "approved_by", "auth_method", "approved_at", "cancel_authorized",
         "cancel_scope", "last_preflight_at", "block_reason")}
+    out["emergency_blocked"] = bool(r.get("emergency_blocked"))
     try:
         today = datetime.now(KST).date().isoformat()
         expires = datetime.fromisoformat(str(r.get("expires_at", "")))
@@ -293,6 +420,8 @@ def session_trading_authorized(settings: Any, *, db: Any | None = None) -> bool:
         return False
     if bool(getattr(settings, "enable_live_trading", False)):
         return False
+    if _PROCESS_EMERGENCY_BLOCK:
+        return False
     account = str(getattr(settings, "kis_account_no", "") or "")
     if not account:
         return False
@@ -301,7 +430,7 @@ def session_trading_authorized(settings: Any, *, db: Any | None = None) -> bool:
     except TypeError:  # compatibility with injected zero-argument test readers
         record = load_approval()
     status = public_status(record)
-    if status.get("status") not in {"SCHEDULED", "ACTIVE"}:
+    if status.get("status") not in _USABLE_STATUSES or (record or {}).get("emergency_blocked"):
         return False
     expected = account_fingerprint(
         account, str(getattr(settings, "kis_product_code", "01")),
@@ -349,6 +478,9 @@ async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
         r = load_approval()
     if not r:
         return False, "ONE_CLICK_APPROVAL_MISSING"
+    if _PROCESS_EMERGENCY_BLOCK or r.get("emergency_blocked"):
+        # 긴급정지로 차단된 세션 — 새 명시적 승인 전까지 어떤 주문도 불가 (기록 재작성 없음).
+        return False, "EMERGENCY_STOP_SESSION_BLOCKED"
     local = now.astimezone(KST)
     if r.get("target_date") != local.date().isoformat():
         return _block(r, "APPROVAL_DATE_MISMATCH")

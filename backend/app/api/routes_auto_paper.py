@@ -14,6 +14,7 @@ body `{ pre_market: { start_allowed, verdict, blocking_reasons, warnings } }`
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -339,16 +340,38 @@ def post_stop() -> dict:
     return snap.to_dict()
 
 
+_ap_log = logging.getLogger("autotrade.auto_paper.routes")
+
+
 @_AP.post("/emergency-stop")
-def post_emergency_stop() -> dict:
+def post_emergency_stop(db=Depends(get_db)) -> dict:
     snap = get_auto_paper_loop().emergency_stop()
-    # P2: 대기 중이던 승인 세션도 BLOCKED — 재시작 시 복원 안 됨 (재승인 필요).
+    out = snap.to_dict()
+    # 대기/진행 중 승인 세션을 승인 파일 + 운영 DB 에 BLOCKED 로 영속 저장 —
+    #   재시작 후에도 복원·주문 불가 (새 명시적 승인 필요). 이 프로세스는 즉시 fail-closed.
+    from app.kis_paper.one_click_session import (
+        EmergencyBlockPersistError, block_session_for_emergency,
+    )
     try:
-        from app.kis_paper.one_click_session import block_session_for_emergency
-        block_session_for_emergency()
-    except Exception:  # noqa: BLE001 — 루프 정지는 이미 완료.
-        pass
-    return snap.to_dict()
+        result = block_session_for_emergency(db)
+        out["session_block"] = result
+        out["session_block_persisted"] = bool(result.get("file") or result.get("db"))
+        if result.get("blocked") and not (result.get("file") and result.get("db")):
+            _ap_log.error("[auto-paper] emergency session block partially persisted: %s",
+                          result.get("errors"))
+    except EmergencyBlockPersistError as exc:
+        _ap_log.critical("[auto-paper] emergency session block NOT persisted (%s) - "
+                         "this process stays blocked; restart may restore the session", exc)
+        out["session_block"] = {"blocked": True, "file": False, "db": False,
+                                "errors": str(exc).split(",")}
+        out["session_block_persisted"] = False
+    except Exception as exc:  # noqa: BLE001 — 프로세스 차단은 이미 적용됨.
+        _ap_log.critical("[auto-paper] emergency session block failed: %s",
+                         type(exc).__name__)
+        out["session_block"] = {"blocked": True, "file": False, "db": False,
+                                "errors": [type(exc).__name__]}
+        out["session_block_persisted"] = False
+    return out
 
 
 @_AP.post("/reset")

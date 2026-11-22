@@ -189,9 +189,11 @@ def test_emergency_while_waiting_blocks_restore(db, freeze):
     loop = AutoPaperLoop()
     loop.start(now=kst(SAT, 12), armed_for=MON)
     loop.emergency_stop()
-    assert ocs.block_session_for_emergency() is True
-    assert ocs.session_trading_authorized(settings()) is False
-    assert ocs.armed_session_date(settings(), now=kst(SAT, 13)) is None
+    result = ocs.block_session_for_emergency(db)
+    assert result["blocked"] and result["file"] and result["db"]
+    ocs._PROCESS_EMERGENCY_BLOCK = False          # 재시작 = 새 프로세스
+    assert ocs.session_trading_authorized(settings(), db=db) is False
+    assert ocs.armed_session_date(settings(), now=kst(SAT, 13), db=db) is None
 
 
 def test_http_emergency_stop_blocks_pending_session(client, db, freeze):
