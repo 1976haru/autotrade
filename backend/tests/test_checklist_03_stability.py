@@ -96,9 +96,33 @@ def test_price_stale():
 
 
 def test_watchdog_backend_down_restarts():
-    a, r = decide_action(health_ok=False)
+    # 연속 실패가 임계치(기본 3) 이상 쌓여야 재시작 — hysteresis.
+    a, r = decide_action(health_ok=False, consecutive_health_fail_count=3,
+                         health_fail_threshold=3)
     assert a == WatchdogAction.RESTART_BACKEND
     assert r == "BACKEND_DOWN"
+
+
+def test_watchdog_backend_down_single_blip_warns_not_restarts():
+    # ★08-10 사고 재현 방지 — 단발성 health check 실패 1회는 재시작하지 않는다.
+    a, r = decide_action(health_ok=False, consecutive_health_fail_count=1,
+                         health_fail_threshold=3)
+    assert a == WatchdogAction.WARN_BACKEND_DOWN
+    assert r == "BACKEND_DOWN"
+
+    a2, _ = decide_action(health_ok=False, consecutive_health_fail_count=2,
+                          health_fail_threshold=3)
+    assert a2 == WatchdogAction.WARN_BACKEND_DOWN
+
+
+def test_watchdog_backend_down_recovery_resets_streak():
+    # health_ok=True 가 뜨면(=caller 가 streak 를 0으로 리셋) 다시 실패해도
+    # 카운트는 1부터 — 이전 실패가 누적되어 즉시 재시작되지 않는다.
+    a, _ = decide_action(health_ok=True)
+    assert a in (WatchdogAction.OK, WatchdogAction.WARN_TICK_SLOW)
+    a2, _ = decide_action(health_ok=False, consecutive_health_fail_count=1,
+                          health_fail_threshold=3)
+    assert a2 == WatchdogAction.WARN_BACKEND_DOWN
 
 
 def test_watchdog_engine_stuck_restart():

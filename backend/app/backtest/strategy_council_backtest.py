@@ -515,22 +515,33 @@ def _build_input(
     )
 
 
-def run_strategy_council_backtest(inp: BacktestInput) -> BacktestReport:
-    """4전략 vote + Agent Council final_action 을 과거 데이터로 평가."""
-    now_iso = datetime.now(timezone.utc).isoformat()
+@dataclass(frozen=True)
+class CollectedTrades:
+    """bar 별 4전략 vote + Agent Council final_action 의 *원시* trade 풀.
+
+    `run_strategy_council_backtest` 가 집계 *전* 사용하며, timeframe 스윕 /
+    거래비용 사후 적용 등 외부 분석이 raw forward-return 에 접근할 수 있도록
+    공개한다. **여전히 주문이 아니다** — BacktestTrade.is_order_signal=False.
+    """
+
+    strat_trades:         dict[str, list[BacktestTrade]]
+    council_trades:       list[BacktestTrade]
+    council_confidences:  list[float]
+    council_qualities:    list[float]
+    council_final_counts: dict[str, int]
+    selected_freq:        dict[str, int]
+
+
+def collect_backtest_trades(inp: BacktestInput) -> CollectedTrades:
+    """과거 OHLCV → 신호 시점별 raw BacktestTrade 풀 (집계 전, broker 호출 0건).
+
+    (symbol, KST date) 별로 그룹핑해 일중 forward-return 을 산출하며, 각 bar 에서
+    4 전략 evaluator + `run_agent_council` 을 재사용한다. 마지막 bar 는 forward
+    return 이 없으므로 신호를 생성하지 않는다.
+    """
     bars = list(inp.bars)
-    symbols = {b.symbol for b in bars}
-    horizon_labels = inp.horizon_labels()
-    primary = inp.primary_horizon if inp.primary_horizon in horizon_labels else CLOSE_HORIZON
-
-    # 데이터 부족 판정: 최소 (opening_range + recent + 가장 큰 horizon + 1).
-    min_needed = inp.opening_range_bars + inp.recent_closes_window + (max(inp.horizons) if inp.horizons else 1) + 1
-    if len(bars) < min_needed:
-        return _empty_report(now_iso, len(symbols), len(bars), inp, horizon_labels,
-                             primary, BACKTEST_INSUFFICIENT_DATA, insufficient=True)
-
+    primary = inp.primary_horizon if inp.primary_horizon in inp.horizon_labels() else CLOSE_HORIZON
     days = _group_by_day(bars)
-    # 전략별 trade 수집 + council trade 수집.
     strat_trades: dict[str, list[BacktestTrade]] = {s: [] for s in SINGLE_STRATEGIES}
     council_trades: list[BacktestTrade] = []
     council_confidences: list[float] = []
@@ -556,7 +567,6 @@ def run_strategy_council_backtest(inp: BacktestInput) -> BacktestReport:
             tphase = day_bars[i].time_phase or _time_phase_for(day_bars[i].timestamp)
             ts_iso = day_bars[i].timestamp.isoformat()
 
-            # 1) 4 전략 vote.
             for strat, ev in (("ORB", evaluate_orb), ("MOMENTUM", evaluate_momentum),
                               ("GAP", evaluate_gap), ("VWAP", evaluate_vwap)):
                 vote = ev(mi)
@@ -568,7 +578,6 @@ def run_strategy_council_backtest(inp: BacktestInput) -> BacktestReport:
                     confidence=vote.confidence, score=vote.score,
                 ))
 
-            # 2) Agent Council final_action (held_position 은 directional 평가용).
             decision = run_agent_council(
                 mi, risk_profile=inp.risk_profile,
                 held_position=inp.council_eval_held_position,
@@ -591,6 +600,31 @@ def run_strategy_council_backtest(inp: BacktestInput) -> BacktestReport:
             ))
         prev_day_close[sym] = day_bars[day_end].close
 
+    return CollectedTrades(
+        strat_trades=strat_trades, council_trades=council_trades,
+        council_confidences=council_confidences, council_qualities=council_qualities,
+        council_final_counts=council_final_counts, selected_freq=selected_freq,
+    )
+
+
+def run_strategy_council_backtest(inp: BacktestInput) -> BacktestReport:
+    """4전략 vote + Agent Council final_action 을 과거 데이터로 평가."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    bars = list(inp.bars)
+    symbols = {b.symbol for b in bars}
+    horizon_labels = inp.horizon_labels()
+    primary = inp.primary_horizon if inp.primary_horizon in horizon_labels else CLOSE_HORIZON
+
+    # 데이터 부족 판정: 최소 (opening_range + recent + 가장 큰 horizon + 1).
+    min_needed = inp.opening_range_bars + inp.recent_closes_window + (max(inp.horizons) if inp.horizons else 1) + 1
+    if len(bars) < min_needed:
+        return _empty_report(now_iso, len(symbols), len(bars), inp, horizon_labels,
+                             primary, BACKTEST_INSUFFICIENT_DATA, insufficient=True)
+
+    collected = collect_backtest_trades(inp)
+    strat_trades = collected.strat_trades
+    council_trades = collected.council_trades
+
     strategies = {
         s: evaluate_strategy_vote_performance(strat_trades[s], strategy=s,
                                               primary_horizon=primary,
@@ -600,9 +634,9 @@ def run_strategy_council_backtest(inp: BacktestInput) -> BacktestReport:
     }
     council = evaluate_agent_council_performance(
         council_trades, primary_horizon=primary, horizon_labels=horizon_labels,
-        quantity=inp.quantity, final_action_counts=council_final_counts,
-        confidences=council_confidences, qualities=council_qualities,
-        selected_freq=selected_freq,
+        quantity=inp.quantity, final_action_counts=collected.council_final_counts,
+        confidences=collected.council_confidences, qualities=collected.council_qualities,
+        selected_freq=collected.selected_freq,
     )
     comparison = _compare_council_vs_single(strategies, council, primary)
 
@@ -838,7 +872,9 @@ __all__ = [
     "BACKTEST_OK", "BACKTEST_INSUFFICIENT_DATA", "BACKTEST_NO_SIGNALS",
     "OHLCVBar", "BacktestInput", "BacktestTrade",
     "StrategyBacktestResult", "CouncilBacktestResult", "BacktestReport",
+    "CollectedTrades",
     "load_ohlcv_from_records", "load_ohlcv_from_csv",
+    "collect_backtest_trades",
     "run_strategy_council_backtest", "evaluate_strategy_vote_performance",
     "evaluate_agent_council_performance", "summarize_backtest_report",
     "render_markdown_report",

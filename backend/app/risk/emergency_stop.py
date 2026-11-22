@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timezone
 from enum import StrEnum
 from typing import Any
 
@@ -35,6 +36,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import EmergencyStopEvent, OrderAuditLog, PendingApproval
+from app.risk.kill_switch_policy import KILL_SWITCH_POLICY_VERSION
 
 
 class KillSwitchLevel(StrEnum):
@@ -280,7 +282,9 @@ def build_status(
         decided_by=getattr(last_active, "decided_by", None) if last_active else None,
         note=getattr(last_active, "note", None) if last_active else None,
         active_since=(
-            last_active.created_at.isoformat()
+            last_active.created_at.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+            if last_active and last_active.created_at and last_active.created_at.tzinfo is None
+            else last_active.created_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
             if last_active and last_active.created_at else None
         ),
         cancel_candidate_count=len(cc),
@@ -288,17 +292,117 @@ def build_status(
     )
 
 
-def apply_kill_switch_to_risk(risk, level: KillSwitchLevel) -> None:
+def apply_kill_switch_to_risk(risk, level: KillSwitchLevel, *,
+                              policy_version: int = KILL_SWITCH_POLICY_VERSION) -> None:
     """RiskManager에 level을 설정하고 emergency_stop boolean을 동기화.
 
-    - LEVEL_1+ → emergency_stop=True (기존 hard-stop 가드 활성화).
+    - LEVEL_1+ → emergency_stop=True (신규 BUY 차단 등 기존 consumer 의미 유지).
     - OFF → emergency_stop=False.
+    - policy_version: 단계별 주문 허용 범위 버전 (`kill_switch_policy`). 운영자가 지금
+      설정하는 정지는 현재 버전, DB 복원은 기록된 버전(없으면 legacy=1 → strict).
 
     in-memory 토글이라 process restart 시 OFF로 reset (기존 emergency_stop과
     동일 정책 — audit row가 영구화 source of truth).
     """
     risk.kill_switch_level = level
+    risk.kill_switch_policy_version = int(policy_version or 0)
     risk.emergency_stop = (level != KillSwitchLevel.OFF)
+
+
+def restore_kill_switch_from_db(risk, db: Session) -> KillSwitchLevel:
+    """#11 영속화: startup 에서 마지막 EmergencyStopEvent 상태를 RiskManager 에 1회 복원.
+
+    정책(단일·단순): *마지막 명시적 상태 그대로* — 최신 이벤트가 enabled=True 면 그
+    level 로 시작(걸린 정지 보존), enabled=False/이력 없음이면 OFF. 비정상 크래시
+    감지는 하지 않는다(과한 옵션 회피).
+
+    ★기존 차단 로직(evaluate_order hard-reject)·apply_kill_switch_to_risk 매핑은
+    무변경 — 시작 시 *복원* 1회만 추가하는 안전강화. 예외를 봇 startup 으로 전파하지 않음.
+
+    P0-SAFETY-FIX-V1 (설치본 검증에서 발견): EXE 는 마이그레이션을 백그라운드로 돌려 본
+    복원이 0029(policy_version 컬럼) *적용 전* 에 실행된다 → 전체 행 조회가 실패해 OFF 로
+    폴백 = 걸려 있던 정지가 업그레이드만으로 풀렸다. 이제:
+      - policy_version 컬럼이 없으면 enabled/level 만 읽어 legacy strict 로 복원.
+      - 테이블 자체가 없으면(첫 설치·스키마 생성 전) 이전 정지가 있을 수 없으므로 OFF.
+      - 그 밖의 읽기 실패는 *해제하지 않고* LEVEL_1 legacy strict(모든 주문 차단)로 시작 —
+        운영자가 배너에서 확인 후 해제. (주문 차단이 안전한 실패 방향)
+    """
+    from sqlalchemy import inspect as sa_inspect
+    from sqlalchemy.exc import OperationalError
+
+    order = EmergencyStopEvent.id.desc()
+    try:
+        if not sa_inspect(db.get_bind()).has_table(EmergencyStopEvent.__tablename__):
+            return KillSwitchLevel.OFF
+        try:
+            row = db.execute(
+                select(EmergencyStopEvent.enabled, EmergencyStopEvent.level,
+                       EmergencyStopEvent.policy_version).order_by(order).limit(1)
+            ).first()
+        except OperationalError:
+            db.rollback()   # 0029 이전 스키마 — policy_version 없음 → legacy.
+            old = db.execute(
+                select(EmergencyStopEvent.enabled, EmergencyStopEvent.level).order_by(order).limit(1)
+            ).first()
+            row = (old[0], old[1], None) if old is not None else None
+        if row is not None and bool(row[0]):
+            try:
+                level = KillSwitchLevel(row[1]) if row[1] else KillSwitchLevel.LEVEL_1
+            except ValueError:
+                level = KillSwitchLevel.LEVEL_1
+            # 기록된 정책 버전 그대로 복원 — 버전 없는(이전 정책) 정지는 legacy strict
+            #   (자동 완화 금지, 운영자가 새 정책으로 재설정해야 완화).
+            apply_kill_switch_to_risk(risk, level, policy_version=int(row[2] or 1))
+            return level
+    except Exception:  # noqa: BLE001 — 상태를 알 수 없으면 해제하지 않고 차단 쪽으로.
+        apply_kill_switch_to_risk(risk, KillSwitchLevel.LEVEL_1, policy_version=1)
+        return KillSwitchLevel.LEVEL_1
+    return KillSwitchLevel.OFF
+
+
+def synchronize_kill_switch_for_order(risk: Any, db: Session):
+    """Return the stricter of in-memory and persisted emergency policies.
+
+    Startup restoration alone is insufficient when another backend process or
+    safety coordinator writes an emergency event after this process starts.
+    Never let an older/off DB row clear a stricter in-memory stop; that keeps
+    this refresh fail-closed and prevents implicit emergency-stop release.
+    """
+    from types import SimpleNamespace
+
+    from app.risk.kill_switch_policy import emergency_order_policy
+
+    current = emergency_order_policy(risk)
+    persisted_risk = SimpleNamespace(
+        emergency_stop=False,
+        kill_switch_level=KillSwitchLevel.OFF,
+        kill_switch_policy_version=KILL_SWITCH_POLICY_VERSION,
+    )
+    restore_kill_switch_from_db(persisted_risk, db)
+    persisted = emergency_order_policy(persisted_risk)
+
+    def strictness(policy) -> int:
+        if not policy.active:
+            return 0
+        if policy.level == KillSwitchLevel.LEVEL_1.value:
+            return 2 if policy.legacy_strict else 1
+        if policy.level == KillSwitchLevel.LEVEL_2.value:
+            return 3
+        return 4  # LEVEL_3 / unknown states fail closed.
+
+    if strictness(persisted) <= strictness(current):
+        return current
+
+    # Keep shared RiskManager consumers (route_order/EOD) synchronized too.
+    try:
+        apply_kill_switch_to_risk(
+            risk, KillSwitchLevel(persisted.level),
+            policy_version=int(getattr(persisted_risk, "kill_switch_policy_version", 0) or 0),
+        )
+    except (AttributeError, TypeError):
+        # Read-only/mock policy objects still get the persisted pre-gate below.
+        pass
+    return persisted
 
 
 # ---------- module invariants (코드 단 안전 보장) ----------

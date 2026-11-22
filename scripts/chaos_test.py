@@ -92,7 +92,11 @@ async def _one_tick(i: int, c: dict, *, backoff_delays, backoff_sleep,
         return
 
     if scenario == "BACKEND_KILL":
-        action, reason = decide_action(health_ok=False)
+        # hysteresis(watchdog.py DEFAULT_HEALTH_FAIL_THRESHOLD=3) — 진짜 kill 은
+        # 여러 폴링에 걸쳐 *연속* 실패로 관측된다. 단발 실패 1회로는 재시작되지
+        # 않는 게 의도된 동작(08-10 단발 blip 오판재시작 방지)이므로, 여기서는
+        # 임계치만큼 연속 실패가 쌓인 상태를 시뮬레이션한다.
+        action, reason = decide_action(health_ok=False, consecutive_health_fail_count=3)
         if action == WatchdogAction.RESTART_BACKEND:
             c["backend_restart_count"] += 1
             c["watchdog_restart_count"] += 1

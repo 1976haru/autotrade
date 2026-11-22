@@ -202,13 +202,28 @@ class PositionLimitRule:
 
     # ---------- 개별 검사 (RiskManager가 inline 호출) ----------
 
+    @staticmethod
+    def is_reduce_only_sell(inp: PositionLimitInput) -> bool:
+        """SELL 이고 브로커 보유 수량 이내(무보유/초과/숏 아님) — 노출 *축소* 전용."""
+        order = inp.order
+        if order.side != OrderSide.SELL or order.quantity <= 0:
+            return False
+        pos = next((p for p in inp.positions if p.symbol == order.symbol), None)
+        return pos is not None and pos.quantity >= order.quantity
+
     def check_order_notional(self, inp: PositionLimitInput) -> tuple[list[str], list[str]]:
-        """1회 주문 명목금액 한도. 양방향 검사.
+        """1회 주문 명목금액 한도 — *신규 노출(BUY)/초과 SELL* 에 적용.
 
         반환: (passed, reasons). 비활성(=0)일 땐 ⚠ *passed에는 추가됨* —
         기존 evaluate_order 동작 보존 (max_order_notional은 default 1_000_000
         으로 항상 활성).
+
+        INTRADAY-FLAT-BY-CLOSE-V1: 보유 수량 이내 reduce-only SELL 은 진입 한도에서
+        면제한다 — 평가액이 한도를 넘게 오른 포지션을 손절/익절/장마감 청산하지 못하던
+        결함 수정 (청산 크기는 보유 수량이 상한). 무보유/초과 SELL 은 종전대로 검사.
         """
+        if self.is_reduce_only_sell(inp):
+            return ["reduce-only SELL within held quantity — entry notional cap not applied"], []
         order_notional = inp.latest_price * inp.order.quantity
         if (self.policy.max_order_notional > 0
                 and order_notional > self.policy.max_order_notional):
@@ -222,6 +237,9 @@ class PositionLimitRule:
         pct = self.policy.max_position_size_pct
         if pct <= 0:
             return [], []
+        if self.is_reduce_only_sell(inp):
+            # 청산(노출 축소)은 자본 대비 *진입* 크기 한도 대상이 아님.
+            return ["reduce-only SELL — equity-relative entry cap not applied"], []
         order_notional = inp.latest_price * inp.order.quantity
         cap = inp.balance.equity * pct / 100.0
         if order_notional > cap:

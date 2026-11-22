@@ -165,6 +165,10 @@ class PaperDecisionLogEntry:
     paper_fill_status:  str | None           = None
     chain_id:           str | None           = None
     source_module:      str                  = PAPER_DECISION_LOG_SOURCE
+    # U7: 주문 보류/차단 사유 코드 (meta.reason_code). UI 가 한국어로 매핑해
+    #   "왜 주문이 안 나갔는지" 정직하게 표시. 없으면 None → UI "사유 확인 중".
+    reason_code:        str | None           = None
+    event_source:       str | None           = None   # V6: operator | diagnostic 등(점검 구분)
 
     # 절대 invariant.
     is_order_signal:       bool = False
@@ -209,6 +213,8 @@ class PaperDecisionLogEntry:
             "paper_fill_status":  self.paper_fill_status,
             "chain_id":           self.chain_id,
             "source_module":      self.source_module,
+            "reason_code":        self.reason_code,
+            "event_source":       self.event_source,
             "is_order_signal":       False,
             "auto_apply_allowed":    False,
             "is_live_authorization": False,
@@ -360,8 +366,26 @@ def record_bridge_report(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _kis_scan_order_fields(meta: dict[str, Any]) -> tuple[str | None, str | None]:
+    """KIS 실시간 스캔(driver_bridge) 경로 row 의 주문번호/체결상태 매핑.
+
+    2026-06-12: KIS 스캔은 주문번호를 `meta.broker_order_no`, 전송여부를
+    `meta.broker_order_sent`/`meta.submitted` 로 기록한다(`paper_order_id` 키 없음).
+    매퍼가 `meta.paper_order_id` 만 읽어, *실제 전송·체결된* SELL 이 paper_order_id=None
+    → 프론트 submitted=false → "사유 확인 중" 으로 오표시됐다. *실제 broker 전송분만*
+    paper_order_id 로 인식시켜 "주문 보냈어요" 로 정직하게 표시한다(dry-run/미전송은 제외).
+    """
+    sent = bool(meta.get("broker_order_sent") or meta.get("submitted"))
+    bo = meta.get("broker_order_no")
+    order_id = meta.get("paper_order_id") or (str(bo) if (sent and bo) else None)
+    # 전송 확정분은 PAPER_PENDING 으로(체결 확정은 본 row 가 보장 못 함 — '보냈어요' 표시).
+    fill = meta.get("paper_fill_status") or ("PAPER_PENDING" if order_id and sent else None)
+    return order_id, fill
+
+
 def _row_to_entry(row: AgentDecisionLog) -> PaperDecisionLogEntry:
     meta = dict(row.meta or {})
+    _order_id, _fill = _kis_scan_order_fields(meta)
     return PaperDecisionLogEntry(
         decision_id=str(meta.get("decision_id") or row.id),
         timestamp=row.created_at.isoformat() if row.created_at else "",
@@ -382,10 +406,12 @@ def _row_to_entry(row: AgentDecisionLog) -> PaperDecisionLogEntry:
         position_size=int(meta.get("sizing_quantity") or
                           meta.get("virtual_position_delta") or 0),
         sizing_verdict=meta.get("sizing_verdict"),
-        paper_order_id=meta.get("paper_order_id"),
-        paper_fill_status=meta.get("paper_fill_status"),
+        paper_order_id=_order_id,
+        paper_fill_status=_fill,
         chain_id=row.chain_id,
         source_module=str(meta.get("source_module") or PAPER_DECISION_LOG_SOURCE),
+        reason_code=(str(meta["reason_code"]) if meta.get("reason_code") else None),
+        event_source=(str(meta["event_source"]) if meta.get("event_source") else None),
     )
 
 

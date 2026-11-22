@@ -99,6 +99,44 @@ describe("registerServiceWorker", () => {
     expect(result).toBeNull();
     expect(register).not.toHaveBeenCalled();
   });
+
+  // EXE-FINAL-BUILD-V2: Tauri(http://tauri.localhost)에서 SW 가 navigation 을 가로채
+  //   두 번째 실행부터 offline.html 만 뜨던 결함 회귀 방지.
+  it("does not register inside the Tauri desktop webview and removes old SWs", async () => {
+    const register = vi.fn();
+    const old = { unregister: vi.fn().mockResolvedValue(true) };
+    globalThis.navigator = {
+      serviceWorker: { register, getRegistrations: vi.fn().mockResolvedValue([old]) },
+    };
+    globalThis.window = { location: { protocol: "http:", hostname: "tauri.localhost" } };
+
+    const result = await registerServiceWorker({ baseUrl: "/", log: false });
+    expect(result).toBeNull();
+    expect(register).not.toHaveBeenCalled();
+    expect(old.unregister).toHaveBeenCalled();
+  });
+
+  it("treats __TAURI_INTERNALS__ as desktop even on another host", async () => {
+    const register = vi.fn();
+    globalThis.navigator = {
+      serviceWorker: { register, getRegistrations: vi.fn().mockResolvedValue([]) },
+    };
+    globalThis.window = {
+      __TAURI_INTERNALS__: {}, location: { protocol: "http:", hostname: "localhost" },
+    };
+
+    expect(await registerServiceWorker({ baseUrl: "/", log: false })).toBeNull();
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it("still registers on a normal https host (PWA unaffected)", async () => {
+    const register = vi.fn().mockResolvedValue({ scope: "/" });
+    globalThis.navigator = { serviceWorker: { register } };
+    globalThis.window = { location: { protocol: "https:", hostname: "1976haru.github.io" } };
+
+    expect(await registerServiceWorker({ baseUrl: "/", log: false })).toEqual({ scope: "/" });
+    expect(register).toHaveBeenCalled();
+  });
 });
 
 

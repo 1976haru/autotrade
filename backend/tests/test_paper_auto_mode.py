@@ -5,9 +5,16 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app.auto_paper.paper_auto_mode import (
+    OperationalPaperMode,
     PaperAutoMode,
     resolve_paper_auto_mode,
 )
+
+
+def test_operator_facing_modes_are_exactly_three():
+    assert {m.value for m in OperationalPaperMode} == {
+        "READ_ONLY", "PAPER_DRY_RUN", "PAPER_TRADING",
+    }
 
 
 def _s(**kw):
@@ -39,6 +46,8 @@ def test_kis_dryrun_mode():
     assert r.broker_order_enabled is False
     assert r.kis_realtime is True
     assert r.price_source == "kis"
+    assert r.operational_mode == "PAPER_DRY_RUN"
+    assert r.to_dict()["effective_gates"]["broker_order_enabled"] is False
 
 
 def test_kis_paper_auto_mode():
@@ -49,6 +58,7 @@ def test_kis_paper_auto_mode():
     assert r.mode == PaperAutoMode.KIS_REALTIME_PAPER_AUTO.value
     assert r.broker_order_enabled is True
     assert r.kis_realtime is True
+    assert r.operational_mode == "PAPER_TRADING"
 
 
 def test_kis_smoke_mode():
@@ -59,6 +69,8 @@ def test_kis_smoke_mode():
     assert r.mode == PaperAutoMode.KIS_REALTIME_SMOKE_TEST.value
     assert r.broker_order_enabled is True
     assert r.smoke_mode is True
+    assert r.operational_mode == "PAPER_TRADING"
+    assert r.to_dict()["effective_gates"]["smoke_limit_active"] is True
 
 
 def test_live_trading_forces_virtual_only():

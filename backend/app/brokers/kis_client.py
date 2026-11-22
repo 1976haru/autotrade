@@ -1,4 +1,11 @@
+import asyncio
+import hashlib
+import json
+import logging
+import os
+import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 
@@ -9,14 +16,132 @@ PAPER_HOST = "https://openapivts.koreainvestment.com:29443"
 LIVE_HOST  = "https://openapi.koreainvestment.com:9443"
 
 _TOKEN_REFRESH_MARGIN = timedelta(seconds=60)
+# EGW00133 = "접근토큰 발급 1분당 1회" — 계좌(앱키) 단위 레이트리밋. 재발급 폭격 방지.
+_TOKEN_RATELIMIT_CODE = "EGW00133"
+_TOKEN_RATELIMIT_BACKOFF = timedelta(seconds=60)
+
+_log = logging.getLogger("autotrade.kis_token")
+
+_URL_ACCOUNT_RE = re.compile(r"(?i)\b(CANO|ACNT_NO|ACCOUNT_NO)=([^&\s\"']+)")
+
+
+def redact_account_in_text(text: str) -> str:
+    return _URL_ACCOUNT_RE.sub(lambda match: f"{match.group(1)}=****", text)
+
+
+class _AccountRedactingFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001
+            return True
+        redacted = redact_account_in_text(message)
+        if redacted != message:
+            record.msg, record.args = redacted, ()
+        return True
+
+
+_ACCOUNT_FILTER = _AccountRedactingFilter()
+for _logger_name in ("httpx", "httpcore"):
+    _logger = logging.getLogger(_logger_name)
+    if not any(isinstance(item, _AccountRedactingFilter) for item in _logger.filters):
+        _logger.addFilter(_ACCOUNT_FILTER)
+
+
+def _safe_protocol_code(value: object) -> str | None:
+    text = str(value or "")
+    return text[:32] if text and all(ch.isalnum() or ch in "_-" for ch in text) else None
+
+
+def _safe_request_id(headers: httpx.Headers) -> str | None:
+    for name in ("x-request-id", "x-correlation-id", "x-amzn-requestid", "x-amz-cf-id"):
+        value = headers.get(name, "").strip()
+        if value and len(value) <= 128 and all(ch.isalnum() or ch in "-_.:" for ch in value):
+            return value
+    return None
+
+
+def _safe_orderable_error_summary(http_status: int, message_code: object) -> str:
+    code = _safe_protocol_code(message_code)
+    if code == "EGW00201":
+        return "KIS rate limit rejected the read-only inquiry."
+    if http_status >= 500:
+        return "KIS server returned an HTTP 5xx error; response body omitted."
+    if http_status != 200:
+        return "KIS HTTP request failed; response body omitted."
+    return "KIS returned an application-level error for the read-only inquiry."
 
 
 class KisAuthError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, diagnostic: dict | None = None):
+        super().__init__(message)
+        self.diagnostic = diagnostic or {}
+
+
+class KisTokenRateLimitedError(KisAuthError):
+    """토큰 발급이 레이트리밋(EGW00133)으로 보호 창 안에 있어 *KIS 를 호출하지 않고*
+    즉시 실패. 호출자는 마지막 정상값(stale)으로 폴백하거나 잠시 후 재시도."""
 
 
 class KisApiError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, diagnostic: dict | None = None):
+        super().__init__(message)
+        # Only explicitly sanitized protocol metadata belongs here. Never retain
+        # response bodies, request headers, credentials, or account identifiers.
+        self.diagnostic = diagnostic or {}
+
+
+# ── 토큰 디스크 캐시 (이 모듈 단일 reader/writer) ──────────────────────────────
+#   %APPDATA%\Autotrade\kis_token_cache.json. access_token + 만료시각만 저장
+#   (app_secret 미저장). 재기동 시 유효하면 재사용해 발급 자체를 회피.
+def _token_cache_path() -> Path:
+    base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    return Path(base) / "Autotrade" / "kis_token_cache.json"
+
+
+def _token_cache_key(app_key: str, is_paper: bool) -> str:
+    h = hashlib.sha256((app_key or "").encode("utf-8")).hexdigest()[:16]
+    return f"{h}_{'paper' if is_paper else 'live'}"
+
+
+def _load_cached_token(app_key: str, is_paper: bool) -> tuple[str, datetime] | None:
+    try:
+        path = _token_cache_path()
+        if not path.exists():
+            return None
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        entry = (raw or {}).get(_token_cache_key(app_key, is_paper))
+        if not entry:
+            return None
+        tok = entry.get("access_token")
+        exp = entry.get("expires_at")
+        if not tok or not exp:
+            return None
+        dt = datetime.fromisoformat(str(exp))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return tok, dt
+    except Exception as exc:  # noqa: BLE001 — 손상은 폴백(정상 재발급), 절대 raise 안 함.
+        _log.warning("[kis_token] 토큰 캐시 읽기 실패 — 재발급 폴백: %s", exc)
+        return None
+
+
+def _save_cached_token(app_key: str, is_paper: bool, token: str, expires_at: datetime) -> None:
+    try:
+        path = _token_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        raw = {}
+        if path.exists():
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8")) or {}
+            except Exception:  # noqa: BLE001
+                raw = {}
+        raw[_token_cache_key(app_key, is_paper)] = {
+            "access_token": token, "expires_at": expires_at.isoformat(),
+        }
+        path.write_text(json.dumps(raw), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("[kis_token] 토큰 캐시 저장 실패(무시): %s", exc)
 
 
 class KisClient:
@@ -49,10 +174,41 @@ class KisClient:
         self._token: str | None = None
         self._token_expires_at: datetime | None = None
         self._rate_limiter = rate_limiter
+        # T1: 발급 직렬화 락 + EGW00133 백오프 창(이 시각 전엔 KIS 미호출).
+        self._token_lock = asyncio.Lock()
+        self._token_retry_not_before: datetime | None = None
+        self._token_source: str | None = None
 
     async def _throttle(self) -> None:
         if self._rate_limiter is not None:
             await self._rate_limiter.acquire()
+
+    @staticmethod
+    def _raise_kis_response_error(
+        endpoint: str,
+        data: dict,
+        *,
+        http_status: int = 200,
+        api_path: str | None = None,
+        tr_id: str | None = None,
+    ) -> None:
+        """Do not let HTTP 200 application errors become empty/zero account data."""
+        if str(data.get("rt_cd", "0")) == "0":
+            return
+        code = str(data.get("msg_cd") or "")[:32]
+        # Do not include msg1 in exception text: KIS messages can echo request
+        # or account details. The protocol codes are enough to classify failure.
+        raise KisApiError(
+            f"KIS {endpoint} rt_cd={_safe_protocol_code(data.get('rt_cd'))} msg_cd={code}",
+            diagnostic={
+                "http_status": http_status,
+                "kis_rt_cd": _safe_protocol_code(data.get("rt_cd")),
+                "kis_msg_cd": _safe_protocol_code(data.get("msg_cd")),
+                "sanitized_error_summary": _safe_orderable_error_summary(http_status, data.get("msg_cd")),
+                "api_path": api_path,
+                "tr_id": tr_id,
+            },
+        )
 
     def _client(self) -> httpx.AsyncClient:
         kwargs = {"base_url": self.base_url, "timeout": self._timeout}
@@ -60,35 +216,110 @@ class KisClient:
             kwargs["transport"] = self._transport
         return httpx.AsyncClient(**kwargs)
 
+    def _token_valid(self, now: datetime) -> bool:
+        return bool(self._token and self._token_expires_at and now < self._token_expires_at)
+
     async def _ensure_token(self) -> str:
         now = datetime.now(timezone.utc)
-        if self._token and self._token_expires_at and now < self._token_expires_at:
+        if self._token_valid(now):
+            self._token_source = "memory"
             return self._token
 
-        await self._throttle()
-        async with self._client() as client:
-            r = await client.post(
-                "/oauth2/tokenP",
-                json={
-                    "grant_type": "client_credentials",
-                    "appkey":     self.app_key,
-                    "appsecret":  self.app_secret,
-                },
-            )
-        if r.status_code != 200:
-            raise KisAuthError(f"KIS token endpoint returned {r.status_code}: {r.text[:200]}")
-        data = r.json()
-        token = data.get("access_token")
-        if not token:
-            raise KisAuthError(f"KIS token response missing access_token: {data}")
-        self._token = token
-        expires_in = int(data.get("expires_in", 86400))
-        self._token_expires_at = now + timedelta(seconds=expires_in) - _TOKEN_REFRESH_MARGIN
-        return token
+        # T1⒜: 발급을 락으로 직렬화 — 동시/연속 콜드스타트 호출이 발급을 *1회만* 트리거.
+        async with self._token_lock:
+            now = datetime.now(timezone.utc)
+            if self._token_valid(now):
+                self._token_source = "memory"
+                return self._token
+
+            # T1⒞: 디스크 캐시에 유효 토큰이 있으면 재사용(발급 자체 회피, 재기동 포함).
+            cached = _load_cached_token(self.app_key, self.is_paper)
+            if cached and now < cached[1]:
+                self._token, self._token_expires_at = cached
+                self._token_source = "disk_cache"
+                return self._token
+
+            # T1⒝: 레이트리밋 보호 창 안이면 KIS 를 때리지 않고 즉시 실패(폭격 차단).
+            if self._token_retry_not_before and now < self._token_retry_not_before:
+                raise KisTokenRateLimitedError(
+                    f"KIS token issuance backing off until {self._token_retry_not_before.isoformat()} (EGW00133)"
+                )
+
+            await self._throttle()
+            async with self._client() as client:
+                r = await client.post(
+                    "/oauth2/tokenP",
+                    json={
+                        "grant_type": "client_credentials",
+                        "appkey":     self.app_key,
+                        "appsecret":  self.app_secret,
+                    },
+                )
+            if r.status_code != 200:
+                body = r.text[:200]
+                if _TOKEN_RATELIMIT_CODE in body or r.status_code == 403:
+                    # 발급 1분당 1회 초과 → 60초 백오프 창 기록(그 전 호출은 KIS 무호출).
+                    self._token_retry_not_before = now + _TOKEN_RATELIMIT_BACKOFF
+                    raise KisTokenRateLimitedError(
+                        f"KIS token rate-limited ({_TOKEN_RATELIMIT_CODE}); backing off 60s",
+                        diagnostic={
+                            "http_status": r.status_code,
+                            "kis_msg_cd": _TOKEN_RATELIMIT_CODE,
+                            "sanitized_error_summary": "KIS token issuance was rate-limited.",
+                        },
+                    )
+                raise KisAuthError(
+                    f"KIS token endpoint returned {r.status_code}",
+                    diagnostic={
+                        "http_status": r.status_code,
+                        "sanitized_error_summary": "KIS token endpoint returned a non-success HTTP status.",
+                    },
+                )
+            data = r.json()
+            token = data.get("access_token")
+            if not token:
+                raise KisAuthError(
+                    "KIS token response missing access_token",
+                    diagnostic={
+                        "http_status": r.status_code,
+                        "sanitized_error_summary": "KIS token response was missing the required token field.",
+                    },
+                )
+            self._token = token
+            self._token_source = "refreshed"
+            expires_in = int(data.get("expires_in", 86400))
+            self._token_expires_at = now + timedelta(seconds=expires_in) - _TOKEN_REFRESH_MARGIN
+            self._token_retry_not_before = None  # 성공 → 백오프 해제
+            _save_cached_token(self.app_key, self.is_paper, token, self._token_expires_at)
+            return token
 
     async def get_price(self, symbol: str) -> dict:
         """Returns raw JSON from KIS quote endpoint. Caller extracts fields."""
-        token = await self._ensure_token()
+        try:
+            token = await self._ensure_token()
+        except (KisAuthError, httpx.TransportError) as exc:
+            # A token refresh failure is distinct from a market data response.
+            code_match = re.search(r"\b(EGW\d{5})\b", str(exc))
+            token_diag = {
+                "http_status": getattr(exc, "diagnostic", {}).get("http_status"),
+                "kis_rt_cd": None,
+                "kis_msg_cd": code_match.group(1) if code_match else None,
+                "sanitized_error_summary": (
+                    "KIS token issuance was rate-limited."
+                    if isinstance(exc, KisTokenRateLimitedError)
+                    else "KIS token endpoint connection failed."
+                    if isinstance(exc, httpx.TransportError)
+                    else "KIS PAPER token acquisition failed."
+                ),
+                "failure_stage": "TOKEN_REFRESH",
+                "failure_kind": type(exc).__name__,
+                "api_path": "/oauth2/tokenP",
+            }
+            token_diag.update(getattr(exc, "diagnostic", {}) or {})
+            raise KisApiError(
+                "KIS PAPER token acquisition failed",
+                diagnostic=token_diag,
+            ) from exc
         await self._throttle()
         async with self._client() as client:
             r = await client.get(
@@ -107,6 +338,57 @@ class KisClient:
             )
         if r.status_code != 200:
             raise KisApiError(f"KIS quote endpoint returned {r.status_code}: {r.text[:200]}")
+        data = r.json()
+        self._raise_kis_response_error("quote", data)
+        return data
+
+    async def inquire_index_price(self, index_code: str) -> dict:
+        """국내 업종(지수) 현재가 — read-only. KOSPI='0001', KOSDAQ='1001'.
+
+        공유 rate limiter 경유(_throttle). 주문 0건. output 에 bstp_nmix_prpr(지수),
+        bstp_nmix_prdy_ctrt(전일대비율%) 등.
+        """
+        token = await self._ensure_token()
+        await self._throttle()
+        async with self._client() as client:
+            r = await client.get(
+                "/uapi/domestic-stock/v1/quotations/inquire-index-price",
+                params={
+                    "FID_COND_MRKT_DIV_CODE": "U",
+                    "FID_INPUT_ISCD":         index_code,
+                },
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "appkey":        self.app_key,
+                    "appsecret":     self.app_secret,
+                    "tr_id":         "FHPUP02100000",
+                    "custtype":      "P",
+                },
+            )
+        if r.status_code != 200:
+            raise KisApiError(f"KIS index endpoint returned {r.status_code}: {r.text[:200]}")
+        return r.json()
+
+    async def inquire_overseas_index(self, *, excd: str, symb: str) -> dict:
+        """해외 지수 현재가 — read-only, 공유 rate limiter 경유. 주문 0건.
+
+        B1: 밤사이 미국 시세(S&P500/나스닥/다우/SOX)용. ★모의(paper) 호스트에서
+        해외지수 조회가 막힐 수 있음(국내 FHPUP02100000 전례) — 호출자(market_briefing)
+        가 per-instrument graceful-fail 처리.
+        """
+        token = await self._ensure_token()
+        await self._throttle()
+        async with self._client() as client:
+            r = await client.get(
+                "/uapi/overseas-price/v1/quotations/inquire-index-price",
+                params={"FID_COND_MRKT_DIV_CODE": "N", "FID_INPUT_ISCD": symb, "FID_INPUT_ISCD_2": excd},
+                headers={
+                    "authorization": f"Bearer {token}", "appkey": self.app_key,
+                    "appsecret": self.app_secret, "tr_id": "FHKST03030100", "custtype": "P",
+                },
+            )
+        if r.status_code != 200:
+            raise KisApiError(f"KIS overseas index endpoint returned {r.status_code}: {r.text[:200]}")
         return r.json()
 
     async def inquire_time_dailychartprice(
@@ -156,7 +438,14 @@ class KisClient:
         return "VTTC8434R" if self.is_paper else "TTTC8434R"
 
     def _daily_ccld_tr_id(self) -> str:
-        return "VTTC8001R" if self.is_paper else "TTTC8001R"
+        # 주식일별주문체결조회 TR id. 구형 VTTC8001R/TTTC8001R 은 KIS 서버에서
+        # rt_cd=0 + "조회할 내역이 없습니다" 빈 결과만 반환한다 (2026-06-05 실측:
+        # 모의 주문이 체결되어 잔고는 바뀌어도 VTTC8001R 로는 0건). KIS 가 NXT
+        # 거래소 도입과 함께 TR id 를 개편한 현행 코드는 VTTC0081R(모의) /
+        # TTTC0081R(실전, 모두 3개월 이내). 신형 TR 로 동일 계좌/파라미터를
+        # 조회하면 체결 row 가 정상 반환된다 — 이 값이 틀리면 fill_poller →
+        # get_order_status 가 영영 FILLED 를 못 보고 filled_quantity=0 에 고정.
+        return "VTTC0081R" if self.is_paper else "TTTC0081R"
 
     def _order_tr_id(self, *, is_buy: bool) -> str:
         if self.is_paper:
@@ -169,35 +458,282 @@ class KisClient:
         Returns raw JSON with `output1` (positions) and `output2` (cash, equity).
         cano/prdt_cd are the 8-digit / 2-digit halves of the KIS account number.
         """
+        try:
+            token = await self._ensure_token()
+        except (KisAuthError, httpx.TransportError) as exc:
+            code_match = re.search(r"\b(EGW\d{5})\b", str(exc))
+            token_diag = {
+                "http_status": None,
+                "kis_rt_cd": None,
+                "kis_msg_cd": code_match.group(1) if code_match else None,
+                "sanitized_error_summary": (
+                    "KIS token issuance was rate-limited."
+                    if isinstance(exc, KisTokenRateLimitedError)
+                    else "KIS token endpoint connection failed before balance inquiry."
+                    if isinstance(exc, httpx.TransportError)
+                    else "KIS PAPER token acquisition failed before balance inquiry."
+                ),
+                "failure_stage": "TOKEN_REFRESH",
+                "failure_kind": type(exc).__name__,
+                "api_path": "/oauth2/tokenP",
+            }
+            token_diag.update(getattr(exc, "diagnostic", {}) or {})
+            raise KisApiError(
+                "KIS PAPER token acquisition failed before balance inquiry",
+                diagnostic=token_diag,
+            ) from exc
+        path = "/uapi/domestic-stock/v1/trading/inquire-balance"
+        tr_id = self._balance_tr_id()
+        token_source = self._token_source or "unknown"
+        request_kwargs = {
+            "params": {
+                "CANO": cano, "ACNT_PRDT_CD": prdt_cd, "AFHR_FLPR_YN": "N",
+                "OFL_YN": "", "INQR_DVSN": "02", "UNPR_DVSN": "01",
+                "FUND_STTL_ICLD_YN": "N", "FNCG_AMT_AUTO_RDPT_YN": "N",
+                "PRCS_DVSN": "00", "CTX_AREA_FK100": "", "CTX_AREA_NK100": "",
+            },
+            "headers": {
+                "authorization": f"Bearer {token}", "appkey": self.app_key,
+                "appsecret": self.app_secret, "tr_id": tr_id, "custtype": "P",
+            },
+        }
+        # One bounded retry for read-only transient transport / upstream failures.
+        # Never retry application-level KIS errors or malformed successful replies.
+        r = None
+        transport_failure = None
+        for attempt in range(2):
+            await self._throttle()
+            try:
+                async with self._client() as client:
+                    r = await client.get(path, **request_kwargs)
+            except httpx.TransportError as exc:
+                transport_failure = exc
+                if attempt == 0:
+                    await asyncio.sleep(1.0)
+                    continue
+                kind = "timeout" if isinstance(exc, httpx.TimeoutException) else "transport"
+                raise KisApiError(
+                    f"KIS balance transport {kind} failure; account state is unknown",
+                    diagnostic={
+                        "http_status": None, "kis_rt_cd": None, "kis_msg_cd": None,
+                        "sanitized_error_summary": f"KIS balance transport {kind} failure after one retry.",
+                        "api_path": path, "tr_id": tr_id,
+                        "failure_stage": "KIS_REQUEST", "failure_kind": type(exc).__name__,
+                        "token_source": token_source,
+                    },
+                ) from exc
+            if r.status_code >= 500 and attempt == 0:
+                await asyncio.sleep(1.0)
+                continue
+            break
+        if r is None:
+            raise KisApiError("KIS balance request did not produce a response; account state is unknown") from transport_failure
+        if r.status_code != 200:
+            raise KisApiError(
+                f"KIS balance endpoint returned HTTP {r.status_code}; account state is unknown",
+                diagnostic={
+                    "http_status": r.status_code,
+                    "kis_rt_cd": None,
+                    "kis_msg_cd": None,
+                    "sanitized_error_summary": "KIS balance inquiry failed; response body omitted.",
+                    "server_request_id": _safe_request_id(r.headers),
+                    "api_path": path,
+                    "tr_id": tr_id,
+                    "failure_stage": "KIS_REQUEST",
+                    "failure_kind": "HTTP_STATUS",
+                    "token_source": token_source,
+                },
+            )
+        try:
+            data = r.json()
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise KisApiError(
+                "KIS balance response is not valid JSON; account state is unknown",
+                diagnostic={
+                    "http_status": r.status_code,
+                    "kis_rt_cd": None,
+                    "kis_msg_cd": None,
+                    "sanitized_error_summary": "KIS balance response was unreadable.",
+                    "server_request_id": _safe_request_id(r.headers),
+                    "api_path": path,
+                    "tr_id": tr_id,
+                    "failure_stage": "RESPONSE_PARSE",
+                    "failure_kind": "INVALID_JSON",
+                    "token_source": token_source,
+                },
+            ) from exc
+        if not isinstance(data, dict):
+            raise KisApiError(
+                "KIS balance response has unexpected shape; account state is unknown",
+                diagnostic={"http_status": r.status_code, "api_path": path, "tr_id": tr_id,
+                            "failure_stage": "RESPONSE_PARSE", "failure_kind": "ROOT_SHAPE",
+                            "token_source": token_source},
+            )
+        try:
+            self._raise_kis_response_error("balance", data, http_status=r.status_code, api_path=path, tr_id=tr_id)
+        except KisApiError as exc:
+            exc.diagnostic.update({"failure_stage": "KIS_REQUEST", "token_source": token_source})
+            raise
+        output1 = data.get("output1")
+        output2 = data.get("output2")
+        diagnostic = {
+            "http_status": r.status_code,
+            "kis_rt_cd": _safe_protocol_code(data.get("rt_cd")),
+            "kis_msg_cd": _safe_protocol_code(data.get("msg_cd")),
+            "sanitized_error_summary": "KIS balance response is incomplete; account state is unknown.",
+            "server_request_id": _safe_request_id(r.headers),
+            "api_path": "/uapi/domestic-stock/v1/trading/inquire-balance",
+            "tr_id": self._balance_tr_id(),
+            "failure_stage": "RESPONSE_PARSE",
+            "token_source": token_source,
+        }
+        if not isinstance(output1, list):
+            raise KisApiError("KIS balance response missing output1; account state is unknown", diagnostic=diagnostic)
+        if any(not isinstance(row, dict) for row in output1):
+            raise KisApiError("KIS balance output1 row has unexpected shape; account state is unknown", diagnostic=diagnostic)
+        for row in output1:
+            qty = row.get("hldg_qty")
+            if not re.fullmatch(r"\d+", str(qty or "")) or not str(row.get("pdno") or "").strip():
+                raise KisApiError("KIS balance output1 holding fields are incomplete; account state is unknown", diagnostic=diagnostic)
+        if not isinstance(output2, list) or not output2 or not isinstance(output2[0], dict):
+            raise KisApiError("KIS balance response missing output2; account state is unknown", diagnostic=diagnostic)
+        for field in ("dnca_tot_amt", "tot_evlu_amt"):
+            value = output2[0].get(field)
+            if value is None or not re.fullmatch(r"\d+", str(value).strip()):
+                raise KisApiError(
+                    f"KIS balance response missing or invalid {field}; account state is unknown",
+                    diagnostic=diagnostic,
+                )
+        held_qty = sum(int(row["hldg_qty"]) for row in output1)
+        if held_qty > 0 and int(output2[0]["tot_evlu_amt"]) == 0:
+            diagnostic["failure_stage"] = "BALANCE_VALIDATE"
+            raise KisApiError("KIS balance holdings conflict with zero total equity; account state is unknown", diagnostic=diagnostic)
+        return data
+
+    async def inquire_orderable_cash(
+        self, cano: str, prdt_cd: str, *, symbol: str, price: int,
+        order_division: str = "00",
+    ) -> dict:
+        """Return KIS's orderable-cash quote for a cash BUY.
+
+        ``01`` is required when interpreting the returned maximum quantity as
+        market-order capacity; the default ``00`` preserves limit-order callers.
+        """
+        if order_division not in {"00", "01"}:
+            raise ValueError("order_division must be 00 (limit) or 01 (market)")
+        if isinstance(price, bool) or not isinstance(price, int) or price <= 0:
+            raise ValueError("price must be a positive integer")
+        path = "/uapi/domestic-stock/v1/trading/inquire-psbl-order"
+        tr_id = "VTTC8908R" if self.is_paper else "TTTC8908R"
         token = await self._ensure_token()
         await self._throttle()
         async with self._client() as client:
-            r = await client.get(
-                "/uapi/domestic-stock/v1/trading/inquire-balance",
+            response = await client.get(
+                path,
                 params={
-                    "CANO":                   cano,
-                    "ACNT_PRDT_CD":           prdt_cd,
-                    "AFHR_FLPR_YN":           "N",
-                    "OFL_YN":                 "",
-                    "INQR_DVSN":              "02",
-                    "UNPR_DVSN":              "01",
-                    "FUND_STTL_ICLD_YN":      "N",
-                    "FNCG_AMT_AUTO_RDPT_YN":  "N",
-                    "PRCS_DVSN":              "00",
-                    "CTX_AREA_FK100":         "",
-                    "CTX_AREA_NK100":         "",
+                    "CANO": cano,
+                    "ACNT_PRDT_CD": prdt_cd,
+                    "PDNO": symbol,
+                    "ORD_UNPR": str(int(price)),
+                    "ORD_DVSN": order_division,
+                    "CMA_EVLU_AMT_ICLD_YN": "N",
+                    "OVRS_ICLD_YN": "N",
                 },
                 headers={
                     "authorization": f"Bearer {token}",
-                    "appkey":        self.app_key,
-                    "appsecret":     self.app_secret,
-                    "tr_id":         self._balance_tr_id(),
-                    "custtype":      "P",
+                    "appkey": self.app_key,
+                    "appsecret": self.app_secret,
+                    "tr_id": tr_id,
+                    "custtype": "P",
                 },
             )
-        if r.status_code != 200:
-            raise KisApiError(f"KIS balance endpoint returned {r.status_code}: {r.text[:200]}")
-        return r.json()
+        if response.status_code != 200:
+            # Parse only allowlisted KIS codes. The body itself is never exposed
+            # in exception text or diagnostic output.
+            body: dict = {}
+            try:
+                parsed = response.json()
+                if isinstance(parsed, dict):
+                    body = parsed
+            except (ValueError, json.JSONDecodeError):
+                pass
+            raise KisApiError(
+                f"KIS orderable-cash endpoint returned {response.status_code}",
+                diagnostic={
+                    "http_status": response.status_code,
+                    "kis_rt_cd": _safe_protocol_code(body.get("rt_cd")),
+                    "kis_msg_cd": _safe_protocol_code(body.get("msg_cd")),
+                    "sanitized_error_summary": _safe_orderable_error_summary(
+                        response.status_code, body.get("msg_cd")
+                    ),
+                    "server_request_id": _safe_request_id(response.headers),
+                    "api_path": path,
+                    "tr_id": tr_id,
+                    "order_division": order_division,
+                },
+            )
+        try:
+            data = response.json()
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise KisApiError(
+                "KIS orderable-cash response is not valid JSON",
+                diagnostic={
+                    "http_status": response.status_code,
+                    "kis_rt_cd": None,
+                    "kis_msg_cd": None,
+                    "sanitized_error_summary": "KIS returned an unreadable response for the read-only inquiry.",
+                    "server_request_id": _safe_request_id(response.headers),
+                    "api_path": path,
+                    "tr_id": tr_id,
+                    "order_division": order_division,
+                },
+            ) from exc
+        if not isinstance(data, dict):
+            raise KisApiError(
+                "KIS orderable-cash response has an unexpected shape",
+                diagnostic={
+                    "http_status": response.status_code,
+                    "kis_rt_cd": None,
+                    "kis_msg_cd": None,
+                    "sanitized_error_summary": "KIS returned an unexpected response shape for the read-only inquiry.",
+                    "server_request_id": _safe_request_id(response.headers),
+                    "api_path": path,
+                    "tr_id": tr_id,
+                    "order_division": order_division,
+                },
+            )
+        if str(data.get("rt_cd", "0")) != "0":
+            raise KisApiError(
+                "KIS orderable-cash application error",
+                diagnostic={
+                    "http_status": response.status_code,
+                    "kis_rt_cd": _safe_protocol_code(data.get("rt_cd")),
+                    "kis_msg_cd": _safe_protocol_code(data.get("msg_cd")),
+                    "sanitized_error_summary": _safe_orderable_error_summary(
+                        response.status_code, data.get("msg_cd")
+                    ),
+                    "server_request_id": _safe_request_id(response.headers),
+                    "api_path": path,
+                    "tr_id": tr_id,
+                    "order_division": order_division,
+                },
+            )
+        output = data.get("output")
+        if not isinstance(output, dict) or not output:
+            raise KisApiError(
+                "KIS orderable-cash response missing output; account state is unknown",
+                diagnostic={
+                    "http_status": response.status_code,
+                    "kis_rt_cd": _safe_protocol_code(data.get("rt_cd")),
+                    "kis_msg_cd": _safe_protocol_code(data.get("msg_cd")),
+                    "sanitized_error_summary": "KIS response is missing the orderable-cash output fields.",
+                    "server_request_id": _safe_request_id(response.headers),
+                    "api_path": path,
+                    "tr_id": tr_id,
+                    "order_division": order_division,
+                },
+            )
+        return output
 
     async def inquire_daily_ccld(
         self,
@@ -244,7 +780,121 @@ class KisClient:
             )
         if r.status_code != 200:
             raise KisApiError(f"KIS daily-ccld endpoint returned {r.status_code}: {r.text[:200]}")
+        data = r.json()
+        self._raise_kis_response_error("daily-ccld", data)
+        return data
+
+    async def cancel_order_paper(
+        self,
+        cano:      str,
+        prdt_cd:   str,
+        *,
+        org_no:    str,
+        orig_odno: str,
+        exchange:  str = "KRX",
+    ) -> dict:
+        """주식 주문 *취소*(잔량 전부) — **KIS 모의투자 전용** (TR VTTC0013U).
+
+        공식 KIS 샘플(open-trading-api examples_llm/domestic_stock/order_rvsecncl):
+        POST /uapi/domestic-stock/v1/trading/order-rvsecncl, 모의 tr_id=VTTC0013U,
+        RVSE_CNCL_DVSN_CD=02(취소), QTY_ALL_ORD_YN=Y(잔량 전부), ORD_QTY/ORD_UNPR=0,
+        EXCG_ID_DVSN_CD=KRX(정규장 원주문 — NXT/SOR 미사용).
+        실전 TR(TTTC0013U)은 *정의하지 않는다* — is_paper=False 면 네트워크 호출 전 거부.
+        """
+        if not self.is_paper:
+            raise KisApiError("live (real-money) cancel is not permitted — KIS paper only")
+        if not org_no or not orig_odno:
+            raise ValueError("cancel requires org_no (KRX_FWDG_ORD_ORGNO) and orig_odno")
+        token = await self._ensure_token()
+        await self._throttle()
+        async with self._client() as client:
+            r = await client.post(
+                "/uapi/domestic-stock/v1/trading/order-rvsecncl",
+                json={
+                    "CANO":               cano,
+                    "ACNT_PRDT_CD":       prdt_cd,
+                    "KRX_FWDG_ORD_ORGNO": org_no,
+                    "ORGN_ODNO":          orig_odno,
+                    "ORD_DVSN":           "00",
+                    "RVSE_CNCL_DVSN_CD":  "02",
+                    "ORD_QTY":            "0",
+                    "ORD_UNPR":           "0",
+                    "QTY_ALL_ORD_YN":     "Y",
+                    "EXCG_ID_DVSN_CD":    exchange,
+                },
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "appkey":        self.app_key,
+                    "appsecret":     self.app_secret,
+                    "tr_id":         "VTTC0013U",
+                    "custtype":      "P",
+                },
+            )
+        if r.status_code != 200:
+            raise KisApiError(f"KIS order-rvsecncl returned {r.status_code}: {r.text[:200]}")
         return r.json()
+
+    async def inquire_daily_ccld_all(
+        self,
+        cano:     str,
+        prdt_cd:  str,
+        *,
+        kst_date: str,
+        max_pages: int = 20,
+    ) -> list[dict]:
+        """오늘(KST) 주문/체결 *전 페이지* — read-only (EOD 청산 대조용).
+
+        `inquire_daily_ccld` 는 1페이지(모의 소량)만 읽어 주문이 많은 날 뒤쪽 주문을
+        놓친다. KIS 연속조회 규약(응답 header tr_cont ∈ {F, M} → 다음 요청 header
+        tr_cont=N + body ctx_area_fk100/nk100)을 따라 전부 읽는다. 같은 TR id
+        (VTTC0081R 모의 / TTTC0081R 실전) · 같은 endpoint — 신규 TR 없음.
+        잔량/미체결 판단용 행만 반환하며 주문 write 0건.
+        """
+        rows: list[dict] = []
+        fk, nk, tr_cont = "", "", ""
+        for _ in range(max(1, int(max_pages))):
+            token = await self._ensure_token()
+            await self._throttle()
+            headers = {
+                "authorization": f"Bearer {token}",
+                "appkey":        self.app_key,
+                "appsecret":     self.app_secret,
+                "tr_id":         self._daily_ccld_tr_id(),
+                "custtype":      "P",
+            }
+            if tr_cont:
+                headers["tr_cont"] = "N"
+            async with self._client() as client:
+                r = await client.get(
+                    "/uapi/domestic-stock/v1/trading/inquire-daily-ccld",
+                    params={
+                        "CANO": cano, "ACNT_PRDT_CD": prdt_cd,
+                        "INQR_STRT_DT": kst_date, "INQR_END_DT": kst_date,
+                        "SLL_BUY_DVSN_CD": "00", "INQR_DVSN": "00", "PDNO": "",
+                        "CCLD_DVSN": "00", "ORD_GNO_BRNO": "", "ODNO": "",
+                        "INQR_DVSN_3": "00", "INQR_DVSN_1": "",
+                        "CTX_AREA_FK100": fk, "CTX_AREA_NK100": nk,
+                    },
+                    headers=headers,
+                )
+            if r.status_code != 200:
+                raise KisApiError(
+                    f"KIS daily-ccld endpoint returned {r.status_code}: {r.text[:200]}")
+            body = r.json()
+            if str(body.get("rt_cd", "0")) != "0":
+                raise KisApiError(
+                    f"KIS daily-ccld rt_cd={body.get('rt_cd')} "
+                    f"msg_cd={body.get('msg_cd', '')} msg={body.get('msg1', '')}")
+            rows.extend(body.get("output1") or [])
+            tr_cont = str(r.headers.get("tr_cont", "") or "").strip().upper()
+            fk = str(body.get("ctx_area_fk100", "") or "").strip()
+            nk = str(body.get("ctx_area_nk100", "") or "").strip()
+            if tr_cont not in ("F", "M"):
+                break
+        else:
+            # max_pages 소진 — 불완전한 목록으로 "미체결 없음" 판단을 내리지 않게 실패 처리.
+            raise KisApiError("KIS daily-ccld pagination exceeded max_pages")
+        return rows
 
     async def place_order(
         self,
@@ -256,35 +906,55 @@ class KisClient:
         quantity:   int,
         order_type: str,        # "market" or "limit"
         limit_price: int | None = None,
+        api_format: str = "legacy",
     ) -> dict:
         """Submit a stock order to the KIS order-cash endpoint.
 
         Returns raw JSON. tr_id selects buy/sell + paper/live combination.
         Caller maps the response (rt_cd / msg1 / output.ODNO) to OrderResult.
+
+        api_format (V3, 2026-10-23):
+          - "legacy"  (기본·운영 체결 이력 있음): 모의 VTTC0802U/0801U, body 6필드.
+          - "current" (KIS 공식 examples_llm/domestic_stock/order_cash): 모의
+            VTTC0012U/0011U + 필수 EXCG_ID_DVSN_CD=KRX + SLL_TYPE(매도 01 일반매도)/
+            CNDT_PRIC(빈값). **모의 전용** — is_paper=False 면 네트워크 호출 전 거부
+            (실전 TR TTTC0011U/0012U 는 정의하지 않는다).
         """
         if order_type == "limit" and not limit_price:
             raise ValueError("limit orders require a limit_price")
         ord_dvsn = "01" if order_type == "market" else "00"
         ord_unpr = "0" if order_type == "market" else str(limit_price)
+        body = {
+            "CANO":         cano,
+            "ACNT_PRDT_CD": prdt_cd,
+            "PDNO":         symbol,
+            "ORD_DVSN":     ord_dvsn,
+            "ORD_QTY":      str(quantity),
+            "ORD_UNPR":     ord_unpr,
+        }
+        if api_format == "current":
+            if not self.is_paper:
+                raise KisApiError("current order-cash format is enabled for KIS paper only")
+            tr_id = "VTTC0012U" if is_buy else "VTTC0011U"
+            body.update({"EXCG_ID_DVSN_CD": "KRX",
+                         "SLL_TYPE": "" if is_buy else "01",
+                         "CNDT_PRIC": ""})
+        elif api_format == "legacy":
+            tr_id = self._order_tr_id(is_buy=is_buy)
+        else:
+            raise ValueError(f"unknown order api_format: {api_format!r}")
 
         token = await self._ensure_token()
         await self._throttle()
         async with self._client() as client:
             r = await client.post(
                 "/uapi/domestic-stock/v1/trading/order-cash",
-                json={
-                    "CANO":         cano,
-                    "ACNT_PRDT_CD": prdt_cd,
-                    "PDNO":         symbol,
-                    "ORD_DVSN":     ord_dvsn,
-                    "ORD_QTY":      str(quantity),
-                    "ORD_UNPR":     ord_unpr,
-                },
+                json=body,
                 headers={
                     "authorization": f"Bearer {token}",
                     "appkey":        self.app_key,
                     "appsecret":     self.app_secret,
-                    "tr_id":         self._order_tr_id(is_buy=is_buy),
+                    "tr_id":         tr_id,
                     "custtype":      "P",
                 },
             )

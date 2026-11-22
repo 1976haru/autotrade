@@ -1,6 +1,6 @@
 [package]
 name = "agent-trader-v1"
-version = "1.0.0"
+version = "1.1.0"
 description = "Agent Trader v1 — AI 에이전트 단타 자동매매 관제 (베타)"
 authors = ["Agent Trader Beta"]
 edition = "2021"
@@ -17,7 +17,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# WINDOWS-ONECLICK-EXE-V1: tray-icon — 창(X)을 닫아도 백엔드·장마감 청산 유지(트레이 상주).
+tauri = { version = "2", features = ["tray-icon"] }
+# WINDOWS-ONECLICK-EXE-V1: 아이콘 중복 실행 시 새 창/백엔드 대신 기존 창을 앞으로.
+tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-process = "2"

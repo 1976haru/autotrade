@@ -383,7 +383,7 @@ class TestNoBrokerOrLiveImports:
 
 class TestAffordabilityApi:
     def test_preview_uses_current_config_by_default(self, api_client):
-        # default config: cap=1M, max_positions=3.
+        # default config: cap=1M, max_positions=5.
         res = api_client.post(
             "/api/auto-paper/affordability/preview",
             json={
@@ -398,7 +398,7 @@ class TestAffordabilityApi:
         body = res.json()
         assert body["verdict"] == "PRICE_OVER_CAP"
         assert body["effective_per_symbol_cap_krw"] == 1_000_000
-        assert body["max_concurrent_positions"] == 3
+        assert body["max_concurrent_positions"] == 5
         assert body["is_paper_only"] is True
         assert body["is_live_authorization"] is False
         assert "한도" in body["reason_ko"]
@@ -420,14 +420,10 @@ class TestAffordabilityApi:
         assert body["affordable_quantity"] == 14
 
     def test_preview_uses_updated_cap(self, api_client):
-        # cap 을 PCT_OF_EQUITY 10% × 30M = 3M 로 바꾸면 180만원 가능.
-        api_client.post(
-            "/api/auto-paper/capital-config",
-            json={"initial_cash": 30_000_000},
-        )
+        # PAPER seed는 10M로 고정하고 종목당 상한은 선택 최대 2M를 사용한다.
         api_client.post(
             "/api/auto-paper/per-symbol-allocation",
-            json={"mode": "PCT_OF_EQUITY"},
+            json={"mode": "FIXED_KRW", "per_symbol_max_krw": 2_000_000},
         )
         res = api_client.post(
             "/api/auto-paper/affordability/preview",
@@ -435,18 +431,18 @@ class TestAffordabilityApi:
                 "action": "BUY",
                 "symbol": "000660",
                 "price": 1_800_000,
-                "available_cash_krw": 30_000_000,
+                "available_cash_krw": 10_000_000,
                 "current_held_symbols": [],
             },
         )
         body = res.json()
-        assert body["effective_per_symbol_cap_krw"] == 3_000_000
+        assert body["effective_per_symbol_cap_krw"] == 2_000_000
         assert body["verdict"] == "AFFORDABLE"
-        # min(3M, 30M) // 1.8M = 1.
+        # min(2M, 10M) // 1.8M = 1.
         assert body["affordable_quantity"] == 1
 
     def test_preview_explicit_override(self, api_client):
-        # body 에 explicit cap 주면 config 무시.
+        # what-if override도 PAPER 정책 상한을 넘을 수 없다.
         res = api_client.post(
             "/api/auto-paper/affordability/preview",
             json={
@@ -460,8 +456,8 @@ class TestAffordabilityApi:
             },
         )
         body = res.json()
-        assert body["effective_per_symbol_cap_krw"] == 5_000_000
-        assert body["max_concurrent_positions"] == 10
+        assert body["effective_per_symbol_cap_krw"] == 2_000_000
+        assert body["max_concurrent_positions"] == 5
         assert body["verdict"] == "AFFORDABLE"
 
     def test_preview_sell_skipped(self, api_client):
@@ -496,12 +492,12 @@ class TestAffordabilityApi:
                 "symbol": "005930",
                 "price": 70_000,
                 "available_cash_krw": 10_000_000,
-                "current_held_symbols": ["000660", "035720", "035420"],
+                "current_held_symbols": ["000660", "035720", "035420", "207940", "005380"],
             },
         )
         body = res.json()
         assert body["verdict"] == "MAX_POSITIONS_REACHED"
-        assert body["current_held_unique_symbols"] == 3
+        assert body["current_held_unique_symbols"] == 5
 
     def test_preview_payload_no_secrets(self, api_client):
         import json
@@ -559,24 +555,23 @@ class TestSafetyFlagsUntouched:
 
 class TestIntegrationWithCapitalConfig:
     def test_pct_mode_changes_effective_cap_propagates(self):
-        # 시드머니 30M + PCT_OF_EQUITY 10% → effective cap = 3M.
-        # 그 한도 아래 가격 = AFFORDABLE, 초과 = PRICE_OVER_CAP.
-        set_paper_capital_config(30_000_000)
+        # 10M PAPER seed의 10% allocation은 1M이다.
+        set_paper_capital_config(10_000_000)
         set_per_symbol_allocation(mode="PCT_OF_EQUITY")
         from app.auto_paper.capital_config import get_paper_capital_config
         cfg = get_paper_capital_config()
-        assert cfg.effective_per_symbol_cap_krw == 3_000_000
+        assert cfg.effective_per_symbol_cap_krw == 1_000_000
 
         r_ok = check_paper_affordability(
-            action="BUY", symbol="000660", price=2_900_000,
-            available_cash_krw=30_000_000,
+            action="BUY", symbol="000660", price=900_000,
+            available_cash_krw=10_000_000,
             effective_per_symbol_cap_krw=cfg.effective_per_symbol_cap_krw,
         )
         assert r_ok.verdict == AffordabilityVerdict.AFFORDABLE
 
         r_blocked = check_paper_affordability(
-            action="BUY", symbol="000660", price=3_100_000,
-            available_cash_krw=30_000_000,
+            action="BUY", symbol="000660", price=1_100_000,
+            available_cash_krw=10_000_000,
             effective_per_symbol_cap_krw=cfg.effective_per_symbol_cap_krw,
         )
         assert r_blocked.verdict == AffordabilityVerdict.PRICE_OVER_CAP

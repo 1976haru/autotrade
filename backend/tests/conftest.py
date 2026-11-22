@@ -1,4 +1,41 @@
-import pytest
+"""pytest 공통 fixture.
+
+★테스트 격리(hermetic) — KIS-PAPER-EOD-SAFETY-HARDENING-V2 (2026-10-23)
+조사 결과 기존 suite 가 운영자의 *실제* 데이터에 쓰고 있었다:
+  - backend/.env 의 DATABASE_URL(=운영 SQLite)을 그대로 사용 → TestClient(app)/SessionLocal
+    테스트가 운영 DB 에 행을 commit (agent_decision_episode 오염 확인).
+  - backend/.env 값(MARKET_DATA_PROVIDER=kis 등)이 default 검증 테스트를 깨뜨림.
+  - %APPDATA%/Autotrade 의 runtime_overrides.json / kis_token_cache.json /
+    config/paper_capital_state.json 을 읽거나 덮어씀.
+아래 블록은 *어떤 app 모듈 import 보다 먼저* 실행되어(app.db.session 이 import 시점에
+engine 을 만든다) 임시 DB·임시 설정 디렉토리·.env 미로딩·안전 플래그를 강제한다.
+APPDATA 자체는 바꾸지 않는다(사용자 site-packages 의 pytest/httpx/ruff 가 거기 있음 —
+subprocess 테스트가 깨진다). 대신 해당 경로 함수를 session fixture 로 패치한다.
+"""
+import os
+import tempfile
+from pathlib import Path
+
+_HERMETIC_DIR = Path(tempfile.mkdtemp(prefix="autotrade-pytest-"))
+os.environ["DATABASE_URL"] = "sqlite:///" + (_HERMETIC_DIR / "test.db").as_posix()
+os.environ["AGENT_TRADER_CONFIG_DIR"] = str(_HERMETIC_DIR / "config")
+os.environ["AUTOTRADE_PAPER_APPROVAL_FILE"] = str(
+    _HERMETIC_DIR / "paper-session-approval.json"
+)
+
+os.environ.update({
+    "DEFAULT_MODE": "SIMULATION", "MARKET_DATA_PROVIDER": "mock",
+    "USE_REAL_TICK_RUNNER": "false", "PAPER_CAPITAL_PERSIST": "false",
+    "ENABLE_LIVE_TRADING": "false", "ENABLE_AI_EXECUTION": "false",
+    "ENABLE_FUTURES_LIVE_TRADING": "false", "KIS_IS_PAPER": "true",
+})
+
+from app.core import config as _hermetic_cfg  # noqa: E402
+
+_hermetic_cfg.Settings.model_config["env_file"] = None   # backend/.env 를 절대 읽지 않음
+_hermetic_cfg.get_settings.cache_clear()
+
+import pytest  # noqa: E402
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -45,6 +82,25 @@ def safe_default_flags(monkeypatch):
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _fake_paper_operator_approval_for_non_auth_tests(request, monkeypatch):
+    """Authorize isolated FakeBroker workflows, never real gate tests."""
+    module_name = request.module.__name__.rsplit(".", 1)[-1]
+    if module_name in {
+        "test_one_click_paper_session",
+        "test_kis_paper_auto_trading_pipeline",
+        "test_kis_paper_v22_multisymbol_integration",
+    }:
+        return
+    from app.kis_paper import one_click_session
+    monkeypatch.setattr(one_click_session, "load_approval", lambda: None)
+
+    async def _approve_fake_paper_workflow(**_kwargs):
+        return True, "TEST_OPERATOR_APPROVAL"
+
+    monkeypatch.setattr(one_click_session, "authorize_order", _approve_fake_paper_workflow)
 
 
 class _FakeAiClient(AiClient):
@@ -102,3 +158,90 @@ def client():
         c.test_broker = broker
         yield c
     app.dependency_overrides.clear()
+
+
+# ── hermetic: 임시 DB 스키마 + %APPDATA%/Autotrade 상태 파일 격리 ──────────────
+
+
+def _hermetic_create_schema() -> None:
+    """임시 DB 스키마를 *실제 alembic 마이그레이션* 으로 생성 — 앱 lifespan 의
+    upgrade head 와 충돌하지 않고, 신규 마이그레이션(0027 등)도 함께 검증된다."""
+    import logging
+
+    from app.db.session import apply_migrations, engine
+    assert str(engine.url).endswith("test.db"), f"test DB 격리 실패: {engine.url}"
+    # root 에 handler 가 없으면 alembic env.py 가 fileConfig(alembic.ini) 를 적용해
+    #   *기존 logger 를 비활성화* 한다(caplog 테스트 붕괴). 운영 lifespan 과 같은 조건
+    #   (root handler 존재)으로 맞춰 fileConfig 를 건너뛰게 한다.
+    _root = logging.getLogger()
+    _guard = logging.NullHandler()
+    _root.addHandler(_guard)
+    try:
+        apply_migrations()
+    finally:
+        _root.removeHandler(_guard)
+
+
+_hermetic_create_schema()
+
+
+def _real_appdata_fingerprint() -> dict:
+    """운영자의 실제 %APPDATA%/Autotrade 트리 (경로 → (크기, mtime)). 없으면 {}."""
+    base = os.environ.get("APPDATA")
+    if not base:
+        return {}
+    root = Path(base) / "Autotrade"
+    if not root.exists():
+        return {}
+    out = {}
+    for p in root.rglob("*"):
+        try:
+            st = p.stat()
+            out[str(p.relative_to(root))] = (st.st_size if p.is_file() else -1, int(st.st_mtime))
+        except OSError:
+            continue
+    return out
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _guard_real_appdata_untouched():
+    """WINDOWS-ONECLICK-EXE-V1 사고 재발 방지: 테스트가 운영자의 실제 %APPDATA%/Autotrade
+    에 파일을 만들거나 바꾸면 세션 종료 시 실패시킨다 (2026-10-24: frozen 모드 테스트가
+    실제 APPDATA 로 DB 를 복사한 사고). logs/ 는 다른 실행 중 프로세스가 쓸 수 있어 제외."""
+    before = _real_appdata_fingerprint()
+    yield
+    after = _real_appdata_fingerprint()
+    changed = sorted(
+        k for k in set(before) | set(after)
+        if before.get(k) != after.get(k) and not k.startswith("logs")
+    )
+    assert not changed, f"tests modified real %APPDATA%/Autotrade: {changed}"
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolate_appdata_state():
+    """runtime_overrides / KIS 토큰 캐시를 임시 경로로 — 운영 %APPDATA% 미접촉."""
+    d = _HERMETIC_DIR / "appdata" / "Autotrade"
+    d.mkdir(parents=True, exist_ok=True)
+    mp = pytest.MonkeyPatch()
+    mp.setattr("app.core.runtime_config.overrides_path",
+               lambda: d / "runtime_overrides.json")
+    mp.setattr("app.core.runtime_config._legacy_overrides_path",
+               lambda: _HERMETIC_DIR / "legacy_runtime_overrides.json")
+    mp.setattr("app.brokers.kis_client._token_cache_path",
+               lambda: d / "kis_token_cache.json")
+    yield
+    mp.undo()
+
+
+@pytest.fixture(autouse=True)
+def _restore_os_environ():
+    """테스트가 os.environ 을 바꾸고(예: desktop launcher 가 실제 .env 를 주입) 원복하지
+    않으면 이후 테스트가 운영자 설정값을 보게 된다(순서 의존 실패). 매 테스트 후 원복."""
+    saved = dict(os.environ)
+    yield
+    if os.environ != saved:
+        os.environ.clear()
+        os.environ.update(saved)
+        from app.core.config import get_settings as _gs
+        _gs.cache_clear()

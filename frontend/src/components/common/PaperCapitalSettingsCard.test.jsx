@@ -62,9 +62,9 @@ describe("<PaperCapitalSettingsCard>", () => {
   it("Paper 시드머니 preset 클릭", () => {
     const storage = _mkStorage();
     render(<PaperCapitalSettingsCard storage={storage} />);
-    fireEvent.click(screen.getByTestId("preset-total-paper-capital-3,000만원"));
+    fireEvent.click(screen.getByTestId("preset-total-paper-capital-1,000만원"));
     const raw = JSON.parse(storage._dump()[PAPER_CAPITAL_SETTINGS_LS_KEY]);
-    expect(raw.totalPaperCapital).toBe(30_000_000);
+    expect(raw.totalPaperCapital).toBe(10_000_000);
   });
 
   it("종목당 투자금 preset 100만원 클릭", () => {
@@ -78,17 +78,17 @@ describe("<PaperCapitalSettingsCard>", () => {
   it("최대 보유 종목 수 preset 8개 클릭", () => {
     const storage = _mkStorage();
     render(<PaperCapitalSettingsCard storage={storage} />);
-    fireEvent.click(screen.getByTestId("preset-max-positions-8개"));
+    fireEvent.click(screen.getByTestId("preset-max-positions-5개"));
     const raw = JSON.parse(storage._dump()[PAPER_CAPITAL_SETTINGS_LS_KEY]);
-    expect(raw.maxPositions).toBe(8);
+    expect(raw.maxPositions).toBe(5);
   });
 
   it("일일 최대 매수금액 preset 500만원 클릭", () => {
     const storage = _mkStorage();
     render(<PaperCapitalSettingsCard storage={storage} />);
-    fireEvent.click(screen.getByTestId("preset-max-daily-buy-amount-500만원"));
+    fireEvent.click(screen.getByTestId("preset-max-daily-buy-amount-1,000만원"));
     const raw = JSON.parse(storage._dump()[PAPER_CAPITAL_SETTINGS_LS_KEY]);
-    expect(raw.maxDailyBuyAmount).toBe(5_000_000);
+    expect(raw.maxDailyBuyAmount).toBe(10_000_000);
   });
 
   it("종목별 최대 비중 preset 30% 클릭", () => {
@@ -139,7 +139,7 @@ describe("<PaperCapitalSettingsCard>", () => {
   it("reset 버튼 → default 복원", () => {
     const storage = _mkStorage();
     render(<PaperCapitalSettingsCard storage={storage} />);
-    fireEvent.click(screen.getByTestId("preset-max-positions-8개"));
+    fireEvent.click(screen.getByTestId("preset-max-positions-5개"));
     fireEvent.click(screen.getByTestId("paper-capital-settings-reset"));
     expect(storage._dump()[PAPER_CAPITAL_SETTINGS_LS_KEY]).toBeUndefined();
   });
@@ -147,12 +147,12 @@ describe("<PaperCapitalSettingsCard>", () => {
   it("재마운트 후 localStorage 값 복원", () => {
     const storage = _mkStorage();
     const { unmount } = render(<PaperCapitalSettingsCard storage={storage} />);
-    fireEvent.click(screen.getByTestId("preset-total-paper-capital-5,000만원"));
+    fireEvent.click(screen.getByTestId("preset-total-paper-capital-1,000만원"));
     unmount();
     render(<PaperCapitalSettingsCard storage={storage} />);
     // 5,000만원 preset 이 active 상태인지 LS 로 확인.
     const raw = JSON.parse(storage._dump()[PAPER_CAPITAL_SETTINGS_LS_KEY]);
-    expect(raw.totalPaperCapital).toBe(50_000_000);
+    expect(raw.totalPaperCapital).toBe(10_000_000);
   });
 
   it("API key / secret / 계좌번호 input 0개 (invariant)", () => {
@@ -234,7 +234,7 @@ describe("<PaperCapitalSettingsCard>", () => {
     const storage = _mkStorage();
     const api = {
       paperCapitalSettingsGet: vi.fn().mockResolvedValue({
-        settings: { total_paper_capital: 50_000_000 },
+        settings: { total_paper_capital: 10_000_000 },
         source: "PERSISTED",
         config_label: "%APPDATA%/Autotrade/config",
       }),
@@ -248,19 +248,19 @@ describe("<PaperCapitalSettingsCard>", () => {
       expect(screen.getByTestId("paper-capital-settings-save-status").textContent)
         .toMatch(/재실행 후에도 유지/);
     });
-    fireEvent.click(screen.getByTestId("preset-max-positions-8개"));
+    fireEvent.click(screen.getByTestId("preset-max-positions-5개"));
     await waitFor(() =>
       expect(api.paperCapitalSettingsSave).toHaveBeenCalledWith(
-        expect.objectContaining({ max_positions: 8 }),
+        expect.objectContaining({ max_positions: 5 }),
       ));
   });
 
   it("P-16: backend 미가용(api 없음)이어도 localStorage 로 동작", () => {
     const storage = _mkStorage();
     render(<PaperCapitalSettingsCard storage={storage} />);
-    fireEvent.click(screen.getByTestId("preset-max-positions-8개"));
+    fireEvent.click(screen.getByTestId("preset-max-positions-5개"));
     const raw = JSON.parse(storage._dump()[PAPER_CAPITAL_SETTINGS_LS_KEY]);
-    expect(raw.maxPositions).toBe(8);
+    expect(raw.maxPositions).toBe(5);
     expect(screen.getByTestId("paper-capital-settings-save-status").textContent)
       .toMatch(/저장/);
   });

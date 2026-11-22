@@ -88,6 +88,16 @@ describe("<KisPaperEnvStatusCard>", () => {
     expect(screen.getByTestId("kis-env-auto-ready").textContent).toMatch(/BLOCKED/);
   });
 
+  it("QA mock without KIS credentials is shown as intentionally disconnected", async () => {
+    render(<KisPaperEnvStatusCard apiClient={_api({
+      ..._SAFE, credentials_present: false, market_data_provider: "mock",
+      account_connection_state: "QA_MODE_KIS_ACCOUNT_NOT_CONNECTED",
+      enable_kis_paper_auto_trading: false, dry_run: true,
+    })} pollIntervalMs={0} />);
+    await waitFor(() => expect(screen.getByTestId("kis-env-qa-disconnected").textContent)
+      .toMatch(/QA 모드.*KIS 계좌 미연결.*Mock 데이터/));
+  });
+
   it("미구성 시 미구성 표시", async () => {
     render(<KisPaperEnvStatusCard
       apiClient={_api({ ..._SAFE, credentials_present: false })} pollIntervalMs={0} />);

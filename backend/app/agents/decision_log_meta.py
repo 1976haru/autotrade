@@ -58,6 +58,9 @@ def build_agent_decision_log_meta(
         "votes":             votes,
         "selected_strategies": list(getattr(d, "selected_strategies", []) or []) if d else [],
         "risk_profile":      getattr(d, "risk_profile", None) if d else None,
+        # AG1: 기각 신호 그림자 추적용 — *기각 시점 가격*(스캔 루프가 이미 들고 있는
+        #   decision.price). 신규 시세 조회 0건. 기록 추가만(council 판단 0 변경).
+        "signal_price":      int(getattr(d, "price", 0) or 0) if d else 0,
         "confidence":        _f(getattr(d, "confidence", None)) if d else None,
         "quality_score":     int(getattr(d, "quality_score", 0) or 0) if d else 0,
         "risk_flags":        list(getattr(d, "risk_flags", []) or []) if d else [],

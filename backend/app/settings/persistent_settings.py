@@ -57,17 +57,17 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "total_paper_capital":  10_000_000,
     "per_symbol_allocation": 1_000_000,
     "max_positions":        5,
-    "max_daily_buy_amount": 3_000_000,
+    "max_daily_buy_amount": 10_000_000,
     "max_symbol_weight_pct": 0.2,
     "allow_additional_buy": False,
     "risk_profile":         "BALANCED",
 }
 
 _LIMITS = {
-    "total_paper_capital":  (100_000, 10_000_000_000),
-    "per_symbol_allocation": (10_000, 10_000_000_000),
-    "max_positions":        (1, 100),
-    "max_daily_buy_amount": (10_000, 10_000_000_000),
+    "total_paper_capital":  (100_000, 10_000_000),
+    "per_symbol_allocation": (1_000_000, 2_000_000),
+    "max_positions":        (1, 5),
+    "max_daily_buy_amount": (10_000, 10_000_000),
 }
 
 
@@ -278,10 +278,7 @@ def validate_paper_capital_settings(
     if md is not None:
         lo, hi = _LIMITS["max_daily_buy_amount"]
         if _is_number(md) and lo <= md <= hi:
-            if md > out["total_paper_capital"]:
-                errors.append("max_daily_buy_amount must be <= total_paper_capital")
-            else:
-                out["max_daily_buy_amount"] = int(md)
+            out["max_daily_buy_amount"] = int(md)
         else:
             errors.append(f"max_daily_buy_amount must be in [{lo}, {hi}]")
 

@@ -50,6 +50,10 @@ def _settings(**kw):
         kis_paper_auto_order_window_start="09:05", kis_paper_auto_order_window_end="15:30",
         kis_paper_auto_min_confidence=0.0, kis_paper_auto_min_quality_score=0,
         market_data_provider="mock",
+        # INTRADAY-FLAT-BY-CLOSE-V1: 15:20~15:30 종가 단일가 신규 주문은 기본 OFF
+        #   (KIS 모의 접수 미확인). 본 파일의 15:20 시나리오는 *명시 opt-in* 으로 유지하고,
+        #   기본값 차단은 test_closing_auction_sell_blocked_by_default 가 고정한다.
+        kis_paper_eod_closing_auction_orders_enabled=True,
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -233,3 +237,14 @@ def test_mc_ledger_quality_no_secret(db, monkeypatch):
     flat = json.dumps(log.meta).lower()
     for bad in ("app_secret", "account_no", "access_token", "api_key"):
         assert bad not in flat
+
+
+def test_closing_auction_sell_blocked_by_default(db):
+    # INTRADAY-FLAT-BY-CLOSE-V1: 기본 설정에선 15:20 단일가 구간 신규 SELL 전송 0.
+    pos = _held(current_time_kst="15:20")
+    council = run_agent_council(_market(), risk_profile="BALANCED", position=pos)
+    kd = council.to_kis_paper_decision(quantity=13, price=75000)
+    r = _run(db, decision=kd,
+             settings=_settings(kis_paper_eod_closing_auction_orders_enabled=False))
+    assert r.reason_code == "EXIT_WINDOW_CLOSED"
+    assert r.broker_order_sent is False

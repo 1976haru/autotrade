@@ -1,3 +1,4 @@
+import logging
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
@@ -5,6 +6,7 @@ from sqlalchemy import engine_from_config, pool
 from alembic import context
 
 from app.core.config import get_settings
+from app.db.alembic_logging import should_apply_alembic_file_config
 from app.db.base import Base
 from app.db import models  # noqa: F401 — load all model mappings onto Base.metadata
 
@@ -14,7 +16,15 @@ config = context.config
 # Read DATABASE_URL from app settings rather than alembic.ini so .env wins.
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
 
-if config.config_file_name is not None:
+# Only apply alembic.ini logging config when running as a *standalone* alembic
+# CLI (root logger has no handlers yet). When migration runs in-process under the
+# desktop launcher / FastAPI, the root logger already carries the launcher's
+# FileHandler — calling fileConfig here would replace it and silence all
+# post-migration app logs (fill_poller marker, runtime ERROR/WARN) in the log
+# file. Skipping it preserves the launcher's handlers. (2026-06-04)
+if should_apply_alembic_file_config(
+    config.config_file_name, bool(logging.getLogger().handlers)
+):
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata

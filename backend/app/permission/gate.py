@@ -183,6 +183,15 @@ class PermissionGate:
             raise RuntimeError(
                 f"audit {approval.audit_id} for approval {approval_id} not found"
             )
+        from app.kis_paper.account_scope import (
+            ACCOUNT_SCOPE_UNKNOWN, account_scope_block_reason, current_account_scope,
+        )
+        from app.brokers.kis import KisBrokerAdapter
+        if isinstance(broker, KisBrokerAdapter):
+            if account_scope_block_reason() is not None:
+                raise RuntimeError(ACCOUNT_SCOPE_UNKNOWN)
+            if audit.account_id != current_account_scope():
+                raise RuntimeError("APPROVAL_ACCOUNT_SCOPE_MISMATCH")
 
         # 160: AI invariants(158/159)도 approve 시점 re-eval에 적용되려면
         # OrderRequest 재구성 시 audit row에서 AI 메타데이터를 복원해야 한다.
@@ -232,6 +241,38 @@ class PermissionGate:
             # 다시 검사. audit row가 source of truth.
             requested_by_ai=audit.requested_by_ai,
         )
+        # INTRADAY-FLAT-BY-CLOSE-V1: 승인 큐의 *프로그램* 신규 BUY 도 approve 시점에
+        #   14:30 컷오프/휴장일/직전일 EOD 미완료를 재검증 (route_order 와 동일 helper).
+        #   승인 큐는 route_order 를 다시 거치지 않으므로 여기서 막아야 한다.
+        if order.side == OrderSide.BUY:
+            from app.brokers.kis import KisBrokerAdapter
+            from app.kis_paper.intraday_buy_gate import (
+                is_manual_buy,
+                is_program_order,
+                manual_buy_block_reason,
+                program_buy_block_reason,
+            )
+            block_code = None
+            block_msg = ""
+            if is_program_order(audit.trade_reason):
+                block_code, block_msg = program_buy_block_reason(
+                    self.db, symbol=order.symbol, quantity=order.quantity)
+            elif is_manual_buy(audit.trade_reason) and isinstance(broker, KisBrokerAdapter):
+                block_code, block_msg = manual_buy_block_reason()
+            if block_code is not None:
+                re_eval.reasons.append(f"{block_code}: {block_msg}")
+                re_eval.decision = RiskDecision.REJECTED
+
+        # P0-SAFETY-FIX-V1: 긴급정지 LEVEL_1 의 SELL 승인도 프로그램 소유 수량 이내만
+        #   (route_order 와 동일 helper — 승인 큐는 route_order 를 다시 거치지 않는다).
+        from app.execution.order_router import emergency_sell_ownership_block
+        own_block = emergency_sell_ownership_block(
+            self.db, risk, side=order.side, symbol=order.symbol,
+            quantity=int(order.quantity), trade_reason=audit.trade_reason)
+        if own_block is not None:
+            re_eval.reasons.append(own_block)
+            re_eval.decision = RiskDecision.REJECTED
+
         if _approve_re_eval_blocks_execution(re_eval):
             # 076: persist the failed attempt on the row before raising.
             # JSON column needs reassignment for the change to be detected —

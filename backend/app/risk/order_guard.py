@@ -37,6 +37,11 @@ from app.brokers.base import OrderRequest, OrderSide, OrderType
 from app.db.models import OrderAuditLog, PendingApproval
 
 
+def _scope_audit(stmt):
+    from app.kis_paper.account_scope import current_account_scope, scope_query
+    return scope_query(stmt, OrderAuditLog, current_account_scope())
+
+
 class GuardDecision(StrEnum):
     """OrderGuard.check 결과."""
     ALLOW           = "ALLOW"
@@ -84,7 +89,7 @@ class OrderGuardResult:
     reasons:        list[str] = field(default_factory=list)
     audit_replay_id: int | None = None   # RETRY_REPLAY 시 기존 audit row id
     cooldown_remaining_seconds: int | None = None
-    blocked_by:     str | None = None    # symbol_cooldown / strategy_symbol_cooldown / post_exit_cooldown / ai_cooldown / pending / duplicate
+    blocked_by: str | None = None  # symbol / strategy_symbol / post_exit / AI / pending / duplicate
 
     @property
     def allowed(self) -> bool:
@@ -183,7 +188,7 @@ def find_audit_by_client_order_id(
     if not client_order_id:
         return None
     return db.execute(
-        select(OrderAuditLog).where(OrderAuditLog.client_order_id == client_order_id)
+        _scope_audit(select(OrderAuditLog).where(OrderAuditLog.client_order_id == client_order_id))
         .order_by(OrderAuditLog.id).limit(1)
     ).scalar_one_or_none()
 
@@ -192,10 +197,10 @@ def _last_executed_for_symbol(
     db: Session, *, symbol: str, side: str | None = None,
 ) -> OrderAuditLog | None:
     """가장 최근 *executed* audit row (= broker로 실제 보낸 주문). cooldown용."""
-    stmt = select(OrderAuditLog).where(
+    stmt = _scope_audit(select(OrderAuditLog).where(
         OrderAuditLog.symbol == symbol,
         OrderAuditLog.executed.is_(True),
-    )
+    ))
     if side:
         stmt = stmt.where(OrderAuditLog.side == side)
     return db.execute(
@@ -209,7 +214,7 @@ def _last_executed_for_strategy_symbol(
     if strategy is None:
         return None
     return db.execute(
-        select(OrderAuditLog)
+        _scope_audit(select(OrderAuditLog))
         .where(
             OrderAuditLog.symbol == symbol,
             OrderAuditLog.strategy == strategy,
@@ -222,21 +227,28 @@ def _last_executed_for_strategy_symbol(
 def _has_pending_same_side(db: Session, *, symbol: str, side: str) -> bool:
     """같은 symbol + side로 PendingApproval(PENDING) 또는 OrderAuditLog
     NEEDS_APPROVAL이 있는지."""
+    from app.kis_paper.account_scope import current_account_scope
+    scope = current_account_scope()
+    pending_stmt = select(PendingApproval.id).where(
+        PendingApproval.symbol == symbol,
+        PendingApproval.side == side,
+        PendingApproval.status == "PENDING",
+    )
+    if scope is not None:
+        pending_stmt = pending_stmt.where(PendingApproval.audit_id.in_(
+            select(OrderAuditLog.id).where(OrderAuditLog.account_id == scope)
+        ))
     pending = db.execute(
-        select(PendingApproval.id).where(
-            PendingApproval.symbol == symbol,
-            PendingApproval.side == side,
-            PendingApproval.status == "PENDING",
-        ).limit(1)
+        pending_stmt.limit(1)
     ).first()
     if pending is not None:
         return True
     audit = db.execute(
-        select(OrderAuditLog.id).where(
+        _scope_audit(select(OrderAuditLog.id).where(
             OrderAuditLog.symbol == symbol,
             OrderAuditLog.side == side,
             OrderAuditLog.decision == "NEEDS_APPROVAL",
-        ).limit(1)
+        )).limit(1)
     ).first()
     return audit is not None
 
@@ -255,7 +267,7 @@ def _find_recent_same_fingerprint(
         return None
     cutoff = _now_utc() - timedelta(seconds=window_seconds)
     rows = db.execute(
-        select(OrderAuditLog)
+        _scope_audit(select(OrderAuditLog))
         .where(OrderAuditLog.created_at >= cutoff)
         .order_by(OrderAuditLog.id.desc())
         .limit(50)

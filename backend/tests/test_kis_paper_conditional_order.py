@@ -61,6 +61,7 @@ def _reset_log():
 def _settings(**kw):
     base = dict(
         enable_kis_paper_auto_trading=True, kis_paper_auto_order_dry_run=False,
+        kis_paper_fill_polling=True,
         kis_is_paper=True, enable_live_trading=False,
         kis_paper_auto_max_order_notional=5_000_000, kis_paper_auto_max_orders_per_day=10,
         kis_paper_auto_order_window_start="09:05", kis_paper_auto_order_window_end="14:50",

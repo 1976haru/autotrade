@@ -32,14 +32,11 @@ def detect_app_runtime(env: dict[str, str] | None = None) -> str:
         return CI_BUILD
     if explicit in ("source", "source_dev", "dev"):
         return SOURCE_DEV
-    # PyInstaller 패키징 / build_stamp 번들 → packaged.
+    # Only the frozen interpreter identifies the installed PyInstaller app.
+    # A generated build_stamp.py may also be present in a developer checkout
+    # and must not mask CI/source environment detection.
     if getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"):
         return PACKAGED_RUNTIME
-    try:
-        import app.system.build_stamp  # noqa: F401  (빌드 시 생성, 번들에만 존재)
-        return PACKAGED_RUNTIME
-    except Exception:  # noqa: BLE001
-        pass
     if str(e.get("GITHUB_ACTIONS", "")).lower() == "true" or str(e.get("CI", "")).lower() == "true":
         return CI_BUILD
     return SOURCE_DEV

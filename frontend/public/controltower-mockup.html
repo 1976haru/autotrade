@@ -1,0 +1,196 @@
+<!doctype html>
+<!-- STEP 0 시안(목업) — 새 홈 "ControlTower(자동매매 관제판)". 승인용 정적 HTML.
+     실제 구현(React) 아님 — *레이아웃 보여주기용*. 데이터는 예시값.
+     브라우저 폭을 줄이면 모바일 1열 재배치가 보입니다. -->
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>관제판 시안 — ControlTower</title>
+<style>
+  :root{
+    --bg:#0b1020; --panel:#121a2e; --panel2:#0e1526; --line:#243049;
+    --t1:#e7ecf5; --t2:#9fb0cc; --t3:#64748b;
+    --up:#ff5a52; --down:#4b8bff; --green:#22c55e; --amber:#f4a915; --red:#ef4444;
+    --accent:#5b9dff;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; background:var(--bg); color:var(--t1);
+       font-family:-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;}
+  .wrap{max-width:1180px; margin:0 auto; padding:16px;}
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px;}
+  .ttl{font-size:13px; font-weight:800; color:var(--t2); letter-spacing:.02em; margin-bottom:12px;
+       text-transform:none; display:flex; justify-content:space-between; align-items:center;}
+  .muted{color:var(--t2);} .dim{color:var(--t3);}
+  .up{color:var(--up);} .down{color:var(--down);}
+  table{width:100%; border-collapse:collapse; font-size:13px;}
+  th{color:var(--t3); font-weight:700; text-align:right; padding:7px 8px; border-bottom:1px solid var(--line); font-size:11px;}
+  th:first-child,td:first-child{text-align:left;}
+  td{padding:9px 8px; border-bottom:1px solid #1a2236; text-align:right;}
+  tr:last-child td{border-bottom:none;}
+  .badge{font-size:10px; font-weight:800; padding:2px 7px; border-radius:999px;}
+  .b-bot{color:#0a8f5b; background:#0c3b2a; border:1px solid #135c41;}
+  .b-old{color:#9fb0cc; background:#1a2236; border:1px solid #2a3550;}
+  .pill{font-size:11px; padding:3px 9px; border-radius:999px; border:1px solid var(--line); color:var(--t2);}
+
+  /* 최상단 가로 바 */
+  .topbar{display:grid; grid-template-columns:1.3fr 1fr auto; gap:14px; align-items:center;
+          background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:14px 18px; margin-bottom:14px;}
+  .status{display:flex; gap:12px; align-items:center;}
+  .status .dot{font-size:30px;}
+  .status .big{font-size:19px; font-weight:800;}
+  .status .sub{font-size:12.5px; color:var(--t2); margin-top:2px;}
+  .ctr{display:flex; gap:10px; justify-content:center;}
+  .btn{padding:13px 26px; border:none; border-radius:11px; font-size:16px; font-weight:800; cursor:pointer; color:#fff; font-family:inherit;}
+  .btn.start{background:var(--green);} .btn.stop{background:#334155;}
+  .btn.estop{background:transparent; color:var(--red); border:1.5px solid var(--red); font-size:14px; padding:13px 18px;}
+
+  /* KPI 행 */
+  .kpis{display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:14px;}
+  .kpi{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:15px 16px;}
+  .kpi .k{font-size:12px; color:var(--t2); margin-bottom:8px;}
+  .kpi .v{font-size:25px; font-weight:800; letter-spacing:-.02em;}
+  .kpi .v small{font-size:14px; font-weight:700;}
+  .kpi .x{font-size:12px; color:var(--t3); margin-top:5px;}
+
+  /* 본문 2열 */
+  .main{display:grid; grid-template-columns:1.45fr 1fr; gap:14px;}
+  .col{display:flex; flex-direction:column; gap:14px;}
+  .exit{font-size:11px; color:var(--t3); margin-top:2px;}
+  .sys{display:flex; align-items:center; gap:8px; font-size:13px;}
+  .sys .ok{color:var(--green);}
+  .ai-verdict{display:flex; align-items:center; gap:12px; padding:10px 12px; background:var(--panel2); border-radius:10px; border:1px solid var(--line);}
+  .ai-verdict .act{font-size:20px; font-weight:800;}
+  .ai-tl{font-size:12px; color:var(--t2);}
+  .ai-tl .row{display:flex; gap:10px; padding:6px 0; border-bottom:1px solid #1a2236;}
+  .ai-tl .row:last-child{border-bottom:none;}
+  .ai-tl .t{color:var(--t3); width:42px; flex:none;}
+
+  .note{font-size:11px; color:var(--amber); background:#251d05; border:1px solid #3a2e08; border-radius:8px; padding:7px 10px; margin-top:10px;}
+  .foot{text-align:center; font-size:12px; color:var(--t3); margin-top:18px; line-height:1.8;}
+  .foot a{color:var(--accent);}
+
+  /* ── 모바일: 1열 재배치 ── */
+  @media (max-width:820px){
+    .topbar{grid-template-columns:1fr; gap:10px;}
+    .ctr{justify-content:stretch;} .ctr .btn{flex:1;}
+    .kpis{grid-template-columns:repeat(2,1fr);}
+    .main{grid-template-columns:1fr;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ── 최상단 가로 바 (항상 보임) ── -->
+  <div class="topbar">
+    <div class="status">
+      <div class="dot">🟢</div>
+      <div>
+        <div class="big">거래 중이에요</div>
+        <div class="sub">조건에 맞는 종목을 자동으로 사고팔고 있어요 · 오전 9:00~오후 3:30</div>
+      </div>
+    </div>
+    <div class="ctr">
+      <button class="btn start">▶ 시작</button>
+      <button class="btn stop">⏸ 정지</button>
+    </div>
+    <button class="btn estop">🛑 긴급정지</button>
+  </div>
+  <!-- (다른 상태 예) 🟡 장이 끝났어요 · 🔴 멈췄어요 — 오늘 주문 한도를 다 썼어요 -->
+
+  <!-- ── KPI 행 (큰 숫자 5개) ── -->
+  <div class="kpis">
+    <div class="kpi"><div class="k">총 자산</div><div class="v">9,820,000<small>원</small></div><div class="x">현금 6,056,042원</div></div>
+    <div class="kpi"><div class="k">오늘 실현손익</div><div class="v dim">거래 시작 전</div><div class="x">체결되면 표시</div></div>
+    <div class="kpi"><div class="k">누적 실현손익</div><div class="v dim">—</div><div class="x">실체결 기준</div></div>
+    <div class="kpi"><div class="k">승률 (승/패)</div><div class="v dim">거래 시작 전</div><div class="x">실체결 기준만</div></div>
+    <div class="kpi"><div class="k">오늘 주문→체결</div><div class="v">15<small>건</small> → 0<small>건</small></div><div class="x">거부 4건</div></div>
+  </div>
+
+  <!-- ── 본문 2열 ── -->
+  <div class="main">
+
+    <!-- 좌측: 보유 종목 + 오늘 매매 기록 -->
+    <div class="col">
+      <div class="panel">
+        <div class="ttl">보유 종목 <span class="pill">KIS 모의계좌 기준</span></div>
+        <table>
+          <thead><tr><th>종목</th><th>수량</th><th>평단</th><th>현재가</th><th>수익률</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>현대차 <span class="badge b-bot">봇 매수</span><div class="exit">손절 198,000 · 익절 232,000</div></td>
+              <td>3</td><td>210,000</td><td>211,500</td><td class="up">+0.7%</td>
+            </tr>
+            <tr><td>삼성전자우 <span class="badge b-old">기존 보유</span></td><td>10</td><td>58,200</td><td>63,800</td><td class="up">+9.7%</td></tr>
+            <tr><td>NAVER <span class="badge b-old">기존 보유</span></td><td>5</td><td>168,000</td><td>187,000</td><td class="up">+11.3%</td></tr>
+            <tr><td>셀트리온 <span class="badge b-old">기존 보유</span></td><td>8</td><td>176,500</td><td>174,600</td><td class="down">−1.1%</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <div class="ttl">오늘 매매 기록</div>
+        <table>
+          <thead><tr><th>시간</th><th>종목</th><th>구분</th><th>수량</th><th>가격</th><th>상태</th><th>전략</th></tr></thead>
+          <tbody>
+            <tr><td>09:32</td><td>삼성전자</td><td>매수</td><td>2</td><td>63,400</td><td class="dim">받지 못함</td><td>ORB</td></tr>
+            <tr><td>09:48</td><td>현대차</td><td>매수</td><td>3</td><td>210,000</td><td class="up">체결</td><td>모멘텀</td></tr>
+            <tr><td>10:05</td><td>SK하이닉스</td><td>매수</td><td>1</td><td>—</td><td class="dim">승인 대기</td><td>VWAP</td></tr>
+            <tr><td>10:21</td><td>기아</td><td>매수</td><td>2</td><td>118,000</td><td class="down">거부</td><td>갭</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- 우측: 전략 성과판 + 에이전트 평가 + 시스템 -->
+    <div class="col">
+      <div class="panel">
+        <div class="ttl">전략 성과판</div>
+        <table>
+          <thead><tr><th>전략</th><th>신호</th><th>채택</th><th>거래</th><th>승률</th><th>손익</th></tr></thead>
+          <tbody>
+            <tr><td>ORB</td><td>6</td><td>2</td><td>0</td><td class="dim">—</td><td class="dim">—</td></tr>
+            <tr><td>모멘텀</td><td>4</td><td>1</td><td>1</td><td class="dim">거래중</td><td class="dim">—</td></tr>
+            <tr><td>VWAP</td><td>3</td><td>1</td><td>0</td><td class="dim">—</td><td class="dim">—</td></tr>
+            <tr><td>갭</td><td>2</td><td>1</td><td>0</td><td class="dim">—</td><td class="dim">—</td></tr>
+          </tbody>
+        </table>
+        <div class="note">⚠ 신호/채택/거래 건수는 실제 기록. 승률·손익은 <b>실체결이 쌓여야</b> 표시 — 추정치로 채우지 않음.</div>
+      </div>
+
+      <div class="panel">
+        <div class="ttl">에이전트 평가</div>
+        <div class="ai-verdict">
+          <div class="act dim">관망</div>
+          <div>
+            <div style="font-weight:700;">지금은 그대로 지켜보재요 <span class="dim">(확신 65%)</span></div>
+            <div class="ai-tl" style="margin-top:2px;">뚜렷한 상승·하락 신호가 아직 없어요</div>
+          </div>
+        </div>
+        <div class="ai-tl" style="margin-top:10px;">
+          <div class="row"><span class="t">10:21</span><span>관망 — 변동성이 너무 커요 (확신 60%)</span></div>
+          <div class="row"><span class="t">10:05</span><span>현대차 매수 의견 (확신 72%)</span></div>
+          <div class="row"><span class="t">09:48</span><span>관망 — 거래량이 부족해요 (확신 58%)</span></div>
+          <div class="row"><span class="t">09:32</span><span>삼성전자 매수 의견 (확신 70%)</span></div>
+          <div class="row"><span class="t">09:05</span><span>장 시작 전 대기 (확신 —)</span></div>
+        </div>
+        <div class="note">판단 적중률은 체결 데이터가 쌓이면 표시 — 지금은 <b>거래 시작 전</b>.</div>
+      </div>
+
+      <div class="panel">
+        <div class="ttl">시스템</div>
+        <div class="sys"><span class="ok">●</span> 정상 — 시세 연결·체결 갱신 모두 작동 중</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 하단 ── -->
+  <div class="foot">
+    모의투자 — 실제 돈이 나가지 않아요 · 실거래 OFF · KIS_IS_PAPER=true<br>
+    <a href="#">전문가 보기 (기존 화면 전체) ›</a>
+  </div>
+
+</div>
+</body>
+</html>

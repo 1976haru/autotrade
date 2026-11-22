@@ -37,6 +37,20 @@ _KST = timezone(timedelta(hours=9))
 OPEN_TIME = datetime(2026, 5, 22, 10, 0, tzinfo=_KST).astimezone(timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_runtime_config(tmp_path, monkeypatch):
+    # 2026-06-12: 라이브 runtime_overrides.json(take_profit 3.5%) 오염 격리. C1 이후
+    #   take_profit 3.5% 가 +4.5% 시나리오를 익절로 먼저 가로채(TAKE_PROFIT > TRAILING_STOP)
+    #   트레일링 단독 검증이 불가했다. tmp 격리 + take_profit 높여 트레일링이 binding 되게.
+    import app.core.runtime_config as rc
+    monkeypatch.setattr(rc, "overrides_path", lambda: tmp_path / "ro.json")
+    monkeypatch.setattr(rc, "_legacy_overrides_path", lambda: tmp_path / "legacy.json")
+    rc.reset_runtime_overrides_for_tests()
+    rc.set_runtime_overrides(take_profit_pct=10.0, stop_loss_pct=2.0)
+    yield
+    rc.reset_runtime_overrides_for_tests()
+
+
 @pytest.fixture()
 def db():
     eng = create_engine("sqlite://", connect_args={"check_same_thread": False},

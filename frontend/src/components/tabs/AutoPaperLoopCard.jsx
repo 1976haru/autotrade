@@ -47,7 +47,7 @@ const _STATE_COLOR = {
 const _STATE_LABEL = {
   PAUSED:         "대기 (일시정지)",
   IDLE:           "대기 (일시정지)",
-  WAITING_MARKET: "장 시작 대기 중",
+  WAITING_MARKET: "시작됨 · 09:05 매수 시작 대기 중",
   RUNNING:        "AI Paper Auto Loop 진행 중",
   STOPPED:        "정지됨",
   EMERGENCY_STOP: "긴급정지됨",
@@ -337,6 +337,40 @@ export function AutoPaperLoopCard({
   // 시작 버튼: pre-market 결과 + 선택된 risk_profile 을 backend 에 동봉.
   // 서버가 최종 거절 권한 (pre_market BLOCK / EMERGENCY_STOP 등).
   const onStart = useCallback(wrap(async () => {
+    // ONE-CLICK-PAPER-V1: localStorage/operatorName is not authentication.
+    // The native command keeps its desktop token outside the webview and adds
+    // the authenticated Windows session user to the audit record.
+    const nativeInvoke = window?.__TAURI_INTERNALS__?.invoke;
+    if (typeof nativeInvoke === "function") {
+      const dateParts = new Intl.DateTimeFormat("en-US", {
+        timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
+      }).formatToParts(new Date()).reduce((out, part) => {
+        if (part.type !== "literal") out[part.type] = part.value;
+        return out;
+      }, {});
+      const targetDate = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+      let approval = null;
+      if (typeof apiClient.paperSessionApprovalGet === "function") {
+        approval = await apiClient.paperSessionApprovalGet();
+      }
+      const reusable = approval?.target_date === targetDate
+        && ["SCHEDULED", "ACTIVE"].includes(approval?.status);
+      if (!reusable) {
+        const approved = window.confirm(
+          `KIS 모의계좌 자동매매 승인 (${targetDate})\n\n`
+          + "오늘 장중 실제 KIS PAPER 매수·매도 주문이 자동 전송될 수 있습니다.\n"
+          + `종목당 목표 ${Number(capitalSummary.perSymbolAllocation || 0).toLocaleString()}원, `
+          + `최대 ${Number(capitalSummary.maxPositions || 0)}종목, `
+          + `일일 최대 ${Number(capitalSummary.maxDailyBuyAmount || 0).toLocaleString()}원\n`
+          + "LIVE 계좌 주문은 허용되지 않습니다. 승인하시겠습니까?",
+        );
+        if (!approved) return;
+        await nativeInvoke("approve_paper_session", {
+          targetDate,
+          explicitAck: true,
+        });
+      }
+    }
     // 항상 body 생성 — risk_profile 은 반드시 carry (기본값 BALANCED).
     const body = {
       risk_profile: riskProfile,
@@ -558,12 +592,12 @@ export function AutoPaperLoopCard({
           }}
         >
           <div style={{ fontWeight: "var(--fw-bold)", marginBottom: 4 }}>
-            ⏳ 장 시작 대기 중
+            자동매매 감시 시작됨 · 09:05 매수 시작 대기 중
           </div>
           <div style={{ fontSize: "var(--fs-xs)" }}>
-            한국 주식시장 정규장(09:00 KST)이 시작되면 자동으로 AI Paper
-            Auto Loop가 RUNNING 상태로 전환됩니다. 그 전까지는 신규 가상
-            매매 후보를 생성하지 않습니다.
+            시작 요청은 정상 처리되었습니다. 09:00부터 시장 감시가 실행되고,
+            신규 BUY는 안전 시간 게이트에 따라 09:05 KST부터만 허용됩니다.
+            Dry-run ON 상태에서는 실제 KIS PAPER 주문이 전송되지 않습니다.
           </div>
         </div>
       )}
@@ -713,7 +747,7 @@ export function AutoPaperLoopCard({
             fontWeight: "var(--fw-bold)",
           }}
         >
-          시작 (AI Paper Auto Loop)
+          2026-11-04 KIS PAPER BUY/SELL 예약 승인 및 감시 시작
         </button>
         <button
           data-testid="btn-stop-auto-paper"
@@ -862,6 +896,10 @@ export function AutoPaperLoopCard({
           const lim = readiness?.paper_auto_limits;
           if (!m) return null;
           const mode = m.mode || "VIRTUAL_ONLY";
+          const operationalMode = m.operational_mode || (
+            m.broker_order_enabled ? "PAPER_TRADING"
+              : (m.kis_realtime && m.dry_run ? "PAPER_DRY_RUN" : "READ_ONLY")
+          );
           const smoke = m.smoke_mode === true;
           const scopeMsg = smoke
             ? "최초 안전 확인 — 1종목 / 1주 / 1건 제한 (정상 운용 아님)"
@@ -886,6 +924,9 @@ export function AutoPaperLoopCard({
                 운용 모드: <strong data-testid="paper-auto-mode-value">{mode}</strong>
                 {" · "}price_source: <strong>{m.price_source || "—"}</strong>
                 {" · "}market_data: <strong>{m.market_data_provider || "—"}</strong>
+              </div>
+              <div data-testid="paper-operational-mode-value" style={{ fontWeight: 800 }}>
+                {operationalMode}
               </div>
               <div style={{ color: "var(--c-text-2)" }}>{scopeMsg}</div>
               {m.kis_realtime === false && m.broker_order_enabled === false && (
@@ -974,6 +1015,18 @@ export function AutoPaperLoopCard({
                 </span>
               </div>
               <div data-testid="bg-tick-message">{msg}</div>
+              {bt && (
+                <div data-testid="bg-tick-runtime-stage" style={{ marginTop: 4, color: "var(--c-text-2)" }}>
+                  Engine stage: <strong>{bt.execution_stage || (running ? "STARTING" : "IDLE")}</strong>
+                  {bt.last_tick_completed_at && (
+                    <> · last tick completed {String(bt.last_tick_completed_at).replace("T", " ").slice(0, 19)} UTC</>
+                  )}
+                  {bt.warmup && (
+                    <> · warmup {bt.warmup.status}: {bt.warmup.completed_symbols ?? 0}/{bt.warmup.total_symbols ?? 0}
+                      {bt.warmup.failed_symbols ? ` (${bt.warmup.failed_symbols} unavailable)` : ""}</>
+                  )}
+                </div>
+              )}
 
               {/* tick 실행 모드 — 진단 dry-run vs Paper 모의 체결. */}
               {bt && (
@@ -1066,6 +1119,41 @@ export function AutoPaperLoopCard({
                   {bt.last_tick_at ? ` (${String(bt.last_tick_at).slice(11, 19)})` : ""}
                 </div>
               )}
+              {bt?.recent_scan_diagnostics?.completed_cycles > 0 && (() => {
+                const scan = bt.recent_scan_diagnostics;
+                const last = bt.last_scan_diagnostics || {};
+                const actions = scan.council_actions || {};
+                const excluded = Object.entries(scan.excluded_reasons || {}).slice(0, 3);
+                return (
+                  <div
+                    data-testid="kis-scan-diagnostics"
+                    style={{ marginTop: 6, padding: "6px 8px", background: "#f8fafc", borderRadius: "var(--r-sm)" }}
+                  >
+                    <div>
+                      오늘 tick {bt.tick_count_today ?? 0}회 / 최근 완료 스캔 {scan.completed_cycles}회 /
+                      감시 고유 종목 {scan.unique_symbols_count} / 시세 정상 {scan.quotes_ok}
+                    </div>
+                    <div>
+                      최근 풀 {last.universe_pool_size ?? "-"} / 테마 통과 {last.theme_filter_passed ?? "-"} /
+                      시장입력 통과 {scan.market_inputs_ready} / Council {scan.council_evaluated}
+                    </div>
+                    <div>
+                      Council BUY {actions.BUY || 0} / HOLD {actions.HOLD || 0} / SELL {actions.SELL || 0} /
+                      주문 게이트 {scan.orders_attempted} / KIS 요청 {scan.orders_submitted}
+                    </div>
+                    {excluded.length > 0 && (
+                      <div data-testid="kis-scan-excluded-reasons" style={{ color: "var(--c-text-2)" }}>
+                        주요 제외: {excluded.map(([code, count]) => `${code} ${count}`).join(" · ")}
+                      </div>
+                    )}
+                    {scan.candidates_found === 0 && (
+                      <div data-testid="kis-no-candidate-detail" style={{ color: "#92400e" }}>
+                        {last.universe_pool_size ?? 0}종목 풀 / 시세 정상 {scan.quotes_ok} / 전략 조건 통과 0 / 현재 매수 후보 없음
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               <div data-testid="bg-tick-safety" style={{ marginTop: 2, color: "var(--c-text-3)" }}>
                 실제 주문 아님 · broker_order_sent=false · is_live_authorization=false
               </div>

@@ -26,9 +26,19 @@ import app_desktop_launcher as launcher   # noqa: E402
 
 
 def test_candidate_env_paths_includes_appdata(monkeypatch):
+    # 설치 EXE(frozen) — 운영 .env 는 %APPDATA%\Autotrade\.env.
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setenv("APPDATA", r"C:\Users\test\AppData\Roaming")
     paths = launcher.candidate_env_paths()
     assert any("Autotrade" in str(p) for p in paths)
+
+
+def test_candidate_env_paths_source_run_excludes_ops_env(monkeypatch):
+    # P0-SAFETY-HARDENING P0-1: 소스 실행은 설치 앱의 운영 .env 를 자동으로 읽지 않는다.
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    monkeypatch.setenv("APPDATA", r"C:\Users\test\AppData\Roaming")
+    paths = launcher.candidate_env_paths()
+    assert not any("Roaming" in str(p) for p in paths)
 
 
 def test_candidate_env_paths_without_appdata(monkeypatch):
@@ -44,6 +54,7 @@ def test_resolve_env_path_returns_first_existing(tmp_path, monkeypatch):
     autotrade.mkdir(parents=True)
     target = autotrade / ".env"
     target.write_text("KIS_IS_PAPER=true\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setenv("APPDATA", str(appdata))
     # backend/.env 도 만들지만 우선순위가 낮음
     found = launcher.resolve_env_path()
@@ -306,3 +317,44 @@ def test_setup_logging_returns_path_or_none(tmp_path, monkeypatch):
     p = launcher._setup_logging()
     # path 가 None 일 수도 (OSError) 정상 path 일 수도. 둘 다 허용.
     assert p is None or isinstance(p, pathlib.Path)
+
+
+# ── A1: DB 경로 절대화(CWD 독립) ──────────────────────────────────────────────
+
+def test_anchor_relative_db_to_absolute(monkeypatch):
+    import logging
+    import app_desktop_launcher as L
+    log = logging.getLogger("t")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(L.sys, "frozen", False, raising=False)
+    L._anchor_relative_db_to_absolute(log)
+    from pathlib import Path
+    url = os.environ.get("DATABASE_URL")
+    assert url and url.startswith("sqlite:///")
+    p = url[len("sqlite:///"):]
+    assert Path(p).is_absolute()                       # 절대경로 고정
+    assert p.replace("\\", "/").endswith("backend/data/auto_trader.db")
+
+
+def test_anchor_skips_already_absolute(monkeypatch):
+    import logging
+    import app_desktop_launcher as L
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///C:/abs/auto_trader.db")
+    monkeypatch.setattr(L.sys, "frozen", False, raising=False)
+    L._anchor_relative_db_to_absolute(logging.getLogger("t"))
+    assert os.environ["DATABASE_URL"] == "sqlite:///C:/abs/auto_trader.db"  # 불변
+
+
+def test_anchor_when_frozen_uses_appdata_not_install_dir(monkeypatch, tmp_path):
+    # WINDOWS-ONECLICK-EXE-V1: 예전엔 frozen 이면 건너뛰어 설치 폴더(CWD) 기준 DB 를 열었다.
+    #   이제 %APPDATA%\Autotrade\data 로 고정 (설치 폴더 밖 — 재설치/제거에도 보존).
+    import logging
+    import app_desktop_launcher as L
+    monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))      # 실제 APPDATA 미접촉
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///./data/auto_trader.db")
+    monkeypatch.setattr(L.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(L.sys, "executable", str(tmp_path / "inst" / "app.exe"))
+    monkeypatch.chdir(tmp_path)
+    L._anchor_relative_db_to_absolute(logging.getLogger("t"))
+    expected = (tmp_path / "Roaming" / "Autotrade" / "data" / "auto_trader.db").resolve()
+    assert os.environ["DATABASE_URL"] == "sqlite:///" + expected.as_posix()

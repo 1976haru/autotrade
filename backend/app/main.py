@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -9,6 +10,13 @@ from app.api.routes_agents import router as agents_router
 from app.api.routes_notifications import router as notifications_router
 from app.api.routes_auto_trader import router as auto_trader_router
 from app.api.routes_auto_paper import router as auto_paper_router
+from app.api.routes_runtime_config import router as runtime_config_router
+from app.api.routes_theme_filter import router as theme_filter_router
+from app.api.routes_performance import router as performance_router
+from app.api.routes_positions import router as positions_router
+from app.api.routes_agent_dashboard import router as agent_dashboard_router
+from app.api.routes_briefing import router as briefing_router
+from app.api.routes_preflight import router as preflight_router
 from app.api.routes_ai import router as ai_router
 from app.api.routes_ai_assist import router as ai_assist_router
 from app.api.routes_ai_execution import router as ai_execution_router
@@ -30,6 +38,7 @@ from app.api.routes_monitoring import router as monitoring_router
 from app.api.routes_paper import router as paper_router
 from app.api.routes_system import router as system_router
 from app.api.routes_reconciliation import router as reconciliation_router
+from app.api.routes_reporting import router as reporting_router
 from app.api.routes_risk import router as risk_router
 from app.api.routes_futures import router as futures_router
 from app.api.routes_shadow import router as shadow_router
@@ -39,6 +48,8 @@ from app.api.routes_themes import router as themes_router
 from app.api.routes_virtual import router as virtual_router
 from app.api.routes_watchlists import router as watchlists_router
 from app.api.routes_kis_paper import router as kis_paper_router  # #89
+from app.api.routes_manual_order import router as manual_order_router
+from app.api.routes_manual_portfolio import router as manual_portfolio_router
 from app.api.health import router as health_router
 from app.core.config import get_settings
 from app.db.migration_runner import (
@@ -87,6 +98,34 @@ async def lifespan(_app: FastAPI):
         "[startup] lifespan begin — migration_nonblocking=%s",
         cfg.migration_nonblocking,
     )
+    # P0-SAFETY-HARDENING P0-1: 소스 실행(런처를 거치지 않는 `uvicorn app.main:app` 포함)이 설치 앱의
+    #   운영 KIS 인증정보를 쓰면 DB·브로커·스케줄러를 만지기 전에 시작 거부(fail-closed).
+    from app.system.source_run_guard import source_run_block_reason
+    _src_block = source_run_block_reason(cfg)
+    if _src_block is not None:
+        _startup_logger.error("[startup] start refused (FAIL_CLOSED): %s", _src_block)
+        raise RuntimeError(_src_block)
+    _startup_logger.info("[startup] source-run safety guard passed")
+
+    # PART1-3: capital_state 영속화 활성화를 env 로 동기화. capital_state 는
+    # get_settings 를 import 하지 않는다는 원칙(안전 flag 결합 0건)을 지키기
+    # 위해, pydantic 이 .env 에서 읽은 값을 os.environ 에 명시 반영한다.
+    if cfg.paper_capital_persist:
+        os.environ["PAPER_CAPITAL_PERSIST"] = "true"
+        _startup_logger.info("[startup] paper capital persistence ENABLED")
+
+    # #11: 킬스위치 상태 복원(재기동 시 휘발 방지). 마지막 EmergencyStopEvent 가
+    #   enabled 면 그 level 로 시작 — 기존 차단 로직 무변경, 복원만. 실패는 OFF 폴백.
+    try:
+        from app.api.deps import get_risk_manager
+        from app.db.session import SessionLocal
+        from app.risk.emergency_stop import restore_kill_switch_from_db
+        with SessionLocal() as _ks_db:
+            _ks_lvl = restore_kill_switch_from_db(get_risk_manager(), _ks_db)
+        _startup_logger.info("[startup] kill-switch 복원: %s", _ks_lvl)
+    except Exception as _ks_exc:  # noqa: BLE001 — 복원 실패는 봇 startup 막지 않음(OFF 시작).
+        _startup_logger.warning("[startup] kill-switch 복원 실패(OFF 시작): %s",
+                                type(_ks_exc).__name__)
 
     poller: FillPoller | None = None
     poller_starter_task: asyncio.Task | None = None
@@ -94,12 +133,19 @@ async def lifespan(_app: FastAPI):
     def _build_and_start_poller() -> FillPoller:
         from app.api.deps import get_broker
         from app.db.session import SessionLocal
+        _startup_logger.info("[startup] fill_poller initializing")
         p = FillPoller(
             broker_factory=get_broker,
             session_factory=SessionLocal,
             interval=cfg.fill_polling_interval_seconds,
         )
-        p.start()
+        try:
+            p.start()
+        except Exception as exc:
+            _startup_logger.error(
+                "[startup] fill_poller failed (error_type=%s)", type(exc).__name__,
+            )
+            raise
         return p
 
     if cfg.migration_nonblocking:
@@ -128,6 +174,8 @@ async def lifespan(_app: FastAPI):
                         return
                     await asyncio.sleep(1.0)
             poller_starter_task = asyncio.create_task(_start_poller_when_db_ready())
+        else:
+            _startup_logger.info("[startup] fill_poller skipped (enable_fill_polling=false)")
 
         _startup_logger.info(
             "[startup] backend ready (non-blocking) — /health and /api/status "
@@ -154,9 +202,33 @@ async def lifespan(_app: FastAPI):
         _startup_logger.info("[startup] alembic migration complete")
         if cfg.enable_fill_polling:
             poller = _build_and_start_poller()
+            _startup_logger.info("[startup] fill_poller started")
+        else:
+            _startup_logger.info("[startup] fill_poller skipped (enable_fill_polling=false)")
         _startup_logger.info(
             "[startup] backend ready — uvicorn accepting requests on /health, "
             "/api/status, /api/kis-paper/readiness"
+        )
+
+    # Restore an explicitly approved, account-scoped PAPER session after a
+    # desktop restart. This never creates approval: it only reuses today's
+    # persisted Windows-desktop approval, keeps LIVE blocked, and respects the
+    # restored emergency stop. start() chooses RUNNING or WAITING_MARKET.
+    try:
+        from app.api.deps import get_risk_manager
+        from app.auto_paper.loop import get_auto_paper_loop
+        from app.kis_paper.one_click_session import session_trading_authorized
+        if (session_trading_authorized(cfg)
+                and not bool(getattr(get_risk_manager(), "emergency_stop", False))):
+            restored = get_auto_paper_loop().start()
+            _startup_logger.info(
+                "[startup] approved PAPER session restored: state=%s",
+                getattr(restored.state, "value", restored.state),
+            )
+    except Exception as exc:  # fail closed; readiness exposes the reason
+        _startup_logger.warning(
+            "[startup] approved PAPER session restore skipped (error_type=%s)",
+            type(exc).__name__,
         )
 
     # Emit operator-facing event — backend ready.
@@ -182,12 +254,63 @@ async def lifespan(_app: FastAPI):
                 "[startup] AI Paper background tick driver started "
                 "(opt-in, PAPER only — no broker orders)"
             )
+        else:
+            _startup_logger.info(
+                "[startup] AI Paper background tick driver skipped "
+                "(disabled or not eligible; no broker orders)"
+            )
     except Exception as exc:  # noqa: BLE001
         _startup_logger.warning(
-            "[startup] background tick driver not started: %s: %s",
-            type(exc).__name__, exc,
+            "[startup] background tick driver failed (error_type=%s)", type(exc).__name__,
         )
 
+    # P0-SAFETY-FIX-V1: EOD guardian — driver 가 꺼져 있어도(EXE 기본·재실행) 프로그램 보유의
+    #   장마감 청산 관리를 계속한다. 신규 BUY/스캔 0, 승인(KIS 모의 자동매매 ON) 시에만 시작.
+    eod_guardian = None
+    try:
+        from app.auto_paper.background_driver import get_eod_guardian
+        eod_guardian = get_eod_guardian()
+        if eod_guardian.start():
+            _startup_logger.info("[startup] EOD guardian started (independent of tick driver)")
+        else:
+            _startup_logger.info("[startup] EOD guardian skipped (disabled or not eligible)")
+    except Exception as exc:  # noqa: BLE001
+        _startup_logger.warning("[startup] EOD guardian failed (error_type=%s)", type(exc).__name__)
+
+    # MULTI-TF-SHADOW-V1 — *opt-in*, 기본 OFF. results/multi_timeframe 후속 —
+    # 5m entry + 60m confirm(Council) 콤보를 read-only 관측(신호빈도 + 슬리피지).
+    # broker.place_order / route_order / OrderExecutor 호출 0건.
+    mtf_shadow = None
+    try:
+        if cfg.enable_multi_tf_shadow:
+            from app.api.deps import get_broker
+            from app.db.session import SessionLocal
+            from app.shadow.multi_tf_shadow import MultiTfShadowRunner
+            mtf_shadow = MultiTfShadowRunner(
+                broker_factory=get_broker,
+                session_factory=SessionLocal,
+                symbols=cfg.multi_tf_shadow_symbol_list(),
+                interval=cfg.multi_tf_shadow_interval_seconds,
+            )
+            if mtf_shadow.start():
+                _startup_logger.info(
+                    "[startup] multi-tf shadow started (opt-in, read-only — no broker orders)"
+                )
+    except Exception as exc:  # noqa: BLE001
+        _startup_logger.warning(
+            "[startup] multi-tf shadow failed (error_type=%s)", type(exc).__name__,
+        )
+
+    mig = get_migration_status()
+    _startup_logger.info(
+        "[startup] application startup complete; migration=%s db_ready=%s "
+        "fill_polling=%s auto_paper_tick=%s live_trading=%s",
+        mig.state.value,
+        db_is_ready(),
+        cfg.enable_fill_polling,
+        cfg.enable_ai_paper_background_tick,
+        cfg.enable_live_trading,
+    )
     try:
         yield
     finally:
@@ -200,9 +323,19 @@ async def lifespan(_app: FastAPI):
             )
         except Exception:  # noqa: BLE001
             pass
+        if eod_guardian is not None:
+            try:
+                await eod_guardian.stop()
+            except Exception:  # noqa: BLE001 — shutdown 정리는 best-effort.
+                pass
         if bg_driver is not None:
             try:
                 await bg_driver.stop()
+            except Exception:  # noqa: BLE001 — shutdown 정리는 best-effort.
+                pass
+        if mtf_shadow is not None:
+            try:
+                await mtf_shadow.stop()
             except Exception:  # noqa: BLE001 — shutdown 정리는 best-effort.
                 pass
         if poller_starter_task is not None and not poller_starter_task.done():
@@ -213,6 +346,13 @@ async def lifespan(_app: FastAPI):
                 pass
         if poller is not None:
             await poller.stop()
+        # P0-SAFETY-FIX-V1: 실행기가 멈춘 뒤 이 프로세스의 EOD lease 해제 — 재시작한 새
+        #   프로세스가 lease 만료를 기다리지 않고 바로 EOD 를 이어받는다.
+        try:
+            from app.system.graceful_shutdown import release_process_eod_leases
+            release_process_eod_leases()
+        except Exception:  # noqa: BLE001 — shutdown 정리는 best-effort.
+            pass
 
 
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
@@ -278,10 +418,20 @@ app.include_router(paper_decision_log_router, prefix="/api")
 app.include_router(agent_memory_router, prefix="/api")
 app.include_router(auto_trader_router, prefix="/api")
 app.include_router(auto_paper_router, prefix="/api")
+app.include_router(runtime_config_router, prefix="/api")
+app.include_router(theme_filter_router, prefix="/api")
+app.include_router(performance_router, prefix="/api")
+app.include_router(positions_router, prefix="/api")
+app.include_router(agent_dashboard_router, prefix="/api")
+app.include_router(briefing_router, prefix="/api")
+app.include_router(preflight_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 app.include_router(monitoring_router, prefix="/api")
 app.include_router(analytics_router, prefix="/api")
+app.include_router(reporting_router, prefix="/api")
 app.include_router(kis_paper_router, prefix="/api")  # #89
+app.include_router(manual_order_router, prefix="/api")
+app.include_router(manual_portfolio_router, prefix="/api")
 app.include_router(health_router, prefix="/api")
 
 
@@ -298,13 +448,33 @@ def root() -> dict:
 # fix/desktop-nonblocking-migration-health: `db_ready` / `migration_status`
 # 를 추가 — DB 호출 없이 module-level singleton 만 read 하므로 응답 속도는
 # 영향 없음. migration 진행 중에도 본 endpoint 는 200 응답.
+#
+# WINDOWS-ONECLICK-EXE-V1: 신원 필드 — 데스크톱 launcher / frontend 가 8000~8002 에서
+# *다른 프로그램* 이나 *이전 버전/다른 실행본* 백엔드를 정상 서비스로 오인하지 않도록
+# app_id(고정) · instance_id(프로세스별, launcher 가 주입) · build_commit 를 노출한다.
+# Secret 0건 (commit hash / uuid / bool 만).
+BACKEND_APP_ID = "agent-trader-backend"
+_INSTANCE_ID = os.environ.get("AUTOTRADE_INSTANCE_ID") or __import__("uuid").uuid4().hex
+
+
 @app.get("/health")
 def health() -> dict:
     mig = get_migration_status()
+    try:
+        from app.system.build_info import get_build_info
+        commit = get_build_info().get("commit")
+    except Exception:  # noqa: BLE001
+        commit = None
     return {
         "ok":               True,
         "status":           "ok",
         "app":              settings.app_name,
+        "app_id":           BACKEND_APP_ID,
+        "instance_id":      _INSTANCE_ID,
+        "build_commit":     commit,
+        "pid":              os.getpid(),
+        "kis_is_paper":     bool(settings.kis_is_paper),
+        "live_trading_enabled": bool(settings.enable_live_trading),
         "db_ready":         db_is_ready(),
         "migration_status": mig.state.value,
     }

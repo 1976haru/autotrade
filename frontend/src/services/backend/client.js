@@ -3,6 +3,15 @@
 // frontend 도 동일 순서로 multi-port probe 후 *성공한 포트* 의 baseUrl 을
 // 전역 API client 에 반영해 이후 모든 호출 (감사 / 에이전트 / 대시보드 /
 // auto-paper) 이 같은 포트를 사용한다.
+import {
+  IDENTITY_REASON_KO,
+  fetchHealth,
+  isTauriRuntime,
+  judgeBackendIdentity,
+  orderPorts,
+  readDesktopPortInfo,
+} from "../../desktop/backendIdentity";
+
 const DEFAULT_BACKEND_URL = "http://127.0.0.1:8000";
 const FALLBACK_PORTS = [8000, 8001, 8002];
 
@@ -36,13 +45,33 @@ export function resetBackendBaseUrl() {
 export async function discoverBackendBaseUrl({
   ports = FALLBACK_PORTS,
   fetchImpl = (typeof globalThis !== "undefined" && globalThis.fetch),
+  // WINDOWS-ONECLICK-EXE-V1: 데스크톱(EXE)에서는 이번 실행본 신원 검사를 강제.
+  //   테스트/웹 모드는 기본 false (종전 동작). desktopPortInfo 주입 가능(테스트).
+  requireIdentity = isTauriRuntime(),
+  desktopPortInfo,
 } = {}) {
   if (typeof fetchImpl !== "function") {
     return { ok: false, error: "fetch not available" };
   }
+  let expectedInstanceId = null;
+  if (requireIdentity) {
+    const info = desktopPortInfo !== undefined ? desktopPortInfo : await readDesktopPortInfo();
+    if (info) {
+      ports = orderPorts(ports, info.port);
+      expectedInstanceId = info.instanceId;
+    }
+  }
   let lastError = "no ports tried";
   for (const port of ports) {
     const baseUrl = `http://127.0.0.1:${port}`;
+    if (requireIdentity) {
+      const verdict = judgeBackendIdentity(await fetchHealth(baseUrl, fetchImpl),
+        { expectedInstanceId });
+      if (!verdict.ok) {
+        lastError = `${verdict.reason}: ${IDENTITY_REASON_KO[verdict.reason] || ""}`;
+        continue;
+      }
+    }
     try {
       const sres = await fetchImpl(`${baseUrl}/api/status`);
       if (sres && sres.ok) {
@@ -123,6 +152,9 @@ export const backendApi = {
   // 모든 경로는 PAPER/SIMULATION 한정 — broker.place_order 호출 0건.
   desktopHealth:          () => backendFetch("/api/desktop/health"),
   autoPaperStatus:        () => backendFetch("/api/auto-paper/status"),
+  // 실시간 현황판("지금 AI가 하는 일") — read-only 최근 판단 로그. broker 호출 0건.
+  paperDecisionLog:       (limit = 12) =>
+    backendFetch(`/api/auto-paper/decision-log?limit=${limit}`),
   // P-16: Paper 자금 설정 영구 저장 — 사용자 설정 폴더(.env 와 분리).
   //       민감정보 저장 0건, broker.place_order 호출 0건.
   paperCapitalSettingsGet:   () =>
@@ -138,6 +170,76 @@ export const backendApi = {
     }),
   // P-01: Paper 시드머니 설정 — Paper 전용, 실전 계좌와 무관.
   paperCapitalConfig:     () => backendFetch("/api/auto-paper/capital-config"),
+  // 라이브 포지션 상황판 + 수동 전량 매도.
+  positionsLive:          () => backendFetch("/api/positions/live"),
+  positionsShadowFilter:  () => backendFetch("/api/positions/shadow-filter"),
+  positionSellAll:        (symbol) =>
+    backendFetch(`/api/positions/${encodeURIComponent(symbol)}/sell-all`, { method: "POST" }),
+  // 설계 B 조각 1: 수동 매수(직접 보유) — route_order 경유, trade_reason=manual_buy.
+  manualBuy:              (symbol, quantity) =>
+    backendFetch("/api/positions/manual-buy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol, quantity }),
+    }),
+  // Task D: 수동 매매 통합 엔드포인트 (BUY/SELL) — /api/manual-order 경유.
+  manualOrder:            ({ symbol, side, quantity }) =>
+    backendFetch("/api/manual-order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol, side, quantity }),
+    }),
+  manualOrderQuote:       (symbol) =>
+    backendFetch(`/api/manual-order/quote/${encodeURIComponent(symbol)}`),
+  manualOrderUniverse:    () => backendFetch("/api/manual-order/universe"),
+  // 수동 포트폴리오 — 직접 보유 현황 + 기간 손익 (read-only).
+  manualPortfolioSummary: ({ period = "today", from, to } = {}) => {
+    const qs = new URLSearchParams({ period });
+    if (from) qs.set("from", from);
+    if (to)   qs.set("to", to);
+    return backendFetch(`/api/manual-portfolio/summary?${qs}`);
+  },
+  // 성과 대시보드 (읽기 전용 집계). 탭 전환/수동 새로고침 시에만 조회.
+  performanceGet:         ({ period = "daily", from, to } = {}) => {
+    const qs = new URLSearchParams({ period });
+    if (from) qs.set("from", from);
+    if (to) qs.set("to", to);
+    return backendFetch(`/api/performance?${qs.toString()}`);
+  },
+  performanceByTechnique: ({ period = "daily" } = {}) =>
+    backendFetch(`/api/performance/by-technique?period=${encodeURIComponent(period)}`),
+  // AI 에이전트 대시보드 (읽기 전용).
+  agentFunnel:      ({ period = "daily" } = {}) => backendFetch(`/api/agent/funnel?period=${encodeURIComponent(period)}`),
+  agentCalibration: ({ period = "daily" } = {}) => backendFetch(`/api/agent/calibration?period=${encodeURIComponent(period)}`),
+  agentShadow:      ({ period = "daily" } = {}) => backendFetch(`/api/agent/shadow?period=${encodeURIComponent(period)}`),
+  agentLearning:    ({ period = "daily" } = {}) => backendFetch(`/api/agent/learning?period=${encodeURIComponent(period)}`),
+  // B1/B2 아침 브리핑 (읽기 전용).
+  briefingMarkets:   () => backendFetch("/api/briefing/markets"),
+  briefingHeadlines: () => backendFetch("/api/briefing/headlines"),
+  // 테마 브리핑 2단계: 전일 미국 테마 ETF/지수 등락률(정보 표시 전용, 자동 토글 없음).
+  briefingThemes:    () => backendFetch("/api/briefing/themes"),
+  // ★key 명을 `preflightStatus` 로 — 아래(#63)에 이미 `preflight:`(/api/system/preflight,
+  //   EXE smoke)가 있어 같은 객체의 중복 키로 *뒤엣것이 이김* → 홈 출발전점검 패널이
+  //   엉뚱한 /api/system/preflight(다른 shape)를 때려 "불러오지 못했어요"에 갇혔다.
+  preflightStatus:   () => backendFetch("/api/preflight"),
+  // 장중 런타임 설정 (동시진입 종목 수 / 종목당 투자금) — 2개 전용.
+  runtimeConfigGet:       () => backendFetch("/api/runtime-config"),
+  runtimeConfigPut:       (body) =>
+    backendFetch("/api/runtime-config", {
+      method: "PUT",
+      body: JSON.stringify(body || {}),
+    }),
+  runtimeProfilePut:      (profile) =>
+    backendFetch("/api/runtime-config/profile", {
+      method: "PUT",
+      body: JSON.stringify({ profile }),
+    }),
+  themeFilterGet:         () => backendFetch("/api/theme-filter"),
+  themeFilterPatch:       (themeId, body) =>
+    backendFetch(`/api/theme-filter/${encodeURIComponent(themeId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body || {}),
+    }),
   setPaperCapitalConfig:  ({ initialCash, fallbackToDefault = false } = {}) =>
     backendFetch("/api/auto-paper/capital-config", {
       method: "POST",
@@ -317,6 +419,8 @@ export const backendApi = {
       ...(body != null ? { body: JSON.stringify(body) } : {}),
     },
   ),
+  paperSessionApprovalGet: () =>
+    backendFetch("/api/auto-paper/paper-session-approval"),
   autoPaperStop:          () => backendFetch("/api/auto-paper/stop", { method: "POST" }),
   autoPaperEmergencyStop: () =>
     backendFetch("/api/auto-paper/emergency-stop", { method: "POST" }),
@@ -453,6 +557,9 @@ export const backendApi = {
       body: JSON.stringify({ enabled, ...(note ? { note } : {}) }),
     }),
   brokerPrice:     (symbol) => backendFetch(`/api/broker/price/${symbol}`),
+  brokerPrices:    (symbols) => backendFetch(
+    `/api/broker/prices?symbols=${encodeURIComponent(symbols.join(","))}`,
+  ),
   brokerBalance:   () => backendFetch("/api/broker/balance"),
   brokerPositions: () => backendFetch("/api/broker/positions"),
   brokerOrder:     (order) => backendFetch("/api/broker/orders", {
@@ -543,8 +650,8 @@ export const backendApi = {
     return backendFetch(`/api/agents/decision-episodes?${qs.toString()}`);
   },
   // P-28: 전략별 성과 대시보드 (read-only, 실 계좌 미사용).
-  agentStrategyPerformance: ({ limit = 500 } = {}) =>
-    backendFetch(`/api/agents/strategy-performance?limit=${limit}`),
+  agentStrategyPerformance: ({ limit = 500, period } = {}) =>
+    backendFetch(`/api/agents/strategy-performance?limit=${limit}${period ? `&period=${encodeURIComponent(period)}` : ""}`),
   // #49 / 6-04: 주문 품질 + 차단 사유 집계 (read-only — 실패율/거절률/부분체결률).
   agentOrderQualityMetrics: ({ limit = 500 } = {}) =>
     backendFetch(`/api/agents/order-quality-metrics?limit=${limit}`),
@@ -962,6 +1069,16 @@ export const backendApi = {
   kisPaperReport: () => backendFetch("/api/kis-paper/report"),
   // 0-04: KIS 모의 자동매매 env/설정 상태 (read-only). secret 값 0건.
   kisPaperAutoStatus: () => backendFetch("/api/kis-paper/auto/status"),
+  // INTRADAY-FLAT-BY-CLOSE-V1: 14:30 매수마감·15:15 강제청산·EOD 상태 (read-only, 서버 시계).
+  kisPaperEodStatus: () => backendFetch("/api/kis-paper/eod/status"),
+  // WINDOWS-ONECLICK-EXE-V1: 앱 종료 전 확인 (보유/미체결 → 자동 청산 불가 경고). read-only.
+  kisPaperEodShutdownCheck: () => backendFetch("/api/kis-paper/eod/shutdown-check"),
+  // FLATTEN_INCOMPLETE 운영자 확인 — 다음 거래일 신규 매수 차단 해제. 주문 0건.
+  kisPaperEodAcknowledge: ({ tradingDate, decidedBy, note } = {}) =>
+    backendFetch("/api/kis-paper/eod/acknowledge", {
+      method: "POST",
+      body: JSON.stringify({ trading_date: tradingDate, decided_by: decidedBy, note: note || null }),
+    }),
   // #53 / 7-01: EXE 운영 상태 표준 enum (read-only). secret 값 0건.
   exeStatus: () => backendFetch("/api/system/exe-status"),
   // #57 / 7-05: backend sidecar build metadata (read-only). secret 값 0건.

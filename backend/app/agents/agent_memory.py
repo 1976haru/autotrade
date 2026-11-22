@@ -116,6 +116,17 @@ _SECRET_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
 )
 
 
+# R-B(2026-06-12): KIS *주문번호*(broker_order_no/odno 등)는 10자리 안팎의 숫자라
+#   `kr_account_long`(광의 \d{10,14} 휴리스틱)에 오탐돼 결정/episode 로깅이 전면 거부됐다.
+#   주문번호는 계좌번호가 아니므로, *이 필드명에 한해* `kr_account_long` 한 패턴만 면제한다.
+#   - 면제 범위는 패턴 1개(\d{10,14})뿐 — 하이픈 계좌형식(`kr_account`)·API key·JWT·주민번호·
+#     카드번호 등 다른 모든 패턴은 주문번호 필드에서도 *그대로 차단*(유출방지 본래 기능 유지).
+#   - 다른 필드(text/meta 일반)는 종전과 동일하게 \d{10,14} 도 계속 차단.
+_ORDER_NO_FIELD_LEAVES = frozenset({
+    "broker_order_no", "order_no", "ord_no", "odno", "orgno", "krx_fwdg_ord_orgno",
+})
+
+
 def sanitize_text(text: str | None, *, field_name: str = "text") -> str:
     """문자열에서 민감정보 패턴을 검출하면 *raise* — fail-closed.
 
@@ -124,7 +135,11 @@ def sanitize_text(text: str | None, *, field_name: str = "text") -> str:
     if text is None:
         return ""
     s = str(text)
+    _leaf = field_name.rsplit(".", 1)[-1].lower()
+    _exempt_account_long = _leaf in _ORDER_NO_FIELD_LEAVES
     for label, pat in _SECRET_PATTERNS:
+        if label == "kr_account_long" and _exempt_account_long:
+            continue  # 주문번호 필드 한정 — \d{10,14} 오탐만 면제(나머지 패턴은 유지)
         if pat.search(s):
             raise SecretLeakError(
                 f"AgentMemory {field_name} contains forbidden pattern '{label}'. "

@@ -33,6 +33,11 @@ class Position(BaseModel):
     quantity: int
     avg_price: int
     market_price: int
+    name: str | None = None   # V4: KIS 잔고 응답의 종목명(prdt_name). 없으면 None.
+    # KIS ord_psbl_qty(주문가능수량). 미결제분 등으로 보유수량(quantity)보다 작을 수
+    # 있다. None=미상(호출자는 quantity 로 간주). 봇 SELL 은 min(quantity, sellable)
+    # 로 캡해 [40240000](주문가능수량 초과)를 피한다.
+    sellable_quantity: int | None = None
 
 
 class OrderRequest(BaseModel):
@@ -68,6 +73,9 @@ class OrderResult(BaseModel):
     filled_quantity: int = 0
     avg_fill_price: int | None = None
     message: str = ""
+    # V3: 정정/취소에 필요한 거래소 전송 주문조직번호(KIS order-cash 응답
+    #   output.KRX_FWDG_ORD_ORGNO). 미제공 브로커/응답은 None.
+    broker_org_no: str | None = None
 
 
 class Balance(BaseModel):

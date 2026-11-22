@@ -55,8 +55,8 @@ from app.risk.position_limits import check_symbol_weight_limit
 class CapitalSettings:
     initial_cash:          int = DEFAULT_PAPER_INITIAL_CASH        # 10,000,000
     per_symbol_cap_krw:    int = DEFAULT_PER_SYMBOL_MAX_KRW        # 1,000,000
-    max_positions:         int = DEFAULT_MAX_CONCURRENT_POSITIONS  # 3
-    max_daily_buy_amount:  int = DEFAULT_DAILY_BUY_LIMIT_KRW       # 3,000,000
+    max_positions:         int = DEFAULT_MAX_CONCURRENT_POSITIONS  # 5
+    max_daily_buy_amount:  int = DEFAULT_DAILY_BUY_LIMIT_KRW       # 10,000,000
     max_symbol_weight_pct: float = DEFAULT_MAX_SYMBOL_WEIGHT_PCT   # 0.20
     allow_additional_buy:  bool = False
 
@@ -223,8 +223,8 @@ class TestBaselineAndNormal:
         s = make_capital_settings()
         assert s.initial_cash == 10_000_000
         assert s.per_symbol_cap_krw == 1_000_000
-        assert s.max_positions == 3
-        assert s.max_daily_buy_amount == 3_000_000
+        assert s.max_positions == 5
+        assert s.max_daily_buy_amount == 10_000_000
         assert s.max_symbol_weight_pct == 0.20
         assert s.allow_additional_buy is False
 
@@ -312,7 +312,7 @@ class TestBlocks:
         r = evaluate_buy_candidate(
             symbol="005930", action="BUY", settings=make_capital_settings(),
             price=_fresh_price(75_000),
-            state=make_position_state(today_buy_used_amount=2_900_000),
+            state=make_position_state(today_buy_used_amount=9_500_000),
         )
         assert r["allowed"] is False
         assert r["reason_code"] == "DAILY_BUY_LIMIT_EXCEEDED"
@@ -386,7 +386,7 @@ class TestKoreanMessages:
             (evaluate_buy_candidate(
                 symbol="005930", action="BUY", settings=make_capital_settings(),
                 price=_fresh_price(75_000),
-                state=make_position_state(today_buy_used_amount=2_900_000)),
+                state=make_position_state(today_buy_used_amount=9_500_000)),
              "일일 최대 매수금액을 초과하여 매수 차단", "DAILY_BUY_LIMIT_EXCEEDED"),
             (evaluate_buy_candidate(
                 symbol="005930", action="BUY",
@@ -469,17 +469,17 @@ class TestOrderingAndEdges:
             symbol="005930", action="BUY",
             settings=make_capital_settings(allow_additional_buy=True),
             price=_fresh_price(75_000),
-            state=make_position_state(today_buy_used_amount=2_900_000,
+            state=make_position_state(today_buy_used_amount=9_500_000,
                                       current_position_quantity=10))
         assert r["allowed"] is False
         assert r["reason_code"] == "DAILY_BUY_LIMIT_EXCEEDED"
 
     def test_daily_limit_exactly_at_limit_allowed(self):
-        # 오늘 2,025,000 사용 + 975,000 = 정확히 3,000,000 → 허용.
+        # 오늘 9,025,000 사용 + 975,000 = 정확히 10,000,000 → 허용.
         r = evaluate_buy_candidate(
             symbol="005930", action="BUY", settings=make_capital_settings(),
             price=_fresh_price(75_000),
-            state=make_position_state(today_buy_used_amount=2_025_000))
+            state=make_position_state(today_buy_used_amount=9_025_000))
         assert r["allowed"] is True
         assert r["stage"] == "order_candidate"
 

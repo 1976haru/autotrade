@@ -25,7 +25,7 @@ const CHECKLIST = [
   ["PortfolioSourceCard", "Dashboard.jsx", "portfolioSource", "/api/auto-paper/portfolio-source"],
   ["AutoPaperLoopCard", "Dashboard.jsx", "autoPaperStatus", "/api/auto-paper/status"],
   ["AgentCouncilVoteCard", "Dashboard.jsx", "agentDecisionEpisodes", "/api/agents/decision-episodes"],
-  ["KisPaperOneClickTestCard", "Dashboard.jsx", "kisPaperReadiness", "/api/kis-paper/readiness"],
+  // E2(2026-06-10): KisPaperOneClickTestCard 홈 개편으로 Dashboard 에서 제외 — 매니페스트에서도 제거(고아 매핑 정리).
   // Settings
   ["KisPaperEnvStatusCard", "Settings.jsx", "kisPaperReadiness", "/api/kis-paper/readiness"],
   ["BackendSidecarStatusCard", "Settings.jsx", "exeStatus", "/api/system/exe-status"],
@@ -59,8 +59,9 @@ function cardTestExists(card) {
 describe("FINAL-UI-API-01: checklist card ↔ tab ↔ client manifest", () => {
   const clientSrc = readFileSync(CLIENT_JS, "utf-8");
 
-  it("covers 19 checklist cards across Dashboard / AISignal / Settings", () => {
-    expect(CHECKLIST.length).toBe(19);
+  it("covers 18 checklist cards across Dashboard / AISignal / Settings", () => {
+    // E2(2026-06-10): KisPaperOneClickTestCard 제거로 19→18.
+    expect(CHECKLIST.length).toBe(18);
     const tabs = new Set(CHECKLIST.map((c) => c[1]));
     expect(tabs).toEqual(new Set(["Dashboard.jsx", "AISignal.jsx", "Settings.jsx"]));
   });

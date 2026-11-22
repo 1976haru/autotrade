@@ -121,8 +121,17 @@ class TestApiResponses:
             else:
                 yield (p.lower(), o)
 
+        import re
+        _key_name = re.compile(r"^KIS_[A-Z_]+$")
         for ep in ("/api/kis-paper/readiness", "/api/kis-paper/auto/status"):
             for key, val in _walk(client.get(ep).json()):
+                # missing_credentials 는 *누락된 env 변수 이름* 목록(값 아님) — 설계상 노출.
+                #   (운영 .env 에 자격이 다 있으면 빈 목록이라 예전엔 가려져 있던 경로 —
+                #   hermetic 테스트 환경에선 이름이 채워진다.) 이름 형식만 허용.
+                if key.startswith(".missing_credentials["):
+                    assert isinstance(val, str) and _key_name.match(val), (
+                        f"{ep}: missing_credentials 항목은 변수 이름만 ({val!r})")
+                    continue
                 if any(s in key for s in ("app_key", "app_secret", "account_no",
                                           "secret", "credential")):
                     assert isinstance(val, bool), (
@@ -166,6 +175,33 @@ class TestRedactionGuards:
             sanitize_text("our key sk-ant-FAKEaaaaaaaaaaaaaaaaaaaa")
         # 평범한 텍스트는 통과.
         assert sanitize_text("정상 메모입니다") == "정상 메모입니다"
+
+    def test_broker_order_no_not_flagged_as_account(self):
+        # R-B(2026-06-12): KIS 주문번호(10자리)는 계좌번호가 아니므로 broker_order_no/odno
+        #   필드에 한해 'kr_account_long'(\d{10,14}) 오탐만 면제 — 결정/episode 로깅 복구.
+        from app.agents.agent_memory import (
+            sanitize_dict,
+            sanitize_text,
+        )
+        # 주문번호 필드 → 통과(오탐 면제)
+        assert sanitize_text("0000012345", field_name="kis_order_result.broker_order_no") == "0000012345"
+        d = sanitize_dict({"broker_order_no": "0000012345", "odno": "9876543210"}, field_name="meta")
+        assert d["broker_order_no"] == "0000012345"
+        assert d["odno"] == "9876543210"
+
+    def test_account_long_still_blocked_in_general_fields(self):
+        # ★유출방지 유지: *일반* 필드의 10~14자리 숫자는 여전히 차단(면제는 주문번호 필드 한정).
+        from app.agents.agent_memory import SecretLeakError, sanitize_text
+        with pytest.raises(SecretLeakError):
+            sanitize_text("00000123456789", field_name="meta.note")
+
+    def test_real_secret_still_blocked_even_in_order_no_field(self):
+        # ★면제는 \d{10,14} 한 패턴뿐 — 주문번호 필드라도 하이픈 계좌형식·API key 는 계속 차단.
+        from app.agents.agent_memory import SecretLeakError, sanitize_text
+        with pytest.raises(SecretLeakError):
+            sanitize_text("12-345678-90", field_name="meta.broker_order_no")  # 하이픈 계좌형식
+        with pytest.raises(SecretLeakError):
+            sanitize_text("sk-ant-AAAAAAAAAAAAAAAAAAAAAA", field_name="meta.broker_order_no")  # API key
 
 
 # ─────────────────────────────────────────────────────────────────────────────

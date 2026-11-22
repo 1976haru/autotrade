@@ -188,7 +188,7 @@ def test_executor_offline_with_fake_route_order():
         selected_strategies=["MOMENTUM"], confidence=0.8, quality_score=80,
         has_exit_plan=True, exit_plan={"stop_loss_pct": 2.0, "take_profit_pct": 3.0})
 
-    # dry_run=True → route_order 미호출, KIS_PAPER_DRY_RUN_OK.
+    # DB safety state is unavailable; fail closed before evaluating dry-run.
     settings = SimpleNamespace(
         enable_kis_paper_auto_trading=True, kis_paper_auto_order_dry_run=True,
         kis_is_paper=True, enable_live_trading=False,
@@ -212,8 +212,7 @@ def test_executor_offline_with_fake_route_order():
     assert res.broker_order_type == "KIS_PAPER"
     assert res.is_live_authorization is False
     assert calls["n"] == 0   # dry_run 이라 route_order_fn 미호출.
-    assert res.reason_code in ("KIS_PAPER_DRY_RUN_OK", "MARKET_CLOSED",
-                               "KIS_PAPER_ORDER_WINDOW_CLOSED", "BLOCKED_BY_RISK_MANAGER")
+    assert res.reason_code == "EMERGENCY_STOP_ENABLED"
 
 
 # ── API ──────────────────────────────────────────────────────────────────────

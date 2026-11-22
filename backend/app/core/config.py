@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     enable_fill_polling:           bool = False
     fill_polling_interval_seconds: int  = 5
 
+    # PART1-3: Paper 현금/원금/실현손익을 재시작 간 디스크에 영속할지 여부.
+    # 안전 flag 5종과 무관 — 모의 잔고 보존용. lifespan 이 이 값을 os.environ
+    # 으로 동기화해 capital_state(_persistence_enabled) 가 읽는다 (capital_state
+    # 는 get_settings 를 import 하지 않는다는 원칙 유지를 위해 env 경유).
+    paper_capital_persist: bool = False
+
     # fix/desktop-nonblocking-migration-health: 데스크톱 EXE 운영자가 첫 실행 시
     # alembic migration 으로 1~2분 멈춰 보이는 문제 해결을 위한 *opt-in* flag.
     # True 이면 lifespan 이 migration 을 background thread 로 띄우고 즉시 yield
@@ -98,6 +104,31 @@ class Settings(BaseSettings):
     # 183: 일일(KST date) 최대 주문 횟수 한도. 0이면 비활성.
     max_orders_per_day: int = 0
 
+    # Consecutive-loss circuit breaker. Defaults enable observation/blocking only
+    # in non-live execution surfaces first: SIMULATION, PAPER, and LIVE_SHADOW.
+    # Cooldown is *time*-based (elapsed minutes since the losing streak's last
+    # closed trade), not attempt-count-based — with a 300-symbol/30s-tick scan,
+    # an attempt-count cooldown exhausts within a single tick (measured median
+    # ~10min at 35-symbol backtest scale, ~1min projected at 300-symbol scale),
+    # defeating the "rest for a while" intent. 60min default is backtest-chosen
+    # (results/circuit_breaker/time_cooldown_revalidation.md) — captures ~97%
+    # of the max achievable cumulative-return improvement across 15~180min
+    # while keeping skipped-candidate win-rate clearly below baseline (16.6%
+    # vs 39.9%), i.e. still discriminating bad candidates rather than
+    # over-blocking recoveries.
+    risk_consecutive_loss_limit: int = 5
+    risk_consecutive_loss_cooldown_minutes: int = 60
+    risk_consecutive_loss_modes: str = "SIMULATION,PAPER,LIVE_SHADOW"
+
+    def risk_consecutive_loss_mode_set(self) -> set[str]:
+        if not self.risk_consecutive_loss_modes:
+            return set()
+        return {
+            m.strip().upper()
+            for m in self.risk_consecutive_loss_modes.split(",")
+            if m.strip()
+        }
+
     # AI Paper background tick driver — *opt-in*, 기본 OFF. RUNNING + 장중 +
     # PAPER/SIM 모드일 때만 N초마다 run-once diagnostic 파이프라인을 자동 반복
     # 실행한다. **실거래 주문 권한이 아니다** — broker / OrderExecutor /
@@ -127,10 +158,51 @@ class Settings(BaseSettings):
     # (KIS_PAPER_DRY_RUN_OK). False 일 때만 실제 KIS 모의투자 주문 전송.
     kis_paper_auto_order_dry_run:    bool  = True
     kis_paper_auto_max_orders_per_day: int = 10
-    kis_paper_auto_max_order_notional: int = 1_000_000
+    # V3(2026-10-23): KIS 모의 주문 API 형식. "legacy"(기본 — VTTC0802U/0801U, 운영 체결
+    #   이력 있음) | "current"(KIS 공식 샘플 — VTTC0012U/0011U + EXCG_ID_DVSN_CD=KRX).
+    #   리허설에서 current 접수·체결을 확인한 뒤에만 전환. 모의 전용(실전 TR 미정의).
+    kis_paper_order_api_format:        str = "legacy"
+    # FIRST-ORDER-PREFLIGHT-01: run-once 입력가 vs 서버 조회가 허용 괴리(%).
+    kis_paper_run_once_max_price_deviation_pct: float = 1.0
+    # 첫 실사용 리허설 가드 — True 면 프로그램 신규 BUY 는 지정 종목·하루 누적 수량
+    #   상한 이내만(run-once 전용), 자동 스캔 BUY 는 전면 차단. SELL(일반·EOD)은 무제한
+    #   허용(보유 이내). 기본 OFF.
+    kis_paper_rehearsal_mode:          bool = False
+    kis_paper_rehearsal_symbol:        str  = "005930"
+    kis_paper_rehearsal_max_buy_qty:   int  = 1
+    # PAPER-only hard ceiling; user-selected per-symbol budget defaults to 1M.
+    kis_paper_auto_max_order_notional: int = 2_000_000
     # 주문 허용 시간창 (KST "HH:MM"). 장 시작 직후/마감 직전 변동성 회피.
     kis_paper_auto_order_window_start: str = "09:05"
-    kis_paper_auto_order_window_end:   str = "14:50"
+    # E1(2026-06-10): 14:50→15:20 — 동시호가(15:20~30) 직전까지 연속매매 허용(하루 승인).
+    #   auto_permission 윈도 게이트 *코드는 미수정*, 설정값만. 15:20 이후 신규 진입은
+    #   청산 기회가 짧을 수 있음(동시호가/익일) — 설정 성격으로 인지.
+    # KIS-PAPER-INTRADAY-FLAT-BY-CLOSE-V1(2026-10-23): 15:20→14:30. 이제 이 값은
+    #   *신규 BUY 진입 마감* 전용이다 (SELL 청산은 auto_permission 에서 분리 — 14:30
+    #   이후에도 보유 청산 가능). 실효 마감 = min(본 값, 정규장 close − buy_cutoff 분).
+    kis_paper_auto_order_window_end:   str = "14:30"
+    # 정규장 close 기준 신규 BUY 마감 오프셋(분). 15:30 − 60 = 14:30. 특수일(수능 등
+    #   16:30 폐장)엔 마감도 같이 이동. intraday_session 이 단일 진실.
+    kis_paper_buy_cutoff_minutes_before_close: int = 60
+    # ── EOD 당일 청산 (overnight positions = 0 목표) ───────────────────────────
+    # 프로그램(kis_paper_auto) 관리 보유만 15:00 사전점검·단계적 청산 → 15:15 전량 강제
+    #   청산. 수동/타 모듈 보유는 대상 아님. 실제 주문은 기존 opt-in(enable_kis_paper_auto_
+    #   trading + dry_run false + KIS_IS_PAPER=true + 실거래 OFF)이 모두 충족될 때만 전송.
+    # V2(2026-10-23): EOD 를 *조용히 끄는* 설정(flatten_enabled / when_loop_stopped)은
+    #   제거했다 — 당일 단타 모드에선 KIS 안전 게이트를 통과하는 한 항상 관리된다.
+    #   강제청산 시작 오프셋은 [12, 30]분으로 클램프(0/과대값으로 끄기 불가).
+    kis_paper_eod_flatten_minutes_before_close: int = 15
+    # 15:00~15:15 단계적 청산 — tick 당 매도 종목 수 (손실 큰 종목부터).
+    kis_paper_eod_staged_symbols_per_step: int = 2
+    # 15:20~15:30 종가 단일가 구간의 신규 청산 주문 — KIS *모의* 서버의 단일가 시장가
+    #   접수 여부가 공식 문서로 확인되지 않아 기본 OFF (운영자 리허설로 확인 후 ON).
+    kis_paper_eod_closing_auction_orders_enabled: bool = False
+    # 종목당 EOD 매도 재시도 상한 (거부/실패 시). 중복 매도 방지는 미체결 대조 + lease.
+    kis_paper_eod_max_attempts_per_symbol: int = 3
+    # 단일 *청산* SELL 1회 명목 한도 — 0 = 보유수량이 유일한 상한 (진입 한도와 분리).
+    kis_paper_auto_max_exit_order_notional: int = 0
+    # KRX 휴장일 override JSON 경로 (빈 값 = 내장 달력만). 형식은 intraday_session 참조.
+    krx_calendar_override_path:         str = ""
     # 신호 품질 최소 기준 (자동주문 진입 게이트).
     kis_paper_auto_min_confidence:    float = 0.6   # 0~1
     kis_paper_auto_min_quality_score: int   = 60    # 0~100
@@ -144,11 +216,27 @@ class Settings(BaseSettings):
     # 아니다 — is_live_authorization 은 항상 False.
     kis_paper_max_concurrent_positions: int = 5
     kis_paper_per_symbol_notional_krw:  int = 1_000_000
-    kis_paper_daily_buy_limit_krw:      int = 3_000_000
+    kis_paper_daily_buy_limit_krw:      int = 10_000_000
+    # 손절/익절 기본 % (양수 magnitude — 손절 2.0=−2%, 익절 3.5=+3.5%). 런타임
+    #   오버라이드(stop_loss_pct/take_profit_pct, %APPDATA% override)로 장중 변경 가능.
+    #   봇 council 이 *매 사이클* effective getter 로 읽어 신규 진입 + 보유 포지션
+    #   청산 판단에 모두 반영(profile 무관 — 단일 진실). 2026-06-10 기본값 하향.
+    kis_paper_default_stop_loss_pct:    float = 2.0
+    kis_paper_default_take_profit_pct:  float = 3.5
     # 1 tick 당 신규 진입 허용 종목 수 (버스트 방지). 0/음수는 1 로 보정.
     kis_paper_max_new_positions_per_tick: int = 1
-    # 1 tick 당 KIS 실시세 조회 종목 수 상한 (rate limit 보호). 0 이면 universe 전체.
+    # 1 tick 당 KIS 실시세 조회 종목 수 상한 (rate limit 보호). 0/과대값은
+    #   _scan_universe_symbols 가 클램프(전종목 폭주 차단) — scan_cap_max 참조.
     kis_paper_scan_max_symbols:         int = 10
+    # 종목 풀 확장(100→400) — 단계 롤아웃. 풀 크기 = TOP402[:size]. 100/200/400 만
+    #   유효(그 외 100 클램프). cap(scan_max_symbols)과 무관 — 스캔 *후보 범위*.
+    #   런타임 변경은 runtime_config(effective_universe_size) 우선.
+    kis_paper_universe_size:            int = 100
+    # 유니버스 소스 — "auto"(시총 상위 TOP402) | "watchlist"(활성 watchlist 종목).
+    #   런타임 변경은 runtime_config(effective_universe_mode) 우선.
+    kis_paper_universe_mode:            str = "auto"
+    # tick당 스캔 *절대 상한* — cap 폭주(전종목 스캔, 40× 부하) 방지 가드.
+    kis_paper_scan_cap_max:             int = 30
     # Smoke mode — *정상 Paper Auto 의 하위 제한 모드*. True 면 단일 종목 / 1주 /
     # 1건만 (최초 안전 확인용). 정상 운용에서는 반드시 false.
     kis_paper_smoke_mode:               bool = False
@@ -161,6 +249,22 @@ class Settings(BaseSettings):
     # 진입한다. 본 flag 는 *실거래 활성화* 와 *전혀 무관* — 모든 KIS 모의주문은
     # 여전히 KIS_IS_PAPER=true / ENABLE_LIVE_TRADING=false 가 강제된다.
     use_real_tick_runner:               bool = False
+
+    # MULTI-TF-SHADOW-V1 — 5분봉 entry + 60분봉 confirm(Council) 콤보를 read-only로
+    # 관측(신호 빈도 + 실제 슬리피지 측정, results/multi_timeframe/design.md 후속).
+    # 기본 OFF. 켜도 broker.place_order/route_order/OrderExecutor 호출 0건 —
+    # fetch_realtime_quote/inquire-time-dailychartprice(둘 다 read-only 시세)만
+    # 호출하며 기존 shared rate limiter를 그대로 통과한다(별도 우회 0).
+    enable_multi_tf_shadow:              bool = False
+    # 관측 대상 종목(콤마) — 기본 8종목(부하 최소화, results/timeframe_test 35종목
+    # 백테스트와 겹치는 대형주 위주). 빈 값이면 shadow 비활성.
+    multi_tf_shadow_symbols:             str  = "005930,000660,005380,035420,373220,000270,006400,035720"
+    multi_tf_shadow_interval_seconds:    int  = 300   # 5분 tick(entry TF와 동일 주기)
+
+    def multi_tf_shadow_symbol_list(self) -> list[str]:
+        if not self.multi_tf_shadow_symbols:
+            return []
+        return [s.strip() for s in self.multi_tf_shadow_symbols.split(",") if s.strip()]
 
     def symbol_whitelist_set(self) -> set[str]:
         """env 콤마 문자열을 set으로 파싱. 공백 strip."""
@@ -185,8 +289,30 @@ class Settings(BaseSettings):
     # default 빈 문자열 — `_default_paper_broker_kind`가 default_mode + kis_is_paper
     # 로 자동 추론. 운영자가 명시 override 가능.
     paper_broker_kind: str = ""
-    kis_rate_limit_calls:          int   = 5
-    kis_rate_limit_window_seconds: float = 1.0
+    # KIS 모의투자 quote API documented rate limit = 2 req/s. 이전 default(5/1.0)
+    # 는 EGW00201("초당 거래건수 초과") cascade 의 직접 원인이었다 — V2 다종목 scan
+    # 이 1~2 tick 만에 quote 호출 5+회 발사 후 KIS 가 500 응답 → engine 자동중단.
+    # 안전 margin 포함 2 req per 1.1s (≈ 1.8 req/s) 로 default 조정. 운영자가
+    # 필요 시 KIS_RATE_LIMIT_CALLS / KIS_RATE_LIMIT_WINDOW_SECONDS 로 override.
+    # EGW00201 회귀(2026-06-08, 4,069건): 캡한 1.8/초(2건/1.1s)에서도 KIS 모의가
+    #   거부 → 실한도가 그보다 낮음. 연속 2건 버스트를 없애고(1건/window) ~0.9/초로
+    #   낮춰 모의 실한도 아래로 둔다. (판단로직·주문경로·안전플래그 미접촉.)
+    kis_rate_limit_calls:          int   = 1
+    kis_rate_limit_window_seconds: float = 1.1
+
+    # EGW00201 후속 (2026-06-02): 다종목 scan 은 동일 tick 안에서 잔고를 종목마다
+    # 다시 조회하고(잔고는 tick 내 사실상 불변) 같은 종목 시세를 scan + route_order
+    # 가 중복 조회한다 — 06-02 EGW00201 141건 중 138건이 balance/quote 였다. 읽기
+    # 전용 quote/balance 응답을 *짧게* 캐싱해 중복 호출을 제거한다.
+    #   - TTL 은 STALE_PRICE_MAX_AGE_SECONDS(60) 보다 *훨씬* 짧게 둬 시세 신선도를
+    #     해치지 않는다(캐시된 Quote 는 원래 조회 timestamp 를 보존 — stale 판정 정직).
+    #   - 0 이면 캐싱 비활성(기존 동작). 주문 체결 후에는 balance 캐시를 즉시 무효화.
+    #   2026-06-08: TTL(1.5/5s)이 틱 소요시간(~10-20s)보다 짧아 같은 틱 안에서
+    #     만료 → 시세 2.2회/종목·잔고 6.4회/틱 중복 재조회(EGW00201 기여). 틱주기
+    #     (30s)보다는 짧고 stale 가드(60s)보다도 짧은 20s 로 올려 *틱 내* 재조회를
+    #     1회로 묶는다(틱 시작마다 fresh, 다음 틱은 만료되어 다시 fresh).
+    kis_quote_cache_ttl_seconds:   float = 20.0
+    kis_balance_cache_ttl_seconds: float = 20.0
 
     openai_api_key: str = ""
     anthropic_api_key: str = ""

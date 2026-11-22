@@ -1,15 +1,17 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.brokers.base import OrderRequest, OrderSide, OrderType
+from app.brokers.base import Balance, OrderRequest, OrderResult, OrderSide, OrderStatus, OrderType, Position, Quote
+from app.brokers.kis import KisBrokerAdapter
 from app.brokers.mock_broker import MockBrokerAdapter
 from app.core.modes import OperationMode
 from app.db.base import Base
 from app.db.models import OrderAuditLog, PendingApproval
-from app.execution.order_router import route_order
+from app.execution.order_router import _paper_daily_buy_limit_reason, route_order
 from app.risk.risk_manager import RiskDecision, RiskManager, RiskPolicy
 
 
@@ -27,6 +29,34 @@ def _order(qty: int = 1) -> OrderRequest:
     return OrderRequest(
         symbol="005930", side=OrderSide.BUY, quantity=qty, order_type=OrderType.MARKET,
     )
+
+
+def _sell(qty: int = 1) -> OrderRequest:
+    return OrderRequest(
+        symbol="005930", side=OrderSide.SELL, quantity=qty, order_type=OrderType.MARKET,
+    )
+
+
+def _seed_closed_loss(
+    db, *, symbol: str = "005930", buy: int = 100_000, sell: int = 90_000,
+    sell_created_at: datetime | None = None,
+) -> None:
+    db.add(OrderAuditLog(
+        mode="SIMULATION", symbol=symbol, side="BUY", quantity=1,
+        order_type="MARKET", latest_price=buy,
+        decision="APPROVED", reasons=[], executed=True,
+        avg_fill_price=buy, filled_quantity=1, broker_status="FILLED",
+    ))
+    db.flush()
+    sell_row = OrderAuditLog(
+        mode="SIMULATION", symbol=symbol, side="SELL", quantity=1,
+        order_type="MARKET", latest_price=sell,
+        decision="APPROVED", reasons=[], executed=True,
+        avg_fill_price=sell, filled_quantity=1, broker_status="FILLED",
+    )
+    if sell_created_at is not None:
+        sell_row.created_at = sell_created_at
+    db.add(sell_row)
 
 
 def run(coro):
@@ -47,6 +77,165 @@ def test_simulation_small_order_is_approved_and_executed():
         assert result.result.status.value == "FILLED"
         assert result.audit.executed is True
         assert result.audit.broker_status == "FILLED"
+
+
+def test_daily_order_cap_applies_to_buy_not_sell():
+    # A(2026-06-05): 일일 주문 횟수 한도는 신규 진입(BUY)에만 적용.
+    #   청산(SELL)은 면제 — cap 사유가 SELL 의 reasons 에 누적되면 안 된다.
+    Session = _session_factory()
+    policy = RiskPolicy(max_orders_per_day=1)
+    with Session() as db:
+        broker = MockBrokerAdapter()
+        r1 = run(route_order(order=_order(1), requested_by_ai=False,
+                 mode=OperationMode.SIMULATION, broker=broker,
+                 risk=RiskManager(policy), db=db))
+        assert r1.decision == RiskDecision.APPROVED      # 1st BUY → today count = 1.
+
+        r2 = run(route_order(order=_order(1), requested_by_ai=False,
+                 mode=OperationMode.SIMULATION, broker=broker,
+                 risk=RiskManager(policy), db=db))
+        assert r2.decision == RiskDecision.REJECTED      # 2nd BUY → 한도 차단.
+        assert any("max_orders_per_day" in x for x in r2.reasons)
+
+        sell = OrderRequest(symbol="005930", side=OrderSide.SELL, quantity=1,
+                            order_type=OrderType.MARKET)
+        r3 = run(route_order(order=sell, requested_by_ai=False,
+                 mode=OperationMode.SIMULATION, broker=broker,
+                 risk=RiskManager(policy), db=db))
+        assert not any("max_orders_per_day" in x for x in r3.reasons)  # SELL 면제.
+
+
+def test_consecutive_loss_cooldown_blocks_rapid_multi_symbol_burst():
+    """다종목 동시스캔(예: 300종목/30초 틱) burst 시나리오 — 여러 BUY 후보가
+    같은 순간 몰려도 시간 기준 쿨다운은 즉시 소진되면 안 된다 (attempt-count
+    기준이던 구버전의 결함: results/circuit_breaker/time_cooldown_revalidation.md)."""
+    Session = _session_factory()
+    policy = RiskPolicy(
+        max_order_notional=10_000_000,
+        consecutive_loss_limit=5,
+        consecutive_loss_cooldown_minutes=60,
+        consecutive_loss_enabled_modes=frozenset({"SIMULATION"}),
+    )
+    with Session() as db:
+        for _ in range(5):
+            _seed_closed_loss(db, sell_created_at=datetime.now(timezone.utc))
+        db.commit()
+
+        broker = MockBrokerAdapter(initial_cash=10_000_000)
+        risk = RiskManager(policy)
+        # 서로 다른 10개 "종목"의 BUY 시도가 같은 틱 안에서 몰린 상황을 흉내.
+        blocked = [
+            run(route_order(
+                order=_order(1), requested_by_ai=False,
+                mode=OperationMode.SIMULATION, broker=broker, risk=risk, db=db,
+            ))
+            for _ in range(10)
+        ]
+        assert all(r.decision == RiskDecision.REJECTED for r in blocked)
+        assert all(any("ConsecutiveLossRule" in x for x in r.reasons) for r in blocked)
+        assert broker.orders == {}
+
+
+def test_consecutive_loss_cooldown_resumes_after_minutes_elapsed():
+    Session = _session_factory()
+    policy = RiskPolicy(
+        max_order_notional=10_000_000,
+        consecutive_loss_limit=5,
+        consecutive_loss_cooldown_minutes=60,
+        consecutive_loss_enabled_modes=frozenset({"SIMULATION"}),
+    )
+    with Session() as db:
+        stale = datetime.now(timezone.utc) - timedelta(minutes=61)
+        for _ in range(5):
+            _seed_closed_loss(db, sell_created_at=stale)
+        db.commit()
+
+        resumed = run(route_order(
+            order=_order(1), requested_by_ai=False,
+            mode=OperationMode.SIMULATION,
+            broker=MockBrokerAdapter(initial_cash=10_000_000),
+            risk=RiskManager(policy), db=db,
+        ))
+        assert resumed.decision == RiskDecision.APPROVED
+        assert resumed.result is not None
+        assert not any("ConsecutiveLossRule" in x for x in resumed.reasons)
+
+
+def test_consecutive_loss_cooldown_still_blocked_before_minutes_elapsed():
+    Session = _session_factory()
+    policy = RiskPolicy(
+        max_order_notional=10_000_000,
+        consecutive_loss_limit=5,
+        consecutive_loss_cooldown_minutes=60,
+        consecutive_loss_enabled_modes=frozenset({"SIMULATION"}),
+    )
+    with Session() as db:
+        recent = datetime.now(timezone.utc) - timedelta(minutes=30)
+        for _ in range(5):
+            _seed_closed_loss(db, sell_created_at=recent)
+        db.commit()
+
+        result = run(route_order(
+            order=_order(1), requested_by_ai=False,
+            mode=OperationMode.SIMULATION,
+            broker=MockBrokerAdapter(initial_cash=10_000_000),
+            risk=RiskManager(policy), db=db,
+        ))
+        assert result.decision == RiskDecision.REJECTED
+        assert any("ConsecutiveLossRule" in x for x in result.reasons)
+
+
+def test_consecutive_loss_cooldown_does_not_block_sell_exit():
+    Session = _session_factory()
+    policy = RiskPolicy(
+        max_order_notional=10_000_000,
+        consecutive_loss_limit=5,
+        consecutive_loss_cooldown_minutes=60,
+        consecutive_loss_enabled_modes=frozenset({"SIMULATION"}),
+    )
+    with Session() as db:
+        for _ in range(5):
+            _seed_closed_loss(db, sell_created_at=datetime.now(timezone.utc))
+        db.commit()
+
+        broker = MockBrokerAdapter(initial_cash=10_000_000)
+        broker.positions["005930"] = Position(
+            symbol="005930", quantity=1, avg_price=75_000, market_price=75_000,
+        )
+        risk = RiskManager(policy)
+        result = run(route_order(
+            order=_sell(1), requested_by_ai=False,
+            mode=OperationMode.SIMULATION, broker=broker, risk=risk, db=db,
+        ))
+        assert result.decision == RiskDecision.APPROVED
+        assert result.result is not None
+        assert result.result.side == OrderSide.SELL
+
+
+def test_consecutive_loss_and_daily_loss_reasons_coexist_without_overwrite():
+    Session = _session_factory()
+    policy = RiskPolicy(
+        max_order_notional=10_000_000,
+        max_daily_loss=200_000,
+        consecutive_loss_limit=5,
+        consecutive_loss_cooldown_minutes=60,
+        consecutive_loss_enabled_modes=frozenset({"SIMULATION"}),
+    )
+    with Session() as db:
+        for _ in range(5):
+            _seed_closed_loss(db, buy=100_000, sell=50_000, sell_created_at=datetime.now(timezone.utc))
+        db.commit()
+
+        result = run(route_order(
+            order=_order(1), requested_by_ai=False,
+            mode=OperationMode.SIMULATION,
+            broker=MockBrokerAdapter(initial_cash=10_000_000),
+            risk=RiskManager(policy),
+            db=db,
+        ))
+        assert result.decision == RiskDecision.REJECTED
+        assert "daily loss limit reached" in result.reasons
+        assert any("ConsecutiveLossRule" in x for x in result.reasons)
 
 
 def test_oversized_order_is_rejected_with_audit_only():
@@ -154,3 +343,98 @@ def test_audit_records_requested_by_ai_flag():
     with Session() as db2:
         audit = db2.execute(select(OrderAuditLog)).scalar_one()
         assert audit.requested_by_ai is True
+
+
+def test_paper_daily_buy_limit_helper_is_account_scoped_and_reserves_costs():
+    from app.kis_paper.account_scope import account_id_for
+
+    Session = _session_factory()
+    scope_a = account_id_for("1234567801", is_paper=True)
+    scope_b = account_id_for("1234567802", is_paper=True)
+    when = datetime(2026, 11, 6, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+    with Session() as db:
+        db.add(OrderAuditLog(
+            mode="PAPER", symbol="000001", side="BUY", quantity=9,
+            order_type="MARKET", latest_price=1_000_000,
+            decision="APPROVED", reasons=[], executed=True,
+            broker_order_id="paper-a-1", account_id=scope_a, created_at=when,
+        ))
+        db.flush()
+        reason = _paper_daily_buy_limit_reason(
+            db, account_scope=scope_a, order=_order(), current_price=1_000_000,
+            daily_limit_krw=10_000_000, now=when,
+        )
+        assert reason is not None and "PAPER_DAILY_BUY_LIMIT_EXCEEDED" in reason
+        assert _paper_daily_buy_limit_reason(
+            db, account_scope=scope_b, order=_order(), current_price=1_000_000,
+            daily_limit_krw=10_000_000, now=when,
+        ) is None
+
+
+def test_paper_daily_buy_limit_is_enforced_before_kis_order_submission(monkeypatch):
+    from dataclasses import dataclass
+
+    from app.kis_paper.account_scope import account_id_for
+
+    @dataclass
+    class Limits:
+        policy_version: str = "test"
+        total_budget_krw: int = 10_000_000
+        per_symbol_krw: int = 2_000_000
+        max_order_krw: int = 2_000_000
+        max_positions: int = 5
+        daily_buy_count: int = 10
+        daily_buy_krw: int = 10_000_000
+        buys_per_tick: int = 1
+        cost_reserve_bps: int = 100
+
+    class FakeKisBroker(KisBrokerAdapter):
+        def __init__(self):
+            super().__init__(app_key="mock", app_secret="mock", account_no="1234567801", is_paper=True)
+            self.sent = 0
+
+        async def get_price(self, symbol):
+            return Quote(symbol=symbol, price=100_000,
+                         timestamp="2026-11-06T10:00:00+09:00", source="kis")
+
+        async def get_balance(self):
+            return Balance(cash=20_000_000, equity=20_000_000, buying_power=20_000_000)
+
+        async def get_positions(self):
+            return []
+
+        async def place_order(self, order):
+            self.sent += 1
+            return OrderResult(order_id="mock", status=OrderStatus.FILLED,
+                               symbol=order.symbol, side=order.side, quantity=order.quantity,
+                               filled_quantity=order.quantity, avg_fill_price=100_000)
+
+        async def cancel_order(self, order_id):
+            raise AssertionError("cancel must not be called")
+
+        async def get_order_status(self, order_id):
+            raise AssertionError("status lookup not expected")
+
+    import app.kis_paper.order_limits as order_limits_module
+    monkeypatch.setattr(order_limits_module, "resolve_kis_paper_order_limits", lambda _settings: Limits())
+    Session = _session_factory()
+    scope = account_id_for("1234567801", is_paper=True)
+    when = datetime(2026, 11, 6, 10, 0, tzinfo=timezone(timedelta(hours=9)))
+    with Session() as db:
+        db.add(OrderAuditLog(
+            mode="PAPER", symbol="000001", side="BUY", quantity=99,
+            order_type="MARKET", latest_price=100_000, decision="APPROVED",
+            reasons=[], executed=True, broker_order_id="existing", account_id=scope,
+            created_at=when,
+        ))
+        db.commit()
+        broker = FakeKisBroker()
+        result = run(route_order(
+            order=OrderRequest(symbol="005930", side=OrderSide.BUY, quantity=1,
+                               order_type=OrderType.MARKET, client_order_id="daily-cap-test"),
+            requested_by_ai=False, mode=OperationMode.PAPER, broker=broker,
+            risk=RiskManager(RiskPolicy(max_order_notional=2_000_000)), db=db, now=when,
+        ))
+        assert result.decision == RiskDecision.REJECTED
+        assert any("PAPER_DAILY_BUY_LIMIT_EXCEEDED" in reason for reason in result.reasons)
+        assert broker.sent == 0

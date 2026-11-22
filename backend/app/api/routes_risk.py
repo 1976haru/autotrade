@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, field_validator
@@ -25,9 +25,19 @@ from app.risk.emergency_stop import (
     normalize_legacy_level,
     normalize_level,
 )
+from app.risk.kill_switch_policy import KILL_SWITCH_POLICY_VERSION, emergency_order_policy
 from app.risk.risk_manager import RiskManager, RiskPolicy
 
 router = APIRouter(prefix="/risk", tags=["risk"])
+
+
+def _utc_iso(value: datetime | None) -> str | None:
+    """SQLite의 naive UTC를 브라우저가 현지시각으로 오해하지 않게 명시한다."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 class EmergencyStopRequest(BaseModel):
@@ -114,7 +124,11 @@ def set_emergency_stop(
             KillSwitchLevel.LEVEL_1 if risk.emergency_stop else KillSwitchLevel.OFF
         )
 
-    state_changed = (current_level != target_level)
+    # P0-SAFETY-FIX-V1: 같은 level 이라도 이전 정책(legacy strict)으로 켜진 정지를 운영자가
+    #   다시 설정하면 *새 정책 전환* 이므로 state 변경으로 기록한다.
+    current_version = int(getattr(risk, "kill_switch_policy_version", 0) or 0)
+    state_changed = (current_level != target_level) or (
+        target_level != KillSwitchLevel.OFF and current_version < KILL_SWITCH_POLICY_VERSION)
     apply_kill_switch_to_risk(risk, target_level)
 
     if state_changed:
@@ -124,6 +138,7 @@ def set_emergency_stop(
             note=payload.note,
             reason_code=payload.reason_code,  # 153
             level=target_level.value,         # #37
+            policy_version=KILL_SWITCH_POLICY_VERSION,
         ))
         db.commit()
 
@@ -177,6 +192,7 @@ def set_emergency_stop(
     return {
         "emergency_stop": risk.emergency_stop,
         "level":          target_level.value,
+        "order_policy":   emergency_order_policy(risk).to_dict(),
     }
 
 
@@ -258,7 +274,7 @@ def emergency_stop_summary(
             .order_by(EmergencyStopEvent.id.desc()).limit(1)
         ).scalar_one_or_none()
         if latest_active is not None and latest_active.created_at is not None:
-            active_since = latest_active.created_at.isoformat()
+            active_since = _utc_iso(latest_active.created_at)
 
     return {
         "currently_active":   bool(risk.emergency_stop),
@@ -298,7 +314,8 @@ def emergency_stop_status(
         cancel_candidates=cancel_candidates,
         liquidation_candidates=None,  # status는 broker 호출 회피 — 별도 endpoint에서
     )
-    return status.to_dict()
+    # P0-SAFETY-FIX-V1: 단계별 실제 허용 범위(legacy strict 여부 포함) — UI 안내의 단일 출처.
+    return {**status.to_dict(), "order_policy": emergency_order_policy(risk).to_dict()}
 
 
 @router.get("/emergency-stop/cancel-candidates")

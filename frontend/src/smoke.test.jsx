@@ -56,15 +56,16 @@ describe("UI smoke (backend offline)", () => {
     expect(view.queryByTestId("error-boundary")).toBeNull();
   });
 
-  it("Dashboard renders Hero summary + Operator panel + Agent decision hero", async () => {
+  it("기본 홈(ReferenceHome) 핵심 영역이 offline에서도 렌더된다", async () => {
+    // V7: 기본 'dash' 탭은 전문가 Dashboard(hero-summary)가 아니라 ReferenceHome.
+    //   hero-summary 등 전문가 surface는 '전문가 보기'로 이동(아래 별도 테스트가 검증).
     let view;
     await act(async () => { view = render(<App />); });
     await waitFor(() => {
-      expect(view.getByTestId("hero-summary")).toBeTruthy();
+      expect(view.getByTestId("reference-home")).toBeTruthy();
     });
-    // 핵심 카드들 — 백엔드 offline에서도 Empty/Error 상태로 표시.
-    expect(view.queryByTestId("agent-decision-hero")).toBeTruthy();
-    expect(view.queryByTestId("status-pin-bot")).toBeTruthy();
+    // 에이전트 영역 + 계좌정보 영역이 offline에서도 Empty/Error 상태로 표시.
+    expect(view.queryByTestId("refhome-agent")).toBeTruthy();
   });
 
   it.each([
@@ -89,17 +90,16 @@ describe("UI smoke (backend offline)", () => {
   );
 
   it("user-facing primary surfaces hide raw 'Failed to fetch'", async () => {
+    // UI 개편: 기본 홈이 ReferenceHome(관제판)으로 교체됨. 기존 Dashboard
+    // surface(hero-summary 등)는 "전문가 보기"로 이동. 본 스모크는 *기본 홈*이
+    // 백엔드 offline 에서도 raw 'Failed to fetch'를 노출하지 않음을 검증한다
+    // (ReferenceHome 은 Promise.allSettled + graceful empty 로 처리).
     let view;
     await act(async () => { view = render(<App />); });
     await waitFor(() => {
-      expect(view.getByTestId("hero-summary")).toBeTruthy();
+      expect(view.getByTestId("reference-home")).toBeTruthy();
     });
-    // 핵심 surface (Hero / OperatingLoop / Reconciliation / AgentDecision Hero)
-    // 는 friendlyErrorMessage / ErrorState로 변환된다. 일부 보조 카드(예:
-    // OperatorPanel '데이터 일부 조회 실패: ...')는 다음 phase backlog.
-    const hero       = view.getByTestId("hero-summary");
-    expect(hero.textContent).not.toContain("Failed to fetch");
-    const agentHero  = view.queryByTestId("agent-decision-hero");
-    if (agentHero) expect(agentHero.textContent).not.toContain("Failed to fetch");
+    const home = view.getByTestId("reference-home");
+    expect(home.textContent).not.toContain("Failed to fetch");
   });
 });

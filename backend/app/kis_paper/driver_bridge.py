@@ -28,6 +28,24 @@ from app.kis_paper.readiness import evaluate_readiness
 
 _log = logging.getLogger("autotrade.kis_paper.bridge")
 
+_UNSET = object()  # sentinel: _bot_owned_override 미주입 구분용
+
+
+def _bounded_entry_notional(configured: int, hard_limit: int) -> int:
+    """Return a BUY sizing target that cannot exceed the order gate."""
+    configured = max(0, int(configured))
+    hard_limit = int(hard_limit)
+    return min(configured, hard_limit) if hard_limit > 0 else configured
+
+
+def _entry_quantity(price: int, target_notional: int) -> int:
+    """Return a whole-share BUY quantity that never exceeds the target."""
+    price = int(price)
+    target_notional = max(0, int(target_notional))
+    if price <= 0 or target_notional <= 0:
+        return 0
+    return target_notional // price
+
 
 def _broker_is_kis_paper(broker) -> bool:
     return (
@@ -85,8 +103,13 @@ def build_decision_from_pipeline(
             None,
         )
     market_input = _market_input_from_pipeline(ro.symbol, ro.price)
+    # S1: 활성 성향은 runtime_config(런타임 오버라이드 > 기본)에서 읽는다 — 봇은 매
+    #   사이클 effective getter 를 호출하므로 저장 즉시 다음 판단부터 반영(재시작 불요).
+    #   floor 클램프(e158704)는 그대로: 어떤 프리셋도 config floor 밑으로 못 간다.
+    from app.core.runtime_config import effective_active_profile
     council = run_agent_council(
-        market_input, risk_profile=risk_profile, held_position=False,
+        market_input, risk_profile=effective_active_profile(), held_position=False,
+        min_confidence_floor=float(getattr(settings, "kis_paper_auto_min_confidence", 0.6)),
     )
     if council.final_action == CouncilAction.HOLD:
         # 2-12: HOLD 도 판단 근거(votes/risk_flags/risk_veto/exit_plan_validation)를
@@ -326,44 +349,321 @@ async def kis_paper_auto_tick(
             pass
 
 
-def _scan_universe_symbols(settings: Any, *, override: list[str] | None) -> list[str]:
-    """스캔 대상 종목 — smoke mode 면 단일, 아니면 universe(상한 적용)."""
-    if override is not None:
-        return list(override)
+# T1(2026-06-12): 회전 스캔 오프셋 — 풀 100 을 틱당 cap 슬라이스로 회전 커버.
+_scan_rotation_offset = 0
+
+
+def reset_scan_rotation_for_tests() -> None:
+    """테스트 격리 — 회전 오프셋 초기화."""
+    global _scan_rotation_offset
+    _scan_rotation_offset = 0
+
+
+def _full_universe_pool(settings: Any) -> list[str]:
+    """스캔 대상 *전체 풀*(회전 cap 미적용) — universe 소스 단일 해결.
+
+    runtime_config 실효값(런타임 전환): auto=시총 상위 TOP402[:size],
+    watchlist=활성 watchlist 종목(비면 auto 폴백). size=100 이면 TOP402[:100]
+    == 기존 FALLBACK_MARKET_CAP_TOP100 (회귀 보장, default_universe assert).
+    종목 *후보군* 일 뿐 주문 신호 아님 — broker/route_order 미접촉.
+    """
+    from app.core.runtime_config import (
+        effective_universe_mode, effective_universe_size)
+    from app.universe.default_universe import FALLBACK_MARKET_CAP_TOP402
+    if effective_universe_mode() == "watchlist":
+        from app.watchlist.active import get_active_watchlist_symbols
+        wl = get_active_watchlist_symbols()
+        if wl:
+            return list(wl)
+    return list(FALLBACK_MARKET_CAP_TOP402[:effective_universe_size()])
+
+
+def _scan_universe_symbols(
+    settings: Any,
+    *,
+    override: list[str] | None,
+    now: datetime | None = None,
+) -> list[str]:
+    """스캔 대상 종목 — OFF 테마 신규 후보 제외 후 universe 회전.
+
+    T1(2026-06-12): 풀 확장 — '매 틱 전부' 는 KIS 시세 호출 폭증(EGW00201). 대신
+    틱당 cap(기본 10) 슬라이스를 *오프셋 회전* 으로 반환해 ~⌈n/cap⌉ 틱에 전체를
+    커버하고, 틱당 KIS 호출량은 현행 수준으로 유지한다. (풀 100→200→400 단계 롤아웃
+    은 회전 주기만 늘림 — 틱당 부하 불변.)
+    ★보유 종목 매 틱 스캔(청산 보장)은 *호출부* 에서 held_symbols union 으로 별도 보장.
+    """
     if bool(getattr(settings, "kis_paper_smoke_mode", False)):
+        # smoke 는 주문 파이프라인 진단이므로 테마 제외와 무관하게 지정 종목을 검사.
         return [str(getattr(settings, "kis_paper_smoke_symbol", "005930"))]
-    from app.universe.default_universe import get_default_universe
-    uni = get_default_universe(None)
-    syms = list(uni.symbols)
+    from app.core.runtime_config import effective_disabled_theme_ids
+    from app.theme_filter.catalog import filter_new_entry_symbols
+
+    disabled = effective_disabled_theme_ids(now)
+    if override is not None:
+        # 명시 override 의 기존 cap 우회 의미는 유지하고 테마 필터만 적용.
+        return filter_new_entry_symbols(override, disabled)
+    syms = filter_new_entry_symbols(_full_universe_pool(settings), disabled)
     cap = int(getattr(settings, "kis_paper_scan_max_symbols", 10) or 0)
-    return syms[:cap] if cap > 0 else syms
+    cap_max = int(getattr(settings, "kis_paper_scan_cap_max", 30) or 30)
+    if cap_max <= 0:
+        cap_max = 30
+    n = len(syms)
+    # ★cap=0/음수/과대 가드 — 전종목 스캔(40× 부하 폭주) 차단. 항상 회전 윈도우.
+    if cap <= 0:
+        _log.warning("[kis-scan] scan_max_symbols=%s 무효 → 10 강제(전종목 폭주 방지)", cap)
+        cap = 10
+    cap = min(cap, cap_max)
+    if cap >= n:
+        # 풀이 cap 이하(소형 watchlist 등)일 때만 전체. 대형 풀은 회전.
+        return syms
+    global _scan_rotation_offset
+    start = _scan_rotation_offset % n
+    window = [syms[(start + i) % n] for i in range(cap)]   # wrap-around 슬라이스
+    _scan_rotation_offset = (start + cap) % n              # 다음 틱은 다음 슬라이스
+    return window
+
+
+async def premarket_warmup_tick(
+    now: datetime | None = None, on_progress: Any = None,
+) -> dict[str, Any]:
+    """Prepare only the next scan window; warmup never gates the live tick loop."""
+    out: dict[str, Any] = {
+        "warmed": 0, "total_symbols": 0, "completed_symbols": 0,
+        "failed_symbols": 0, "reason_code": "WARMUP_DONE",
+        "is_order_signal": False, "broker_order_sent": False,
+    }
+    try:
+        from app.api.deps import get_broker
+        from app.core.config import get_settings
+        from app.core.runtime_config import effective_disabled_theme_ids
+        from app.market_data.kis_realtime import warmup_bars_cache
+        from app.theme_filter.catalog import filter_new_entry_symbols
+        settings = get_settings()
+        pool = _full_universe_pool(settings)
+        symbols = filter_new_entry_symbols(pool, effective_disabled_theme_ids(now))
+        cap = max(1, int(getattr(settings, "kis_paper_scan_max_symbols", 10) or 10))
+        cap_max = max(1, int(getattr(settings, "kis_paper_scan_cap_max", 30) or 30))
+        symbols = symbols[:min(cap, cap_max)]
+        out["universe_size"] = len(pool)
+        out["total_symbols"] = len(symbols)
+        broker = get_broker()
+        client = getattr(broker, "client", None) if broker is not None else None
+        if client is None:
+            out["reason_code"] = "WARMUP_NO_CLIENT"
+            return out
+        bars = await warmup_bars_cache(
+            symbols, client=client, now=now, concurrency=3, on_progress=on_progress,
+        )
+        out["completed_symbols"] = len(bars)
+        out["warmed"] = sum(1 for count in bars.values() if count > 0)
+        out["failed_symbols"] = len(bars) - out["warmed"]
+        out["reason_code"] = "WARMUP_DONE" if not out["failed_symbols"] else "WARMUP_PARTIAL"
+    except Exception as exc:  # noqa: BLE001 ? warmup failure is retried and never gates trading.
+        _log.warning("[kis-warmup] premarket warmup failed: %s: %s",
+                     type(exc).__name__, exc)
+        out["reason_code"] = "WARMUP_ERROR"
+        out["error_type"] = type(exc).__name__
+    return out
 
 
 def _today_kis_paper_buy_state(db: Any, now: datetime) -> tuple[set[str], int]:
-    """오늘 체결된 kis_paper_auto BUY 의 보유 종목 + 누적 매수금액 (best-effort)."""
+    """오늘 체결된 kis_paper_auto 주문의 *net 보유* 종목 + 누적 매수금액.
+
+    PART1-4 (2026-06-01 잔고부족 거부 fix):
+      기존엔 BUY 한 종목을 전부 `held` 에 넣고 SELL 청산을 빼지 않아, 청산된
+      종목(005380)이 계속 보유로 잡혀 SELL 신호가 broker 로 가 "잔고부족"
+      거부가 반복됐다. 이제 종목별 BUY 수량 − SELL 수량(REJECTED 제외)을
+      집계해 *net > 0* 인 종목만 `held` 로 본다.
+    """
     held: set[str] = set()
     used = 0
     try:
         from app.db.models import OrderAuditLog
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        rows = (
+        from app.kis_paper.account_scope import current_account_scope, scope_query
+        rows = scope_query(
             db.query(OrderAuditLog)
             .filter(OrderAuditLog.trade_reason == "kis_paper_auto")
             .filter(OrderAuditLog.created_at >= start)
-            .filter(OrderAuditLog.executed.is_(True))
-            .all()
-        )
+            .filter(OrderAuditLog.executed.is_(True)),
+            OrderAuditLog, current_account_scope(),
+        ).all()
+        # 종목별 net 수량 (BUY +qty, SELL -qty). broker_status REJECTED 는 제외 —
+        # 거부된 주문은 실제 잔고를 바꾸지 않으므로 보유 계산에 넣지 않는다.
+        net_qty: dict[str, int] = {}
         for r in rows:
             sym = getattr(r, "symbol", None)
+            if not sym:
+                continue
+            bstat = str(getattr(r, "broker_status", "") or "").upper()
+            if bstat == "REJECTED":
+                continue
             side = str(getattr(r, "side", "") or "").upper()
-            if sym and side in ("BUY", "B"):
-                held.add(sym)
-                qty = int(getattr(r, "quantity", 0) or 0)
-                px = int(getattr(r, "avg_fill_price", 0) or getattr(r, "limit_price", 0) or 0)
+            qty = int(getattr(r, "quantity", 0) or 0)
+            px = int(getattr(r, "avg_fill_price", 0) or getattr(r, "limit_price", 0) or 0)
+            if side in ("BUY", "B"):
+                net_qty[sym] = net_qty.get(sym, 0) + qty
                 used += qty * px
+            elif side in ("SELL", "S"):
+                net_qty[sym] = net_qty.get(sym, 0) - qty
+        held = {sym for sym, q in net_qty.items() if q > 0}
     except Exception:  # noqa: BLE001 — 상태 집계 실패는 스캔을 막지 않음 (보수적 0).
-        return set(), 0
+        return set(), 2**31 - 1
     return held, used
+
+
+def _bot_owned_symbols(db: Any) -> "frozenset[str] | None":
+    """봇(kis_paper_auto) *순보유*(net position) 종목 집합 — 소유권 원장.
+
+    ★2026-07-06 기아(000270) 오매도 사고 수정: 과거엔 "봇이 BUY 체결한 적
+    있는가"(lifetime, 기간·수량 무관)로 판정 — 봇이 몇 주 전 전량 청산한
+    종목도 원장에 영구히 남아, 이후 사용자가 같은 종목을 신규로 수동매수하면
+    "봇 소유"로 오분류돼 강제 손절 대상이 됐다(실제 사고: 06-12 전량청산 후
+    07-06 수동매수 → 강제 STOP_LOSS 오발동).
+    수정: BUY 체결수량 합 − SELL 체결수량 합(net) > 0 인 종목만 포함.
+    trade_reason 필터(kis_paper_auto)는 원래부터 있었고 manual_buy/manual_sell은
+    애초에 이 쿼리에 안 잡힌다 — 이번 버그는 trade_reason 누락이 아니라
+    시간/순보유량 미반영이 원인.
+    broker_status 는 신뢰 못 함(부분체결 후 잔량취소된 행이 CANCELED로 남아있어도
+    filled_quantity>0인 실체결분은 유효) — filled_quantity>0 가 유일한 진실.
+
+    Returns:
+        frozenset[str] : 봇 순보유 종목 코드 집합 (비어있어도 frozenset).
+        None           : ledger lookup failed; caller must block automatic SELL.
+    """
+    try:
+        from app.kis_paper.account_scope import current_account_scope, program_holdings
+        return frozenset(program_holdings(db, current_account_scope()))
+    except Exception:  # noqa: BLE001
+        _log.error("[ownership-ledger] 원장 조회 실패 — fail-closed: 자동 SELL 대상 없음")
+        return None
+
+
+async def _kis_held_symbols(broker: Any, *, fallback: set[str]) -> set[str]:
+    """현재 보유 종목 = *KIS 잔고(get_positions)* 의 net>0 종목 — 브로커 진실.
+
+    today-only DB net(`_today_kis_paper_buy_state`)은 *전일 캐리오버* 포지션을
+    못 잡아, 다음날 held 가 비어 (1) 보유 청산 불가(SELL_NO_HELD_POSITION),
+    (2) 기존 보유 위에 중복 매수해 max_concurrent 초과를 유발했다(2026-06-05
+    발견: KIS 5종목 보유인데 봇은 0으로 인식). 보유는 브로커 진실에서 읽는다.
+
+    조회 *성공* 시 KIS 를 신뢰한다(빈 결과 = 실제 무보유). 조회 *실패* 시에만
+    보수적으로 fallback(오늘 DB net)으로 — 스캔 자체는 막지 않는다.
+    """
+    try:
+        if broker is None or not hasattr(broker, "get_positions"):
+            return set(fallback)
+        positions = await broker.get_positions()
+    except Exception:  # noqa: BLE001 — 조회 실패는 스캔을 막지 않음 (fallback).
+        return set(fallback)
+    held = {
+        str(getattr(p, "symbol", "") or "")
+        for p in (positions or [])
+        if int(getattr(p, "quantity", 0) or 0) > 0
+    }
+    held.discard("")
+    return held
+
+
+# R-A(2026-06-12): get_positions 가 EGW00201(레이트리밋) 등으로 *실패*하면 보유 수량을
+#   알 수 없어, SELL 청산이 수량 0 → SELL_NOT_ORDERABLE 로 skip 돼 익절/손절이 *끊긴다*
+#   (NAVER +8.69% 미청산 실체). 조회 *성공* 시 보유스냅샷(수량 포함)을 캐시하고, *실패* 시
+#   신선한 스냅샷이 있으면 그 수량으로 fallback 해 레이트리밋 순간에도 청산이 끊기지 않게 한다.
+#   ── 조회/캐시 계층만 수정 — Agent Council/주문경로/bridge 판단부 미접촉.
+#   ── 스냅샷이 TTL 초과(오래됨)면 사용 안 함 → 종전처럼 보수적(수량 미상)으로 떨어진다.
+_HELD_SNAPSHOT: dict[str, dict[str, int]] = {}
+_HELD_SNAPSHOT_AT: datetime | None = None
+_HELD_SNAPSHOT_TTL_SECONDS = 600  # 마지막 *성공* 조회가 10분 이내일 때만 수량 fallback 신뢰
+
+
+def _held_snapshot_fresh(now: datetime | None, ttl_seconds: int) -> bool:
+    """마지막 성공 보유스냅샷이 신선한가 (TTL 이내). 빈 스냅샷/미기록이면 False."""
+    if not _HELD_SNAPSHOT or _HELD_SNAPSHOT_AT is None:
+        return False
+    if now is None:
+        return True  # now 미상이면 보수적으로 사용(스캔 틱 간격은 수십초)
+    try:
+        a, b = _HELD_SNAPSHOT_AT, now
+        if a.tzinfo is None:
+            a = a.replace(tzinfo=timezone.utc)
+        if b.tzinfo is None:
+            b = b.replace(tzinfo=timezone.utc)
+        age = (b - a).total_seconds()
+    except Exception:  # noqa: BLE001
+        return False
+    return 0 <= age <= ttl_seconds
+
+
+def _held_map_fallback(fallback: set[str], *, now: datetime | None,
+                       ttl_seconds: int) -> dict[str, dict[str, int]]:
+    """조회 실패 시 보유맵. 신선한 스냅샷이면 *수량까지 살려* 청산이 끊기지 않게 하고,
+    스냅샷에 없는 today-DB-net 심볼은 수량 미상(빈 dict)으로 종전 보수적 동작을 유지한다."""
+    out: dict[str, dict[str, int]] = {}
+    if _held_snapshot_fresh(now, ttl_seconds):
+        for sym, info in _HELD_SNAPSHOT.items():
+            out[sym] = dict(info)
+        _log.warning(
+            "[kis-paper-bridge] get_positions 실패 → 보유스냅샷 fallback 사용 "
+            "(symbols=%d, snapshot_at=%s) — 청산 유지용",
+            len(out), _HELD_SNAPSHOT_AT,
+        )
+    for s in fallback:
+        out.setdefault(s, {})
+    return out
+
+
+async def _kis_held_map(broker: Any, *, fallback: set[str],
+                        now: datetime | None = None,
+                        ttl_seconds: int = _HELD_SNAPSHOT_TTL_SECONDS,
+                        with_read_status: bool = False,
+                        ) -> dict[str, dict[str, int]]:
+    """보유 종목 → {hldg, ord_psbl}. `_kis_held_symbols` 와 동일 소스(get_positions,
+    *단일 호출*)지만 수량을 보존한다 — 봇 SELL 이 보유수량 기준으로 주문하도록.
+
+    조회 *성공* 시 보유스냅샷(수량 포함)을 캐시한다. 조회 *실패* 시 신선한 스냅샷이
+    있으면 그 수량으로 fallback(R-A) — 없으면 today-DB-net 심볼만 수량 미상(빈 dict)으로
+    종전 보수적 동작. hldg/ord_psbl 은 int 로 정규화, ord_psbl 미상(None)이면 hldg 로 간주.
+    """
+    global _HELD_SNAPSHOT, _HELD_SNAPSHOT_AT
+    try:
+        if broker is None or not hasattr(broker, "get_positions"):
+            result = _held_map_fallback(fallback, now=now, ttl_seconds=ttl_seconds)
+            return (result, False) if with_read_status else result
+        positions = await broker.get_positions()
+    except Exception:  # noqa: BLE001 — 조회 실패는 스캔을 막지 않음.
+        result = _held_map_fallback(fallback, now=now, ttl_seconds=ttl_seconds)
+        return (result, False) if with_read_status else result
+    out: dict[str, dict[str, int]] = {}
+    for p in (positions or []):
+        sym = str(getattr(p, "symbol", "") or "")
+        hldg = int(getattr(p, "quantity", 0) or 0)
+        if not sym or hldg <= 0:
+            continue
+        _sell = getattr(p, "sellable_quantity", None)
+        ordp = int(_sell) if _sell not in (None, "") else hldg
+        # S1(2026-06-15): 진입가(avg_price) 캡처 — 익절/손절 강제청산용 PositionContext 의
+        #   진입가 소스. R-A 스냅샷에도 자연 carry(아래 dict copy). 없으면 0 → 스캔에서
+        #   position=None(보수적: 진입가 모르면 강제청산 안 함).
+        _avg = int(getattr(p, "avg_price", 0) or 0)
+        if _avg <= 0:
+            # 결함 A 수정(2026-06-25): KIS inquire-balance 가 보유분(hldg>0)에
+            #   pchs_avg_pric=0 을 *간헐* 반환하면 PositionContext 가 None 이 되어 강제손절이
+            #   평가조차 안 됐다(06-25 STOP_LOSS 0건, 손실 포지션 미청산). 직전 *성공*
+            #   스냅샷의 비-0 avg = KIS 가 직전에 보고한 *동일 출처* 값(avg 는 거래 전엔
+            #   불변)이므로 복구해 강제손절 평가가 끊기지 않게 한다. churn 으로 stale 해도
+            #   대개 stale-high → 손절이 *더 일찍* = 보수적(손실방어)이라 안전측.
+            #   (DB 체결가 가중평균 fallback + 괴리 가드는 신뢰도가 낮아 2차 패치로 분리.)
+            _snap_avg = int((_HELD_SNAPSHOT.get(sym) or {}).get("avg_price", 0) or 0)
+            if _snap_avg > 0:
+                _log.warning(
+                    "[kis-paper-bridge] %s avg_price=0(KIS) → 직전 스냅샷 avg %d 로 복구 "
+                    "(강제손절 평가 유지)", sym, _snap_avg)
+                _avg = _snap_avg
+        out[sym] = {"hldg": hldg, "ord_psbl": max(0, ordp), "avg_price": _avg}
+    # 조회 성공 → 스냅샷 갱신(수량 포함). 빈 결과(실제 무보유)도 성공이므로 그대로 반영.
+    _HELD_SNAPSHOT = {s: dict(v) for s, v in out.items()}
+    _HELD_SNAPSHOT_AT = now if now is not None else datetime.now(timezone.utc)
+    return (out, True) if with_read_status else out
 
 
 async def kis_paper_realtime_scan_tick(
@@ -378,6 +678,7 @@ async def kis_paper_realtime_scan_tick(
     universe_symbols: list[str] | None = None,
     client: Any = None,
     risk_profile: Any = None,
+    _bot_owned_override: Any = _UNSET,
 ) -> dict[str, Any]:
     """KIS 실시간 시세 기반 *다종목* 스캔 1 tick.
 
@@ -389,7 +690,9 @@ async def kis_paper_realtime_scan_tick(
     DRYRUN 모드(`kis_paper_auto_order_dry_run=true`)면 게이트가 dry-run 경로로
     돌아 broker_order_sent=false. SMOKE 모드면 단일 종목 / qty=1.
     """
-    from app.agents.agent_council import CouncilAction, run_agent_council
+    from app.agents.agent_council import (
+        CouncilAction, StrategyMarketInput, run_agent_council)
+    from app.core.runtime_config import effective_active_profile
     from app.scheduler.market_clock import MarketPhase, current_market_phase
 
     if now is None:
@@ -408,18 +711,71 @@ async def kis_paper_realtime_scan_tick(
         from app.market_data.kis_realtime import build_kis_market_input
         market_input_fn = build_kis_market_input
 
+    from app.kis_paper.one_click_session import effective_session_settings
+    settings = effective_session_settings(settings)
     mode = resolve_paper_auto_mode(settings)
     market_is_open = current_market_phase(now) == MarketPhase.OPEN
     smoke = bool(getattr(settings, "kis_paper_smoke_mode", False))
-    per_symbol_notional = int(getattr(settings, "kis_paper_per_symbol_notional_krw", 1_000_000))
-    max_concurrent = int(getattr(settings, "kis_paper_max_concurrent_positions", 5))
-    daily_buy_limit = int(getattr(settings, "kis_paper_daily_buy_limit_krw", 3_000_000))
-    max_new_per_tick = max(1, int(getattr(settings, "kis_paper_max_new_positions_per_tick", 1) or 1))
+    # R1(2026-06-06): 종목당 투자금/동시진입 종목 수는 *런타임 오버라이드 > env*.
+    #   봇은 매 사이클 config 모듈(runtime_config)의 effective getter 를 호출 —
+    #   오버라이드 파일을 직접 읽지 않는다. 저장 즉시 다음 신규 매수 판단부터 반영.
+    #   (주문 경로 route_order/RiskManager/Gate/Executor 는 미수정.)
+    from app.kis_paper.order_limits import resolve_kis_paper_order_limits
+    paper_limits = resolve_kis_paper_order_limits(settings)
+    # Keep position sizing consistent with the final fail-closed permission
+    # gate.  Previously a 1.6~2.0M allocation with a 1.0M hard order limit
+    # turned every valid Council BUY into NOTIONAL_LIMIT_EXCEEDED.
+    per_symbol_notional = paper_limits.per_symbol_krw
+    max_concurrent = paper_limits.max_positions
+    # T2(2026-06-12): 일일 매수 한도도 런타임 오버라이드(R1 패턴 — config-read 계층,
+    #   매 사이클 effective getter. BUY 사전 가드(아래 daily_buy_used 비교)는 무변경).
+    daily_buy_limit = paper_limits.daily_buy_krw
+    max_new_per_tick = paper_limits.buys_per_tick
     if smoke:
         max_new_per_tick = 1
     smoke_qty = max(1, int(getattr(settings, "kis_paper_smoke_qty", 1) or 1))
 
-    symbols = _scan_universe_symbols(settings, override=universe_symbols)
+    # INTRADAY-FLAT-BY-CLOSE V2: 15:00(precheck) 이후엔 청산을 EOD coordinator 가 단독
+    #   소유 — 스캔 SELL 과 EOD SELL 이 같은 종목을 동시에 내는 중복 매도 차단.
+    from app.scheduler.intraday_session import IntradayPhase, IntradayPolicy
+    _phase = IntradayPolicy.from_settings(settings).phase(now)
+    if _phase in (IntradayPhase.EOD_PRECHECK, IntradayPhase.EOD_FLATTEN,
+                  IntradayPhase.CLOSING_AUCTION, IntradayPhase.POST_CLOSE):
+        return _scan_summary(
+            mode=mode, symbols_scanned=0, candidates_found=0, orders_attempted=0,
+            orders_submitted=0, orders=[], skipped=[],
+            reason_code="EOD_COORDINATOR_OWNS_EXITS",
+            reason_message="장마감 청산 구간 — 신규 매수 0, 청산은 EOD coordinator 가 단독 수행합니다.",
+        )
+
+    # Keep the full-pool/filter/window counts next to the result.  Previously
+    # only the ten-symbol window count survived, which made a rotating scan
+    # look like the same ten symbols were being scanned forever.
+    if universe_symbols is not None:
+        _pool = list(universe_symbols)
+    else:
+        _pool = _full_universe_pool(settings)
+    from app.core.runtime_config import effective_disabled_theme_ids
+    from app.theme_filter.catalog import filter_new_entry_symbols
+    _theme_passed = filter_new_entry_symbols(_pool, effective_disabled_theme_ids(now))
+    symbols = _scan_universe_symbols(settings, override=universe_symbols, now=now)
+    diagnostics: dict[str, Any] = {
+        "universe_pool_size": len(_pool),
+        "theme_filter_passed": len(_theme_passed),
+        "theme_filter_excluded": max(0, len(_pool) - len(_theme_passed)),
+        "scan_window_size": len(symbols),
+        "scanned_symbols": [],
+        "quotes_requested": 0,
+        "quotes_ok": 0,
+        "quotes_failed": 0,
+        "quotes_stale": 0,
+        "market_inputs_ready": 0,
+        "market_inputs_failed": 0,
+        "council_evaluated": 0,
+        "council_actions": {"BUY": 0, "HOLD": 0, "SELL": 0},
+        "council_results": [],
+        "strategy_signals": {},
+    }
 
     db = session_factory()
     out_orders: list[dict[str, Any]] = []
@@ -441,7 +797,38 @@ async def kis_paper_realtime_scan_tick(
         rd = evaluate_readiness(settings)
         creds = bool(rd.kis_key_present and rd.kis_secret_present and rd.kis_account_present)
         # 일일 주문 횟수 한도는 executor 의 gate (max_orders_per_day) 가 강제.
-        held_symbols, daily_buy_used = _today_kis_paper_buy_state(db, now)
+        #   daily_buy_used(일일 매수금액 한도용)는 오늘 DB 기준 유지.
+        #   held_symbols(보유)는 *KIS 잔고 = 브로커 진실* 에서 — 전일 캐리오버
+        #   포지션을 봇이 인식해 청산/중복매수 가드가 올바로 작동하게 한다.
+        _db_held, daily_buy_used = _today_kis_paper_buy_state(db, now)
+        # INTRADAY-FLAT-BY-CLOSE-V1: 신규 BUY 서버측 판단 (route_order 와 동일 helper).
+        #   차단이면 BUY 후보는 executor 로 보내지 않고 skip(사유 기록) — 청산은 계속.
+        from app.kis_paper.intraday_buy_gate import program_buy_block_reason
+        _buy_block_code, _ = program_buy_block_reason(db, settings=settings, now=now)
+        # FIRST-ORDER-PREFLIGHT-01: 리허설 모드 — 자동 스캔 신규 BUY 전면 차단(run-once 만).
+        #   보유 종목 SELL(손절/익절/청산)은 그대로 평가·전송된다.
+        from app.kis_paper.intraday_buy_gate import (
+            REHEARSAL_SCAN_BUY_DISABLED,
+            rehearsal_enabled,
+        )
+        if _buy_block_code is None and rehearsal_enabled(settings):
+            _buy_block_code = REHEARSAL_SCAN_BUY_DISABLED
+        # ★보유 *수량* 보존(단일 get_positions). SELL 수량 캡에 사용. held_symbols 는
+        #   기존 set-기반 가드용으로 키에서 파생(중복 get_positions 호출 없음).
+        held_map, positions_verified = await _kis_held_map(
+            broker, fallback=_db_held, now=now, with_read_status=True,
+        )
+        held_symbols = set(held_map.keys())
+        # 소유권 원장: 봇이 BUY 체결한 종목 집합(루프 밖 1회 쿼리, O(1) 조회).
+        # Unknown ownership is fail-closed: stop/take-profit auto SELL is blocked.
+        #   _bot_owned_override: 테스트 전용 주입(frozenset 또는 None).
+        if _bot_owned_override is not _UNSET:
+            _bot_owned: "frozenset[str] | None" = _bot_owned_override
+        else:
+            _bot_owned = _bot_owned_symbols(db)
+        # T1(2026-06-12): 회전 스캔이 이번 틱 윈도우에 빠뜨린 *보유* 종목도 항상 스캔
+        #   목록에 union — 익절/손절 청산이 회전 때문에 지연되지 않게(청산 보장).
+        symbols = list(symbols) + [h for h in held_symbols if h not in symbols]
 
         if client is None and not _fn_injected:
             # KIS read-only client 가 없으면 실시세 조회 불가 — mock 대체 금지.
@@ -453,20 +840,112 @@ async def kis_paper_realtime_scan_tick(
             )
 
         for symbol in symbols:
+            diagnostics["quotes_requested"] += 1
             mi, quote = await market_input_fn(
                 symbol, client=client, now=now, market_is_open=market_is_open,
             )
             symbols_scanned += 1
+            diagnostics["scanned_symbols"].append(symbol)
+            if quote.ok:
+                diagnostics["quotes_ok"] += 1
+                if bool(getattr(quote, "is_stale", False)):
+                    diagnostics["quotes_stale"] += 1
+            else:
+                diagnostics["quotes_failed"] += 1
+            # ⓑ-fix(2026-06-18 손절 갭): 60분봉 fetch 실패(mi=None)여도 *보유종목 청산평가*는
+            #   실시간 현재가(quote.price)로 계속한다. 청산(infer_position_sell_reason)은
+            #   PositionContext(현재가)만 의존 — mi(60분봉) 무관. 신규 진입만 mi 필요.
+            #   ★집계·투표·리스크·승인·손절임계 로직 무수정 — 청산평가가 *skip 되지 않게* 만 한다.
+            _exit_only = False
             if mi is None:
-                skipped.append({"symbol": symbol, "reason_code": quote.status,
-                                "price_source": "kis"})
-                continue
+                diagnostics["market_inputs_failed"] += 1
+                if (symbol in held_symbols) and quote.ok and float(quote.price or 0) > 0:
+                    # 최소 입력(현재가만) — 진입 voter 는 데이터 부족→HOLD, 청산은 position 으로 평가.
+                    mi = StrategyMarketInput(symbol=symbol, current_price=float(quote.price))
+                    _exit_only = True   # 열화 데이터 → 진입(BUY) 금지, 청산(SELL)만 허용
+                else:
+                    # 보유 아님 or 현재가도 없음 → 평가 불가 → skip(다음 틱 재시도, 합성가 안 만듦).
+                    # A successful current-price response can still fail the
+                    # historical-bar input build.  Do not misreport that as
+                    # KIS_PRICE_OK; it is the key distinction for NO_CANDIDATE.
+                    _input_reason = (
+                        "MARKET_INPUT_UNAVAILABLE" if quote.ok else str(quote.status)
+                    )
+                    skipped.append({"symbol": symbol, "reason_code": _input_reason,
+                                    "price_source": "kis", "exit_eval": "skipped_no_price"})
+                    continue
+            else:
+                diagnostics["market_inputs_ready"] += 1
 
+            # S1(2026-06-15): 보유 종목은 PositionContext 를 구성해 council 에 전달 →
+            #   run_agent_council 의 *기존* stop_loss/take_profit 강제청산 트리거가 비로소
+            #   작동(익절선 초과 상승주가 영원히 안 팔리던 구조적 결함 수정). 익절/손절
+            #   임계는 effective getter(C1 런타임값). ★집계·투표·veto 로직 무수정 — position
+            #   전달만. 진입가(avg_price) 미상이면 position=None(보수적: 강제청산 안 함).
+            _position = None
+            if symbol in held_symbols:
+                # ★필터 A(2026-07-02): 봇 소유권 원장 확인 — 수동 보유는 PositionContext
+                #   설정 0 → position-based 강제청산(stop/take) 평가 제외.
+        # Unknown ownership is fail-closed: stop/take-profit auto SELL is blocked.
+                _is_bot_own = _bot_owned is not None and symbol in _bot_owned
+                _hinfo = held_map.get(symbol) or {}
+                _avg = int(_hinfo.get("avg_price", 0) or 0)
+                _cur = float(quote.price or 0)
+                if _is_bot_own and _avg > 0 and _cur > 0:
+                    from app.agents.position_context import PositionContext
+                    from app.core.runtime_config import (
+                        effective_stop_loss_pct, effective_take_profit_pct)
+                    _slp = round(effective_stop_loss_pct(), 2)
+                    _tpp = round(effective_take_profit_pct(), 2)
+                    # 결함 C 수정(2026-06-25): effective_*_pct 는 *퍼센트*(1.0=1%) 인데
+                    #   PositionContext._norm_pct 가 v<=1.0 을 *비율*(1.0→100%)로 오해석해
+                    #   손절 ≤1.0% 설정 시 손절가=0 → STOP_LOSS 가 영영 안 떴다(06-25 0건,
+                    #   사용자가 1.5%→1.0% 로 낮춘 직후 발생). 평단 기준 *절대* 손절/익절가를
+                    #   직접 계산해 넘긴다 — resolve_*_price 는 절대가를 우선하므로 _norm_pct
+                    #   모호성을 우회한다(퍼센트 필드는 표시/호환용으로 함께 보존).
+                    _stop_abs = round(float(_avg) * (1.0 - _slp / 100.0), 4)
+                    _take_abs = round(float(_avg) * (1.0 + _tpp / 100.0), 4)
+                    _position = PositionContext(
+                        held_position=True, symbol=symbol,
+                        quantity=int(_hinfo.get("hldg", 0) or 0),
+                        available_quantity=int(_hinfo.get("ord_psbl", 0) or 0),
+                        average_entry_price=float(_avg),
+                        current_price=_cur,
+                        stop_loss=_stop_abs,
+                        take_profit=_take_abs,
+                        stop_loss_pct=_slp,
+                        take_profit_pct=_tpp,
+                    )
             council = run_agent_council(
-                mi, risk_profile=risk_profile,
+                mi, risk_profile=effective_active_profile(),  # S1: 런타임 활성 성향
                 held_position=(symbol in held_symbols),
+                position=_position,
+                min_confidence_floor=float(getattr(settings, "kis_paper_auto_min_confidence", 0.6)),
             )
             final = council.final_action
+            diagnostics["council_evaluated"] += 1
+            _final_name = str(getattr(final, "value", final)).upper()
+            diagnostics["council_actions"][_final_name] = (
+                diagnostics["council_actions"].get(_final_name, 0) + 1
+            )
+            diagnostics["council_results"].append({
+                "symbol": symbol,
+                "action": _final_name,
+                "confidence": round(float(getattr(council, "confidence", 0) or 0), 4),
+            })
+            for _vote in getattr(council, "votes", ()):
+                _strategy = str(_vote.strategy)
+                _signal = str(getattr(_vote.signal, "value", _vote.signal)).upper()
+                _bucket = diagnostics["strategy_signals"].setdefault(
+                    _strategy, {"BUY": 0, "HOLD": 0, "SELL": 0},
+                )
+                _bucket[_signal] = _bucket.get(_signal, 0) + 1
+            if _exit_only and final != CouncilAction.SELL:
+                # ⓑ-fix: 열화 데이터(60분봉 없음)에선 진입 금지 — 청산(SELL)만 진행.
+                #   재진입은 정상 60분봉 틱에서만. (mi=None 의 BUY 는 부실신호이므로 차단)
+                skipped.append({"symbol": symbol, "reason_code": "EXIT_ONLY_NO_SELL",
+                                "price_source": "kis"})
+                continue
             if final not in (CouncilAction.BUY, CouncilAction.SELL):
                 skipped.append({"symbol": symbol, "reason_code": "HOLD_NO_SIGNAL",
                                 "price_source": "kis"})
@@ -475,25 +954,126 @@ async def kis_paper_realtime_scan_tick(
 
             price = int(quote.price or 0)
             if final == CouncilAction.BUY:
-                qty = smoke_qty if smoke else max(1, per_symbol_notional // max(1, price))
-            else:
-                qty = smoke_qty if smoke else max(1, per_symbol_notional // max(1, price))
-            notional = price * qty
-
-            # ── bridge 사전 가드 (RiskManager 전, BUY 신규 진입에만) ──────────
-            if final == CouncilAction.BUY:
+                # A single share above the approved per-symbol budget cannot
+                # be bought regardless of the account's aggregate cash. Avoid
+                # an unnecessary KIS capacity request and report the local
+                # budget constraint explicitly instead of calling it a KIS
+                # zero-quantity response.
+                if per_symbol_notional > 0 and price > per_symbol_notional:
+                    skipped.append({
+                        "symbol": symbol,
+                        "reason_code": "PRICE_EXCEEDS_ENTRY_NOTIONAL_LIMIT",
+                        "price_source": "kis",
+                        "price": price,
+                        "entry_notional_limit": per_symbol_notional,
+                        "minimum_shares": 1,
+                    })
+                    continue
+                # Resolve state gates before issuing a capacity inquiry.
+                if not positions_verified:
+                    skipped.append({"symbol": symbol, "reason_code": "KIS_POSITIONS_UNVERIFIED",
+                                    "price_source": "kis"})
+                    continue
+                if _buy_block_code is not None:
+                    skipped.append({"symbol": symbol, "reason_code": _buy_block_code,
+                                    "price_source": "kis"})
+                    continue
                 if symbol in held_symbols:
                     skipped.append({"symbol": symbol, "reason_code": "DUPLICATE_POSITION_BLOCKED"})
                     continue
                 if (len(held_symbols) + orders_submitted) >= max_concurrent:
                     skipped.append({"symbol": symbol, "reason_code": "MAX_CONCURRENT_POSITIONS_REACHED"})
                     continue
-                if daily_buy_limit > 0 and (daily_buy_used + notional) > daily_buy_limit:
-                    skipped.append({"symbol": symbol, "reason_code": "DAILY_BUY_LIMIT_REACHED"})
-                    continue
                 if orders_submitted >= max_new_per_tick:
                     skipped.append({"symbol": symbol, "reason_code": "MAX_NEW_POSITIONS_PER_TICK_REACHED"})
                     continue
+                # BUY 무변경 — 예산 ÷ 가격(신규 진입 사이징).
+                if _broker_is_kis_paper(broker):
+                    capacity_reader = getattr(broker, "get_orderable_buy_capacity", None)
+                    if not callable(capacity_reader):
+                        skipped.append({"symbol": symbol,
+                                        "reason_code": "KIS_ORDERABLE_CAPACITY_UNAVAILABLE",
+                                        "price_source": "kis"})
+                        continue
+                    try:
+                        capacity = await capacity_reader(symbol=symbol, price=price)
+                        from app.kis_paper.order_limits import safe_market_buy_quantity
+                        qty = safe_market_buy_quantity(
+                            target_budget_krw=per_symbol_notional,
+                            quote_price_krw=price,
+                            calculation_price_krw=int(capacity["calculation_price_krw"]),
+                            no_credit_buy_quantity=int(capacity["no_credit_buy_quantity"]),
+                            no_credit_buy_amount_krw=int(capacity["no_credit_buy_amount_krw"]),
+                            orderable_cash_krw=int(capacity["orderable_cash_krw"]),
+                            cost_reserve_bps=paper_limits.cost_reserve_bps,
+                        )
+                        if smoke:
+                            qty = min(qty, max(0, int(smoke_qty)))
+                    except Exception as exc:  # fail closed on missing/invalid KIS capacity
+                        skipped.append({"symbol": symbol,
+                                        "reason_code": f"KIS_ORDERABLE_CAPACITY_FAILED:{type(exc).__name__}",
+                                        "price_source": "kis"})
+                        continue
+                else:
+                    qty = smoke_qty if smoke else _entry_quantity(price, per_symbol_notional)
+                if qty <= 0:
+                    skipped.append({
+                        "symbol": symbol,
+                        "reason_code": ("KIS_ORDERABLE_QUANTITY_ZERO"
+                                        if _broker_is_kis_paper(broker)
+                                        else "PRICE_EXCEEDS_ENTRY_NOTIONAL_LIMIT"),
+                        "price_source": "kis",
+                        "price": price,
+                        "entry_notional_limit": per_symbol_notional,
+                        "kis_orderable_quantity": int(capacity.get("no_credit_buy_quantity", 0))
+                            if _broker_is_kis_paper(broker) else None,
+                        "kis_calculation_price": int(capacity.get("calculation_price_krw", 0))
+                            if _broker_is_kis_paper(broker) else None,
+                        "kis_orderable_cash": int(capacity.get("orderable_cash_krw", 0))
+                            if _broker_is_kis_paper(broker) else None,
+                        "kis_no_credit_buy_amount": int(capacity.get("no_credit_buy_amount_krw", 0))
+                            if _broker_is_kis_paper(broker) else None,
+                    })
+                    continue
+            else:
+                # ★SELL 수량 = KIS 보유 기준(예산 아님). min(보유, 주문가능) — 미결제분
+                #   대비. 예산÷가격으로 보내 보유의 3~4배를 주문하던 [40240000] 버그 수정
+                #   (2026-06-09). 수동 매도(hldg_qty 소스)와 동일 소스로 통일.
+                _info = held_map.get(symbol) or {}
+                _hldg = int(_info.get("hldg", 0) or 0)
+                _ordp = int(_info.get("ord_psbl", _hldg) or 0)
+                # smoke 도 보유·주문가능 수량을 넘지 않게 클램프 (초과 매도 KIS 거부 방지).
+                qty = min(smoke_qty, _hldg, _ordp) if smoke else min(_hldg, _ordp)
+            notional = price * qty
+
+            # ── bridge 사전 가드 (RiskManager 전, BUY 신규 진입에만) ──────────
+            if final == CouncilAction.BUY and daily_buy_limit > 0 and (daily_buy_used + notional) > daily_buy_limit:
+                skipped.append({"symbol": symbol, "reason_code": "DAILY_BUY_LIMIT_REACHED"})
+                continue
+
+            if final == CouncilAction.SELL and symbol not in held_symbols:
+                skipped.append({"symbol": symbol,
+                                "reason_code": "SELL_NO_HELD_POSITION",
+                                "price_source": "kis"})
+                continue
+            # ★필터 B(2026-07-02): 수동 보유(원장 밖) SELL 완전 차단 — 봇은 자기가
+        # Unknown ownership is fail-closed: stop/take-profit auto SELL is blocked.
+            #   전부 봇소유 간주 → 통과(손절 유지 우선, 수동 보호 포기).
+            if final == CouncilAction.SELL and symbol in held_symbols:
+                _is_bot_own_b = _bot_owned is not None and symbol in _bot_owned
+                if not _is_bot_own_b:
+                    _log.info("[ownership] %s SELL 차단 — 원장 밖 수동 보유", symbol)
+                    skipped.append({"symbol": symbol,
+                                    "reason_code": "SELL_NOT_BOT_OWNED",
+                                    "price_source": "kis"})
+                    continue
+            # ★주문가능수량 0(미결제 등) → 헛주문 방지로 skip. (보유는 있으나 오늘
+            #   팔 수 있는 수량이 0이면 broker 로 보내지 않는다.)
+            if final == CouncilAction.SELL and qty < 1:
+                skipped.append({"symbol": symbol,
+                                "reason_code": "SELL_NOT_ORDERABLE",
+                                "price_source": "kis"})
+                continue
 
             decision = replace(
                 council.to_kis_paper_decision(quantity=int(qty), price=price),
@@ -528,7 +1108,7 @@ async def kis_paper_realtime_scan_tick(
                     held_symbols.add(symbol)
                     daily_buy_used += notional
 
-        return _scan_summary(
+        summary = _scan_summary(
             mode=mode, symbols_scanned=symbols_scanned,
             candidates_found=candidates_found, orders_attempted=orders_attempted,
             orders_submitted=orders_submitted, orders=out_orders, skipped=skipped,
@@ -537,19 +1117,25 @@ async def kis_paper_realtime_scan_tick(
                 f"KIS 실시간 스캔 완료 — {symbols_scanned}종목 조회, "
                 f"{candidates_found}후보, {orders_submitted}건 전송."
             ),
+            diagnostics=diagnostics,
         )
+        _persist_scan_audit(db, now=now, summary=summary)
+        return summary
     except Exception as exc:  # noqa: BLE001 — 스캔 오류는 loop 를 죽이지 않음.
         try:
             db.rollback()
         except Exception:  # noqa: BLE001
             pass
         _log.warning("[kis-paper-scan] tick error: %s: %s", type(exc).__name__, exc)
-        return _scan_summary(
+        summary = _scan_summary(
             mode=mode, symbols_scanned=symbols_scanned,
             candidates_found=candidates_found, orders_attempted=orders_attempted,
             orders_submitted=orders_submitted, orders=out_orders, skipped=skipped,
             reason_code="KIS_PAPER_ERROR", reason_message=f"{type(exc).__name__}",
+            diagnostics=diagnostics,
         )
+        _persist_scan_audit(db, now=now, summary=summary)
+        return summary
     finally:
         try:
             db.close()
@@ -557,12 +1143,67 @@ async def kis_paper_realtime_scan_tick(
             pass
 
 
+def _persist_scan_audit(db: Any, *, now: datetime, summary: dict[str, Any]) -> None:
+    """Persist one order-neutral scan audit row for post-session reconstruction."""
+    try:
+        from app.db.models import AgentDecisionLog
+
+        diagnostics = dict(summary.get("scan_diagnostics") or {})
+        skipped = list(summary.get("skipped") or [])
+        reason_codes = sorted({
+            str(item.get("reason_code") or "UNKNOWN") for item in skipped
+        })
+        row = AgentDecisionLog(
+            created_at=now.astimezone(timezone.utc).replace(tzinfo=None),
+            agent_name="kis_paper_scan_audit",
+            symbol=None,
+            mode="PAPER",
+            decision="INFO",
+            confidence=None,
+            reasons=[str(summary.get("reason_code") or "KIS_REALTIME_SCAN_DONE"), *reason_codes],
+            meta={
+                "audit_schema": "KIS_PAPER_SCAN_V1",
+                "symbols_scanned": int(summary.get("symbols_scanned") or 0),
+                "candidates_found": int(summary.get("candidates_found") or 0),
+                "orders_attempted": int(summary.get("orders_attempted") or 0),
+                "orders_submitted": int(summary.get("orders_submitted") or 0),
+                "council_evaluated": int(diagnostics.get("council_evaluated") or 0),
+                "council_actions": dict(diagnostics.get("council_actions") or {}),
+                "council_results": list(diagnostics.get("council_results") or []),
+                "excluded_reasons": dict(diagnostics.get("excluded_reasons") or {}),
+                "skipped": skipped,
+                "broker_order_sent": bool(summary.get("broker_order_sent")),
+                "is_order_signal": False,
+                "is_live_authorization": False,
+            },
+        )
+        db.add(row)
+        db.commit()
+    except Exception as exc:  # noqa: BLE001 -- audit failure must not stop trading.
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        _log.warning("[kis-paper-scan] persistent scan audit failed: %s", type(exc).__name__)
+
+
 def _scan_summary(
     *, mode, symbols_scanned, candidates_found, orders_attempted,
     orders_submitted, orders, skipped, reason_code, reason_message,
+    diagnostics=None,
 ) -> dict[str, Any]:
     """다종목 스캔 집계 결과 — driver / UI 가 읽는 표준 shape."""
     first_submitted = next((o for o in orders if o.get("submitted")), None)
+    diagnostics = dict(diagnostics or {})
+    excluded: dict[str, int] = {}
+    for item in skipped:
+        code = str(item.get("reason_code") or "UNKNOWN")
+        excluded[code] = excluded.get(code, 0) + 1
+    diagnostics["excluded_reasons"] = dict(
+        sorted(excluded.items(), key=lambda kv: (-kv[1], kv[0]))
+    )
+    diagnostics["order_gate_evaluated"] = int(orders_attempted)
+    diagnostics["orders_submitted"] = int(orders_submitted)
     return {
         "reason_code":      reason_code,
         "reason_message":   reason_message,
@@ -584,6 +1225,7 @@ def _scan_summary(
         "broker_order_type": "KIS_PAPER",
         "orders":           orders,
         "skipped":          skipped,
+        "scan_diagnostics": diagnostics,
         "is_live_authorization": False,
         "is_order_signal":  False,
     }

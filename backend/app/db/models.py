@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -70,10 +70,19 @@ class OrderAuditLog(Base):
 
     executed:        Mapped[bool]           = mapped_column(Boolean, default=False)
     broker_order_id: Mapped[str | None]     = mapped_column(String(64), nullable=True)
+    # V3: 정정/취소용 KRX 전송 주문조직번호 (KIS order-cash 응답). NULL = 미제공/구버전 행.
+    broker_org_no:   Mapped[str | None]     = mapped_column(String(16), nullable=True)
+    # Account scope hash only; NULL rows are legacy/unattributed and must not
+    # be adopted as holdings for a KIS account.
+    account_id:      Mapped[str | None]     = mapped_column(String(48), nullable=True, index=True)
     broker_status:   Mapped[str | None]     = mapped_column(String(32), nullable=True)
     filled_quantity: Mapped[int]            = mapped_column(Integer, default=0)
     avg_fill_price:  Mapped[int | None]     = mapped_column(Integer, nullable=True)
     message:         Mapped[str]            = mapped_column(String(255), default="")
+
+    __table_args__ = (
+        UniqueConstraint("account_id", "client_order_id", name="uq_order_audit_account_client_order"),
+    )
 
 
 class BacktestRun(Base):
@@ -185,6 +194,9 @@ class EmergencyStopEvent(Base):
     # 기존 의미와 동일한 LEVEL_1로 표시 (app/risk/emergency_stop.py
     # `normalize_legacy_level` 참고). 운영자가 단계 표시를 원하면 명시 권장.
     level:       Mapped[str | None]    = mapped_column(String(16), nullable=True)
+    # P0-SAFETY-FIX-V1: 단계별 주문 허용 범위 버전 (app/risk/kill_switch_policy.py).
+    # NULL = 이전 정책(LEVEL_1 도 모든 주문 차단)으로 기록된 정지 — 복원 시 legacy strict.
+    policy_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class AgentDecisionLog(Base):
@@ -698,3 +710,156 @@ class LossReasonLog(Base):
     reviewed_by:   Mapped[str | None]    = mapped_column(String(64), nullable=True)
     review_note:   Mapped[str | None]    = mapped_column(String(500), nullable=True)
     reviewed_at:   Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class PositionHighWatermark(Base):
+    """트레일링 스탑 1단계(측정) — 보유 종목의 장중 최고가 추적. *상태 기록 전용*.
+
+    설계 docs/design/trailing_stop.md §2-1. 봇 매도 결정에 *미사용*(측정+섀도 단계) —
+    매 틱 hwm=max(저장값, 현재가) upsert, activated 래칫(+activation 도달 시 True 유지),
+    청산 시 DELETE(재매수 시 깨끗이 재시작). 재시작 복구 폴백 max(현재가, 진입가×1.03).
+    """
+
+    __tablename__ = "position_high_watermark"
+
+    symbol:         Mapped[str]      = mapped_column(String(16), primary_key=True)
+    entry_price:    Mapped[int]      = mapped_column(Integer)
+    high_watermark: Mapped[int]      = mapped_column(Integer)
+    activated:      Mapped[bool]     = mapped_column(Boolean, default=False)
+    updated_at:     Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow, index=True)
+
+
+class TrailingShadowOutcome(Base):
+    """트레일링 섀도(2단계) — 청산된 보유의 *최고점 도달* 기록. T3 비교 데이터.
+
+    봇이 고정 익절/손절로 청산할 때, 그 포지션이 보유 중 도달한 최고점(peak_return)을
+    기록한다 → "트레일링이었다면 얼마까지 갔나" vs "고정 익절 +3%" 누적 비교용.
+    측정 전용(주문/판단 0). 설계 docs/design/trailing_stop.md 3단계 전환 판단 근거.
+    """
+
+    __tablename__ = "trailing_shadow_outcome"
+
+    id:               Mapped[int]      = mapped_column(primary_key=True)
+    symbol:           Mapped[str]      = mapped_column(String(16), index=True)
+    entry_price:      Mapped[int]      = mapped_column(Integer)
+    peak_high_watermark: Mapped[int]   = mapped_column(Integer)
+    peak_return_pct:  Mapped[float]    = mapped_column(Float)
+    activated:        Mapped[bool]     = mapped_column(Boolean, default=False)
+    closed_at:        Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+
+
+class MultiTfShadowTick(Base):
+    """MULTI-TF-SHADOW-V1 — 5m entry + 60m confirm(Council) 콤보 관측, 틱 단위 요약.
+
+    results/multi_timeframe/design.md 콤보(5m entry AGENT_COUNCIL BUY + 60m confirm
+    AGENT_COUNCIL BUY)를 read-only로 매 tick 스캔한 집계. 주문/판단 0 — broker.
+    place_order/route_order/OrderExecutor 미접촉, fetch_realtime_quote(read-only
+    시세)만 호출. is_order_signal=False 영구.
+    """
+
+    __tablename__ = "multi_tf_shadow_tick"
+
+    id:                   Mapped[int]      = mapped_column(primary_key=True)
+    created_at:           Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+    symbols_scanned:      Mapped[int]      = mapped_column(Integer)
+    combo_signals_found:  Mapped[int]      = mapped_column(Integer)
+    fetch_errors:         Mapped[int]      = mapped_column(Integer, default=0)
+    rate_limited_count:   Mapped[int]      = mapped_column(Integer, default=0)
+    tick_duration_seconds: Mapped[float]   = mapped_column(Float)
+    is_order_signal:      Mapped[bool]     = mapped_column(Boolean, default=False)
+
+
+class MultiTfShadowSignal(Base):
+    """MULTI-TF-SHADOW-V1 — 콤보(5m entry BUY + 60m confirm BUY) 매치 시점 기록.
+
+    p1(신호 확정 시점 시세) → p2(60분 확인평가 완료 직후 재조회 시세) 슬리피지가
+    핵심 측정값 — results/multi_timeframe/adverse_selection_measurement.md 의
+    "실측 슬리피지"를 이 콤보 자체의 5분 빈도로 재측정한다. 주문 0건.
+    """
+
+    __tablename__ = "multi_tf_shadow_signal"
+
+    id:               Mapped[int]      = mapped_column(primary_key=True)
+    created_at:       Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+    symbol:           Mapped[str]      = mapped_column(String(16), index=True)
+    entry_tf:         Mapped[str]      = mapped_column(String(8))
+    confirm_tf:       Mapped[str]      = mapped_column(String(8))
+    entry_signal:     Mapped[str]      = mapped_column(String(16))
+    confirm_signal:   Mapped[str]      = mapped_column(String(16))
+    p1_price:         Mapped[float]    = mapped_column(Float)
+    p1_timestamp:     Mapped[datetime] = mapped_column(DateTime)
+    p2_price:         Mapped[float | None]     = mapped_column(Float, nullable=True)
+    p2_timestamp:     Mapped[datetime | None]  = mapped_column(DateTime, nullable=True)
+    elapsed_seconds:  Mapped[float | None]     = mapped_column(Float, nullable=True)
+    slippage_bps:     Mapped[float | None]     = mapped_column(Float, nullable=True)
+    prev_close:       Mapped[float | None]     = mapped_column(Float, nullable=True)
+    confidence:       Mapped[float | None]     = mapped_column(Float, nullable=True)
+    is_order_signal:  Mapped[bool]     = mapped_column(Boolean, default=False)
+    is_live_authorization: Mapped[bool] = mapped_column(Boolean, default=False)
+    closed_at:        Mapped[datetime] = mapped_column(DateTime, default=_utcnow, index=True)
+
+
+class EodLiquidationState(Base):
+    """KIS-PAPER-INTRADAY-FLAT-BY-CLOSE-V1 — 거래일별 장마감 청산 상태 (재시작 복구용).
+
+    거래일(KST) 1행. EOD coordinator 가 상태/lease/진행 요약을 저장해 서버 재시작·
+    절전 복귀·다중 프로세스에서도 *중복 주문 없이* 이어서 처리한다. 주문 자체는
+    기존 sanctioned 경로(route_order → RiskManager → PermissionGate → OrderExecutor)
+    만 사용 — 본 테이블은 상태 기록일 뿐 주문 권한이 아니다(is_live_authorization=False).
+    """
+
+    __tablename__ = "eod_liquidation_state"
+
+    id:               Mapped[int]             = mapped_column(primary_key=True)
+    trading_date:     Mapped[str]             = mapped_column(String(10), index=True)
+    account_key:      Mapped[str]             = mapped_column(String(48), default="", server_default="")
+    state:            Mapped[str]             = mapped_column(String(32), index=True)
+    created_at:       Mapped[datetime]        = mapped_column(DateTime, default=_utcnow)
+    updated_at:       Mapped[datetime]        = mapped_column(DateTime, default=_utcnow)
+    # DB lease — 두 프로세스/중복 start 에서 EOD 청산이 동시에 돌지 않게.
+    lease_owner:      Mapped[str | None]      = mapped_column(String(96), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_reconcile_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_reconcile_ok: Mapped[bool]           = mapped_column(Boolean, default=False)
+    final_verdict_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reason_code:      Mapped[str | None]      = mapped_column(String(64), nullable=True)
+    summary:          Mapped[dict]            = mapped_column(JSON, default=dict)
+    # FLATTEN_INCOMPLETE 운영자 확인 (확인 전까지 다음 거래일 신규 BUY 차단).
+    incident_acknowledged: Mapped[bool]       = mapped_column(Boolean, default=False)
+    acknowledged_by:  Mapped[str | None]      = mapped_column(String(64), nullable=True)
+    acknowledged_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ack_note:         Mapped[str | None]      = mapped_column(String(255), nullable=True)
+    is_live_authorization: Mapped[bool]       = mapped_column(Boolean, default=False)
+
+    __table_args__ = (
+        Index("uq_eod_liquidation_state_date_account", "trading_date", "account_key", unique=True),
+    )
+
+
+class PaperSessionApproval(Base):
+    """Explicit, date/account-scoped authorization for real KIS PAPER orders.
+
+    The account is stored only as a one-way fingerprint.  ``record`` is the
+    exact authorization envelope mirrored to the local fail-closed file, so a
+    desktop/backend restart can restore the approved session without asking
+    the operator to approve the same trading day twice.
+    """
+
+    __tablename__ = "paper_session_approval"
+
+    id:                  Mapped[int]      = mapped_column(primary_key=True)
+    trading_date:        Mapped[str]      = mapped_column(String(10), index=True)
+    account_fingerprint: Mapped[str]      = mapped_column(String(32), index=True)
+    status:              Mapped[str]      = mapped_column(String(16), index=True)
+    approved_by:         Mapped[str]      = mapped_column(String(128))
+    approved_at:         Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    expires_at:          Mapped[datetime] = mapped_column(DateTime, index=True)
+    record:              Mapped[dict]     = mapped_column(JSON)
+
+    __table_args__ = (
+        Index(
+            "uq_paper_session_approval_date_account",
+            "trading_date", "account_fingerprint", unique=True,
+        ),
+    )

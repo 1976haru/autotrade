@@ -35,6 +35,11 @@ from sqlalchemy.orm import Session
 from app.db.models import OrderAuditLog
 
 
+def _scoped(query):
+    from app.kis_paper.account_scope import current_account_scope, scope_query
+    return scope_query(query, OrderAuditLog, current_account_scope())
+
+
 KST = timezone(timedelta(hours=9))
 
 
@@ -62,7 +67,7 @@ def count_orders_today_kst(
     if today is None:
         today = today_kst()
 
-    rows = db.query(OrderAuditLog.created_at).all()
+    rows = _scoped(db.query(OrderAuditLog.created_at)).all()
     count = 0
     for (ts,) in rows:
         if ts is None:
@@ -89,7 +94,7 @@ def compute_today_realized_pnl(
         today = datetime.now(tz).date()
 
     rows = (
-        db.query(OrderAuditLog)
+        _scoped(db.query(OrderAuditLog))
           .filter(
               OrderAuditLog.executed.is_(True),
               OrderAuditLog.avg_fill_price.isnot(None),
@@ -178,7 +183,7 @@ def compute_weekly_realized_pnl_kst(
     week_start = week_start_kst(today)
 
     rows = (
-        db.query(OrderAuditLog)
+        _scoped(db.query(OrderAuditLog))
           .filter(
               OrderAuditLog.executed.is_(True),
               OrderAuditLog.avg_fill_price.isnot(None),
@@ -225,12 +230,18 @@ def compute_weekly_realized_pnl_kst(
     return realized_week
 
 
-def count_consecutive_losing_trades(
+def get_consecutive_loss_state(
     db:        Session,
     *,
     lookback:  int = 50,
-) -> int:
+) -> tuple[int, int | None, datetime | None]:
     """가장 최근의 SELL 매칭(=closed trade)부터 연속해서 손실인 거래 수.
+
+    반환값은 (연속 손실 수, 가장 최근 손실 SELL audit id, 그 SELL의 created_at
+    (tz-aware UTC))이다. 세 번째 값은 호출자가 *시간 기준* 쿨다운(연패 임계
+    도달 후 N분간 신규 BUY 차단)을 계산하는 데 쓴다 — "차단된 BUY 시도 횟수"
+    기준은 다종목 동시스캔 구조에서 한 틱 안에 즉시 소진돼 부적합했다
+    (results/circuit_breaker/time_cooldown_revalidation.md).
 
     예: 최근 SELL부터 역순으로 (lose, lose, win, lose, lose) → 2.
     이익(>=0)이 등장하면 거기서 멈춘다.
@@ -243,10 +254,10 @@ def count_consecutive_losing_trades(
     부분 매칭(예: SELL 10주 중 7주만 매칭)은 매칭된 부분의 PnL로만 평가.
     """
     if lookback <= 0:
-        return 0
+        return 0, None, None
 
     rows = (
-        db.query(OrderAuditLog)
+        _scoped(db.query(OrderAuditLog))
           .filter(
               OrderAuditLog.executed.is_(True),
               OrderAuditLog.avg_fill_price.isnot(None),
@@ -258,7 +269,7 @@ def count_consecutive_losing_trades(
 
     # 1패스: 모든 closed trade의 PnL을 시간순으로 모은다.
     buy_queue: dict[str, deque[tuple[int, int]]] = defaultdict(deque)
-    closed_trade_pnls: list[int] = []
+    closed_trade_pnls: list[tuple[int, int, datetime | None]] = []
 
     for r in rows:
         qty   = r.filled_quantity
@@ -283,14 +294,33 @@ def count_consecutive_losing_trades(
             else:
                 q[0] = (buy_qty - take, buy_price)
         if matched > 0:
-            closed_trade_pnls.append(sell_pnl)
+            ts = r.created_at
+            if ts is not None and ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            closed_trade_pnls.append((r.id, sell_pnl, ts))
 
     # 2패스: 뒤에서부터 trailing — pnl < 0인 동안 카운트.
     tail = closed_trade_pnls[-lookback:]
     count = 0
-    for pnl in reversed(tail):
+    latest_losing_sell_audit_id: int | None = None
+    latest_losing_sell_at: datetime | None = None
+    for audit_id, pnl, ts in reversed(tail):
         if pnl < 0:
             count += 1
+            if latest_losing_sell_audit_id is None:
+                latest_losing_sell_audit_id = audit_id
+                latest_losing_sell_at = ts
         else:
             break
+    return count, latest_losing_sell_audit_id, latest_losing_sell_at
+
+
+def count_consecutive_losing_trades(
+    db:        Session,
+    *,
+    lookback:  int = 50,
+) -> int:
+    count, _latest_losing_sell_audit_id, _latest_losing_sell_at = get_consecutive_loss_state(
+        db, lookback=lookback,
+    )
     return count

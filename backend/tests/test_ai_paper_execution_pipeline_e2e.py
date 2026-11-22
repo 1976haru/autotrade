@@ -182,12 +182,13 @@ def test_strategy_engine_not_connected():
 
 def test_no_candidate_when_no_symbol_and_user_symbols_empty():
     # symbol=None + user_symbols 없음 → fallback universe 가 후보를 채우므로
-    # NO_CANDIDATE 가 아니라 정상 진행 (fallback 50 의 첫 종목 사용).
+    # NO_CANDIDATE 가 아니라 정상 진행 (fallback universe 의 첫 종목 사용 — a90723c 이후 100).
     r = run_paper_pipeline_once(
         symbol=None, force_mock_market_data=True, dry_run=True,
         per_symbol_cap_krw=1_000_000, available_cash_krw=10_000_000,
     )
-    assert r.universe_count == 50
+    from app.universe.default_universe import FALLBACK_MARKET_CAP_TOP100
+    assert r.universe_count == len(FALLBACK_MARKET_CAP_TOP100) == 100
     assert r.symbol is not None
     assert r.result_code == RunOnceResultCode.PAPER_DRY_RUN_OK
 
@@ -315,14 +316,23 @@ def test_api_run_readiness(client):
     res = client.get("/api/auto-paper/run-readiness")
     assert res.status_code == 200
     j = res.json()
-    assert j["universe"]["count"] == 50
-    assert j["universe"]["source"] == "FALLBACK_MARKET_CAP_TOP50"
+    assert j["universe"]["count"] == 100
+    assert j["universe"]["source"] == "FALLBACK_MARKET_CAP_TOP100"
     assert j["permission"]["live_execution_blocked"] is True
     assert j["permission"]["paper_virtual_execution_allowed"] is True
     assert j["can_run_once_diagnostic"] is True
     assert j["is_live_authorization"] is False
     assert "phase" in j["market_session"]
     assert "health_code" in j["loop"]
+
+
+def test_run_readiness_reports_runtime_watch_universe_size(client, monkeypatch):
+    from app.core import runtime_config
+    monkeypatch.setattr(runtime_config, "effective_universe_size", lambda: 200)
+    res = client.get("/api/auto-paper/run-readiness")
+    assert res.status_code == 200
+    assert res.json()["universe"]["count"] == 200
+    assert res.json()["universe"]["source"] == "FALLBACK_MARKET_CAP_TOP200"
 
 
 def test_api_run_once_diagnostic_normal(client):

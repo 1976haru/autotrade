@@ -1,7 +1,7 @@
-"""Agent Council — 4 매매기법 투표 → 단일 BUY/SELL/HOLD 결정 (advisory).
+"""Agent Council — 5 매매기법 투표 → 단일 BUY/SELL/HOLD 결정 (advisory).
 
-ORB Breakout / Momentum / Gap Trading / VWAP 4 전략을 각 종목에 대해 평가해
-`StrategyVote` 를 만들고, 가중 투표 + MarketRegime + RiskOfficer + ChiefTrading
+ORB Breakout / Momentum / Gap Trading / VWAP / Candlestick(양음봉) 5 전략을 각
+종목에 대해 평가해 `StrategyVote` 를 만들고, 가중 투표 + MarketRegime + RiskOfficer + ChiefTrading
 역할을 거쳐 `AgentCouncilDecision` 을 산출한다. risk_profile(보수적/안정적/공격적)
 에 따라 진입 임계가 조정된다.
 
@@ -38,11 +38,14 @@ class CouncilAction(StrEnum):
 
 
 # 전략 ID + 기본 가중치 (사용자 요청서 §2-6).
+# T3(2026-06-12): CANDLE(양음봉) 5번째 추가 — GAP 동급 20(우대 없음, 동등 경쟁자).
+#   집계 루프(run_agent_council)는 이 dict 를 generic 하게 읽어 변경 0줄.
 STRATEGY_WEIGHTS: dict[str, int] = {
     "MOMENTUM": 30,
     "VWAP":     25,
     "ORB":      25,
     "GAP":      20,
+    "CANDLE":   20,
 }
 
 # risk_profile 별 council 임계 (진입 게이트). min_confidence 는 risk_profile
@@ -109,14 +112,15 @@ class StrategyVote:
         }
 
 
-# P-23: 4 전략 canonical 순서 (episode votes 누락 0건 보장 기준).
-STRATEGY_ORDER: tuple[str, ...] = ("ORB", "MOMENTUM", "GAP", "VWAP")
+# P-23: canonical 순서 (episode votes 누락 0건 보장 기준).
+# T3(2026-06-12): CANDLE 추가 — placeholder/S3 스냅샷에 5번째 행으로 항상 기록됨.
+STRATEGY_ORDER: tuple[str, ...] = ("ORB", "MOMENTUM", "GAP", "VWAP", "CANDLE")
 
 
 def placeholder_strategy_votes() -> list[dict[str, Any]]:
-    """전략 평가가 아예 불가능한 경우(후보/시세 없음) 4 전략 placeholder vote.
+    """전략 평가가 아예 불가능한 경우(후보/시세 없음) 5 전략 placeholder vote.
 
-    episode.votes 에 ORB/MOMENTUM/GAP/VWAP 4개가 *항상* 존재하도록 보장한다.
+    episode.votes 에 ORB/MOMENTUM/GAP/VWAP/CANDLE 5개가 *항상* 존재하도록 보장한다.
     실제 평가가 수행되면 caller 가 council.votes 의 to_dict() 를 사용한다.
     """
     out: list[dict[str, Any]] = []
@@ -399,15 +403,51 @@ def evaluate_vwap(inp: StrategyMarketInput) -> StrategyVote:
                         "VWAP 근접 — 방향성 약함", reason_code="VWAP_NEUTRAL")
 
 
+def evaluate_candlestick(inp: StrategyMarketInput) -> StrategyVote:
+    """양음봉(캔들) — 시가 대비 현재가 방향(양봉/음봉) + 꼬리(매수·매도세) 비율.
+
+    T3(2026-06-12): 5번째 투표자. ORB/MOMENTUM/GAP/VWAP 와 *동등 경쟁* (가중치 20,
+    GAP 동급, 우대 없음). 입력 DTO 변경 0 — open_price/current_price/opening_range_*
+    재사용. 데이터 없으면 HOLD + reason_code(silent 실패 0).
+    """
+    o, c = inp.open_price, inp.current_price
+    if o is None or c is None or o <= 0:
+        return StrategyVote("CANDLE", CouncilAction.HOLD, 0.0, 0,
+                            "캔들 데이터 부족(시가/현재가 없음)",
+                            reason_code="INSUFFICIENT_CANDLE_DATA")
+    body = (c - o) / o
+    hi = inp.opening_range_high if inp.opening_range_high is not None else max(o, c)
+    lo = inp.opening_range_low if inp.opening_range_low is not None else min(o, c)
+    rng = max(hi - lo, 1e-9)
+    upper_wick = max(0.0, (hi - max(o, c)) / rng)   # 윗꼬리 비율(매도 압력)
+    lower_wick = max(0.0, (min(o, c) - lo) / rng)   # 아래꼬리 비율(매수 지지)
+    sc = _score_from_magnitude(body, full_at=0.03)
+    # 양봉 + 아래꼬리 우세(매수세 유입) → BUY.
+    if body > 0.005 and lower_wick >= upper_wick:
+        return StrategyVote("CANDLE", CouncilAction.BUY,
+                            _clamp01(0.5 + body * 6 + lower_wick * 0.2), sc,
+                            f"양봉 +{body*100:.1f}% (아래꼬리 매수세)",
+                            risk_flags=_volume_risk_flags(inp))
+    # 음봉 + 윗꼬리 우세(매도세) → SELL.
+    if body < -0.005 and upper_wick >= lower_wick:
+        return StrategyVote("CANDLE", CouncilAction.SELL,
+                            _clamp01(0.5 + abs(body) * 6 + upper_wick * 0.2), sc,
+                            f"음봉 {body*100:.1f}% (윗꼬리 매도세)",
+                            risk_flags=_volume_risk_flags(inp))
+    return StrategyVote("CANDLE", CouncilAction.HOLD, 0.3, 30,
+                        "캔들 방향성 약함(도지/혼조)", reason_code="CANDLE_NEUTRAL")
+
+
 _EVALUATORS = {
     "ORB": evaluate_orb, "MOMENTUM": evaluate_momentum,
     "GAP": evaluate_gap, "VWAP": evaluate_vwap,
+    "CANDLE": evaluate_candlestick,
 }
 
 
 def evaluate_all_strategies(inp: StrategyMarketInput) -> list[StrategyVote]:
-    """4 전략 모두 평가 — 고정 순서(MOMENTUM/VWAP/ORB/GAP, 가중치 순)."""
-    return [_EVALUATORS[s](inp) for s in ("MOMENTUM", "VWAP", "ORB", "GAP")]
+    """5 전략 모두 평가 — 고정 순서(MOMENTUM/VWAP/ORB/GAP/CANDLE, 가중치 순)."""
+    return [_EVALUATORS[s](inp) for s in ("MOMENTUM", "VWAP", "ORB", "GAP", "CANDLE")]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -416,9 +456,12 @@ def evaluate_all_strategies(inp: StrategyMarketInput) -> list[StrategyVote]:
 
 
 def _exit_plan_for(profile: RiskProfile) -> dict[str, Any]:
-    pol = policy_for(profile)
-    sl = round(pol.default_stop_loss_pct * 100, 2)      # % 표기
-    return {"stop_loss_pct": sl, "take_profit_pct": round(sl * 2, 2),
+    # C1(2026-06-10): 손절/익절은 profile 무관 — config + 런타임 오버라이드(effective
+    #   getter, 매 호출 fresh)에서 읽는다. 익절은 손절 2× 가 아니라 독립 값.
+    from app.core.runtime_config import (
+        effective_stop_loss_pct, effective_take_profit_pct)
+    return {"stop_loss_pct": round(effective_stop_loss_pct(), 2),
+            "take_profit_pct": round(effective_take_profit_pct(), 2),
             "trailing_stop": False}
 
 
@@ -428,8 +471,9 @@ def run_agent_council(
     risk_profile: RiskProfile | str | None = None,
     held_position: bool = False,
     position: "PositionContext | None" = None,
+    min_confidence_floor: float | None = None,
 ) -> AgentCouncilDecision:
-    """4 전략 투표 → MarketRegime → RiskOfficer → ChiefTrading → 최종 결정.
+    """5 전략 투표 → MarketRegime → RiskOfficer → ChiefTrading → 최종 결정.
 
     held_position=True 면 SELL 판단(청산)을 허용 — 보유 없으면 SELL 은 HOLD 로
     강등(naked SELL 방지). broker 호출 0건.
@@ -444,6 +488,14 @@ def run_agent_council(
         held_position = position.is_sellable
     profile = policy_for(risk_profile).profile
     thr = _PROFILE_THRESHOLDS[profile]
+    # SSOT 정합(2026-06-05): config 의 주문 게이트 min_confidence 가 진실원.
+    #   council 진입 임계는 *프리셋 값과 config floor 중 더 엄격한 값* 으로 클램프
+    #   한다 — 어떤 프리셋도 config 보다 관대할 수 없게 해, council 후보 임계와
+    #   실제 주문 게이트(auto_permission 의 kis_paper_auto_min_confidence)가
+    #   어긋나지 않도록 한다. floor=None(미주입) 이면 기존 프리셋 임계 그대로.
+    entry_min_confidence = float(thr["min_confidence"])
+    if min_confidence_floor is not None:
+        entry_min_confidence = max(entry_min_confidence, float(min_confidence_floor))
     votes = evaluate_all_strategies(inp)
 
     # 1. 가중 투표 집계.
@@ -494,9 +546,9 @@ def run_agent_council(
         if regime_block_buy:
             final = CouncilAction.HOLD
             reasons.append(f"장세({inp.market_regime}/{inp.regime_decision})로 신규 BUY 억제")
-        elif confidence < thr["min_confidence"]:
+        elif confidence < entry_min_confidence:
             final = CouncilAction.HOLD
-            reasons.append(f"confidence {confidence:.2f} < 임계 {thr['min_confidence']:.2f}")
+            reasons.append(f"confidence {confidence:.2f} < 임계 {entry_min_confidence:.2f}")
         elif quality < thr["min_quality"]:
             final = CouncilAction.HOLD
             reasons.append(f"quality_score {quality} < 임계 {int(thr['min_quality'])}")
@@ -532,11 +584,14 @@ def run_agent_council(
     exit_plan: dict[str, Any] = {}
     exit_plan_validation: dict[str, Any] = {}
     if final == CouncilAction.BUY:
-        pol = policy_for(profile)
-        sl_pct = round(pol.default_stop_loss_pct * 100, 2)
+        # C1: 손절/익절 = effective getter(config + 런타임 오버라이드, profile 무관).
+        from app.core.runtime_config import (
+            effective_stop_loss_pct, effective_take_profit_pct)
+        sl_pct = round(effective_stop_loss_pct(), 2)
+        tp_pct = round(effective_take_profit_pct(), 2)
         plan_obj = build_default_exit_plan(
             entry_price=inp.current_price, risk_profile=profile.value,
-            stop_loss_pct=sl_pct, take_profit_pct=round(sl_pct * 2, 2),
+            stop_loss_pct=sl_pct, take_profit_pct=tp_pct,
         )
         vres = validate_exit_plan(
             plan_obj.to_dict() if plan_obj is not None else None,
@@ -554,12 +609,16 @@ def run_agent_council(
     pos_sell_reason: str | None = None
     if position is not None and held_position:
         from app.agents.position_context import infer_position_sell_reason
-        _pol = policy_for(profile)
-        _def_sl_pct = round(_pol.default_stop_loss_pct * 100, 2)
+        # ★C1: 보유 포지션 청산 임계값도 effective getter(매 사이클 fresh) — 손절을
+        #   장중 낮추면 *기존 보유* 도 다음 사이클부터 새 임계값으로 청산 판단된다.
+        from app.core.runtime_config import (
+            effective_stop_loss_pct, effective_take_profit_pct)
+        _sl_pct = round(effective_stop_loss_pct(), 2)
+        _tp_pct = round(effective_take_profit_pct(), 2)
         pos_sell_reason = infer_position_sell_reason(
-            position, default_stop_loss_pct=_def_sl_pct,
-            default_take_profit_pct=round(_def_sl_pct * 2, 2),
-            default_trailing_stop_pct=_def_sl_pct)   # 트레일링 default ≈ stop 폭.
+            position, default_stop_loss_pct=_sl_pct,
+            default_take_profit_pct=_tp_pct,
+            default_trailing_stop_pct=_sl_pct)   # 트레일링 default ≈ stop 폭.
         if pos_sell_reason is not None:
             final = CouncilAction.SELL
             reasons.append(f"보유 포지션 청산 트리거({pos_sell_reason}) — SELL")

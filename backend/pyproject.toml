@@ -2,6 +2,12 @@
 line-length = 120
 target-version = "py312"
 
+[tool.ruff.lint]
+# Keep CI deterministic across Ruff releases.  These are Ruff's historical
+# core defaults; optional modernization/style families are adopted only in a
+# dedicated cleanup change, never implicitly through ``ruff>=0.6``.
+select = ["E4", "E7", "E9", "F"]
+
 # fix/global-ci-stabilization-before-next-step:
 # 구조적으로 *의도된* 위반 패턴을 per-file-ignore — 후속 리팩터 PR 에서 코드
 # 스타일 정리 시 다시 enable 가능. 본 PR 의 목적은 CI baseline 안정화이며,

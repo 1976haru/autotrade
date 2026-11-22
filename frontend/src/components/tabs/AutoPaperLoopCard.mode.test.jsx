@@ -57,6 +57,8 @@ describe("AutoPaperLoopCard V2 mode display", () => {
     render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
     const v = await screen.findByTestId("paper-auto-mode-value");
     expect(v.textContent).toBe("KIS_REALTIME_PAPER_AUTO");
+    expect((await screen.findByTestId("paper-operational-mode-value")).textContent)
+      .toBe("PAPER_TRADING");
     const block = await screen.findByTestId("paper-auto-mode");
     expect(block.getAttribute("data-price-source")).toBe("kis");
     expect(block.textContent).toMatch(/여러 종목/);

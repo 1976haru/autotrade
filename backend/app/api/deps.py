@@ -7,7 +7,7 @@ from app.brokers.kis_client import KisClient
 from app.brokers.mock_broker import MockBrokerAdapter
 from app.core.config import get_settings
 from app.core.modes import OperationMode
-from app.core.rate_limiter import SlidingWindowRateLimiter
+from app.core.rate_limiter import get_kis_rate_limiter
 from app.market.base import MarketDataAdapter
 from app.market.mock import MockMarketData
 from app.risk.risk_manager import RiskManager, RiskPolicy
@@ -25,20 +25,18 @@ def _get_kis_broker() -> KisBrokerAdapter:
         # No credentials yet — return a bare adapter; the first real call
         # raises a clear error. Operator must set KIS_APP_KEY / KIS_APP_SECRET.
         return KisBrokerAdapter()
-    limiter = SlidingWindowRateLimiter(
-        max_calls=settings.kis_rate_limit_calls,
-        window_seconds=settings.kis_rate_limit_window_seconds,
-    )
+    # 계좌 단위 공유 limiter — 모든 KisClient 가 동일 인스턴스를 써야 aggregate
+    # 호출이 KIS 한도 이하로 묶인다(per-instance limiter 는 합산 시 초과 → EGW00201).
     client = KisClient(
         settings.kis_app_key,
         settings.kis_app_secret,
         is_paper=settings.kis_is_paper,
-        rate_limiter=limiter,
+        rate_limiter=get_kis_rate_limiter(),
     )
     return KisBrokerAdapter(client=client)
 
 
-def get_broker() -> BrokerAdapter:
+def get_broker(settings_override=None) -> BrokerAdapter:
     """Returns the broker for the current operation mode.
 
     LIVE_SHADOW → KIS (read-only quotes / balance / positions). RiskManager
@@ -53,7 +51,7 @@ def get_broker() -> BrokerAdapter:
     All other modes → Mock. Real LIVE order routing for
     LIVE_MANUAL_APPROVAL / LIVE_AI_ASSIST lands in follow-up PRs.
     """
-    settings = get_settings()
+    settings = settings_override or get_settings()
     mode = settings.default_mode
 
     if mode == OperationMode.PAPER:
@@ -63,12 +61,45 @@ def get_broker() -> BrokerAdapter:
                 "routing paper-mode orders to the KIS live server. "
                 "Set KIS_IS_PAPER=true or change DEFAULT_MODE."
             )
-        return _get_kis_broker()
+        if settings_override is None:
+            return _get_kis_broker()
+        if not settings.kis_app_key or not settings.kis_app_secret:
+            return KisBrokerAdapter()
+        client = KisClient(
+            settings.kis_app_key, settings.kis_app_secret, is_paper=True,
+            rate_limiter=get_kis_rate_limiter(),
+        )
+        return KisBrokerAdapter(client=client)
 
     if mode == OperationMode.LIVE_SHADOW:
         return _get_kis_broker()
 
     return get_mock_broker()
+
+
+def get_kis_paper_broker(settings_override) -> KisBrokerAdapter:
+    """Construct the PAPER adapter for an already-approved session.
+
+    This operation mode is selected by the date/account-bound session and must
+    not fall back to SIM/MOCK merely because the global desktop mode is SIM.
+    The adapter still hard-pins ``is_paper=True``; LIVE is never selectable here.
+    """
+    settings = settings_override
+    if bool(getattr(settings, "enable_live_trading", False)):
+        raise RuntimeError("LIVE_TRADING_MUST_BE_OFF")
+    if not bool(getattr(settings, "kis_is_paper", False)):
+        raise RuntimeError("KIS_PAPER_ACCOUNT_REQUIRED")
+    key = getattr(settings, "kis_app_key", None)
+    secret = getattr(settings, "kis_app_secret", None)
+    account = getattr(settings, "kis_account_no", None)
+    if not key or not secret:
+        return KisBrokerAdapter(
+            app_key=key, app_secret=secret, account_no=account, is_paper=True,
+        )
+    client = KisClient(key, secret, is_paper=True, rate_limiter=get_kis_rate_limiter())
+    return KisBrokerAdapter(
+        app_key=key, app_secret=secret, account_no=account, is_paper=True, client=client,
+    )
 
 
 @lru_cache

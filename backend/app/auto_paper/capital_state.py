@@ -414,7 +414,7 @@ class CapitalState:
     실현).
     """
 
-    def __init__(self, *, initial_cash_krw: int) -> None:
+    def __init__(self, *, initial_cash_krw: int, persist: bool = False) -> None:
         if int(initial_cash_krw) < 0:
             raise ValueError(
                 f"initial_cash_krw must be >= 0, got {initial_cash_krw}"
@@ -427,6 +427,41 @@ class CapitalState:
         self._buy_count: int = 0
         self._sell_count: int = 0
         self._last_event_at: str | None = None
+        # PART1-3: 영속화 opt-in. persist=True 이면 commit/reset 후 저장하고,
+        # 생성 시점에 저장된 상태가 있으면 복원한다. 기본 False → 기존 동작 유지
+        # (테스트/임시 인스턴스는 영속 안 함).
+        self._persist: bool = bool(persist)
+        if self._persist:
+            self._maybe_restore_unlocked()
+
+    def _maybe_restore_unlocked(self) -> None:
+        """영속 파일이 있으면 복원. 없거나 손상 시 initial 유지 (★0원 아님)."""
+        try:
+            from app.auto_paper.capital_persistence import load_state
+            restored = load_state()
+        except Exception:  # noqa: BLE001 — 복원 실패는 initial 로 진행.
+            restored = None
+        if not restored:
+            return
+        # initial_cash 는 *현재 config* 값을 우선 — 운영자가 시드머니를 바꿨을
+        # 수 있으므로, 저장된 initial 이 아니라 생성자 initial 을 유지하고
+        # 현금/원금/실현손익/카운트만 복원한다.
+        self._available_cash_krw = int(restored["available_cash_krw"])
+        self._invested_krw = int(restored["invested_krw"])
+        self._realized_pnl_krw = int(restored["realized_pnl_krw"])
+        self._buy_count = int(restored["buy_count"])
+        self._sell_count = int(restored["sell_count"])
+        self._last_event_at = restored.get("last_event_at")
+
+    def _maybe_save_unlocked(self) -> None:
+        """현재 상태를 best-effort 저장. 실패는 흐름을 막지 않음."""
+        if not self._persist:
+            return
+        try:
+            from app.auto_paper.capital_persistence import save_state
+            save_state(self._snapshot_unlocked().to_dict())
+        except Exception:  # noqa: BLE001 — 저장 실패는 non-fatal.
+            pass
 
     def reset(self, *, initial_cash_krw: int) -> CapitalStateSnapshot:
         """전체 상태 리셋 (테스트 / 운영자 명시 초기화)."""
@@ -442,6 +477,7 @@ class CapitalState:
             self._buy_count = 0
             self._sell_count = 0
             self._last_event_at = None
+            self._maybe_save_unlocked()
             return self._snapshot_unlocked()
 
     def snapshot(self) -> CapitalStateSnapshot:
@@ -517,6 +553,7 @@ class CapitalState:
                 symbol, q, p, required,
                 self._available_cash_krw, self._invested_krw,
             )
+            self._maybe_save_unlocked()
             return self._snapshot_unlocked()
 
     def commit_sell(
@@ -564,6 +601,7 @@ class CapitalState:
                 symbol, q, p, proceeds, cost, realized,
                 self._available_cash_krw, self._invested_krw,
             )
+            self._maybe_save_unlocked()
             return self._snapshot_unlocked()
 
     def _snapshot_unlocked(self) -> CapitalStateSnapshot:
@@ -583,16 +621,34 @@ class CapitalState:
 # ============================================================================
 
 
+def _persistence_enabled() -> bool:
+    """영속화 opt-in 여부 — 환경변수 `PAPER_CAPITAL_PERSIST=true` 일 때만.
+
+    기본 False → 기존 테스트/임시 인스턴스는 영속하지 않음 (실 OS 폴더 미오염).
+    운영(.env / main startup)에서만 켜서 재시작 간 잔고를 유지한다. 안전 flag
+    5종 (LIVE/AI/FUTURES/KIS_IS_PAPER/DEFAULT_MODE) 과 *무관* — 단지 Paper 현금
+    상태를 디스크에 보존할지 여부.
+    """
+    import os
+    return os.environ.get("PAPER_CAPITAL_PERSIST", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
 @lru_cache
 def _get_state_singleton() -> CapitalState:
-    """최초 호출 시 PaperCapitalConfig 의 initial_cash 로 초기화."""
+    """최초 호출 시 PaperCapitalConfig 의 initial_cash 로 초기화.
+
+    `PAPER_CAPITAL_PERSIST=true` 이면 영속 파일에서 현금/원금/실현손익을
+    복원하고, 이후 commit/reset 시 저장한다 (PART1-3).
+    """
     try:
         from app.auto_paper.capital_config import get_paper_capital_config
         cfg = get_paper_capital_config()
         initial = int(cfg.initial_cash)
     except Exception:  # noqa: BLE001 — config 미가용 시 안전 default.
         initial = 10_000_000
-    return CapitalState(initial_cash_krw=initial)
+    return CapitalState(initial_cash_krw=initial, persist=_persistence_enabled())
 
 
 def get_capital_state() -> CapitalState:

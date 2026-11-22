@@ -21,6 +21,7 @@ import { AppVersionCard } from "../common/AppVersionCard";
 import { PreflightSmokeCard } from "../common/PreflightSmokeCard";
 import { RuntimeEventLogViewer } from "../common/RuntimeEventLogViewer";
 import { UniverseStatusCard } from "../common/UniverseStatusCard";
+import { ThemeFilterCard } from "../common/ThemeFilterCard";
 import { LiveSafetyStatusCard } from "../common/LiveSafetyStatusCard";
 import { ProgramIntegrityGateCard } from "../common/ProgramIntegrityGateCard";
 import { PremarketReadinessGateCard } from "../common/PremarketReadinessGateCard";
@@ -29,6 +30,9 @@ import { FinalPrebuildGateCard } from "../common/FinalPrebuildGateCard";
 import { backendApi } from "../../services/backend/client";
 import { APP_INFO, appVersionLine } from "../../config/appInfo";
 import { latestReleaseNote } from "../../config/releaseNotes";
+// UI 대정리: 홈에서 옮겨온 진단/테스트 카드 (시스템 영역). 홈 5블록 정리.
+import { MonitoringCard } from "./MonitoringCard";
+import { KisPaperOneClickTestCard } from "./KisPaperOneClickTestCard";
 
 
 // 버전 / 공지 카드 — Settings 탭 상단에 노출. VersionBadge 클릭 시 release
@@ -253,6 +257,14 @@ export function Settings({ settings }) {
           모순(연결됨+실패 동시) 표시를 차단. read-only, broker 호출 0건. */}
       <BackendSidecarStatusCard />
 
+      {/* UI 대정리: 시스템 안정성 모니터링 — 홈에서 이동(홈은 5블록만).
+          server/DB/API 오류율/데이터 지연/주문 실패율/승인 대기/리스크/알림. read-only. */}
+      <MonitoringCard />
+
+      {/* UI 대정리: 한투 모의투자 AI 자동매매 원클릭 테스트 — 홈에서 이동.
+          실제 돈 0원, KIS_IS_PAPER=true / ENABLE_LIVE_TRADING=false 강제. */}
+      <KisPaperOneClickTestCard />
+
       {/* #63 / 8-01: EXE Preflight Smoke Test — health/config/KIS/DB/auto loop/
           Agent Council/Decision Episode/build 를 한 번에 점검 PASS/WARN/FAIL.
           read-only, 주문 발생 0건, 자격정보 미포함. */}
@@ -261,6 +273,9 @@ export function Settings({ settings }) {
       {/* #54 / 7-02: 기본 Universe 50개 상태 — 사용자 관심종목 없으면 기본 50개
           fallback, source/count/preview/사유 표시. read-only, 주문 기능 아님. */}
       <UniverseStatusCard />
+
+      {/* 테마 기능 3a: 신규 진입 후보만 제외. 보유 union/청산 경로는 유지. */}
+      <ThemeFilterCard />
 
       {/* #56 / 7-04: 통합 오류/이벤트 로그 뷰어 — RuntimeEvent / AI 판단 /
           KIS 주문 이벤트를 최근 100건 한 화면에서 확인. source/severity/검색

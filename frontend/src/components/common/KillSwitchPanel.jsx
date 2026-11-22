@@ -8,10 +8,10 @@
  * **자동 청산 / 자동 취소 버튼은 절대 만들지 않는다** — read-only candidate
  * count만 표시. 실제 취소 / 청산은 별도 수동 승인 흐름 (#37 절대 원칙 5/6/7).
  *
- * 정책:
- * - LEVEL 1 신규 매수 중단
- * - LEVEL 2 미체결 취소 후보 표시
- * - LEVEL 3 청산 후보 표시
+ * 정책 (P0-SAFETY-FIX-V1, backend app/risk/kill_switch_policy.py 가 단일 진실):
+ * - LEVEL 1 신규 매수 중단 — 보유 청산·장마감 강제청산·미체결 매수 취소는 계속
+ * - LEVEL 2 + 자동 주문·취소 전부 중단, 미체결 취소 후보 표시 (MTS/HTS 직접 조치)
+ * - LEVEL 3 + 청산 후보 표시 (MTS/HTS 직접 조치)
  *
  * 본 컴포넌트는 토글 버튼을 내장하지 않는다 — 실제 토글 UI는 StrategyRisk
  * 탭의 기존 EmergencyStopConfirmModal이 담당. 본 컴포넌트는 *상태 표시*만.
@@ -31,9 +31,9 @@ const LEVEL_META = {
 };
 
 const LEVEL_ROWS = [
-  { id: "LEVEL_1", title: "LEVEL 1", desc: "신규 매수 즉시 중단" },
-  { id: "LEVEL_2", title: "LEVEL 2", desc: "미체결 취소 후보 표시 (자동 취소 X)" },
-  { id: "LEVEL_3", title: "LEVEL 3", desc: "청산 후보 표시 (자동 전량청산 X)" },
+  { id: "LEVEL_1", title: "LEVEL 1", desc: "신규 매수 즉시 중단 (보유 청산·장마감 강제청산·미체결 매수 취소는 계속)" },
+  { id: "LEVEL_2", title: "LEVEL 2", desc: "자동 주문·취소 전부 중단 · 미체결 취소 후보 표시 (MTS/HTS 직접 조치)" },
+  { id: "LEVEL_3", title: "LEVEL 3", desc: "자동 주문·취소 전부 중단 · 청산 후보 표시 (MTS/HTS 직접 조치)" },
 ];
 
 

@@ -34,6 +34,21 @@ def _ensure_migration_logger_enabled():
     log.disabled = prev_disabled
 
 
+@pytest.fixture(autouse=True)
+def _restore_main_apply_migrations():
+    """본 모듈은 app.main.apply_migrations 를 가짜(실패/지연)로 바꾼다 — 원복하지 않으면
+    이후 *다른* 테스트의 TestClient(app) lifespan 이 가짜 실패 마이그레이션을 실행한다
+    (예전엔 MIGRATION_NONBLOCKING=true env 누수가 이를 가려 왔음)."""
+    import app.db.migration_runner as runner
+    import app.main as main_module
+    from app.db.session import apply_migrations as real_apply
+    original_app = main_module.app
+    yield
+    main_module.app = original_app
+    main_module.apply_migrations = real_apply  # type: ignore[assignment]
+    runner.reset_status_for_tests()
+
+
 def _make_app_with(migration_nonblocking: bool, fake_apply):
     """`MIGRATION_NONBLOCKING` env + 가짜 apply 를 set 한 후 app.main 을
     reload 해 새 FastAPI 인스턴스 반환."""

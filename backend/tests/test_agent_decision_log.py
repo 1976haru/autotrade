@@ -453,6 +453,42 @@ class TestQuery:
         assert e.auto_apply_allowed is False
         assert e.is_live_authorization is False
 
+    def test_reason_code_surfaced_from_meta(self, db):
+        # U7: 주문 보류/차단 사유 코드(meta.reason_code)를 entry 가 노출 → UI 가
+        #   한국어로 매핑("일일 한도로 보류" 등). 정직성: 데이터에 있을 때만 표시.
+        from datetime import datetime, timezone
+        from app.auto_paper.decision_log import (
+            _row_to_entry, PAPER_DECISION_LOG_MODE, PAPER_DECISION_LOG_SOURCE,
+        )
+        from app.db.models import AgentDecisionLog
+        row = AgentDecisionLog(
+            created_at=datetime.now(timezone.utc), agent_name="PaperDecisionBridge",
+            symbol="005930", mode=PAPER_DECISION_LOG_MODE, decision="SELL",
+            confidence=None, reasons=["약세 청산"],
+            meta={"decision_id": "d1", "source_module": PAPER_DECISION_LOG_SOURCE,
+                  "reason_code": "KIS_PAPER_ORDER_LIMIT_EXCEEDED"},
+        )
+        db.add(row)
+        db.flush()
+        e = _row_to_entry(row)
+        assert e.reason_code == "KIS_PAPER_ORDER_LIMIT_EXCEEDED"
+        assert e.to_dict()["reason_code"] == "KIS_PAPER_ORDER_LIMIT_EXCEEDED"
+
+    def test_reason_code_none_when_absent(self, db):
+        from datetime import datetime, timezone
+        from app.auto_paper.decision_log import (
+            _row_to_entry, PAPER_DECISION_LOG_MODE, PAPER_DECISION_LOG_SOURCE,
+        )
+        from app.db.models import AgentDecisionLog
+        row = AgentDecisionLog(
+            created_at=datetime.now(timezone.utc), agent_name="PaperDecisionBridge",
+            symbol="005930", mode=PAPER_DECISION_LOG_MODE, decision="HOLD",
+            confidence=None, reasons=[], meta={"source_module": PAPER_DECISION_LOG_SOURCE},
+        )
+        db.add(row)
+        db.flush()
+        assert _row_to_entry(row).reason_code is None
+
     def test_query_filter_by_action(self, db):
         exp = _exp(recommended=[
             _se("sma_crossover", "005930"),
@@ -616,3 +652,52 @@ class TestStaticGuards:
     def test_no_settings_mutation(self):
         src = self._source()
         assert not re.search(r"settings\.enable_[a-z_]+\s*=", src)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KIS 실시간 스캔 경로 매핑 (2026-06-12) — broker_order_no → paper_order_id
+#   체결·전송된 SELL 이 "사유 확인 중" 으로 오표시되던 버그 회귀 가드.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestKisScanOrderMapping:
+    import datetime as _dt
+
+    def _row(self, meta, *, decision="SELL", symbol="068270"):
+        from datetime import datetime, timezone
+        return AgentDecisionLog(
+            id=1, created_at=datetime(2026, 6, 12, 4, 1, tzinfo=timezone.utc),
+            agent_name="PaperPipeline", symbol=symbol, mode="PAPER",
+            decision=decision, confidence=100, reasons=["SELL 채택"],
+            meta=meta, chain_id="c1",
+        )
+
+    def test_broker_order_no_maps_to_paper_order_id_when_sent(self):
+        # KIS 스캔: 주문번호는 meta.broker_order_no, 전송여부는 broker_order_sent/submitted.
+        from app.auto_paper.decision_log import _row_to_entry
+        e = _row_to_entry(self._row({
+            "broker_order_no": "0000028616", "broker_order_sent": True,
+            "submitted": True, "reason_code": "KIS_PAPER_SUBMITTED",
+        }))
+        assert e.paper_order_id == "0000028616"   # submitted=true → "사유 확인 중" 아님
+        assert e.paper_fill_status == "PAPER_PENDING"
+
+    def test_dryrun_or_unsent_does_not_fake_submission(self):
+        # 미전송(broker_order_sent=False, submitted=False) → paper_order_id None (정직).
+        from app.auto_paper.decision_log import _row_to_entry
+        e = _row_to_entry(self._row({
+            "broker_order_no": "0000099999", "broker_order_sent": False,
+            "submitted": False, "dry_run": True,
+        }))
+        assert e.paper_order_id is None
+        assert e.paper_fill_status is None
+
+    def test_explicit_paper_order_id_still_preferred(self):
+        # 기존 PaperDecisionBridge 경로(meta.paper_order_id) 는 그대로 유지.
+        from app.auto_paper.decision_log import _row_to_entry
+        e = _row_to_entry(self._row({
+            "paper_order_id": "PAPER-9001", "paper_fill_status": "PAPER_FILLED",
+            "broker_order_no": "0000000001", "broker_order_sent": True,
+        }))
+        assert e.paper_order_id == "PAPER-9001"
+        assert e.paper_fill_status == "PAPER_FILLED"

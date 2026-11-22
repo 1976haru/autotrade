@@ -36,7 +36,6 @@ from app.kis_paper.auto_permission import (
     evaluate_kis_paper_order_permission,
 )
 
-
 _log = logging.getLogger("autotrade.kis_paper.auto")
 
 # route_order 와 동일 시그니처의 콜러블 — 테스트는 mock 주입.
@@ -85,6 +84,9 @@ class KisPaperAutoDecision:
     # KIS 모의주문 전송(not dry_run)은 price_source="kis" 에서만 허용된다.
     price_source:         str               = "kis"
     price_is_stale:       bool              = False
+    # INTRADAY-FLAT-BY-CLOSE-V1: 주문 목적 — "" (side 로 유도) / "EOD_FORCED_EXIT"
+    #   (장마감 강제청산 coordinator 만 설정). 게이트가 목적별 시간창/한도를 적용.
+    order_purpose:        str               = ""
 
     def __post_init__(self) -> None:
         if self.is_short_entry is not False:
@@ -179,19 +181,40 @@ class KisPaperAutoResult:
         }
 
 
+def _accepts_kwarg(fn: Any, name: str) -> bool:
+    import inspect
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(
+        p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+
+
 def _today_kis_paper_order_count(db: Session, now: datetime) -> int:
-    """오늘(UTC date) KIS 모의 자동주문(trade_reason='kis_paper_auto') 카운트."""
+    """오늘(UTC date) KIS 모의 자동 *BUY* 주문(trade_reason='kis_paper_auto') 카운트.
+
+    ★일일 주문 *횟수* 한도(max_orders_per_day)는 *신규 진입(BUY)에만* 적용된다
+    (auto_permission 게이트가 side==BUY 에서만 차단). 따라서 카운트도 BUY 만 세야
+    한다 — 예전엔 BUY+SELL 전부 세어, 실패/청산 SELL 이 BUY 횟수 예산을 소진시켜
+    BUY 를 전량 차단했다(2026-06-09: 실패 SELL 250건이 카운트를 10 초과로 부풀려
+    BUY 1,046건 차단). A수정(SELL 한도 면제) 정신과 정합 — SELL 은 횟수 예산을
+    소진하지 않는다.
+    """
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     try:
-        return (
+        from app.kis_paper.account_scope import current_account_scope, scope_query
+        query = scope_query(
             db.query(OrderAuditLog)
             .filter(OrderAuditLog.trade_reason == "kis_paper_auto")
             .filter(OrderAuditLog.created_at >= start)
             .filter(OrderAuditLog.executed.is_(True))
-            .count()
+            .filter(OrderAuditLog.side == "BUY")   # ★BUY 만 — SELL 은 횟수 면제(A수정 정합)
+            , OrderAuditLog, current_account_scope(),
         )
+        return query.count()
     except Exception:  # noqa: BLE001
-        return 0
+        return 2**31 - 1
 
 
 def build_permission_input(
@@ -203,8 +226,12 @@ def build_permission_input(
     emergency_stop: bool,
     daily_order_count: int,
     now: datetime,
+    buy_blocked_by_incident: bool = False,
 ) -> KisPaperOrderPermissionInput:
     """settings + decision → 게이트 입력 DTO (secret 값 없음)."""
+    _pos_qty = int(getattr(decision, "position_quantity", 0) or 0)
+    from app.kis_paper.order_limits import resolve_kis_paper_order_limits
+    paper_limits = resolve_kis_paper_order_limits(settings)
     return KisPaperOrderPermissionInput(
         enable_kis_paper_auto_trading=bool(getattr(settings, "enable_kis_paper_auto_trading", False)),
         dry_run=bool(getattr(settings, "kis_paper_auto_order_dry_run", True)),
@@ -218,16 +245,50 @@ def build_permission_input(
         confidence=float(decision.confidence),
         quality_score=int(decision.quality_score),
         has_exit_plan=bool(decision.has_exit_plan),
-        max_order_notional=int(getattr(settings, "kis_paper_auto_max_order_notional", 1_000_000)),
+        max_order_notional=paper_limits.max_order_krw,
         daily_order_count=int(daily_order_count),
-        max_orders_per_day=int(getattr(settings, "kis_paper_auto_max_orders_per_day", 10)),
+        max_orders_per_day=paper_limits.daily_buy_count,
         window_start=str(getattr(settings, "kis_paper_auto_order_window_start", "09:05")),
         window_end=str(getattr(settings, "kis_paper_auto_order_window_end", "14:50")),
         min_confidence=float(getattr(settings, "kis_paper_auto_min_confidence", 0.6)),
         min_quality_score=int(getattr(settings, "kis_paper_auto_min_quality_score", 60)),
+        # 결함 B 수정(2026-06-25): *보유 포지션 청산* SELL 은 리스크 *축소* 이므로 진입용
+        #   confidence/quality 게이트를 면제한다. 종전엔 sell_reason ∈ {STOP_LOSS,
+        #   TAKE_PROFIT} 만 면제해, avg=0 등으로 강제손절이 죽고 vote(VWAP_BREAKDOWN)로만
+        #   청산이 나올 때 진입게이트(0.6/60)에 막혀 손실 포지션이 청산되지 않았다
+        #   (06-25 STOP_LOSS 0건). held_position 이거나 청산성 reason_code 면 면제.
+        #   ★naked SELL(미보유 매도)은 council(held_position=False→HOLD) + bridge
+        #   (SELL_NO_HELD_POSITION)에서 이미 차단되므로, 면제는 *실보유 청산*에만 적용된다.
+        #   is_risk_exit 는 auto_permission 에서 confidence/quality *만* 우회 —
+        #   emergency_stop / order-window / notional / daily-cap 은 그대로 적용된다.
+        is_risk_exit=(
+            str(decision.side).upper() == "SELL"
+            and (
+                bool(getattr(decision, "held_position", False))
+                or str(getattr(decision, "sell_reason_code", "") or "").upper()
+                in ("STOP_LOSS", "TAKE_PROFIT", "TRAILING_STOP", "MARKET_CLOSE_EXIT")
+            )
+        ),
         price_source=str(getattr(decision, "price_source", "kis") or "kis"),
         price_is_stale=bool(getattr(decision, "price_is_stale", False)),
+        fill_polling_enabled=bool(getattr(settings, "kis_paper_fill_polling", False)),
         now=now,
+        # INTRADAY-FLAT-BY-CLOSE-V1: 목적별 게이트 입력.
+        order_purpose=str(getattr(decision, "order_purpose", "") or ""),
+        max_exit_order_notional=int(getattr(
+            settings, "kis_paper_auto_max_exit_order_notional", 0) or 0),
+        quantity=int(decision.quantity),
+        # SELL 이고 보유 수량이 알려졌을 때만 초과매도 검증 (0/미상 = -1 → 생략).
+        held_quantity=(_pos_qty if (str(decision.side).upper() == "SELL" and _pos_qty > 0)
+                       else -1),
+        buy_cutoff_minutes_before_close=int(getattr(
+            settings, "kis_paper_buy_cutoff_minutes_before_close", 60) or 60),
+        flatten_minutes_before_close=int(getattr(
+            settings, "kis_paper_eod_flatten_minutes_before_close", 15) or 15),
+        allow_closing_auction_exit=bool(getattr(
+            settings, "kis_paper_eod_closing_auction_orders_enabled", False)),
+        calendar_override_path=str(getattr(settings, "krx_calendar_override_path", "") or ""),
+        buy_blocked_by_incident=bool(buy_blocked_by_incident),
     )
 
 
@@ -256,12 +317,83 @@ async def execute_kis_paper_auto_order(
     chain_id = chain_id or f"kis-paper-{uuid.uuid4().hex[:12]}"
 
     daily_count = _today_kis_paper_order_count(db, now)
+    # P0 (2026-11-03): 실시간 스캔 호출자가 emergency_stop 인자를 빠뜨려도
+    # 실행기 자체가 권위 있는 런타임 RiskManager 상태를 읽어야 한다. 종전에는
+    # 기본값 False 때문에 dry-run 결과가 KIS_PAPER_DRY_RUN_OK 로 기록되어
+    # LEVEL_1 차단 원인이 가려졌다. 새 정책 LEVEL_1 의 reduce-only SELL/EOD 는
+    # 초기 permission gate 에서 통과시키고, route_order 가 브로커 보유수량으로
+    # 최종 검증한다. LEVEL_2/3 및 legacy strict 는 BUY/SELL 모두 조기 차단한다.
+    from app.risk.emergency_stop import synchronize_kill_switch_for_order
+    emergency_policy = synchronize_kill_switch_for_order(risk, db)
+    if emergency_policy.active:
+        permission_emergency_stop = (
+            True if str(decision.side).upper() == "BUY"
+            else not emergency_policy.allows_reduce_only_sell
+        )
+    else:
+        # 테스트/호환 호출자가 명시한 정지 신호도 절대 완화하지 않는다.
+        permission_emergency_stop = bool(emergency_stop)
+    # INTRADAY-FLAT-BY-CLOSE-V1: 직전 거래일 EOD 미완료(운영자 미확인)면 신규 BUY 차단.
+    #   여기선 조기 사유 표시용(조회 실패 시 미차단) — 권위 있는 fail-closed 재검증은
+    #   route_order 의 program_buy_block_reason 이 수행한다.
+    eod_incident = False
+    if str(decision.side).upper() == "BUY":
+        try:
+            from app.kis_paper.intraday_buy_gate import eod_incident_block
+            eod_incident = eod_incident_block(db, now) is not None
+        except Exception:  # noqa: BLE001
+            eod_incident = False
+    from app.kis_paper.one_click_session import effective_session_settings
+    permission_settings = effective_session_settings(settings, db=db)
     perm = evaluate_kis_paper_order_permission(build_permission_input(
-        settings=settings, decision=decision,
+        settings=permission_settings, decision=decision,
         broker_is_kis_paper=broker_is_kis_paper,
         credentials_present=credentials_present,
-        emergency_stop=emergency_stop, daily_order_count=daily_count, now=now,
+        emergency_stop=permission_emergency_stop,
+        daily_order_count=daily_count, now=now,
+        buy_blocked_by_incident=eod_incident,
     ))
+
+    # Only the real KIS adapter can carry a real external order. Every such
+    # order requires a date/account-bound approval and fresh read-only KIS
+    # preflight; a config switch must never bypass this. FakeBroker tests and
+    # internal simulation remain usable without an operator KIS approval.
+    if perm.allowed:
+        try:
+            from dataclasses import replace
+
+            from app.brokers.kis import KisBrokerAdapter
+            from app.kis_paper.one_click_session import authorize_order, load_approval
+            try:
+                approval_present = load_approval(db) is not None
+            except TypeError:  # compatibility with injected zero-argument readers
+                approval_present = load_approval() is not None
+            is_real_kis_paper_adapter = (
+                isinstance(broker, KisBrokerAdapter) and bool(broker.is_paper)
+            )
+            if is_real_kis_paper_adapter and (not perm.dry_run or approval_present):
+                approved, approval_reason = await authorize_order(
+                    db=db, settings=settings, broker=broker, risk=risk,
+                    side=str(decision.side), symbol=str(decision.symbol),
+                    quantity=int(decision.quantity), now=now,
+                    notional_krw=int(decision.notional_krw or 0),
+                    daily_order_count=int(daily_count),
+                )
+                if approved:
+                    perm = replace(perm, dry_run=False)
+                else:
+                    perm = replace(
+                        perm, allowed=False,
+                        reason_code="ONE_CLICK_PAPER_BLOCKED",
+                        reason_message=approval_reason,
+                    )
+        except Exception as exc:  # fail closed; never fall through to routing
+            from dataclasses import replace
+            perm = replace(
+                perm, allowed=False,
+                reason_code="ONE_CLICK_PAPER_GATE_ERROR",
+                reason_message=f"{type(exc).__name__}",
+            )
 
     # P-26: SELL 이면 매도 사유 reason_code 를 AgentDecisionLog / ledger 에 carry.
     # 2-11: Agent Council 이 sell_reason 을 이미 전달했으면(decision) 그 값을 우선,
@@ -403,10 +535,15 @@ async def execute_kis_paper_auto_order(
         # ai_decision_meta + AgentDecisionLog 에 기록.
         from app.core.modes import OperationMode
         from app.risk.risk_manager import RiskDecision
-        routing = await route_order_fn(
+        route_kwargs: dict[str, Any] = dict(
             order=order, requested_by_ai=False, mode=OperationMode.PAPER,
             broker=broker, risk=risk, db=db,
         )
+        # INTRADAY-FLAT-BY-CLOSE-V1: 같은 서버 시계로 route_order 의 신규 BUY 컷오프를
+        #   재검증하도록 now 전달 (route_order 가 받는 경우만 — 테스트 fake 호환).
+        if _accepts_kwarg(route_order_fn, "now"):
+            route_kwargs["now"] = now
+        routing = await route_order_fn(**route_kwargs)
     except Exception as exc:  # noqa: BLE001 — 주문 흐름이 죽지 않게.
         _log.warning("[kis-paper-auto] route_order raised: %s: %s",
                      type(exc).__name__, exc)

@@ -40,7 +40,9 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 
-_EXPECTED = {"ORB", "MOMENTUM", "GAP", "VWAP"}
+# T3(3c632f2): CANDLE 이 5번째 voter 로 추가됨 — 기대값은 코드 계약(STRATEGY_ORDER)에서 유도.
+_EXPECTED = {"ORB", "MOMENTUM", "GAP", "VWAP", "CANDLE"}
+_N = len(_EXPECTED)
 
 
 def _market_input():
@@ -85,7 +87,7 @@ class TestCouncilVotes:
         cd = _council_dict()
         names = {v["strategy"] for v in cd["votes"]}
         assert names == _EXPECTED
-        assert len(cd["votes"]) == 4
+        assert len(cd["votes"]) == _N
 
     def test_each_vote_has_all_fields(self):
         for v in _council_dict()["votes"]:
@@ -125,7 +127,7 @@ class TestPlaceholders:
     def test_placeholder_four_votes(self):
         pv = placeholder_strategy_votes()
         assert {v["strategy"] for v in pv} == _EXPECTED
-        assert len(pv) == 4
+        assert len(pv) == _N
 
     def test_placeholder_fields(self):
         for v in placeholder_strategy_votes():
@@ -136,7 +138,7 @@ class TestPlaceholders:
             assert v["weight"] > 0
 
     def test_strategy_order(self):
-        assert STRATEGY_ORDER == ("ORB", "MOMENTUM", "GAP", "VWAP")
+        assert STRATEGY_ORDER == ("ORB", "MOMENTUM", "GAP", "VWAP", "CANDLE")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -155,7 +157,7 @@ class TestEpisodeVoteStorage:
         ep = get_episode(db, eid)
         names = {v["strategy"] for v in ep["votes"]}
         assert names == _EXPECTED, f"{action}: vote 누락 — {names}"
-        assert len(ep["votes"]) == 4
+        assert len(ep["votes"]) == _N
 
     def test_episode_council_scores_and_selected(self, db):
         cd = _council_dict()
@@ -185,7 +187,7 @@ class TestEpisodeVoteStorage:
         ep = list_episodes(db, limit=1)[0]
         vs = ep["vote_summary"]
         assert set(vs["strategies"]) == _EXPECTED
-        assert vs["buy_vote_count"] + vs["sell_vote_count"] + vs["hold_vote_count"] == 4
+        assert vs["buy_vote_count"] + vs["sell_vote_count"] + vs["hold_vote_count"] == _N
         assert vs["top_strategy"] in _EXPECTED
 
 

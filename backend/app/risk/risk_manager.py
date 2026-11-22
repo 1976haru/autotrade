@@ -141,6 +141,12 @@ class RiskPolicy:
     # 기존 hard reject "daily loss limit reached"가 그대로 잡는다.
     weekly_loss_limit:    int   = 0    # 주간 누적 realized PnL 한도 (양수)
     consecutive_loss_limit: int = 0    # 연속 손실 거래 수 임계
+    # 쿨다운은 *시간* 기준(경과 분) — "차단된 BUY 시도 횟수" 기준이었던 초기
+    # 버전은 다종목 동시스캔(예: 300종목/30초 틱) 구조에서 한 틱 안에 즉시
+    # 소진돼 의도(연패 후 몇 십 분 쉬기)와 실제 동작이 어긋났다
+    # (results/circuit_breaker/time_cooldown_revalidation.md).
+    consecutive_loss_cooldown_minutes: int = 0
+    consecutive_loss_enabled_modes: frozenset[str] = field(default_factory=frozenset)
     daily_loss_warn_pct:    float = 0.0  # max_daily_loss의 X%; 0 = 비활성
     daily_loss_reduce_pct:  float = 0.0  # max_daily_loss의 Y%; 0 = 비활성
     weekly_loss_warn_pct:   float = 0.0
@@ -192,6 +198,15 @@ class RiskPolicy:
             max_symbol_exposure_pct          = settings.max_symbol_exposure_pct,
             auto_stop_consecutive_rejections = settings.auto_stop_consecutive_rejections,
             max_orders_per_day               = settings.max_orders_per_day,
+            consecutive_loss_limit = getattr(settings, "risk_consecutive_loss_limit", 0),
+            consecutive_loss_cooldown_minutes = getattr(
+                settings, "risk_consecutive_loss_cooldown_minutes", 0,
+            ),
+            consecutive_loss_enabled_modes = frozenset(
+                settings.risk_consecutive_loss_mode_set()
+                if hasattr(settings, "risk_consecutive_loss_mode_set")
+                else ()
+            ),
         )
 
 
@@ -275,9 +290,16 @@ class RiskManager:
         self.policy = policy or RiskPolicy()
         self.daily_realized_pnl = 0
         self.emergency_stop = False
+        # P0-SAFETY-FIX-V1: 단계(kill_switch_level)와 정책 버전. level 미상/버전<2 정지는
+        #   legacy strict(모든 주문 차단) — app/risk/kill_switch_policy.py.
+        self.kill_switch_level = None
+        self.kill_switch_policy_version = 0
 
     def set_emergency_stop(self, enabled: bool) -> None:
+        # level 없는 boolean 토글(자동정지·legacy 호출) — 단계 미상이므로 strict.
         self.emergency_stop = enabled
+        self.kill_switch_level = None
+        self.kill_switch_policy_version = 0
 
     def set_ai_disabled(self, enabled: bool) -> None:
         """178: 운영자 in-memory 토글. RiskPolicy의 default 외에도 런타임 변경
@@ -299,6 +321,7 @@ class RiskManager:
         # 시그니처 호환 — keyword-only + default None.
         weekly_realized_pnl:    int | None = None,
         consecutive_loss_count: int | None = None,
+        paper_position_limits=None,
     ) -> RiskCheckResult:
         # Hard short-circuit: emergency_stop is the operator's "stop everything"
         # signal. It must REJECT across every mode — including LIVE_MANUAL_APPROVAL
@@ -306,11 +329,22 @@ class RiskManager:
         # otherwise queue the order behind the alarm. Returning here also keeps
         # the audit row's reason list focused on the actual cause rather than
         # piling on incidental violations.
+        #
+        # P0-SAFETY-FIX-V1: 새 정책 LEVEL_1 만 예외 — 브로커 확인 보유 이내 reduce-only SELL
+        # (PAPER/SIMULATION)은 아래 일반 평가로 계속 진행. 그 외(BUY·LEVEL_2/3·legacy) 전부 거부.
         if self.emergency_stop:
-            return RiskCheckResult(
-                decision=RiskDecision.REJECTED,
-                reasons=["emergency stop is enabled"],
-            )
+            from app.risk.kill_switch_policy import emergency_block_reason
+            blocked = emergency_block_reason(
+                self, side=getattr(order.side, "value", order.side), symbol=order.symbol,
+                quantity=int(order.quantity), positions=positions, mode=mode)
+            if blocked is not None:
+                # 첫 사유는 기존 문자열 그대로(감사로그·UI·check_order BLOCKED 매핑 호환), 단계별
+                # 상세는 둘째 사유로.
+                from app.risk.kill_switch_policy import STRICT_REASON
+                return RiskCheckResult(
+                    decision=RiskDecision.REJECTED,
+                    reasons=[STRICT_REASON] + ([blocked] if blocked != STRICT_REASON else []),
+                )
 
         # 178: AI kill-switch — emergency_stop과 같은 hard short-circuit이지만
         # requested_by_ai=True인 주문에만 적용. 운영자가 strategy/manual은 두고
@@ -387,7 +421,9 @@ class RiskManager:
         # of truth. evaluate_order의 inline 로직 대신 본 rule이 담당. 기존
         # reason/passed 문자열은 그대로 유지 (기존 26+ 테스트 호환).
         order_notional = latest_price * order.quantity
-        pl_rule = PositionLimitRule(policy_from_risk_policy(self.policy))
+        pl_rule = PositionLimitRule(
+            paper_position_limits or policy_from_risk_policy(self.policy)
+        )
         pl_input = PositionLimitInput(
             order=order, balance=balance, positions=positions, latest_price=latest_price,
         )
@@ -404,7 +440,15 @@ class RiskManager:
         # daily loss / cash availability — position-limit이 아니므로 RiskManager
         # 본체에 그대로 둔다.
         if self.daily_realized_pnl <= -abs(self.policy.max_daily_loss):
-            result.reasons.append("daily loss limit reached")
+            # INTRADAY-FLAT-BY-CLOSE-V1: 일일 손실 한도 도달은 *신규 노출* 을 막는 장치다.
+            #   보유 수량 이내 reduce-only SELL(손절/장마감 청산)까지 막으면 손실 포지션을
+            #   못 닫아 손실이 더 커진다 → 청산은 통과 (손실 방어 우선, loss_limits 의
+            #   block_buy 정책과 정합). 무보유/초과 SELL 은 종전대로 차단.
+            if pl_rule.is_reduce_only_sell(pl_input):
+                result.passed.append(
+                    "daily loss limit reached — reduce-only SELL allowed (exposure reduction)")
+            else:
+                result.reasons.append("daily loss limit reached")
         else:
             result.passed.append("daily loss limit not reached")
 
@@ -481,7 +525,9 @@ class RiskManager:
         if requested_by_ai and not can_ai_execute(mode, enable_ai_execution=self.policy.enable_ai_execution):
             result.reasons.append("AI execution is not allowed in current mode")
 
-        if mode.name.startswith("LIVE") and not can_place_live_order(mode, enable_live_trading=self.policy.enable_live_trading):
+        if mode.name.startswith("LIVE") and not can_place_live_order(
+            mode, enable_live_trading=self.policy.enable_live_trading,
+        ):
             result.reasons.append("live trading is disabled by global safety flag")
 
         if result.reasons:

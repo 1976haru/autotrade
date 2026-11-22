@@ -331,11 +331,20 @@ def _resolve_paper_broker_kind(settings) -> str:
 
 def _kis_auto_config(settings) -> dict:
     from app.kis_paper.real_tick_runner import should_use_real_tick_runner
+    from app.kis_paper.order_limits import resolve_kis_paper_order_limits
+    limits = resolve_kis_paper_order_limits(settings)
     return {
         "enable_kis_paper_auto_trading": bool(settings.enable_kis_paper_auto_trading),
         "dry_run":                       bool(settings.kis_paper_auto_order_dry_run),
         "max_orders_per_day":            int(settings.kis_paper_auto_max_orders_per_day),
-        "max_order_notional":            int(settings.kis_paper_auto_max_order_notional),
+        "max_order_notional":            limits.max_order_krw,
+        "paper_order_limits_policy":     limits.policy_version,
+        "paper_total_budget_krw":        limits.total_budget_krw,
+        "paper_per_symbol_krw":          limits.per_symbol_krw,
+        "paper_max_positions":           limits.max_positions,
+        "paper_daily_buy_count":         limits.daily_buy_count,
+        "paper_daily_buy_krw":           limits.daily_buy_krw,
+        "paper_buys_per_tick":           limits.buys_per_tick,
         "window_start":                  settings.kis_paper_auto_order_window_start,
         "window_end":                    settings.kis_paper_auto_order_window_end,
         "min_confidence":                float(settings.kis_paper_auto_min_confidence),
@@ -360,12 +369,31 @@ def get_kis_paper_auto_status() -> dict:
     .env 에서만 변경.
     """
     settings = get_settings()
+    from app.kis_paper.one_click_session import (
+        effective_session_settings,
+        session_trading_authorized,
+    )
+    session_approved = session_trading_authorized(settings)
+    effective_settings = effective_session_settings(settings)
     rd = evaluate_readiness(settings)
     return {
-        **_kis_auto_config(settings),
+        # The configured fail-safe remains OFF/dry-run.  A current, account-scoped
+        # desktop approval grants only this PAPER session its effective order mode.
+        **_kis_auto_config(effective_settings),
+        "configured_enable_kis_paper_auto_trading": bool(
+            settings.enable_kis_paper_auto_trading),
+        "configured_dry_run": bool(settings.kis_paper_auto_order_dry_run),
+        "paper_session_approved": session_approved,
         # 4-01: 자격 종합 + 4종 per-credential present + 누락 키 이름 목록.
         # *값 원문 0건* — boolean / 키 이름만.
         "credentials_present":      rd.credentials_present,
+        "market_data_provider":     str(settings.market_data_provider),
+        "account_connection_state": (
+            "CONNECTED" if rd.credentials_present and settings.kis_is_paper
+            else "QA_MODE_KIS_ACCOUNT_NOT_CONNECTED"
+            if str(settings.market_data_provider).lower() == "mock"
+            else "KIS_CREDENTIALS_MISSING"
+        ),
         "kis_app_key_present":      rd.kis_key_present,
         "kis_app_secret_present":   rd.kis_secret_present,
         "kis_account_no_present":   rd.kis_account_present,
@@ -381,7 +409,7 @@ def get_kis_paper_auto_status() -> dict:
         # 자격 미설정이면 False (= BLOCKED). 실거래 권한과 무관.
         "kis_paper_auto_ready": bool(
             rd.can_run_kis_paper
-            and settings.enable_kis_paper_auto_trading
+            and effective_settings.enable_kis_paper_auto_trading
             and not settings.enable_live_trading
             and not settings.enable_ai_execution
         ),
@@ -426,13 +454,27 @@ async def post_kis_paper_auto_run_once(
     """
     settings = get_settings()
     rd = evaluate_readiness(settings)
+    now = _run_once_now()
+    side = body.side.strip().upper()
+    # FIRST-ORDER-PREFLIGHT-01: 사용자 입력 가격을 신뢰하지 않는다. 서버가 브로커(KIS)
+    #   현재가·시세 시각을 직접 조회해 (1) 출처 (2) 신선도 (3) 입력가와의 괴리를 재검증하고,
+    #   주문 판단에는 *서버 조회가* 와 *실제 출처* 를 쓴다. 조회 실패/괴리 초과 → 주문 0.
+    verify = await _verify_run_once_price(broker, body.symbol, int(body.price), settings, now)
+    if side in ("BUY", "SELL") and not verify["ok"]:
+        return {
+            "reason_code": verify["reason_code"], "reason_message": verify["reason_message"],
+            "submitted": False, "broker_order_sent": False, "price_check": verify,
+            "broker_order_type": "KIS_PAPER", "is_live_authorization": False,
+        }
     decision = KisPaperAutoDecision(
-        symbol=body.symbol, side=body.side.strip().upper(),
-        quantity=int(body.quantity), price=int(body.price),
+        symbol=body.symbol, side=side,
+        quantity=int(body.quantity), price=int(verify.get("server_price") or body.price),
         selected_strategies=list(body.selected_strategies or []),
         confidence=float(body.confidence), quality_score=int(body.quality_score),
         entry_reason=body.entry_reason, has_exit_plan=bool(body.has_exit_plan),
         exit_plan=dict(body.exit_plan or {}),
+        price_source=str(verify.get("price_source") or "unknown"),
+        price_is_stale=bool(verify.get("is_stale", True)),
     )
     try:
         result = await execute_kis_paper_auto_order(
@@ -442,6 +484,7 @@ async def post_kis_paper_auto_run_once(
                 rd.kis_key_present and rd.kis_secret_present and rd.kis_account_present
             ),
             route_order_fn=route_order,
+            now=now,
         )
         db.commit()
     except Exception as exc:   # noqa: BLE001 — 흐름이 500 으로 죽지 않게.
@@ -454,4 +497,129 @@ async def post_kis_paper_auto_run_once(
             "broker_order_sent":     False,
             "is_live_authorization": False,
         }
-    return result.to_dict()
+    out = result.to_dict()
+    out["price_check"] = verify
+    return out
+
+
+def _run_once_now():
+    """run-once 서버 시계 (테스트에서 monkeypatch). 프론트 시각 미사용."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc)
+
+
+async def _verify_run_once_price(broker, symbol: str, client_price: int, settings,
+                                 now) -> dict:
+    """브로커 현재가 재조회 + 출처/신선도/괴리 검증 (주문 write 0 — read-only get_price)."""
+    from datetime import datetime, timezone
+    max_age = int(getattr(settings, "stale_price_max_age_seconds", 60) or 60)
+    max_dev = float(getattr(settings, "kis_paper_run_once_max_price_deviation_pct", 1.0) or 1.0)
+    base = {"client_price": int(client_price), "max_age_seconds": max_age,
+            "max_deviation_pct": max_dev, "ok": False}
+    try:
+        q = await broker.get_price(symbol)
+    except Exception as exc:  # noqa: BLE001
+        return {**base, "reason_code": "RUN_ONCE_QUOTE_UNAVAILABLE",
+                "reason_message": f"브로커 현재가 조회 실패({type(exc).__name__}) — 주문하지 않습니다."}
+    price = int(getattr(q, "price", 0) or 0)
+    source = str(getattr(q, "source", "") or "unknown").lower()
+    try:
+        ts = datetime.fromisoformat(str(q.timestamp))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        age = (now - ts).total_seconds()
+    except Exception:  # noqa: BLE001
+        age = None
+    stale = age is None or age > max_age or age < -5
+    dev = (abs(client_price - price) / price * 100.0) if price > 0 else None
+    info = {**base, "server_price": price, "price_source": source,
+            "quote_timestamp": str(getattr(q, "timestamp", "")),
+            "quote_age_seconds": None if age is None else round(age, 1),
+            "deviation_pct": None if dev is None else round(dev, 3), "is_stale": stale}
+    if price <= 0:
+        return {**info, "reason_code": "RUN_ONCE_QUOTE_INVALID",
+                "reason_message": "브로커 현재가가 0 이하 — 주문하지 않습니다."}
+    if stale:
+        return {**info, "reason_code": "RUN_ONCE_QUOTE_STALE",
+                "reason_message": f"브로커 시세가 오래됨(> {max_age}초) — 주문하지 않습니다."}
+    if dev is not None and dev > max_dev:
+        return {**info, "reason_code": "RUN_ONCE_PRICE_MISMATCH",
+                "reason_message": (f"입력가 {client_price} 가 서버 조회가 {price} 와 "
+                                   f"{dev:.2f}% 차이(> {max_dev}%) — 주문하지 않습니다.")}
+    # 출처 검증은 게이트(auto_permission: KIS_REALTIME_PRICE_REQUIRED)가 실제 출처로 수행 —
+    #   dry-run 진단은 mock 출처도 허용하되 실제 전송은 kis 출처에서만 통과한다.
+    return {**info, "ok": True, "reason_code": "RUN_ONCE_PRICE_VERIFIED",
+            "reason_message": "서버가 브로커 현재가·시세 시각을 재검증했습니다."}
+
+
+# ── KIS-PAPER-INTRADAY-FLAT-BY-CLOSE-V1: 장마감 당일 청산 상태 / 운영자 확인 ──────
+
+
+@router.get("/eod/status")
+def get_kis_paper_eod_status(db: Session = Depends(get_db)) -> dict:
+    """장중 단타 세션(14:30 매수마감·15:15 강제청산·15:30 마감) + EOD 청산 상태.
+
+    read-only — broker 호출 0건 (driver 의 마지막 대조 결과만). 서버 시계 기준
+    판단이므로 프론트 시각과 무관하다. 실거래 권한 아님.
+    """
+    from app.auto_paper.background_driver import get_background_tick_driver
+    from app.kis_paper.eod_liquidation import eod_status
+    out = eod_status(db)
+    drv = get_background_tick_driver()
+    out["background_driver_running"] = bool(drv.is_running)
+    out["background_driver_enabled"] = bool(drv.status().get("enabled"))
+    out["service_kind"] = "CONTINUOUS_BACKGROUND_DRIVER"
+    # P0-SAFETY-FIX-V1: EOD 를 실제로 관리하는 실행기 — driver(종일 운용) / guardian(청산 전용) / 없음.
+    from app.auto_paper.background_driver import get_eod_guardian
+    guardian = get_eod_guardian()
+    out["eod_guardian_running"] = bool(guardian.is_running)
+    out["eod_manager"] = ("BACKGROUND_DRIVER" if drv.is_running
+                          else "EOD_GUARDIAN" if guardian.is_running else "NONE")
+    out["notice"] = (
+        "정상 종일 운용은 백엔드 상시 서비스(background driver)가 수행합니다. "
+        "설정 화면의 quick(3틱)/slow(20틱) 시험은 단발 점검이며 종일 운용이 아닙니다. "
+        "PC 절전·앱 종료·네트워크 단절 시 15:15 청산이 실행되지 않을 수 있습니다."
+    )
+    return out
+
+
+@router.get("/eod/shutdown-check")
+def get_kis_paper_eod_shutdown_check(db: Session = Depends(get_db)) -> dict:
+    """데스크톱 앱 종료 전 확인 — 보유/미체결이 있으면 종료 시 자동 청산 불가 경고.
+    read-only (DB/마지막 대조 요약), broker 호출 0건."""
+    from app.kis_paper.eod_liquidation import shutdown_check
+    return shutdown_check(db)
+
+
+class _EodAckBody(BaseModel):
+    trading_date: str
+    decided_by:   str
+    note:         Optional[str] = None
+    account:      Optional[str] = None
+
+
+@router.post("/eod/acknowledge")
+def post_kis_paper_eod_acknowledge(body: _EodAckBody, db: Session = Depends(get_db)) -> dict:
+    """FLATTEN_INCOMPLETE(또는 미판정) 운영자 확인 — 다음 거래일 신규 BUY 차단 해제.
+
+    사고 기록(state)은 그대로 보존. 주문 0건. 운영자는 KIS 모의계좌에서 잔여 보유를
+    직접 확인/정리한 뒤 호출해야 한다.
+    """
+    from app.kis_paper.eod_liquidation import acknowledge_incident
+    if not (body.decided_by or "").strip():
+        raise HTTPException(status_code=400, detail="decided_by is required")
+    account = (body.account or "").strip()
+    if account and account not in ("LEGACY_ACCOUNT", "CURRENT"):
+        raise HTTPException(status_code=400, detail="account must be LEGACY_ACCOUNT, CURRENT or omitted")
+    try:
+        row = acknowledge_incident(db, trading_date=body.trading_date,
+                                   decided_by=body.decided_by.strip(), note=body.note,
+                                   account_key="" if account == "LEGACY_ACCOUNT" else None)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "trading_date": row.trading_date, "state": row.state,
+        "incident_acknowledged": True, "acknowledged_by": row.acknowledged_by,
+        "account": row.account_key or "LEGACY_ACCOUNT",
+        "is_live_authorization": False, "broker_order_sent": False,
+    }

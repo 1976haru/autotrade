@@ -121,6 +121,10 @@ def test_lifespan_emits_backend_ready_marker(startup_log_capture):
     assert "backend ready" in startup_log_capture["joined"]
 
 
+def test_lifespan_emits_final_application_startup_marker(startup_log_capture):
+    assert "[startup] application startup complete;" in startup_log_capture["joined"]
+
+
 def test_lifespan_emits_shutdown_marker(startup_log_capture):
     assert "lifespan exit" in startup_log_capture["joined"]
 

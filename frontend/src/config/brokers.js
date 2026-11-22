@@ -90,4 +90,7 @@ export const BROKERS = {
   },
 };
 
-export const DEFAULT_BROKER = "mirae";
+// U8: 이 프로젝트의 실제 브로커는 KIS(한국투자증권) — backend 가 KisBrokerAdapter
+//   만 사용한다. 헤더/기본값이 'mirae'(미래에셋, 스텁) 로 남아 있던 잔재를 KIS 로
+//   교정한다. brokerId 는 영속화되지 않으므로(useState) 즉시 반영된다.
+export const DEFAULT_BROKER = "kis";

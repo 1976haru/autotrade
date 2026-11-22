@@ -356,9 +356,14 @@ def test_tauri_bundle_resources_excludes_user_env():
         pytest.skip("tauri.conf.json 미존재 — 본 검사 skip")
     conf = json.loads(p.read_text(encoding="utf-8"))
     resources = (conf.get("bundle") or {}).get("resources", [])
-    # 빈 배열 또는 .env / .env.* 패턴 0건.
-    assert isinstance(resources, list), "bundle.resources 가 list 가 아님"
-    for r in resources:
+    # Tauri는 배열과 onedir 원본/대상 매핑을 모두 허용한다.
+    assert isinstance(resources, (list, dict)), "bundle.resources must be a list or mapping"
+    resource_paths = (
+        list(resources)
+        if isinstance(resources, list)
+        else [item for pair in resources.items() for item in pair]
+    )
+    for r in resource_paths:
         assert ".env" not in str(r).lower(), (
             f"bundle.resources 에 .env 관련 항목 포함: '{r}'"
         )

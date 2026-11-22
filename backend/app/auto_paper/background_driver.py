@@ -32,8 +32,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import inspect
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from functools import lru_cache
 from typing import Any, Callable, Optional
@@ -108,6 +109,42 @@ def _redact_secret(text: str) -> str:
     for pat in _SECRET_PATTERNS:
         out = pat.sub("[REDACTED]", out)
     return out[:500]
+
+
+async def _trailing_shadow_tick(now: datetime) -> None:
+    """트레일링 1·2단계(측정+섀도) 1틱 — ★거래 동작에 영향 0(관찰만, 매도 0).
+
+    get_positions(브로커 어댑터 *20s 캐시* — 스캔이 직전에 호출했으면 캐시 히트, EGW 부하 ~0)
+    로 보유 종목을 읽어 최고가(hwm) 영속 추적 + "트레일링이었다면 청산했을지" 섀도 로그.
+    driver_bridge/주문경로 미접촉 — 독립 측정 계층.
+    """
+    from app.api.deps import get_broker
+    from app.db.session import SessionLocal
+    from app.positions.high_watermark import update_and_shadow
+    broker = get_broker()
+    if broker is None or not hasattr(broker, "get_positions"):
+        return
+    positions = await broker.get_positions()
+    db = SessionLocal()
+    try:
+        update_and_shadow(db, positions, now=now)
+    finally:
+        db.close()
+
+
+def _label_outcomes_tick(now: datetime) -> None:
+    """청산 round-trip → 진입 episode 에 outcome 라벨링 1틱 — ★거래 동작에 영향 0(집계만).
+
+    학습(설계 A)의 기법별 expectancy 산출이 가능해지도록, 라이브 청산 거래에 사후 성과를
+    붙인다. 멱등 + 최근분만(소급 X). 학습 자동조정은 여전히 0.
+    """
+    from app.analytics.outcome_labeler import label_closed_round_trips
+    from app.db.session import SessionLocal
+    db = SessionLocal()
+    try:
+        label_closed_round_trips(db, now=now)
+    finally:
+        db.close()
 
 
 @dataclass(frozen=True)
@@ -208,6 +245,13 @@ class BackgroundTickDriver:
         # 위해 *주입된 async 콜러블* 로만 KIS 주문 흐름을 호출한다. 미주입 시
         # `app.kis_paper.driver_bridge.kis_paper_auto_tick` 를 lazy import.
         kis_auto_tick_fn:  Optional[Callable[..., Any]] = None,
+        # 개장 전(PRE_OPEN) 1회 universe 캐시 warmup 콜러블 — 미주입 시
+        # driver_bridge.premarket_warmup_tick lazy import(broker import 회피).
+        premarket_warmup_fn: Optional[Callable[..., Any]] = None,
+        # INTRADAY-FLAT-BY-CLOSE-V1: 장마감 청산 coordinator 1 단계 콜러블 — 미주입 시
+        # eod_liquidation.run_eod_step lazy import. 루프 RUNNING 여부와 *무관* 하게
+        # wall-clock 으로 매 interval 호출 (프론트 polling 의존 0).
+        eod_step_fn: Optional[Callable[..., Any]] = None,
     ):
         self._settings_provider = settings_provider
         self._loop_provider = loop_provider
@@ -219,6 +263,21 @@ class BackgroundTickDriver:
         self._risk_check_builder = risk_check_builder
         self._risk_manager_provider = risk_manager_provider
         self._kis_auto_tick_fn = kis_auto_tick_fn
+        self._premarket_warmup_fn = premarket_warmup_fn
+        self._eod_step_fn = eod_step_fn
+        self._last_eod: dict[str, Any] | None = None
+        self._warmup_date: str | None = None
+        self._warmup_task: asyncio.Task | None = None
+        self._warmup_status = "IDLE"
+        self._warmup_started_at: str | None = None
+        self._warmup_completed_at: str | None = None
+        self._warmup_total_symbols = 0
+        self._warmup_completed_symbols = 0
+        self._warmup_failed_symbols = 0
+        self._warmup_error: str | None = None
+        self._warmup_retry_at: datetime | None = None
+        self._tick_in_progress = False
+        self._last_tick_completed_at: str | None = None    # 당일 1회 warmup 가드 (KST date)
         # 상태.
         self._task: asyncio.Task | None = None
         self._stop_event: asyncio.Event | None = None
@@ -241,6 +300,10 @@ class BackgroundTickDriver:
         # KIS_PAPER_AUTO 최근 주문 결과 carry.
         self._last_broker_order_no: str | None = None
         self._last_order_status: str | None = None
+        # Completed KIS scan summaries only.  A bounded in-memory history is
+        # enough for operational diagnosis and never changes order behavior.
+        self._last_scan_diagnostics: dict[str, Any] = {}
+        self._scan_history: list[dict[str, Any]] = []
 
     # ── settings / loop accessors ──────────────────────────────────────────
 
@@ -342,6 +405,13 @@ class BackgroundTickDriver:
         phase = current_market_phase(now)
         if phase != MarketPhase.OPEN:
             return self._gate(False, BackgroundTickReason.MARKET_CLOSED)
+        # INTRADAY-FLAT-BY-CLOSE-V1: KRX 휴장일(평일 공휴일)도 장 종료로 취급.
+        try:
+            from app.scheduler.intraday_session import IntradayPhase, IntradayPolicy
+            if IntradayPolicy.from_settings(s).phase(now) == IntradayPhase.NON_TRADING_DAY:
+                return self._gate(False, BackgroundTickReason.MARKET_CLOSED)
+        except Exception:  # noqa: BLE001 — 달력 판단 실패는 기존 동작 유지.
+            pass
 
         if state != "RUNNING":
             return self._gate(False, BackgroundTickReason.AUTO_LOOP_NOT_RUNNING)
@@ -563,6 +633,153 @@ class BackgroundTickDriver:
         from app.kis_paper.driver_bridge import kis_paper_auto_tick
         return kis_paper_auto_tick
 
+    def _premarket_warmup_callable(self):
+        """주입된 warmup 콜러블 — 미주입 시 bridge lazy import (broker 무관)."""
+        if self._premarket_warmup_fn is not None:
+            return self._premarket_warmup_fn
+        from app.kis_paper.driver_bridge import premarket_warmup_tick
+        return premarket_warmup_tick
+
+    def _on_warmup_progress(self, completed: int, total: int, failed: int) -> None:
+        self._warmup_completed_symbols = max(0, int(completed))
+        self._warmup_total_symbols = max(0, int(total))
+        self._warmup_failed_symbols = max(0, int(failed))
+
+    async def _run_premarket_warmup(self, now: datetime, today: str) -> None:
+        try:
+            fn = self._premarket_warmup_callable()
+            try:
+                params = inspect.signature(fn).parameters.values()
+                accepts_progress = any(
+                    p.name == "on_progress" or p.kind == inspect.Parameter.VAR_KEYWORD
+                    for p in params
+                )
+            except (TypeError, ValueError):
+                accepts_progress = False
+            if accepts_progress:
+                ret = fn(now=now, on_progress=self._on_warmup_progress)
+            else:
+                ret = fn(now=now)
+            result = await ret if inspect.isawaitable(ret) else ret
+            result = dict(result or {})
+            self._warmup_total_symbols = int(
+                result.get("total_symbols", self._warmup_total_symbols) or 0
+            )
+            self._warmup_completed_symbols = int(
+                result.get("completed_symbols", self._warmup_completed_symbols) or 0
+            )
+            self._warmup_failed_symbols = int(
+                result.get("failed_symbols", self._warmup_failed_symbols) or 0
+            )
+            reason = str(result.get("reason_code") or "WARMUP_DONE")
+            failed = self._warmup_failed_symbols > 0 or reason not in ("WARMUP_DONE",)
+            self._warmup_status = "DEGRADED" if failed else "READY"
+            self._warmup_error = reason if failed else None
+            self._warmup_retry_at = (
+                self._now_provider() + timedelta(minutes=5) if failed else None
+            )
+            self._warmup_completed_at = datetime.now(timezone.utc).isoformat()
+            _log.info("[bg-tick] premarket warmup %s: %s", self._warmup_status, result)
+        except asyncio.CancelledError:
+            self._warmup_status = "STOPPED"
+            raise
+        except Exception as exc:  # noqa: BLE001 ? warmup failures never stop the tick loop.
+            self._warmup_status = "DEGRADED"
+            self._warmup_error = _redact_secret(f"{type(exc).__name__}: {exc}")
+            self._warmup_retry_at = self._now_provider() + timedelta(minutes=5)
+            self._warmup_completed_at = datetime.now(timezone.utc).isoformat()
+            _log.warning("[bg-tick] premarket warmup failed; retry scheduled: %s",
+                         self._warmup_error)
+        finally:
+            if self._warmup_task is asyncio.current_task():
+                self._warmup_task = None
+
+    async def _maybe_premarket_warmup(self, now: datetime) -> None:
+        """Start a non-blocking, bounded warmup once per pre-open session."""
+        if current_market_phase(now) != MarketPhase.PRE_OPEN:
+            return
+        today = to_kst(now).strftime("%Y-%m-%d")
+        if self._warmup_task is not None and not self._warmup_task.done():
+            return
+        if self._warmup_date == today and self._warmup_status == "READY":
+            return
+        if self._warmup_date == today and self._warmup_status == "DEGRADED":
+            if self._warmup_retry_at is not None and now < self._warmup_retry_at:
+                return
+        self._warmup_date = today
+        self._warmup_status = "WARMING_UP"
+        self._warmup_started_at = now.isoformat()
+        self._warmup_completed_at = None
+        self._warmup_completed_symbols = 0
+        self._warmup_failed_symbols = 0
+        self._warmup_error = None
+        self._warmup_retry_at = None
+        # Crucially, do not await this task: the next loop iteration must reach
+        # the market gate/tick even when a symbol's historical bars are slow.
+        self._warmup_task = asyncio.create_task(
+            self._run_premarket_warmup(now, today),
+            name=f"kis-paper-warmup-{today}",
+        )
+
+    async def _cancel_warmup(self) -> None:
+        task = self._warmup_task
+        if task is None or task.done():
+            self._warmup_task = None
+            return
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        self._warmup_task = None
+
+
+    async def maybe_eod_step(self, now: datetime | None = None) -> dict[str, Any] | None:
+        """장마감 청산 coordinator 1 단계 — KIS Paper Auto 활성 시에만.
+
+        루프 상태(RUNNING/STOPPED/PAUSED)와 무관하게 호출 — 운영자가 STOP 해도
+        보유 청산 필요 여부는 계속 관리된다(EMERGENCY_STOP 은 coordinator 가 차단).
+        실패해도 driver 를 죽이지 않는다."""
+        if now is None:
+            now = self._now_provider()
+        s = self._settings()
+        if bool(getattr(s, "enable_live_trading", False)):
+            return None
+        from app.kis_paper.one_click_session import (
+            effective_session_settings, session_trading_authorized,
+        )
+        from app.db.session import SessionLocal
+        approval_db = SessionLocal()
+        try:
+            approved_session = session_trading_authorized(s, db=approval_db)
+            eod_settings = effective_session_settings(s, db=approval_db) if approved_session else s
+        finally:
+            approval_db.close()
+        injected_legacy_step = (
+            self._eod_step_fn is not None
+            and bool(getattr(s, "enable_kis_paper_auto_trading", False))
+        )
+        if not (approved_session or injected_legacy_step):
+            return None
+        try:
+            state = str(self._loop().status(now=now).state)
+        except Exception:  # noqa: BLE001
+            state = None
+        try:
+            fn = self._eod_step_fn
+            if fn is None:
+                from app.kis_paper.eod_liquidation import run_eod_step
+                fn = run_eod_step
+                ret = fn(now=now, loop_state=state, settings=eod_settings)
+            else:
+                ret = fn(now=now, loop_state=state)
+            res = (await ret) if asyncio.iscoroutine(ret) else ret
+            self._last_eod = dict(res or {})
+            return self._last_eod
+        except Exception as exc:  # noqa: BLE001 — EOD 실패가 tick loop 를 죽이지 않음.
+            safe = _redact_secret(f"{type(exc).__name__}: {exc}")
+            _log.warning("[bg-tick] EOD step 실패: %s", safe)
+            self._emit(level="ERROR", code="KIS_PAPER_EOD_STEP_ERROR", message=safe,
+                       details={"is_live_authorization": False})
+            return None
+
     async def kis_paper_tick(self, now: datetime | None = None) -> DriverTickResult:
         """KIS_PAPER_AUTO 1 tick — 게이트 통과 시 주입 콜러블로 KIS 주문 흐름 위임.
 
@@ -594,9 +811,12 @@ class BackgroundTickDriver:
             cycle = int(self._loop().status(now=now).cycle_count)
 
         self._tick_count_today += 1
+        self._tick_in_progress = True
         try:
             res = await self._kis_auto_tick_callable()(now=now)
         except Exception as exc:  # noqa: BLE001 — KIS tick 오류는 loop 를 죽이지 않음.
+            self._tick_in_progress = False
+            self._last_tick_completed_at = datetime.now(timezone.utc).isoformat()
             safe = _redact_secret(f"{type(exc).__name__}: {exc}")
             self._last_reason_code = "KIS_PAPER_ERROR"
             self._last_reason_message = safe
@@ -607,6 +827,8 @@ class BackgroundTickDriver:
                 cycle_count=cycle, recorded_event=True, tick_mode="KIS_PAPER_AUTO",
             )
 
+        self._tick_in_progress = False
+        self._last_tick_completed_at = datetime.now(timezone.utc).isoformat()
         res = dict(res or {})
         rc = str(res.get("reason_code") or "KIS_PAPER_ERROR")
         self._last_reason_code = rc
@@ -616,15 +838,40 @@ class BackgroundTickDriver:
         self._last_fill_status = res.get("fill_status")
         self._last_quantity = int(res.get("quantity") or 0)
         self._last_notional_krw = int(res.get("notional_krw") or 0)
+        scan = dict(res.get("scan_diagnostics") or {})
+        scan["completed_at"] = now.isoformat()
+        scan["cycle"] = cycle
+        scan["candidates_found"] = int(res.get("candidates_found") or 0)
+        scan["orders_attempted"] = int(res.get("orders_attempted") or 0)
+        scan["orders_submitted"] = int(res.get("orders_submitted") or 0)
+        self._last_scan_diagnostics = scan
+        self._scan_history.append(scan)
+        self._scan_history = self._scan_history[-40:]
         recorded = self._emit(
             level="INFO", code=f"KIS_PAPER_TICK_{rc}",
             message=self._last_reason_message,
             details={"executed": True, "cycle": cycle, "tick_mode": "KIS_PAPER_AUTO",
                      "reason_code": rc, "broker_order_no": res.get("broker_order_no"),
                      "submitted": bool(res.get("submitted")),
+                     # Persist the per-cycle audit summary. Keeping this only in
+                     # the 40-entry in-memory ring made Council actions and block
+                     # reasons impossible to reconstruct after EOD or restart.
+                     # This is diagnostic data only and cannot reach the order path.
+                     "scan_diagnostics": scan,
                      "broker_order_sent": bool(res.get("broker_order_sent")),
                      "is_live_authorization": False},
         )
+        # 트레일링 1·2단계(측정+섀도) — ★봇 매도 결정·거래 동작에 영향 0(hwm 기록 + 섀도 로그만).
+        #   스캔/주문이 모두 끝난 *뒤* 관찰만. 실패해도 tick/거래 불변(try/except 격리).
+        try:
+            await _trailing_shadow_tick(now)
+        except Exception:  # noqa: BLE001 — 측정 실패는 거래에 영향 0.
+            pass
+        # 학습용 청산 outcome 라벨링(집계) — ★거래 동작에 영향 0(round-trip→진입 episode 기록만).
+        try:
+            _label_outcomes_tick(now)
+        except Exception:  # noqa: BLE001
+            pass
         return DriverTickResult(
             executed=True, reason_code=rc, reason_message=self._last_reason_message,
             cycle_count=cycle, recorded_event=recorded, tick_mode="KIS_PAPER_AUTO",
@@ -648,8 +895,17 @@ class BackgroundTickDriver:
         _log.info("[bg-tick] driver loop started")
         try:
             while not self._stop_event.is_set():
+                # 개장 전(PRE_OPEN) 당일 1회 universe 캐시 warmup — 콜드 스파이크 평탄화.
+                #   게이트와 무관(주문 0). 실패해도 loop 무영향.
+                await self._maybe_premarket_warmup(self._now_provider())
+                # 장마감 청산 coordinator — 스캔 tick *전* 에 순차 실행(같은 task →
+                #   스캔과 동시 매도 0). 루프 상태 무관, wall-clock 트리거.
+                await self.maybe_eod_step(self._now_provider())
                 try:
-                    if bool(getattr(self._settings(), "enable_kis_paper_auto_trading", False)):
+                    _settings = self._settings()
+                    from app.kis_paper.one_click_session import session_trading_authorized
+                    if (bool(getattr(_settings, "enable_kis_paper_auto_trading", False))
+                            or session_trading_authorized(_settings)):
                         await self.kis_paper_tick()
                     else:
                         self.tick_once()
@@ -663,6 +919,7 @@ class BackgroundTickDriver:
                 except asyncio.TimeoutError:
                     pass
         finally:
+            await self._cancel_warmup()
             _log.info("[bg-tick] driver loop exited")
 
     def start(self) -> bool:
@@ -686,17 +943,16 @@ class BackgroundTickDriver:
         _log.info("[bg-tick] driver task created")
         return True
 
-    async def stop(self) -> None:
-        """task 안전 취소 — shutdown / 테스트 cleanup 용."""
+    async def stop(self, grace_seconds: float = 20.0) -> None:
+        """안전 종료 — shutdown / 테스트 cleanup 용.
+
+        P0-SAFETY-FIX-V1: 즉시 cancel 하면 EOD/주문 단계가 broker 호출과 audit commit 사이에서
+        끊길 수 있다 → stop 신호 후 *진행 중 tick 완료* 를 grace 동안 기다리고, 넘을 때만 cancel.
+        """
         if self._stop_event is not None:
             self._stop_event.set()
-        if self._task is not None:
-            self._task.cancel()
-            try:
-                await self._task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
-            self._task = None
+        await _finish_task(self._task, grace_seconds)
+        self._task = None
         self._stop_event = None
 
     @property
@@ -707,16 +963,84 @@ class BackgroundTickDriver:
 
     def status(self) -> dict[str, Any]:
         s = self._settings()
+        # Status must describe the same session-scoped settings used by the
+        # order path.  The configured fail-safe remains OFF/dry-run, while a
+        # current desktop PAPER approval creates an effective settings view.
+        from app.kis_paper.one_click_session import effective_session_settings
+        effective = effective_session_settings(s)
         enabled = bool(getattr(s, "enable_ai_paper_background_tick", False))
+        recent = list(self._scan_history)
+        unique_symbols = sorted({
+            symbol for scan in recent
+            for symbol in (scan.get("scanned_symbols") or [])
+        })
+        totals: dict[str, int] = {}
+        for key in ("quotes_requested", "quotes_ok", "quotes_failed", "quotes_stale",
+                    "market_inputs_ready", "market_inputs_failed", "council_evaluated",
+                    "candidates_found", "orders_attempted", "orders_submitted"):
+            totals[key] = sum(int(scan.get(key) or 0) for scan in recent)
+        excluded: dict[str, int] = {}
+        strategy: dict[str, dict[str, int]] = {}
+        actions = {"BUY": 0, "HOLD": 0, "SELL": 0}
+        for scan in recent:
+            for code, count in (scan.get("excluded_reasons") or {}).items():
+                excluded[code] = excluded.get(code, 0) + int(count or 0)
+            for action, count in (scan.get("council_actions") or {}).items():
+                actions[action] = actions.get(action, 0) + int(count or 0)
+            for name, counts in (scan.get("strategy_signals") or {}).items():
+                bucket = strategy.setdefault(name, {"BUY": 0, "HOLD": 0, "SELL": 0})
+                for signal, count in counts.items():
+                    bucket[signal] = bucket.get(signal, 0) + int(count or 0)
+        recent_scan = {
+            "completed_cycles": len(recent),
+            "unique_symbols_count": len(unique_symbols),
+            "unique_symbols": unique_symbols,
+            **totals,
+            "council_actions": actions,
+            "strategy_signals": strategy,
+            "excluded_reasons": dict(sorted(
+                excluded.items(), key=lambda kv: (-kv[1], kv[0])
+            )),
+        }
+        interval_seconds = max(1, int(getattr(s, "ai_paper_tick_interval_seconds", 30) or 30))
+        execution_stage = "IDLE"
+        if self._tick_in_progress:
+            execution_stage = "SCANNING"
+        elif self._warmup_status == "WARMING_UP":
+            execution_stage = "WARMING_UP"
+        elif self._warmup_status == "DEGRADED":
+            execution_stage = "DEGRADED"
+        elif self._last_tick_completed_at:
+            try:
+                completed = datetime.fromisoformat(self._last_tick_completed_at)
+                age = (datetime.now(timezone.utc) - completed).total_seconds()
+                execution_stage = "RUNNING" if age <= max(90, interval_seconds * 3) else "STALLED"
+            except (TypeError, ValueError):
+                execution_stage = "UNKNOWN"
+        elif self.is_running:
+            execution_stage = "STARTING"
         return {
             "enabled":          enabled,
             "running":          self.is_running,
-            "interval_seconds": int(getattr(s, "ai_paper_tick_interval_seconds", 30)),
+            "interval_seconds": interval_seconds,
             "dry_run":          bool(getattr(s, "ai_paper_tick_dry_run", True)),
             "max_per_day":      int(getattr(s, "ai_paper_tick_max_per_day", 0) or 0),
             "allow_simulated_fills": bool(getattr(s, "ai_paper_allow_simulated_fills", False)),
             "tick_count_today": int(self._tick_count_today),
             "last_tick_at":     self._last_tick_at,
+            "last_tick_completed_at": self._last_tick_completed_at,
+            "tick_in_progress": self._tick_in_progress,
+            "execution_stage": execution_stage,
+            "warmup": {
+                "status": self._warmup_status,
+                "started_at": self._warmup_started_at,
+                "completed_at": self._warmup_completed_at,
+                "completed_symbols": self._warmup_completed_symbols,
+                "total_symbols": self._warmup_total_symbols,
+                "failed_symbols": self._warmup_failed_symbols,
+                "last_error": self._warmup_error,
+                "retry_at": self._warmup_retry_at.isoformat() if self._warmup_retry_at else None,
+            },
             "last_reason_code": self._last_reason_code,
             "last_reason_message": self._last_reason_message,
             "last_pipeline_result_code": self._last_pipeline_result_code,
@@ -731,10 +1055,16 @@ class BackgroundTickDriver:
             "last_cash_after":        self._last_cash_after,
             "last_position_quantity": int(self._last_position_quantity),
             # KIS_PAPER_AUTO carry.
-            "kis_paper_auto_enabled": bool(getattr(s, "enable_kis_paper_auto_trading", False)),
-            "kis_paper_auto_dry_run": bool(getattr(s, "kis_paper_auto_order_dry_run", True)),
+            "kis_paper_auto_enabled": bool(getattr(effective, "enable_kis_paper_auto_trading", False)),
+            "kis_paper_auto_dry_run": bool(getattr(effective, "kis_paper_auto_order_dry_run", True)),
             "last_broker_order_no":   self._last_broker_order_no,
             "last_order_status":      self._last_order_status,
+            "last_scan_diagnostics":  self._last_scan_diagnostics,
+            "recent_scan_diagnostics": recent_scan,
+            # INTRADAY-FLAT-BY-CLOSE-V1: 마지막 EOD coordinator 단계 요약.
+            "last_eod_state":         (self._last_eod or {}).get("state"),
+            "last_eod_reason_code":   (self._last_eod or {}).get("reason_code"),
+            "last_eod_phase":         (self._last_eod or {}).get("phase"),
             # 절대 invariant.
             "is_order_signal":       False,
             "is_live_authorization": False,
@@ -748,9 +1078,124 @@ def get_background_tick_driver() -> BackgroundTickDriver:
     return BackgroundTickDriver()
 
 
+async def _finish_task(task: "asyncio.Task | None", grace_seconds: float) -> None:
+    """stop 신호를 받은 task 가 스스로 끝나길 grace 동안 기다리고, 넘으면 cancel."""
+    if task is None or task.done():
+        return
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=max(0.0, float(grace_seconds)))
+        return
+    except asyncio.TimeoutError:
+        _log.warning("[bg-tick] task did not finish within %.0fs — cancelling", grace_seconds)
+    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+        return
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+        pass
+
+
+class EodGuardian:
+    """장마감 청산 *전용* 실행기 — BackgroundTickDriver 가 꺼져 있어도 EOD 를 관리.
+
+    P0-SAFETY-FIX-V1: EOD coordinator 는 driver run loop 안에서만 호출됐다 → 상시 실행기 OFF
+    (EXE 기본·재실행 직후)면 프로그램 보유가 남아도 14:30 BUY 취소·15:00 단계청산·15:15
+    강제청산·15:30 대조가 전부 멈췄다. 본 guardian 은 driver 가 *돌고 있지 않을 때만*
+    `driver.maybe_eod_step` 을 같은 interval 로 호출한다 (중복 0: driver 실행 중엔 skip,
+    프로세스 간 중복은 EOD DB lease, 프로세스 내는 _STEP_LOCK).
+
+    신규 BUY·스캔·실전 주문 기능 없음. 실행 조건은 maybe_eod_step/run_eod_step 그대로:
+    ENABLE_KIS_PAPER_AUTO_TRADING(운영자가 승인한 당일 청산 정책) + 실거래 OFF + KIS 실시간
+    모의 모드 + 프로그램 소유 원장 수량만 (수동 보유 매도 0). 루프 PAUSED/STOPPED 여도
+    당일 청산은 V2 정책대로 관리되며, 루프 EMERGENCY_STOP·강한 킬스위치는 coordinator 가 차단.
+    """
+
+    def __init__(self, driver: BackgroundTickDriver, *,
+                 now_provider: Optional[Callable[[], datetime]] = None) -> None:
+        self._driver = driver
+        self._now = now_provider or (lambda: datetime.now(timezone.utc))
+        self._task: asyncio.Task | None = None
+        self._stop_event: asyncio.Event | None = None
+        self.last_result: dict[str, Any] | None = None
+
+    def _approved(self) -> bool:
+        s = self._driver._settings()
+        if bool(getattr(s, "enable_live_trading", False)):
+            return False
+        from app.kis_paper.one_click_session import session_trading_authorized
+        from app.db.session import SessionLocal
+        db = SessionLocal()
+        try:
+            approved = session_trading_authorized(s, db=db)
+        finally:
+            db.close()
+        return approved or (
+            (getattr(self._driver, "_eod_step_fn", None) is not None
+             or not isinstance(self._driver, BackgroundTickDriver))
+            and bool(getattr(s, "enable_kis_paper_auto_trading", False))
+        )
+
+    async def run_once(self, now: datetime | None = None) -> dict[str, Any] | None:
+        # Independent from scan/warmup. EOD lease/step lock serialize duplicates.
+        res = await self._driver.maybe_eod_step(now or self._now())
+        if res is not None:
+            self.last_result = res
+        return res
+
+    async def _run(self) -> None:
+        assert self._stop_event is not None
+        _log.info("[eod-guardian] started (driver off → EOD managed independently)")
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    await self.run_once()
+                except Exception as exc:  # noqa: BLE001 — guardian 은 죽지 않는다.
+                    _log.warning("[eod-guardian] step raised: %s", _redact_secret(
+                        f"{type(exc).__name__}: {exc}"))
+                interval = max(1, int(getattr(
+                    self._driver._settings(), "ai_paper_tick_interval_seconds", 30) or 30))
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=interval)
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            _log.info("[eod-guardian] exited")
+
+    def start(self) -> bool:
+        # Keep the scheduler alive even before today's approval. Each step
+        # revalidates the current date/account/session and is a no-op otherwise;
+        # this also lets approval made later in the GUI be seen while scans are stopped.
+        if bool(getattr(self._driver._settings(), "enable_live_trading", False)):
+            _log.warning("[eod-guardian] not started — LIVE configuration is prohibited")
+            return False
+        if self._task is not None and not self._task.done():
+            return True
+        self._stop_event = asyncio.Event()
+        self._task = asyncio.create_task(self._run())
+        return True
+
+    async def stop(self, grace_seconds: float = 20.0) -> None:
+        if self._stop_event is not None:
+            self._stop_event.set()
+        await _finish_task(self._task, grace_seconds)
+        self._task = None
+        self._stop_event = None
+
+    @property
+    def is_running(self) -> bool:
+        return self._task is not None and not self._task.done()
+
+
+@lru_cache(maxsize=1)
+def get_eod_guardian() -> EodGuardian:
+    return EodGuardian(get_background_tick_driver())
+
+
 def reset_background_tick_driver_for_tests() -> None:
     """테스트 격리용 — singleton cache clear."""
     get_background_tick_driver.cache_clear()
+    get_eod_guardian.cache_clear()
 
 
 __all__ = [
@@ -760,4 +1205,6 @@ __all__ = [
     "BackgroundTickDriver",
     "get_background_tick_driver",
     "reset_background_tick_driver_for_tests",
+    "EodGuardian",
+    "get_eod_guardian",
 ]

@@ -53,6 +53,31 @@ function _set(overrides) {
 }
 
 
+describe("<BackendOfflineBanner> T3 3-state", () => {
+  afterEach(cleanup);
+  it("③ CONNECTED + brokerHealthy=false → 증권사(KIS) 연결 문제 배너(+기준시각)", () => {
+    _set({ status: { db_ready: true }, connectionState: _CS.CONNECTED, error: "" });
+    const { getByTestId } = render(<BackendOfflineBanner brokerHealthy={false} brokerAsOf="09:27" />);
+    const b = getByTestId("backend-kis-unhealthy-banner");
+    expect(b.textContent).toContain("증권사(KIS)");
+    expect(b.textContent).toContain("09:27");
+    expect(b.textContent).toContain("다시 시도");
+  });
+
+  it("③ CONNECTED + brokerHealthy=true → 증권사 배너 없음", () => {
+    _set({ status: { db_ready: true }, connectionState: _CS.CONNECTED, error: "" });
+    const { queryByTestId } = render(<BackendOfflineBanner brokerHealthy={true} />);
+    expect(queryByTestId("backend-kis-unhealthy-banner")).toBeNull();
+  });
+
+  it("② CONNECTING + status(옛값) → '연결이 끊겼어요'(①과 다른 문구)", () => {
+    _set({ status: { db_ready: true }, connectionState: _CS.CONNECTING });
+    const { getByTestId } = render(<BackendOfflineBanner />);
+    expect(getByTestId("backend-disconnected-banner").textContent).toContain("끊겼어요");
+  });
+});
+
+
 describe("<BackendOfflineBanner>", () => {
   afterEach(cleanup);
 
@@ -108,13 +133,16 @@ describe("<BackendOfflineBanner>", () => {
     expect(queryByTestId("backend-connected-fallback-banner")).toBeNull();
   });
 
-  it("shows fallback banner with uvicorn hint on error", () => {
+  it("shows fallback banner with launcher hint on error (U1: no uvicorn --reload)", () => {
     _set({ error: "Failed to fetch" });
     const { getByTestId } = render(<BackendOfflineBanner />);
     const banner = getByTestId("backend-offline-banner");
     // 240 (Light-003): friendly copy — raw 'Failed to fetch'는 더 이상 노출 X.
     expect(banner.textContent).toContain("백엔드 연결 대기 중");
-    expect(banner.textContent).toContain("uvicorn app.main:app");
+    // U1: 정식 런처 안내로 교체 — --reload 금지(한글 경로 watchdog 버그).
+    expect(banner.textContent).toContain("app_desktop_launcher.py");
+    expect(banner.textContent).not.toContain("uvicorn app.main:app");
+    expect(banner.textContent).not.toContain("--reload");
     expect(banner.textContent).not.toContain("Failed to fetch");
   });
 
@@ -302,8 +330,8 @@ describe("<BackendOfflineBanner>", () => {
       });
       const { queryByTestId } = render(<BackendOfflineBanner />);
       expect(queryByTestId("backend-db-preparing-banner")).toBeNull();
-      // 비-desktop 환경에서는 빨간 backend-offline-banner 가 떠야 함.
-      expect(queryByTestId("backend-offline-banner")).toBeTruthy();
+      // T3 ②: status(옛값) 존재 + CONNECTING = 한 번 연결 후 끊김 → '연결이 끊겼어요'.
+      expect(queryByTestId("backend-disconnected-banner")).toBeTruthy();
     });
   });
 

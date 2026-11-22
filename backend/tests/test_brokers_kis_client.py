@@ -4,17 +4,26 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 
+import app.brokers.kis_client as kc
 from app.brokers.kis_client import (
     LIVE_HOST,
     PAPER_HOST,
     KisApiError,
     KisAuthError,
     KisClient,
+    KisTokenRateLimitedError,
 )
 
 
 def run(coro):
     return asyncio.run(coro)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_token_cache(tmp_path, monkeypatch):
+    # T1⒞ 디스크 캐시가 테스트 간/실환경과 섞이지 않게 tmp 로 격리.
+    monkeypatch.setattr(kc, "_token_cache_path", lambda: tmp_path / "kis_token_cache.json")
+    yield
 
 
 def test_constructor_requires_credentials():
@@ -66,8 +75,9 @@ def test_token_refreshes_when_expired():
     transport = httpx.MockTransport(_token_handler(seen, token="tok-1", expires_in=86400))
     c = KisClient("k", "s", is_paper=True, transport=transport)
     run(c._ensure_token())
-    # Force expiry
+    # Force expiry (in-memory + disk) — 둘 다 만료여야 재발급.
     c._token_expires_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+    kc._token_cache_path().unlink(missing_ok=True)
     run(c._ensure_token())
     token_calls = [s for s in seen if s["path"].endswith("/oauth2/tokenP")]
     assert len(token_calls) == 2
@@ -91,6 +101,80 @@ def test_token_response_missing_access_token_raises():
     c = KisClient("k", "s", is_paper=True, transport=transport)
     with pytest.raises(KisAuthError, match="missing access_token"):
         run(c._ensure_token())
+
+
+# ── T1: 레이트리밋 자기파괴 루프 방지 ──────────────────────────────────────────
+
+def _egw_handler(seen: list):
+    """tokenP 가 항상 EGW00133(403) — 레이트리밋 시뮬레이션."""
+    def handler(request):
+        seen.append(request.url.path)
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(403, json={"error_code": "EGW00133",
+                                             "error_description": "1분당 1회"})
+        return httpx.Response(200, json={})
+    return handler
+
+
+def test_egw00133_sets_backoff_and_skips_kis_within_window():
+    # ⒝ 첫 발급은 KIS 호출 → EGW00133. 백오프 창 안의 다음 호출은 KIS 무호출 + 즉시 실패.
+    seen = []
+    c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(_egw_handler(seen)))
+    with pytest.raises(KisTokenRateLimitedError):
+        run(c._ensure_token())
+    assert len([p for p in seen if p.endswith("/oauth2/tokenP")]) == 1
+    # 창 안 5회 연타 → KIS 추가 호출 0 (폭격 차단).
+    for _ in range(5):
+        with pytest.raises(KisTokenRateLimitedError):
+            run(c._ensure_token())
+    assert len([p for p in seen if p.endswith("/oauth2/tokenP")]) == 1  # 여전히 1
+
+
+def test_backoff_window_expiry_allows_one_retry():
+    seen = []
+    c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(_egw_handler(seen)))
+    with pytest.raises(KisTokenRateLimitedError):
+        run(c._ensure_token())
+    # 백오프 창 경과 모사 → 다음 호출은 KIS 재호출(여전히 EGW → 다시 1회만).
+    c._token_retry_not_before = datetime.now(timezone.utc) - timedelta(seconds=1)
+    with pytest.raises(KisTokenRateLimitedError):
+        run(c._ensure_token())
+    assert len([p for p in seen if p.endswith("/oauth2/tokenP")]) == 2
+
+
+def test_concurrent_calls_issue_token_once():
+    # ⒜ 동시 호출 N개 → 발급 1회만(락 직렬화).
+    seen = []
+    transport = httpx.MockTransport(_token_handler(seen, token="tok-x"))
+    c = KisClient("k", "s", is_paper=True, transport=transport)
+
+    async def many():
+        return await asyncio.gather(*[c._ensure_token() for _ in range(8)])
+
+    toks = run(many())
+    assert all(t == "tok-x" for t in toks)
+    assert len([p for p in seen if p["path"].endswith("/oauth2/tokenP")]) == 1
+
+
+def test_disk_cache_reused_across_instances_no_refetch():
+    # ⒞ 인스턴스 A 가 발급·저장 → 새 인스턴스 B(재기동 모사)가 디스크에서 재사용(발급 0).
+    seenA, seenB = [], []
+    a = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(_token_handler(seenA, token="tok-disk")))
+    run(a._ensure_token())
+    b = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(_token_handler(seenB, token="tok-other")))
+    tok = run(b._ensure_token())
+    assert tok == "tok-disk"  # 디스크 값 재사용
+    assert len([p for p in seenB if p["path"].endswith("/oauth2/tokenP")]) == 0  # 발급 0
+
+
+def test_disk_cache_expired_falls_back_to_refetch():
+    seen = []
+    c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(_token_handler(seen, token="tok-new")))
+    # 만료된 디스크 엔트리 주입.
+    kc._save_cached_token("k", True, "stale", datetime.now(timezone.utc) - timedelta(hours=1))
+    tok = run(c._ensure_token())
+    assert tok == "tok-new"  # 만료 → 재발급 폴백
+    assert len([p for p in seen if p["path"].endswith("/oauth2/tokenP")]) == 1
 
 
 def test_get_price_sends_required_kis_headers_and_params():
@@ -179,6 +263,116 @@ def test_inquire_balance_paper_uses_paper_tr_id():
     assert bal["params"]["INQR_DVSN"] == "02"
 
 
+def test_inquire_orderable_cash_uses_paper_read_only_endpoint():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        return httpx.Response(200, json={
+            "rt_cd": "0", "output": {"ord_psbl_cash": "2500000", "nrcvb_buy_amt": "2400000"},
+        })
+
+    client = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    output = run(client.inquire_orderable_cash(
+        "12345678", "01", symbol="005930", price=70000,
+    ))
+    request = next(r for r in seen if r.url.path.endswith("/inquire-psbl-order"))
+    assert output["ord_psbl_cash"] == "2500000"
+    assert request.headers["tr_id"] == "VTTC8908R"
+    assert request.url.params["PDNO"] == "005930"
+    assert request.url.params["ORD_UNPR"] == "70000"
+    assert request.url.params["ORD_DVSN"] == "00"
+
+
+def test_inquire_orderable_cash_market_capacity_uses_ord_dvsn_01():
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        return httpx.Response(200, json={
+            "rt_cd": "0", "output": {
+                "ord_psbl_cash": "2500000", "nrcvb_buy_amt": "2400000",
+                "nrcvb_buy_qty": "32", "max_buy_amt": "3000000", "max_buy_qty": "40",
+                "psbl_qty_calc_unpr": "70000",
+            },
+        })
+
+    client = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    output = run(client.inquire_orderable_cash(
+        "12345678", "01", symbol="005930", price=70000, order_division="01",
+    ))
+    request = next(r for r in seen if r.url.path.endswith("/inquire-psbl-order"))
+    assert output["nrcvb_buy_qty"] == "32"
+    assert request.headers["tr_id"] == "VTTC8908R"
+    assert request.url.params["ORD_DVSN"] == "01"
+    assert request.url.params["ORD_UNPR"] == "70000"
+
+
+def test_orderable_cash_rejects_missing_or_invalid_price_before_network():
+    seen = []
+    client = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(lambda r: seen.append(r)))
+    with pytest.raises(ValueError, match="positive integer"):
+        run(client.inquire_orderable_cash("12345678", "01", symbol="005930", price=0))
+    with pytest.raises(ValueError, match="positive integer"):
+        run(client.inquire_orderable_cash("12345678", "01", symbol="005930", price=1.5))
+    assert seen == []
+
+
+def test_orderable_cash_http_500_exposes_only_safe_diagnostics():
+    def handler(request):
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        return httpx.Response(
+            500,
+            json={"rt_cd": "1", "msg_cd": "SERVER500", "msg1": "account=12345678 secret=do-not-log"},
+            headers={"X-Request-Id": "req-safe-123"},
+        )
+
+    client = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    with pytest.raises(KisApiError) as caught:
+        run(client.inquire_orderable_cash(
+            "12345678", "01", symbol="005930", price=218000, order_division="01",
+        ))
+    error = caught.value
+    assert error.diagnostic["http_status"] == 500
+    assert error.diagnostic["kis_msg_cd"] == "SERVER500"
+    assert error.diagnostic["server_request_id"] == "req-safe-123"
+    assert error.diagnostic["tr_id"] == "VTTC8908R"
+    assert "12345678" not in str(error)
+    assert "do-not-log" not in str(error)
+
+
+def test_orderable_cash_http_200_kis_error_has_business_code():
+    def handler(request):
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        return httpx.Response(200, json={"rt_cd": "1", "msg_cd": "EGW00201", "msg1": "private detail"})
+
+    client = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    with pytest.raises(KisApiError) as caught:
+        run(client.inquire_orderable_cash("12345678", "01", symbol="005930", price=218000))
+    assert caught.value.diagnostic["http_status"] == 200
+    assert caught.value.diagnostic["kis_msg_cd"] == "EGW00201"
+    assert "private detail" not in str(caught.value)
+
+
+def test_orderable_cash_missing_output_is_unknown_not_zero():
+    def handler(request):
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        return httpx.Response(200, json={"rt_cd": "0"})
+
+    client = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    with pytest.raises(KisApiError) as caught:
+        run(client.inquire_orderable_cash("12345678", "01", symbol="005930", price=218000))
+    assert caught.value.diagnostic["http_status"] == 200
+    assert "missing" in caught.value.diagnostic["sanitized_error_summary"]
+
+
 def test_inquire_balance_live_uses_live_tr_id():
     seen = []
     c = KisClient("k", "s", is_paper=False, transport=httpx.MockTransport(_balance_handler(seen)))
@@ -188,13 +382,76 @@ def test_inquire_balance_live_uses_live_tr_id():
 
 
 def test_inquire_balance_endpoint_failure_raises_api_error():
+    seen = []
     def handler(request):
         if request.url.path.endswith("/oauth2/tokenP"):
             return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        seen.append(request)
         return httpx.Response(500, text="internal error")
     c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
-    with pytest.raises(KisApiError, match="500"):
+    with pytest.raises(KisApiError, match="500") as caught:
         run(c.inquire_balance("12345678", "01"))
+    assert len(seen) == 2
+    assert caught.value.diagnostic["http_status"] == 500
+    assert caught.value.diagnostic["tr_id"] == "VTTC8434R"
+
+
+def test_inquire_balance_retries_transient_5xx_once_then_accepts_valid_reply():
+    calls = []
+    def handler(request):
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(503, text="upstream unavailable")
+        return httpx.Response(200, json=_BALANCE_RESPONSE)
+    c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    assert run(c.inquire_balance("12345678", "01")) == _BALANCE_RESPONSE
+    assert len(calls) == 2
+
+
+def test_inquire_balance_http_200_kis_error_does_not_look_like_zero_balance():
+    response = {"rt_cd": "1", "msg_cd": "EGW00201", "msg1": "rate limited"}
+    seen = []
+    c = KisClient("k", "s", is_paper=True,
+                  transport=httpx.MockTransport(_balance_handler(seen, response)))
+    with pytest.raises(KisApiError, match="EGW00201") as caught:
+        run(c.inquire_balance("12345678", "01"))
+    assert caught.value.diagnostic["http_status"] == 200
+    assert caught.value.diagnostic["kis_rt_cd"] == "1"
+    assert caught.value.diagnostic["kis_msg_cd"] == "EGW00201"
+
+
+def test_inquire_balance_missing_output1_is_unknown_not_empty_account():
+    response = {"rt_cd": "0", "msg_cd": "20310000", "output2": [
+        {"dnca_tot_amt": "0", "tot_evlu_amt": "0"},
+    ]}
+    c = KisClient("k", "s", is_paper=True,
+                  transport=httpx.MockTransport(_balance_handler([], response)))
+    with pytest.raises(KisApiError, match="missing output1") as caught:
+        run(c.inquire_balance("12345678", "01"))
+    assert caught.value.diagnostic["http_status"] == 200
+    assert caught.value.diagnostic["sanitized_error_summary"].endswith("unknown.")
+
+
+def test_inquire_balance_missing_cash_or_equity_is_unknown_not_zero():
+    response = {"rt_cd": "0", "msg_cd": "20310000", "output1": [], "output2": [
+        {"dnca_tot_amt": "0"},
+    ]}
+    c = KisClient("k", "s", is_paper=True,
+                  transport=httpx.MockTransport(_balance_handler([], response)))
+    with pytest.raises(KisApiError, match="tot_evlu_amt") as caught:
+        run(c.inquire_balance("12345678", "01"))
+    assert caught.value.diagnostic["http_status"] == 200
+
+
+def test_inquire_balance_valid_explicit_zero_is_a_verified_empty_account():
+    response = {"rt_cd": "0", "msg_cd": "20310000", "output1": [], "output2": [
+        {"dnca_tot_amt": "0", "tot_evlu_amt": "0"},
+    ]}
+    c = KisClient("k", "s", is_paper=True,
+                  transport=httpx.MockTransport(_balance_handler([], response)))
+    assert run(c.inquire_balance("12345678", "01")) == response
 
 
 _DAILY_CCLD_RESPONSE = {
@@ -231,7 +488,8 @@ def test_inquire_daily_ccld_paper_uses_paper_tr_id():
     raw = run(c.inquire_daily_ccld("12345678", "01"))
     assert raw == _DAILY_CCLD_RESPONSE
     call = [s for s in seen if s["path"].endswith("/inquire-daily-ccld")][0]
-    assert call["headers"]["tr_id"] == "VTTC8001R"
+    # 현행 KIS TR id (구형 VTTC8001R 은 빈 결과만 반환 — 2026-06-05 실측 회귀 가드).
+    assert call["headers"]["tr_id"] == "VTTC0081R"
     assert call["params"]["CANO"] == "12345678"
     assert call["params"]["ACNT_PRDT_CD"] == "01"
     assert call["params"]["INQR_STRT_DT"]
@@ -243,7 +501,7 @@ def test_inquire_daily_ccld_live_uses_live_tr_id():
     c = KisClient("k", "s", is_paper=False, transport=httpx.MockTransport(_ccld_handler(seen)))
     run(c.inquire_daily_ccld("12345678", "01"))
     call = [s for s in seen if s["path"].endswith("/inquire-daily-ccld")][0]
-    assert call["headers"]["tr_id"] == "TTTC8001R"
+    assert call["headers"]["tr_id"] == "TTTC0081R"
 
 
 def test_inquire_daily_ccld_endpoint_failure_raises():

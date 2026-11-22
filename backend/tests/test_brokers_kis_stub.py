@@ -163,7 +163,8 @@ def _stub_kis_client_with_order(rt_cd: str = "0", odno: str = "0000123") -> KisC
         if request.url.path.endswith("/order-cash"):
             return httpx.Response(200, json={
                 "rt_cd": rt_cd,
-                "msg1":  "정상처리되었습니다." if rt_cd == "0" else "잔고부족",
+                "msg_cd": "MCA00000" if rt_cd == "0" else "40570000",
+                "msg1":  "정상처리되었습니다." if rt_cd == "0" else "주문 불가한 계좌입니다.",
                 "output": {"ODNO": odno, "ORD_TMD": "094530"},
             })
         return httpx.Response(404)
@@ -189,7 +190,9 @@ def test_place_order_paper_kis_failure_returns_rejected():
                          is_paper=True, client=_stub_kis_client_with_order(rt_cd="1"))
     result = run(a.place_order(order))
     assert result.status.value == "REJECTED"
-    assert "잔고부족" in result.message
+    assert "주문 불가한 계좌" in result.message
+    # exact KIS msg_cd is preserved for diagnosis / KIS support ticket
+    assert "40570000" in result.message
 
 
 def test_place_order_live_mode_explicitly_disabled():
@@ -203,8 +206,16 @@ def test_place_order_live_mode_explicitly_disabled():
 
 
 def test_cancel_order_still_stub():
+    # V2(EOD-SAFETY-HARDENING): *실전* 취소는 여전히 stub (LIVE 경로 미개방).
     with pytest.raises(NotImplementedError, match="LIVE_MANUAL_APPROVAL"):
-        run(KisBrokerAdapter().cancel_order("any-id"))
+        run(KisBrokerAdapter(is_paper=False).cancel_order("any-id"))
+
+
+def test_paper_cancel_without_org_no_refused_without_network():
+    # 모의 취소는 구현됐지만 KRX_FWDG_ORD_ORGNO 미상이면 네트워크 호출 없이 REJECTED.
+    res = run(KisBrokerAdapter(is_paper=True).cancel_order("any-id"))
+    assert res.status.value == "REJECTED"
+    assert "CANCEL_ORG_NO_UNKNOWN" in res.message
 
 
 def test_get_order_status_returns_filled_result():
@@ -306,10 +317,22 @@ def test_get_order_status_returns_received_when_no_fills():
     assert result.avg_fill_price is None
 
 
-def test_get_order_status_unknown_id_returns_not_found_rejected():
+def test_get_order_status_not_in_ccld_stays_received_not_rejected():
+    """An accepted order (has ODNO) absent from today's daily-ccld is *submitted,
+    not yet concluded* — it must surface RECEIVED, never REJECTED.
+
+    Regression for 2026-06-02: 6 KIS paper BUYs were accepted ("모의투자 매수주문이
+    완료 되었습니다") but recorded broker_status=REJECTED, because this not-found
+    branch returned REJECTED and the fill poller then clobbered the order's
+    RECEIVED status. RECEIVED keeps it an open poll candidate until it fills.
+    """
     a = KisBrokerAdapter(app_key="k", app_secret="s", account_no="1234567801",
                          client=_stub_kis_client(daily_ccld_response={"output1": []}))
-    result = run(a.get_order_status("does-not-exist"))
-    assert result.status.value == "REJECTED"
-    assert "not found" in result.message
-    assert result.symbol == "UNKNOWN"
+    # ODNO shape mirrors the 2026-06-01 005935 BUY (broker_order_id 0000003912).
+    result = run(a.get_order_status("0000003912"))
+    assert result.status.value == "RECEIVED"
+    assert result.status.value != "REJECTED"
+    assert result.order_id == "0000003912"   # id preserved, not blanked
+    assert result.filled_quantity == 0
+    assert result.avg_fill_price is None
+    assert "daily-ccld" in result.message

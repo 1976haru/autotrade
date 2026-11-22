@@ -65,6 +65,10 @@ def test_build_info_no_broker_order(client):
 
 
 def test_build_info_env_override(client, monkeypatch):
+    # Isolate environment precedence from a local generated build stamp.
+    import app.system.build_info as build_info
+    monkeypatch.setattr(build_info, "_load_stamp", lambda: {})
+    monkeypatch.setattr(build_info, "_git", lambda *args: None)
     monkeypatch.setenv("AUTOTRADE_GIT_COMMIT", "deadbeef")
     monkeypatch.setenv("AUTOTRADE_GIT_BRANCH", "release-x")
     monkeypatch.setenv("AUTOTRADE_BUILD_CHANNEL", "paper-beta")
@@ -77,6 +81,10 @@ def test_build_info_env_override(client, monkeypatch):
 
 
 def test_build_info_dirty_env_override(client, monkeypatch):
+    # A packaged build stamp intentionally outranks env; test the env fallback.
+    import app.system.build_info as build_info
+    monkeypatch.setattr(build_info, "_load_stamp", lambda: {})
+    monkeypatch.setattr(build_info, "_git", lambda *args: None)
     monkeypatch.setenv("AUTOTRADE_GIT_DIRTY", "true")
     assert client.get("/api/system/build-info").json()["is_dirty"] is True
     monkeypatch.setenv("AUTOTRADE_GIT_DIRTY", "false")

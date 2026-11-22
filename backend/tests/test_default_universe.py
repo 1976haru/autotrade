@@ -16,6 +16,7 @@ import pytest
 
 from app.universe.default_universe import (
     FALLBACK_MARKET_CAP_TOP50,
+    FALLBACK_MARKET_CAP_TOP100,
     UniverseResolution,
     UniverseSource,
     get_default_universe,
@@ -27,26 +28,28 @@ _MODULE_PATH = (
 )
 
 
-def test_fallback_universe_is_exactly_50_unique():
+def test_fallback_universe_is_exactly_100_unique():
+    # T1(2026-06-12): 풀 100 으로 확장. TOP50 은 앞 50 부분집합 alias(하위호환).
+    assert len(FALLBACK_MARKET_CAP_TOP100) == 100
+    assert len(set(FALLBACK_MARKET_CAP_TOP100)) == 100
+    assert all(isinstance(c, str) and c.strip() for c in FALLBACK_MARKET_CAP_TOP100)
     assert len(FALLBACK_MARKET_CAP_TOP50) == 50
-    assert len(set(FALLBACK_MARKET_CAP_TOP50)) == 50
-    # 모두 비어있지 않은 종목 코드.
-    assert all(isinstance(c, str) and c.strip() for c in FALLBACK_MARKET_CAP_TOP50)
+    assert tuple(FALLBACK_MARKET_CAP_TOP50) == FALLBACK_MARKET_CAP_TOP100[:50]
 
 
-def test_empty_watchlist_uses_fallback_50():
+def test_empty_watchlist_uses_fallback_100():
     r = get_default_universe(user_symbols=None)
-    assert r.source == UniverseSource.FALLBACK_MARKET_CAP_TOP50
-    assert r.count == 50
+    assert r.source == UniverseSource.FALLBACK_MARKET_CAP_TOP100
+    assert r.count == 100
     assert r.fallback_used is True
     assert "투자 추천" in r.warning_ko or "추천" in r.warning_ko
-    assert len(r.symbols) == 50
+    assert len(r.symbols) == 100
 
 
 def test_empty_list_also_uses_fallback():
     r = get_default_universe(user_symbols=[])
-    assert r.source == UniverseSource.FALLBACK_MARKET_CAP_TOP50
-    assert r.count == 50
+    assert r.source == UniverseSource.FALLBACK_MARKET_CAP_TOP100
+    assert r.count == 100
 
 
 def test_user_symbols_take_priority_over_fallback():

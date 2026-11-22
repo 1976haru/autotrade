@@ -1,0 +1,66 @@
+/* ReferenceHome 반응형 레이아웃 + 다크 토글.
+ * 색/폰트는 전역 디자인 토큰(var(--c-*), var(--fs-*))을 사용 → 설정탭의 글자크기·
+ * 테마가 새 홈에도 그대로 적용된다. 기본은 밝은 테마(앱 chrome과 통일).
+ *
+ * 레이아웃: 3개 논리 컬럼(좌=자동매매, 중=모니터링, 우=수동관리)을 각각 세로
+ * flex(rh-col)로 쌓는다. 카드마다 grid-area를 맞춰 행 높이를 짜맞추던 이전 방식은
+ * 컨텐츠 높이가 서로 다를 때 컬럼 사이에 불필요한 빈 공간을 만들었다 — flex 컬럼은
+ * 각자 컨텐츠 높이대로 쌓이므로 그 문제가 없다(align-items:start로 셀에 늘어붙지 않음).
+ * 모바일(<=700): 1열(좌→중→우 순서). 태블릿: 좌+중 2열, 우측은 아래 풀폭.
+ * PC(>1024): 좌/중/우 3열 풀폭. */
+
+.rh-root {
+  background: var(--c-bg);
+  color: var(--c-text);
+  min-height: 100%;
+  padding: 6px 6px 12px;
+}
+
+/* 다크 토글 — 새 홈 한정 고대비 다크 팔레트(전역 라이트 마이그레이션 비간섭). */
+.rh-root.rh-dark {
+  --c-bg:            #0b1220;
+  --c-surface:       #18233b;
+  --c-surface-2:     #1f2c47;
+  --c-surface-3:     #273550;
+  --c-border:        #3a4a68;
+  --c-border-strong: #4a5d80;
+  --c-text:    #f4f7fc;   /* 거의 흰색 — 대비 대폭 ↑ */
+  --c-text-2:  #d4dcec;
+  --c-text-3:  #9fb0cc;
+  --c-text-4:  #7b8aa6;
+}
+
+.rh-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr;         /* 모바일 기본: 1열 */
+  grid-template-areas: "left" "center" "right";
+  align-items: start;
+}
+
+.rh-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;                       /* flex/grid 자식 오버플로 방지 */
+}
+
+.rh-col-left   { grid-area: left; }
+.rh-col-center { grid-area: center; }
+.rh-col-right  { grid-area: right; }
+
+@media (min-width: 701px) and (max-width: 1024px) {
+  .rh-grid {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "left    center"
+      "right   right";
+  }
+}
+
+@media (min-width: 1025px) {
+  .rh-grid {
+    grid-template-columns: 1.05fr 1.3fr 1fr;
+    grid-template-areas: "left center right";
+  }
+}

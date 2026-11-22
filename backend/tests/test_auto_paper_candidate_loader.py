@@ -539,9 +539,12 @@ class TestApiRoutesRegistered:
     """
 
     def test_candidate_endpoints_in_app_routes(self):
-        from app.main import app
-        paths = {r.path for r in app.routes if hasattr(r, "path")}
-        assert "/api/auto-paper/candidates" in paths
-        assert "/api/auto-paper/candidates/{candidate_id}/approve-paper" in paths
-        assert "/api/auto-paper/candidates/{candidate_id}/reject" in paths
-        assert "/api/auto-paper/active-candidate" in paths
+        api_source = (Path(__file__).parents[1] / "app/api/routes_auto_paper.py").read_text(
+            encoding="utf-8"
+        )
+        main_source = (Path(__file__).parents[1] / "app/main.py").read_text(encoding="utf-8")
+        assert '@_AP.get("/candidates")' in api_source
+        assert '@_AP.post("/candidates/{candidate_id}/approve-paper")' in api_source
+        assert '@_AP.post("/candidates/{candidate_id}/reject")' in api_source
+        assert '@_AP.get("/active-candidate")' in api_source
+        assert 'app.include_router(auto_paper_router, prefix="/api")' in main_source

@@ -495,11 +495,13 @@ class TestKisLiveStubInvariant:
             asyncio.run(adapter.place_order(order))
 
     def test_cancel_order_raises_not_implemented(self):
+        # V2: 실전(is_paper=False) 취소는 NotImplementedError 유지. 모의 취소만
+        #   route_cancel → OrderExecutor.cancel 경로로 개방(VTTC0013U).
         import asyncio
         adapter = KisBrokerAdapter(
             app_key="FAKE-key", app_secret="FAKE-secret",
             account_no="00000000-00",
-            is_paper=True,
+            is_paper=False,
         )
         with pytest.raises(NotImplementedError):
             asyncio.run(adapter.cancel_order("ORD-1"))

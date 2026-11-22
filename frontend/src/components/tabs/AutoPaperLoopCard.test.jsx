@@ -148,6 +148,9 @@ describe("<AutoPaperLoopCard>", () => {
     const buttons = container.querySelectorAll("button");
     for (const btn of buttons) {
       const text = (btn.textContent || "").toLowerCase();
+      // ONE-CLICK-PAPER-V1 is an explicit date/account-scoped authorization,
+      // not a manual order button.  Its wording must state BUY/SELL scope.
+      if (text.includes("paper buy/sell 예약 승인")) continue;
       expect(text).not.toContain("place order");
       expect(text).not.toContain("buy");
       expect(text).not.toContain("sell");
@@ -342,15 +345,16 @@ describe("<AutoPaperLoopCard>", () => {
   // ==========================================================
 
   describe("Market waiting mode", () => {
-    it("WAITING_MARKET → '장 시작 대기 중' 라벨 + 안내 배너 표시", async () => {
+    it("WAITING_MARKET → 시작 성공과 09:05 매수 대기 상태를 정확히 표시", async () => {
       const api = _mockApi({ state: "WAITING_MARKET", cycle_count: 0 });
       render(<AutoPaperLoopCard apiClient={api} pollIntervalMs={0} />);
       await waitFor(() =>
-        expect(screen.getByTestId("state-pill").textContent).toMatch(/장 시작 대기 중/)
+        expect(screen.getByTestId("state-pill").textContent).toMatch(/시작됨.*09:05 매수 시작 대기 중/)
       );
       const banner = screen.getByTestId("auto-paper-market-waiting-banner");
-      expect(banner.textContent).toMatch(/장 시작 대기 중/);
-      expect(banner.textContent).toMatch(/09:00 KST/);
+      expect(banner.textContent).toMatch(/자동매매 감시 시작됨/);
+      expect(banner.textContent).toMatch(/09:05 KST/);
+      expect(banner.textContent).toMatch(/Dry-run ON.*실제 KIS PAPER 주문이 전송되지 않습니다/);
     });
 
     it("WAITING_MARKET → 시작 버튼 비활성화 (이미 대기 중)", async () => {
@@ -418,7 +422,7 @@ describe("<AutoPaperLoopCard>", () => {
   describe("6-state canonical model lock", () => {
     const _SIX_CANONICAL_STATES = [
       { state: "PAUSED",         label: "대기" },
-      { state: "WAITING_MARKET", label: "장 시작 대기" },
+      { state: "WAITING_MARKET", label: "시작됨 · 09:05 매수 시작 대기" },
       { state: "RUNNING",        label: "AI Paper Auto Loop 진행" },
       { state: "STOPPED",        label: "정지" },
       { state: "EMERGENCY_STOP", label: "긴급정지" },
@@ -1319,9 +1323,9 @@ describe("<AutoPaperLoopCard> — P-15 capital settings", () => {
         apiClient={api}
         pollIntervalMs={0}
         paperCapitalSettings={{
-          totalPaperCapital: 30_000_000,
+          totalPaperCapital: 10_000_000,
           perSymbolAllocation: 2_000_000,
-          maxPositions: 8,
+          maxPositions: 5,
           maxDailyBuyAmount: 5_000_000,
           maxSymbolWeightPct: 0.10,
           allowAdditionalBuy: true,
@@ -1335,9 +1339,9 @@ describe("<AutoPaperLoopCard> — P-15 capital settings", () => {
     await waitFor(() => expect(api.autoPaperStart).toHaveBeenCalled());
     const body = api.autoPaperStart.mock.calls[0][0];
     expect(body.capital_settings).toEqual({
-      total_paper_capital:    30_000_000,
+      total_paper_capital:    10_000_000,
       per_symbol_allocation:  2_000_000,
-      max_positions:          8,
+      max_positions:          5,
       max_daily_buy_amount:   5_000_000,
       max_symbol_weight_pct:  0.10,
       allow_additional_buy:   true,
@@ -1358,7 +1362,7 @@ describe("<AutoPaperLoopCard> — P-15 capital settings", () => {
       total_paper_capital:    10_000_000,
       per_symbol_allocation:  1_000_000,
       max_positions:          5,
-      max_daily_buy_amount:   3_000_000,
+      max_daily_buy_amount:   10_000_000,
       max_symbol_weight_pct:  0.2,
       allow_additional_buy:   false,
     });

@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 import shutil
 import sqlite3
+import sys
 import subprocess
 from pathlib import Path
 
@@ -157,9 +158,30 @@ def test_backend_dockerignore_excludes_backups():
 # ====================================================================
 
 
+def _bash_exe() -> str | None:
+    """실행할 bash 경로. Windows 에서 subprocess 의 "bash" 는 System32 의 WSL shim 을
+    먼저 집어 Windows 경로의 스크립트를 못 찾는다(rc 127) — Git for Windows bash 를 고른다."""
+    if sys.platform != "win32":
+        return shutil.which("bash")
+    cands = []
+    git = shutil.which("git")
+    if git:   # <Git>/cmd/git.exe → <Git>/bin/bash.exe
+        root = Path(git).resolve().parents[1]
+        cands += [root / "bin" / "bash.exe", root / "usr" / "bin" / "bash.exe"]
+    cands += [Path("C:/Program Files/Git/bin/bash.exe"),
+              Path("C:/Program Files/Git/usr/bin/bash.exe")]
+    for c in cands:
+        if c.is_file():
+            return str(c)
+    w = shutil.which("bash")
+    if w and "system32" not in w.lower() and "windowsapps" not in w.lower():
+        return w
+    return None
+
+
 def _has_bash() -> bool:
-    """git bash / WSL bash 존재 여부."""
-    return shutil.which("bash") is not None
+    """git bash(Windows) / 시스템 bash 존재 여부 — WSL shim 은 제외."""
+    return _bash_exe() is not None
 
 
 def _path_is_ascii() -> bool:
@@ -201,7 +223,7 @@ def test_sqlite_backup_smoke_creates_file(tmp_path):
     env["BACKUP_RETENTION_DAYS"] = "0"  # smoke에서는 retention 안 돌림
 
     result = subprocess.run(
-        ["bash", str(SCRIPTS_DIR / "backup_db.sh")],
+        [_bash_exe(), str(SCRIPTS_DIR / "backup_db.sh")],
         env=env, capture_output=True, text=True, timeout=30,
         encoding="utf-8", errors="replace",
     )
@@ -235,7 +257,7 @@ def test_sqlite_backup_smoke_does_not_leak_url_in_output(tmp_path):
     env["BACKUP_RETENTION_DAYS"] = "0"
 
     result = subprocess.run(
-        ["bash", str(SCRIPTS_DIR / "backup_db.sh")],
+        [_bash_exe(), str(SCRIPTS_DIR / "backup_db.sh")],
         env=env, capture_output=True, text=True, timeout=30,
         encoding="utf-8", errors="replace",
     )
@@ -265,7 +287,7 @@ def test_dry_run_does_not_create_backup_file(tmp_path):
     env["BACKUP_RETENTION_DAYS"] = "0"
 
     result = subprocess.run(
-        ["bash", str(SCRIPTS_DIR / "backup_db.sh")],
+        [_bash_exe(), str(SCRIPTS_DIR / "backup_db.sh")],
         env=env, capture_output=True, text=True, timeout=30,
         encoding="utf-8", errors="replace",
     )
@@ -284,7 +306,7 @@ def test_backup_aborts_on_secret_looking_url(tmp_path):
     env["BACKUP_DIR"]   = str(backup_dir)
 
     result = subprocess.run(
-        ["bash", str(SCRIPTS_DIR / "backup_db.sh")],
+        [_bash_exe(), str(SCRIPTS_DIR / "backup_db.sh")],
         env=env, capture_output=True, text=True, timeout=10,
         encoding="utf-8", errors="replace",
     )
@@ -298,7 +320,7 @@ def test_backup_aborts_on_missing_database_url():
     """DATABASE_URL 미지정 → exit 1 + 사용법 안내."""
     env = {k: v for k, v in os.environ.items() if k != "DATABASE_URL"}
     result = subprocess.run(
-        ["bash", str(SCRIPTS_DIR / "backup_db.sh")],
+        [_bash_exe(), str(SCRIPTS_DIR / "backup_db.sh")],
         env=env, capture_output=True, text=True, timeout=10,
         encoding="utf-8", errors="replace",
     )

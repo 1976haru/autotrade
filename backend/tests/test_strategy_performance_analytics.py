@@ -303,3 +303,56 @@ def test_module_no_order_or_account_symbols():
     for bad in ("place_order", "cancel_order", "route_order", "OrderExecutor",
                 "get_balance", "fetch_balance", "account_balance"):
         assert bad not in names, f"forbidden code symbol: {bad}"
+
+
+def test_strategy_performance_endpoint_carries_episodes_analyzed():
+    """D3: 응답에 episodes_analyzed 가 있어 프론트가 '집계 전'과 '실제 0'을
+    구분할 수 있다. 빈 DB → episodes_analyzed == 0 (집계 전)."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+    from app.db.base import Base
+    from app.db.session import get_db
+    from app.main import app
+
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False},
+                        poolclass=StaticPool)
+    Base.metadata.create_all(bind=eng)
+    TS = sessionmaker(bind=eng, autoflush=False, autocommit=False, expire_on_commit=False)
+
+    def _ov():
+        db = TS()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _ov
+    try:
+        with TestClient(app) as c:
+            r = c.get("/api/agents/strategy-performance")
+        assert r.status_code == 200
+        body = r.json()
+        assert "episodes_analyzed" in body
+        assert body["episodes_analyzed"] == 0   # 빈 DB → 집계 전(데이터 없음)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+# ── T4a(2026-06-12): 스코어카드 데이터주도 일반화 (5번째 CANDLE 자동) ─────────────
+
+def test_scorecard_includes_candle_from_council_ssot():
+    # SINGLE_STRATEGIES 가 council STRATEGY_ORDER(=ORB/MOMENTUM/GAP/VWAP/CANDLE)에서 유도.
+    from app.analytics.strategy_performance import SINGLE_STRATEGIES
+    assert "CANDLE" in SINGLE_STRATEGIES
+    assert {"ORB", "MOMENTUM", "GAP", "VWAP"}.issubset(set(SINGLE_STRATEGIES))
+
+
+def test_scorecard_discovers_strategy_from_votes():
+    # votes 에 등장한 임의 전략(SSOT 에 없어도)도 성적표에 한 행으로 잡힌다(완전 데이터주도).
+    from app.analytics.strategy_performance import _discover_strategies
+    eps = [{"votes": [{"strategy": "CANDLE", "signal": "BUY"},
+                      {"strategy": "EXPERIMENTAL_X", "signal": "SELL"}]}]
+    found = _discover_strategies(eps)
+    assert "CANDLE" in found and "EXPERIMENTAL_X" in found

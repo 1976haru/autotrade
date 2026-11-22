@@ -372,6 +372,37 @@ def get_exe_status() -> dict:
     }
 
 
+class _ShutdownBody(BaseModel):
+    # 운영자가 데스크톱 '안전 종료' 대화상자에서 위험(보유·미체결) 경고를 보고 종료를 확정했는지.
+    confirm: bool = False
+
+
+@router.post("/system/shutdown")
+async def request_graceful_shutdown(body: _ShutdownBody, request: Request,
+                                    db: Session = Depends(get_db)) -> Any:
+    """P0-SAFETY-FIX-V1 — 데스크톱 앱의 *정상 종료* 요청 (강제 종료 대신).
+
+    loopback + 이번 실행본 instance_id 헤더 필수. 보유·미체결·EOD 단계 진행 중이면 운영자
+    확인(confirm=true) 없이는 409. 허용 시 응답 후 SIGINT → uvicorn 정상 종료 → lifespan 이
+    진행 중 EOD 단계 완료를 기다려 실행기를 멈추고 EOD lease 를 해제한다. 주문·취소 0건.
+    """
+    from fastapi.responses import JSONResponse
+
+    from app.main import _INSTANCE_ID
+    from app.system import graceful_shutdown as gs
+    denied = gs.authorize(request.client.host if request.client else None,
+                          request.headers.get(gs.INSTANCE_HEADER), _INSTANCE_ID)
+    if denied:
+        return JSONResponse(status_code=403, content={"accepted": False, "reason_code": denied})
+    pre = gs.shutdown_preflight(db)
+    if not pre["safe_without_confirmation"] and not body.confirm:
+        return JSONResponse(status_code=409, content={
+            "accepted": False, "reason_code": "SHUTDOWN_CONFIRMATION_REQUIRED", "preflight": pre})
+    gs.schedule_exit()
+    return {"accepted": True, "preflight": pre, "instance_id": _INSTANCE_ID,
+            "is_live_authorization": False}
+
+
 @router.get("/system/build-info")
 def get_build_info_endpoint() -> dict:
     """#57 / 7-05 — backend sidecar build metadata (read-only).

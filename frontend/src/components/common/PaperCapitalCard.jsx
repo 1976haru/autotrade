@@ -167,7 +167,7 @@ export function PaperCapitalCard({
   }, []);
 
   const options = config?.allowed_initial_cash_options
-    || [10_000_000, 30_000_000, 50_000_000];
+    || [10_000_000];
   const selected = config?.initial_cash;
 
   // P-02 — 종목당 한도 옵션 (UI 표시 3종 — 사용자 요청서 §8).
@@ -429,7 +429,7 @@ export function PaperCapitalCard({
                 gap: 6,
               }}
             >
-              {(config.allowed_max_concurrent_positions_options || [3, 5, 10]).map((count) => {
+              {(config.allowed_max_concurrent_positions_options || [3, 5]).map((count) => {
                 const isSel = config.max_concurrent_positions === count;
                 const isPending = pendingValue === `max-positions:${count}`;
                 return (

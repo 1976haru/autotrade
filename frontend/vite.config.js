@@ -65,6 +65,16 @@ const _gitDirty =
 export default defineConfig({
   base: _basePath,
   plugins: [react()],
+  // dev 서버에서 /api·/health 를 backend(8000)로 프록시 — 같은 오리진(5173)으로
+  //   호출되어 CORS/cross-origin 경계 없이 동작. (예전엔 프록시 없어 /api/* 가 SPA
+  //   index.html 로 떨어져 카드가 비정상 응답을 받을 수 있었다.) 백엔드 포트
+  //   fallback(8001/8002)은 프론트 client 의 multi-port probe(절대 URL)가 처리.
+  server: {
+    proxy: {
+      '/api': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      '/health': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+    },
+  },
   // build-time inject — runtime fetch 없이 항상 사용 가능.
   define: {
     'import.meta.env.VITE_APP_VERSION': JSON.stringify(_pkgVersion),

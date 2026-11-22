@@ -361,12 +361,18 @@ def _settings(**overrides):
         max_symbol_exposure_pct          = 0.0,
         auto_stop_consecutive_rejections = 0,
         max_orders_per_day               = 0,
+        risk_consecutive_loss_limit      = 5,
+        risk_consecutive_loss_cooldown_minutes = 60,
+        risk_consecutive_loss_modes      = "SIMULATION,PAPER,LIVE_SHADOW",
     )
     base.update(overrides)
     ns = SimpleNamespace(**base)
     # 175: symbol_whitelist_set() 메서드를 SimpleNamespace에 부착.
     ns.symbol_whitelist_set = lambda: (
         {s.strip() for s in (ns.symbol_whitelist or "").split(",") if s.strip()}
+    )
+    ns.risk_consecutive_loss_mode_set = lambda: (
+        {s.strip().upper() for s in (ns.risk_consecutive_loss_modes or "").split(",") if s.strip()}
     )
     return ns
 
@@ -395,6 +401,26 @@ def test_policy_from_settings_propagates_threshold_overrides():
     assert p.max_daily_loss       == 75_000
     assert p.max_positions        == 2
     assert p.max_symbol_exposure  == 100_000
+
+
+def test_policy_from_settings_enables_consecutive_loss_cooldown_defaults():
+    p = RiskPolicy.from_settings(_settings())
+    assert p.consecutive_loss_limit == 5
+    assert p.consecutive_loss_cooldown_minutes == 60
+    assert p.consecutive_loss_enabled_modes == frozenset({
+        "SIMULATION", "PAPER", "LIVE_SHADOW",
+    })
+
+
+def test_policy_from_settings_propagates_consecutive_loss_overrides():
+    p = RiskPolicy.from_settings(_settings(
+        risk_consecutive_loss_limit=7,
+        risk_consecutive_loss_cooldown_minutes=15,
+        risk_consecutive_loss_modes="paper, live_shadow",
+    ))
+    assert p.consecutive_loss_limit == 7
+    assert p.consecutive_loss_cooldown_minutes == 15
+    assert p.consecutive_loss_enabled_modes == frozenset({"PAPER", "LIVE_SHADOW"})
 
 
 def test_policy_from_settings_propagates_safety_flags():
@@ -1418,3 +1444,54 @@ def test_check_order_live_trading_disabled_maps_to_blocked():
     assert result.decision == RiskDecision.BLOCKED
     assert result.blocked_by == "live_trading_disabled"
     assert result.required_action == "ENABLE_LIVE_TRADING_FLAG"
+
+
+# ── INTRADAY-FLAT-BY-CLOSE-V1: reduce-only SELL (청산) ─────────────────────
+
+
+def _sell(qty: int, symbol: str = "005930") -> OrderRequest:
+    return OrderRequest(symbol=symbol, side=OrderSide.SELL, quantity=qty)
+
+
+def _held(qty: int, symbol: str = "005930") -> list[Position]:
+    return [Position(symbol=symbol, quantity=qty, avg_price=75_000, market_price=75_000)]
+
+
+def test_reduce_only_sell_not_blocked_by_entry_notional_cap():
+    # 보유 20주 × 75,000 = 1,500,000 > max_order_notional 1,000,000 — 청산은 통과.
+    risk = RiskManager(RiskPolicy())
+    result = risk.evaluate_order(order=_sell(20), mode=OperationMode.PAPER,
+                                 balance=_balance(), positions=_held(20),
+                                 latest_price=75_000)
+    assert result.decision == RiskDecision.APPROVED
+    assert "order notional exceeds max_order_notional" not in result.reasons
+
+
+def test_oversell_or_naked_sell_still_hits_notional_cap():
+    risk = RiskManager(RiskPolicy())
+    over = risk.evaluate_order(order=_sell(21), mode=OperationMode.PAPER,
+                               balance=_balance(), positions=_held(20), latest_price=75_000)
+    assert "order notional exceeds max_order_notional" in over.reasons
+    naked = risk.evaluate_order(order=_sell(20), mode=OperationMode.PAPER,
+                                balance=_balance(), positions=[], latest_price=75_000)
+    assert naked.decision == RiskDecision.REJECTED
+
+
+def test_daily_loss_limit_blocks_buy_but_not_reduce_only_sell():
+    risk = RiskManager(RiskPolicy(max_daily_loss=100_000))
+    risk.daily_realized_pnl = -200_000
+    sell = risk.evaluate_order(order=_sell(5), mode=OperationMode.PAPER,
+                               balance=_balance(), positions=_held(5), latest_price=75_000)
+    assert sell.decision == RiskDecision.APPROVED
+    buy = risk.evaluate_order(order=_buy(1), mode=OperationMode.PAPER,
+                              balance=_balance(), positions=_held(5), latest_price=75_000)
+    assert "daily loss limit reached" in buy.reasons
+
+
+def test_emergency_stop_still_blocks_reduce_only_sell():
+    # 청산 면제는 한도에만 — 긴급정지(운영자 stop everything)는 SELL 도 차단 유지.
+    risk = RiskManager(RiskPolicy())
+    risk.set_emergency_stop(True)
+    result = risk.evaluate_order(order=_sell(5), mode=OperationMode.PAPER,
+                                 balance=_balance(), positions=_held(5), latest_price=75_000)
+    assert result.decision == RiskDecision.REJECTED

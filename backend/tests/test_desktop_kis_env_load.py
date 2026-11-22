@@ -317,6 +317,74 @@ class TestEndToEnd:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# detect_shadowed_env_conflicts — EGW00103 root-cause guard
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestShadowedEnvConflictDetection:
+    """fix/egw00103-shadowed-env: 여러 .env 가 서로 다른 KIS_APP_KEY 를 가질 때
+    런처가 우선순위로 *가린* 파일을 운영자가 고치면 EGW00103 이 난다. 본 가드는
+    그 상황을 지문 비교로 감지해 경고만 낸다 (파일 수정 0건)."""
+
+    @staticmethod
+    def _sub(tmp_path, name):
+        d = tmp_path / name
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def test_warns_when_shadowed_file_has_different_key(self, tmp_path, caplog):
+        from app_desktop_launcher import detect_shadowed_env_conflicts
+        chosen = _write_env_file(self._sub(tmp_path, "appdata"),
+                                 kis_key="PSTstaleKey00000000000000000000000A")
+        shadowed = _write_env_file(self._sub(tmp_path, "backend"),
+                                   kis_key="PSuFreshKey00000000000000000000000B")
+        log = logging.getLogger("autotrade.launcher")
+        with caplog.at_level(logging.WARNING, logger="autotrade.launcher"):
+            conflicts = detect_shadowed_env_conflicts(
+                chosen, [chosen, shadowed], log)
+        assert len(conflicts) == 1
+        assert conflicts[0]["path"] == str(shadowed)
+        joined = "\n".join(r.getMessage() for r in caplog.records)
+        assert "EGW00103" in joined
+        assert "shadowed" in joined.lower()
+
+    def test_no_conflict_when_keys_identical(self, tmp_path, caplog):
+        from app_desktop_launcher import detect_shadowed_env_conflicts
+        chosen = _write_env_file(self._sub(tmp_path, "a"), kis_key="PSTsameKey0000000000000000000000XYZ")
+        other = _write_env_file(self._sub(tmp_path, "b"), kis_key="PSTsameKey0000000000000000000000XYZ")
+        log = logging.getLogger("autotrade.launcher")
+        with caplog.at_level(logging.WARNING, logger="autotrade.launcher"):
+            conflicts = detect_shadowed_env_conflicts(chosen, [chosen, other], log)
+        assert conflicts == []
+        assert "EGW00103" not in "\n".join(r.getMessage() for r in caplog.records)
+
+    def test_no_conflict_when_only_one_file(self, tmp_path):
+        from app_desktop_launcher import detect_shadowed_env_conflicts
+        chosen = _write_env_file(tmp_path)
+        log = logging.getLogger("test")
+        assert detect_shadowed_env_conflicts(chosen, [chosen], log) == []
+
+    def test_secret_value_never_logged(self, tmp_path, caplog):
+        """경고에 KIS_APP_KEY 원문이 노출되면 안 된다 — 지문만."""
+        from app_desktop_launcher import detect_shadowed_env_conflicts
+        marker_stale = "PSTstale-marker-DO-NOT-LEAK-AAAA1111"
+        marker_fresh = "PSufresh-marker-DO-NOT-LEAK-BBBB2222"
+        chosen = _write_env_file(self._sub(tmp_path, "a"), kis_key=marker_stale)
+        shadowed = _write_env_file(self._sub(tmp_path, "b"), kis_key=marker_fresh)
+        log = logging.getLogger("autotrade.launcher")
+        with caplog.at_level(logging.WARNING, logger="autotrade.launcher"):
+            detect_shadowed_env_conflicts(chosen, [chosen, shadowed], log)
+        joined = "\n".join(r.getMessage() for r in caplog.records)
+        assert marker_stale not in joined
+        assert marker_fresh not in joined
+
+    def test_none_chosen_returns_empty(self):
+        from app_desktop_launcher import detect_shadowed_env_conflicts
+        log = logging.getLogger("test")
+        assert detect_shadowed_env_conflicts(None, [], log) == []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Static guards — no broker / executor imports added
 # ─────────────────────────────────────────────────────────────────────────────
 

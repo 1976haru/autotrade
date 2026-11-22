@@ -67,9 +67,10 @@ CHECKLIST_ITEMS: tuple[ChecklistItem, ...] = (
         "agentDecisionEpisodes", "/api/agents/decision-episodes",
         "backend/app/api/routes_agents.py", '"/decision-episodes"',
         "GET", "/api/agents/decision-episodes", True),
+    # E2(895054e) 이후 Dashboard 에서 빠지고 Settings 탭에 마운트됨(Settings.jsx) — 위치 정정.
     ChecklistItem(
-        "kis_paper_oneclick", "KisPaperOneClickTestCard", "Dashboard",
-        "frontend/src/components/tabs/Dashboard.jsx",
+        "kis_paper_oneclick", "KisPaperOneClickTestCard", "Settings",
+        "frontend/src/components/tabs/Settings.jsx",
         "kisPaperReadiness", "/api/kis-paper/readiness",
         "backend/app/api/routes_kis_paper.py", '"/readiness"',
         "GET", "/api/kis-paper/readiness", True),

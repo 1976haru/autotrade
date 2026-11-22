@@ -76,6 +76,12 @@ def aggregate_audit_positions(db: Session) -> list[AuditPositionRow]:
         OrderAuditLog.executed.is_(True),
         OrderAuditLog.filled_quantity > 0,
     )
+    from app.kis_paper.account_scope import current_account_scope, kis_scope_required
+    scope = current_account_scope()
+    if scope is None and kis_scope_required():
+        raise RuntimeError("ACCOUNT_SCOPE_UNKNOWN")
+    if scope is not None:
+        stmt = stmt.where(OrderAuditLog.account_id == scope)
     rows = db.execute(stmt).all()
 
     by_symbol_buy:  dict[str, int] = defaultdict(int)

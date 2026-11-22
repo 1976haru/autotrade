@@ -409,15 +409,15 @@ class TestApi:
         # 시드머니 30M + PCT 10% → cap=3M.
         api_client.post(
             "/api/auto-paper/capital-config",
-            json={"initial_cash": 30_000_000},
+            json={"initial_cash": 10_000_000},
         )
         api_client.post(
             "/api/auto-paper/per-symbol-allocation",
-            json={"mode": "PCT_OF_EQUITY"},
+            json={"mode": "FIXED_KRW", "per_symbol_max_krw": 2_000_000},
         )
         res = api_client.get("/api/auto-paper/min-lot/preview")
         body = res.json()
-        assert body["effective_per_symbol_cap_krw"] == 3_000_000
+        assert body["effective_per_symbol_cap_krw"] == 2_000_000
         # 2M 가격 → 3M//2M = 1주.
         ex_2m = next(e for e in body["examples"] if e["price"] == 2_000_000)
         assert ex_2m["affordable_quantity"] == 1
@@ -454,7 +454,7 @@ class TestRegressionWithPriorP:
             get_paper_capital_config,
         )
         assert DEFAULT_PAPER_INITIAL_CASH == 10_000_000
-        assert ALLOWED_PAPER_INITIAL_CASH == (10_000_000, 30_000_000, 50_000_000)
+        assert ALLOWED_PAPER_INITIAL_CASH == (10_000_000,)
         cfg = get_paper_capital_config()
         assert cfg.initial_cash == 10_000_000
 
@@ -475,8 +475,8 @@ class TestRegressionWithPriorP:
             DEFAULT_MAX_CONCURRENT_POSITIONS,
             ALLOWED_MAX_CONCURRENT_POSITIONS,
         )
-        assert DEFAULT_MAX_CONCURRENT_POSITIONS == 3
-        assert ALLOWED_MAX_CONCURRENT_POSITIONS == (3, 5, 10)
+        assert DEFAULT_MAX_CONCURRENT_POSITIONS == 5
+        assert ALLOWED_MAX_CONCURRENT_POSITIONS == (3, 5)
 
     def test_affordability_helper_intact(self):
         # P-04 helper 가 그대로 작동 + 본 모듈과 compute 결과 일치.
