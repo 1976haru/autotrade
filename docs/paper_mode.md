@@ -116,6 +116,27 @@ KIS Developers/모의투자 포털에서 같은 계좌의 주문 내역을 보�
 | 401/403 KIS 인증 오류 | App Key/Secret 오타, 모의투자 앱이 아닌 실전 앱 키 사용 |
 | `place_order` 호출 시 `NotImplementedError: LIVE_MANUAL_APPROVAL` | 어댑터가 `is_paper=False`로 잘못 생성됨 — 환경변수 점검 |
 
+## 홈 "자동매매 시작" 준비 점검 (fix/autopaper-start-readiness)
+
+승인 팝업을 띄우기 전에 `GET /api/auto-paper/run-readiness`의 `order_blockers`를 확인하고,
+승인 API(`POST /api/auto-paper/paper-session-approval`)도 같은 조건을 다시 검사한다.
+사유가 하나라도 있으면 승인은 `409 ORDER_PATH_NOT_READY:<codes>`로 거부되고 홈에 원인이 표시된다.
+
+| 사유 코드 | 조건 | 조치 |
+|---|---|---|
+| `MARKET_DATA_PROVIDER_NOT_KIS` | `MARKET_DATA_PROVIDER` ≠ `kis` | `%APPDATA%\Autotrade\.env`에서 `kis`로 바꾸고 재실행 |
+| `BACKGROUND_TICK_DISABLED` | `ENABLE_AI_PAPER_BACKGROUND_TICK=false` | `true` |
+| `KIS_CREDENTIALS_MISSING` | 앱키/시크릿/계좌번호 중 빈 값 | 모의투자 키 입력 |
+| `FILL_POLLER_DISABLED` | `KIS_PAPER_FILL_POLLING=false` | `true` |
+| `KIS_PAPER_SMOKE_MODE_ON` | `KIS_PAPER_SMOKE_MODE=true` | `false` |
+
+`POST /api/auto-paper/start` 응답에는 `order_mode`와 `order_blockers`가 함께 온다. `order_mode`가
+`KIS_REALTIME_PAPER_AUTO`가 아니면 홈에 "가상 전용 — KIS 주문 안 나감" 배지가 표시된다.
+
+- **휴장일:** `market_clock.current_market_phase`가 KRX 휴장일 달력을 반영한다. 휴장일은 `WEEKEND`와 똑같이 휴장으로 처리하고, 특수 세션(지연 개장)은 달력의 개장·마감 시각을 따른다.
+- **다음 거래일 대기:** 장 마감 후·주말·휴장일에는 승인 대상이 `GET /api/auto-paper/next-trading-day`(KRX 달력 기준)가 된다. 그 날짜로 승인한 뒤 시작하면 루프가 `WAITING_MARKET`(`armed_for`=대상일)으로 기다렸다가 그날 09:00에 `RUNNING`이 된다. 대상일을 놓치면 `MARKET_CLOSED`가 된다. 대기는 주문 권한이 아니다. `authorize_order`가 `target_date == 오늘`을 그대로 검사하므로 대기 중 주문은 0건이다. 승인 가능 날짜는 오늘 또는 다음 거래일뿐이다.
+- **긴급정지:** 대기 중 `POST /api/auto-paper/emergency-stop`을 호출하면 대기가 풀리고 승인 기록이 `BLOCKED`로 바뀐다. 재시작해도 복원되지 않으며, 다시 시작하려면 새로 승인해야 한다.
+
 ## PAPER 다음 단계
 
 PAPER로 충분한 검증을 마친 후:

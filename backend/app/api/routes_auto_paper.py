@@ -257,8 +257,15 @@ def post_start(body: _StartBody | None = None) -> dict:
             blocking_reasons=list(body.pre_market.blocking_reasons),
             warnings=list(body.pre_market.warnings),
         )
+    # P2: 장 마감 후/휴장일 — 다음 거래일 승인이 있으면 그날까지 대기(arming).
+    armed_for = None
     try:
-        snap = loop.start(pre_market=pm)
+        from app.kis_paper.one_click_session import armed_session_date
+        armed_for = armed_session_date(get_settings())
+    except Exception:  # noqa: BLE001 — 판단 실패 시 기존 phase 규칙 (대기 없음).
+        armed_for = None
+    try:
+        snap = loop.start(pre_market=pm, armed_for=armed_for)
     except LoopPreMarketBlockedError as e:
         # Pre-market BLOCK — 차단 사유 구조화 응답.
         raise HTTPException(
@@ -305,6 +312,23 @@ def post_start(body: _StartBody | None = None) -> dict:
     return out
 
 
+@_AP.get("/next-trading-day")
+def get_next_trading_day() -> dict:
+    """KRX 달력 기준 승인 대상 거래일 (오늘 장 마감 전이면 오늘). read-only."""
+    from datetime import datetime as _dt, timezone as _tz
+    from app.kis_paper.one_click_session import KST as _KST, _calendar_for
+    from app.scheduler.intraday_session import next_trading_day
+    now = _dt.now(_tz.utc)
+    target = next_trading_day(now, calendar=_calendar_for(get_settings()))
+    today = now.astimezone(_KST).date()
+    return {
+        "today": today.isoformat(),
+        "target_date": target.isoformat(),
+        "is_today": target == today,
+        "weekday": target.weekday(),
+    }
+
+
 @_AP.post("/stop")
 def post_stop() -> dict:
     loop = get_auto_paper_loop()
@@ -317,7 +341,14 @@ def post_stop() -> dict:
 
 @_AP.post("/emergency-stop")
 def post_emergency_stop() -> dict:
-    return get_auto_paper_loop().emergency_stop().to_dict()
+    snap = get_auto_paper_loop().emergency_stop()
+    # P2: 대기 중이던 승인 세션도 BLOCKED — 재시작 시 복원 안 됨 (재승인 필요).
+    try:
+        from app.kis_paper.one_click_session import block_session_for_emergency
+        block_session_for_emergency()
+    except Exception:  # noqa: BLE001 — 루프 정지는 이미 완료.
+        pass
+    return snap.to_dict()
 
 
 @_AP.post("/reset")
@@ -2219,6 +2250,7 @@ def get_run_readiness() -> dict:
             "last_error":     snap.last_error,
             "health_code":    health_code,
             "health_message": health_msg,
+            "armed_for":      snap.armed_for,
         },
         "market_session": {
             "phase":       phase.value,

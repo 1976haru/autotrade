@@ -161,3 +161,4 @@ def test_start_without_approval_reports_virtual_only(client, approval_file, monk
 def test_run_readiness_exposes_order_blockers(client, approval_file):
     body = client.get("/api/auto-paper/run-readiness").json()
     assert isinstance(body["order_blockers"], list)
+    assert "armed_for" in body["loop"]

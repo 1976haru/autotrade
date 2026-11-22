@@ -362,13 +362,35 @@ class IntradayPolicy:
             ph == IntradayPhase.CLOSING_AUCTION and allow_closing_auction)
 
 
+def next_trading_day(now: datetime, *, calendar: KrxCalendar | None = None) -> date:
+    """KRX 달력 기준 다음 거래일 (KST).
+
+    오늘이 거래일이고 정규장 마감 전이면 오늘을 반환한다. 휴장일·주말은 건너뛴다.
+    달력 미커버 연도(`UNKNOWN`)는 평일이면 거래일로 본다 — 신규 BUY 차단은
+    `buy_entry_decision` 이 별도로 맡는다.
+    """
+    cal = calendar or load_krx_calendar()
+    kst = to_kst(now)
+    d = kst.date()
+    st = cal.status(d)
+    if st in (CalendarStatus.TRADING_DAY, CalendarStatus.UNKNOWN):
+        _o, close = cal.session_hours(d)
+        if kst.time() < close:
+            return d
+    for _ in range(30):
+        d = d + timedelta(days=1)
+        if cal.status(d) in (CalendarStatus.TRADING_DAY, CalendarStatus.UNKNOWN):
+            return d
+    return d
+
+
 def policy_from_settings(settings: Any) -> IntradayPolicy:
     return IntradayPolicy.from_settings(settings)
 
 
 __all__ = [
     "CalendarStatus", "IntradayPhase", "IntradaySchedule", "IntradayPolicy",
-    "KrxCalendar", "load_krx_calendar", "policy_from_settings",
+    "KrxCalendar", "load_krx_calendar", "policy_from_settings", "next_trading_day",
     "buy_reason_message_ko",
     "BUY_ALLOWED", "BUY_BLOCKED_CUTOFF", "BUY_BLOCKED_NOT_TRADING_DAY",
     "BUY_BLOCKED_CALENDAR", "BUY_BLOCKED_BEFORE_ENTRY", "BUY_BLOCKED_AFTER_CLOSE",

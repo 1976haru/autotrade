@@ -217,10 +217,13 @@ async def lifespan(_app: FastAPI):
     try:
         from app.api.deps import get_risk_manager
         from app.auto_paper.loop import get_auto_paper_loop
-        from app.kis_paper.one_click_session import session_trading_authorized
+        from app.kis_paper.one_click_session import (
+            armed_session_date, session_trading_authorized,
+        )
         if (session_trading_authorized(cfg)
                 and not bool(getattr(get_risk_manager(), "emergency_stop", False))):
-            restored = get_auto_paper_loop().start()
+            # next-trading-day approval → WAITING_MARKET armed for that date.
+            restored = get_auto_paper_loop().start(armed_for=armed_session_date(cfg))
             _startup_logger.info(
                 "[startup] approved PAPER session restored: state=%s",
                 getattr(restored.state, "value", restored.state),

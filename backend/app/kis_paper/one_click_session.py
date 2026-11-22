@@ -12,7 +12,7 @@ import hmac
 import json
 import os
 import tempfile
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -133,6 +133,54 @@ def order_path_blockers(settings: Any) -> list[str]:
     return codes
 
 
+def armed_session_date(settings: Any, *, now: datetime | None = None,
+                       db: Any | None = None) -> date | None:
+    """Future trading day with a valid approval that the loop may wait for.
+
+    Returns the approval's ``target_date`` only when it is *after* today and
+    equals ``next_trading_day(now)``.  Today's approval returns None (the
+    normal phase logic applies).  This never authorizes an order:
+    ``authorize_order`` still requires ``target_date == today``.
+    """
+    from app.scheduler.intraday_session import next_trading_day
+    now = now or datetime.now(timezone.utc)
+    if not session_trading_authorized(settings, db=db):
+        return None
+    try:
+        record = load_approval(db)
+    except TypeError:
+        record = load_approval()
+    try:
+        target = datetime.strptime(str((record or {}).get("target_date", "")),
+                                   "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    today = now.astimezone(KST).date()
+    if target <= today:
+        return None
+    calendar = _calendar_for(settings)
+    return target if target == next_trading_day(now, calendar=calendar) else None
+
+
+def block_session_for_emergency(reason: str = "AUTO_PAPER_EMERGENCY_STOP") -> bool:
+    """Mark the current session approval BLOCKED (stricter only, never loosens).
+
+    Used by the auto-paper loop emergency stop so a pending/next-day session
+    is not restored after a restart; a fresh explicit approval is required.
+    """
+    record = load_approval()
+    if not record or record.get("status") not in {"SCHEDULED", "ACTIVE"}:
+        return False
+    _block(record, reason)
+    return True
+
+
+def _calendar_for(settings: Any):
+    from app.scheduler.intraday_session import load_krx_calendar
+    path = str(getattr(settings, "krx_calendar_override_path", "") or "") or None
+    return load_krx_calendar(path)
+
+
 def create_approval(*, db: Any, settings: Any, risk: Any, target_date: str, actor: str,
                     explicit_ack: bool) -> dict[str, Any]:
     if not explicit_ack:
@@ -141,8 +189,12 @@ def create_approval(*, db: Any, settings: Any, risk: Any, target_date: str, acto
     if blockers:
         raise ValueError(f"{ORDER_PATH_NOT_READY}:" + ",".join(blockers))
     target = datetime.strptime(target_date, "%Y-%m-%d").date()
-    today = datetime.now(KST).date()
-    if target < today or target > today + timedelta(days=1):
+    now_utc = datetime.now(timezone.utc)
+    today = now_utc.astimezone(KST).date()
+    from app.scheduler.intraday_session import next_trading_day
+    next_session = next_trading_day(now_utc, calendar=_calendar_for(settings))
+    # 오늘 또는 다음 거래일(KRX 달력)만 — 그 이후 미래는 거부.
+    if target not in {today, next_session}:
         raise ValueError("TARGET_DATE_NOT_TODAY_OR_NEXT_DAY")
     if not bool(getattr(settings, "kis_is_paper", False)):
         raise ValueError("PAPER_ACCOUNT_REQUIRED")
