@@ -14,7 +14,9 @@ feat/step2-market-waiting-mode: Auto Paper Loop 시작 시점에 시장 시간�
 - 평일 15:30 ~ 24:00 → CLOSED    (장 종료 후)
 - 토/일               → WEEKEND   (휴장)
 
-공휴일 처리는 *후속 항목* — 본 PR 시점에는 평일/주말 만 구분.
+KRX 휴장일(`intraday_session.load_krx_calendar`)은 `WEEKEND` 와 같은 휴장으로
+처리한다 (별도 enum 없음). 특수 세션(지연 개장 등)은 달력의 개장/마감 시각을 따른다.
+달력 미커버 연도(UNKNOWN)는 요일 기준 — 신규 BUY 차단은 intraday_session 담당.
 
 CLAUDE.md 절대 원칙:
 - broker / OrderExecutor / route_order import 0건
@@ -26,6 +28,7 @@ from __future__ import annotations
 
 from datetime import datetime, time, timedelta, timezone
 from enum import StrEnum
+from typing import Any
 
 
 # KST = UTC+9, DST 없음. 표준 라이브러리 `zoneinfo` 가 없는 환경 (PyInstaller
@@ -61,14 +64,39 @@ def to_kst(now: datetime) -> datetime:
     return _ensure_tz_aware(now).astimezone(KST_TZ)
 
 
-def current_market_phase(now: datetime | None = None) -> MarketPhase:
+_CALENDAR_CACHE: dict[str, Any] = {}
+
+
+def _default_calendar() -> Any:
+    """설정의 override 경로 기준 KRX 달력 (경로별 모듈 캐시)."""
+    from app.scheduler.intraday_session import load_krx_calendar
+    try:
+        from app.core.config import get_settings
+        path = str(getattr(get_settings(), "krx_calendar_override_path", "") or "")
+    except Exception:  # noqa: BLE001 — 설정 로드 실패 시 내장 달력.
+        path = ""
+    cal = _CALENDAR_CACHE.get(path)
+    if cal is None:
+        cal = load_krx_calendar(path or None)
+        _CALENDAR_CACHE[path] = cal
+    return cal
+
+
+def clear_calendar_cache() -> None:
+    _CALENDAR_CACHE.clear()
+
+
+def current_market_phase(
+    now: datetime | None = None, *, calendar: Any | None = None,
+) -> MarketPhase:
     """현재 한국 시장 단계.
 
     Args:
         now: 시점 (tz-aware 권장). None 이면 datetime.now(utc).
+        calendar: KrxCalendar (테스트 주입용). None 이면 설정 기준 KRX 달력.
 
     Returns:
-        MarketPhase 중 하나. 공휴일 미고려 (평일/주말 만 구분).
+        MarketPhase 중 하나. KRX 휴장일은 WEEKEND 로 반환한다.
 
     Examples:
         >>> from datetime import datetime
@@ -85,10 +113,23 @@ def current_market_phase(now: datetime | None = None) -> MarketPhase:
     if kst.weekday() >= 5:
         return MarketPhase.WEEKEND
 
+    open_t, close_t = KOREAN_MARKET_OPEN, KOREAN_MARKET_CLOSE
+    try:
+        from app.scheduler.intraday_session import CalendarStatus
+        cal = calendar if calendar is not None else _default_calendar()
+        d = kst.date()
+        st = cal.status(d)
+        if st == CalendarStatus.HOLIDAY:
+            return MarketPhase.WEEKEND
+        if st == CalendarStatus.TRADING_DAY:
+            open_t, close_t = cal.session_hours(d)
+    except Exception:  # noqa: BLE001 — 달력 오류 시 요일/정규 시각 기준 (기존 동작).
+        pass
+
     kst_time = kst.time()
-    if kst_time < KOREAN_MARKET_OPEN:
+    if kst_time < open_t:
         return MarketPhase.PRE_OPEN
-    if kst_time < KOREAN_MARKET_CLOSE:
+    if kst_time < close_t:
         return MarketPhase.OPEN
     return MarketPhase.CLOSED
 

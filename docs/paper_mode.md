@@ -116,6 +116,43 @@ KIS Developers/모의투자 포털에서 같은 계좌의 주문 내역을 보�
 | 401/403 KIS 인증 오류 | App Key/Secret 오타, 모의투자 앱이 아닌 실전 앱 키 사용 |
 | `place_order` 호출 시 `NotImplementedError: LIVE_MANUAL_APPROVAL` | 어댑터가 `is_paper=False`로 잘못 생성됨 — 환경변수 점검 |
 
+## 홈 "자동매매 시작" 준비 점검 (fix/autopaper-start-readiness)
+
+승인 팝업을 띄우기 전에 `GET /api/auto-paper/run-readiness`의 `order_blockers`를 확인하고,
+승인 API(`POST /api/auto-paper/paper-session-approval`)도 같은 조건을 다시 검사한다.
+사유가 하나라도 있으면 승인은 `409 ORDER_PATH_NOT_READY:<codes>`로 거부되고 홈에 원인이 표시된다.
+
+| 사유 코드 | 조건 | 조치 |
+|---|---|---|
+| `MARKET_DATA_PROVIDER_NOT_KIS` | `MARKET_DATA_PROVIDER` ≠ `kis` | `%APPDATA%\Autotrade\.env`에서 `kis`로 바꾸고 재실행 |
+| `BACKGROUND_TICK_DISABLED` | `ENABLE_AI_PAPER_BACKGROUND_TICK=false` | `true` |
+| `KIS_CREDENTIALS_MISSING` | 앱키/시크릿/계좌번호 중 빈 값 | 모의투자 키 입력 |
+| `FILL_POLLER_DISABLED` | `KIS_PAPER_FILL_POLLING=false` | `true` |
+| `KIS_PAPER_SMOKE_MODE_ON` | `KIS_PAPER_SMOKE_MODE=true` | `false` |
+
+`POST /api/auto-paper/start` 응답에는 `order_mode`와 `order_blockers`가 함께 온다. `order_mode`가
+`KIS_REALTIME_PAPER_AUTO`가 아니면 홈에 "가상 전용 — KIS 주문 안 나감" 배지가 표시된다.
+
+- **휴장일:** `market_clock.current_market_phase`가 KRX 휴장일 달력을 반영한다. 휴장일은 `WEEKEND`와 똑같이 휴장으로 처리하고, 특수 세션(지연 개장)은 달력의 개장·마감 시각을 따른다.
+- **다음 거래일 대기:** 장 마감 후·주말·휴장일에는 승인 대상이 `GET /api/auto-paper/next-trading-day`(KRX 달력 기준)가 된다. 그 날짜로 승인한 뒤 시작하면 루프가 `WAITING_MARKET`(`armed_for`=대상일)으로 기다렸다가 그날 09:00에 `RUNNING`이 된다. 대상일을 놓치면 `MARKET_CLOSED`가 된다. 대기는 주문 권한이 아니다. `authorize_order`가 `target_date == 오늘`을 그대로 검사하므로 대기 중 주문은 0건이다. 승인 가능 날짜는 오늘 또는 다음 거래일뿐이다.
+### 세션 상태와 재시작 fail-closed 정책
+
+| 승인 상태 | 신규 BUY | 청산 SELL·EOD | 해제 |
+|---|---|---|---|
+| `SCHEDULED` / `ACTIVE` | 가능 | 가능 | — |
+| `EXIT_ONLY` | **차단** (`EMERGENCY_STOP_SESSION_BLOCKED` / `RESTART_REAPPROVAL_REQUIRED`) | 가능 (기존 SELL 검증 그대로: KIS 보유·주문가능수량, 프로그램 소유 등) | 새 **명시적 승인**만 |
+| `BLOCKED` 등 | 차단 | 차단 (기존 의미) | — |
+
+- **긴급정지:** `POST /api/auto-paper/emergency-stop`은 대기를 풀고 세션을 `EXIT_ONLY`로 바꿔 **승인 파일과 운영 DB 양쪽에** 저장한다. 응답에는 `session_block`과 `session_block_persisted`가 담긴다.
+  - 현재 프로세스는 저장 결과와 상관없이 즉시 신규 BUY를 막는다.
+  - 저장이 양쪽 모두 실패하면 CRITICAL 로그를 남긴다. 이때도 아래 재시작 정책 때문에 자동 복구는 일어나지 않는다.
+- **충돌 시 제한 우선:** `load_approval`은 파일과 DB(같은 날짜·계좌) 중 더 제한적인 상태를 쓴다. 순서는 `BLOCKED` > `EXIT_ONLY` > `SCHEDULED/ACTIVE`이며, BUY 차단 표식은 어느 한쪽에만 있어도 적용된다. 파일이 삭제·손상되면 DB에서 그대로 복구한다.
+- **신규 BUY의 DB 대조:** `session_trading_authorized`와 `authorize_order(BUY)`는 DB를 조회하지 못하거나 DB가 파일보다 제한적이면 거부한다(`APPROVAL_DB_UNVERIFIED`). DB의 차단 기록이 조회 실패로 가려지고 파일의 오래된 `SCHEDULED`만 보이는 경우를 막기 위해서다.
+- **재시작 자동 복구는 일회용 허가가 있을 때만:** 허가(`paper-session-restore-permit.json`, 승인 파일과 같은 폴더)는 **정상 종료** 때만 lifespan 종료 처리에서 기록된다. 기록 조건은 루프가 `RUNNING`/`WAITING_MARKET`이고, 프로세스 BUY 차단이 없고, 세션이 신규 BUY 가능 상태이며 DB 대조에 성공한 경우다.
+  - 다음 시작 때 허가를 읽고 즉시 삭제한다. 허가가 현재 승인(날짜·계좌·승인시각)과 일치하고 DB 대조가 성공해야만 복구한다.
+  - 크래시, 강제 종료, 긴급정지 저장 실패, 허가 손상·불일치, DB 조회 실패 시에는 복구하지 않는다. 세션은 `EXIT_ONLY`로 바뀌고 그 프로세스는 신규 BUY를 막는다. 청산과 EOD는 계속되며, 다시 매수하려면 홈에서 재승인해야 한다.
+  - 사용자가 멈춘 루프(PAUSED/STOPPED)는 정상 종료해도 자동 재개하지 않는다.
+
 ## PAPER 다음 단계
 
 PAPER로 충분한 검증을 마친 후:

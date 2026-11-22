@@ -217,13 +217,26 @@ async def lifespan(_app: FastAPI):
     try:
         from app.api.deps import get_risk_manager
         from app.auto_paper.loop import get_auto_paper_loop
-        from app.kis_paper.one_click_session import session_trading_authorized
-        if (session_trading_authorized(cfg)
-                and not bool(getattr(get_risk_manager(), "emergency_stop", False))):
-            restored = get_auto_paper_loop().start()
+        from app.kis_paper.one_click_session import evaluate_restart_restore
+        # Fail-closed: auto-restore only with the one-shot permit written by a
+        # *clean* shutdown that matches the current approval and a verified DB.
+        # Otherwise the session becomes EXIT_ONLY (new BUY needs re-approval;
+        # EOD/exit SELL continues) and this process blocks new BUY.
+        decision = evaluate_restart_restore(
+            cfg, risk_emergency=bool(getattr(get_risk_manager(), "emergency_stop", False)),
+        )
+        if decision.get("restore"):
+            # next-trading-day approval → WAITING_MARKET armed for that date.
+            restored = get_auto_paper_loop().start(armed_for=decision.get("armed_for"))
             _startup_logger.info(
                 "[startup] approved PAPER session restored: state=%s",
                 getattr(restored.state, "value", restored.state),
+            )
+        elif decision.get("reason") not in (None, "NO_ACTIVE_SESSION"):
+            _startup_logger.warning(
+                "[startup] PAPER session NOT auto-restored (reason=%s) - "
+                "new BUY requires explicit re-approval; exits/EOD continue",
+                decision.get("reason"),
             )
     except Exception as exc:  # fail closed; readiness exposes the reason
         _startup_logger.warning(
@@ -315,6 +328,16 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         _startup_logger.info("[shutdown] lifespan exit")
+        # One-shot restore permit — written ONLY here (clean shutdown). A crash,
+        # forced kill or failed write leaves no permit -> next start re-approval.
+        try:
+            from app.auto_paper.loop import get_auto_paper_loop as _gal
+            from app.kis_paper.one_click_session import write_restore_permit
+            _permit = write_restore_permit(cfg, loop_state=_gal().status().state)
+            _startup_logger.info("[shutdown] restore permit: %s", _permit)
+        except Exception as exc:  # noqa: BLE001 — no permit = fail-closed restart.
+            _startup_logger.warning("[shutdown] restore permit skipped (%s)",
+                                    type(exc).__name__)
         try:
             from app.system.event_log import log_event
             log_event(

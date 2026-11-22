@@ -451,6 +451,9 @@ export const backendApi = {
   // 자동매매 실행 점검: run-readiness (준비 상태 한눈에) — read-only.
   autoPaperRunReadiness: () =>
     backendFetch("/api/auto-paper/run-readiness"),
+  // P2: KRX 달력 기준 승인 대상 거래일 — read-only.
+  autoPaperNextTradingDay: () =>
+    backendFetch("/api/auto-paper/next-trading-day"),
   // 강제 진단 run-once — 파이프라인 전체 1회 실행 + reason_code. 실거래 아님.
   autoPaperRunOnceDiagnostic: (body = {}) =>
     backendFetch("/api/auto-paper/run-once-diagnostic", {

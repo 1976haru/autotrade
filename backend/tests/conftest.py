@@ -85,6 +85,15 @@ def safe_default_flags(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_process_emergency_session_block():
+    """one_click_session 의 프로세스 내 긴급정지 차단 표식이 테스트 사이에 새지 않게."""
+    from app.kis_paper import one_click_session
+    one_click_session._clear_process_buy_block()
+    yield
+    one_click_session._clear_process_buy_block()
+
+
+@pytest.fixture(autouse=True)
 def _fake_paper_operator_approval_for_non_auth_tests(request, monkeypatch):
     """Authorize isolated FakeBroker workflows, never real gate tests."""
     module_name = request.module.__name__.rsplit(".", 1)[-1]
@@ -92,6 +101,9 @@ def _fake_paper_operator_approval_for_non_auth_tests(request, monkeypatch):
         "test_one_click_paper_session",
         "test_kis_paper_auto_trading_pipeline",
         "test_kis_paper_v22_multisymbol_integration",
+        "test_autopaper_start_readiness",
+        "test_autopaper_next_session_arm",
+        "test_autopaper_emergency_session_block",
     }:
         return
     from app.kis_paper import one_click_session

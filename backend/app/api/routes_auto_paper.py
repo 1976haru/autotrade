@@ -14,6 +14,7 @@ body `{ pre_market: { start_allowed, verdict, blocking_reasons, warnings } }`
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -257,8 +258,15 @@ def post_start(body: _StartBody | None = None) -> dict:
             blocking_reasons=list(body.pre_market.blocking_reasons),
             warnings=list(body.pre_market.warnings),
         )
+    # P2: 장 마감 후/휴장일 — 다음 거래일 승인이 있으면 그날까지 대기(arming).
+    armed_for = None
     try:
-        snap = loop.start(pre_market=pm)
+        from app.kis_paper.one_click_session import armed_session_date
+        armed_for = armed_session_date(get_settings())
+    except Exception:  # noqa: BLE001 — 판단 실패 시 기존 phase 규칙 (대기 없음).
+        armed_for = None
+    try:
+        snap = loop.start(pre_market=pm, armed_for=armed_for)
     except LoopPreMarketBlockedError as e:
         # Pre-market BLOCK — 차단 사유 구조화 응답.
         raise HTTPException(
@@ -282,7 +290,6 @@ def post_start(body: _StartBody | None = None) -> dict:
     #   직전일 EOD 사고 차단 포함 상세는 GET /api/kis-paper/eod/status).
     try:
         from datetime import datetime as _dt, timezone as _tz
-        from app.core.config import get_settings
         from app.scheduler.intraday_session import IntradayPolicy, buy_reason_message_ko
         _ok, _code = IntradayPolicy.from_settings(get_settings()).buy_entry_decision(
             _dt.now(_tz.utc))
@@ -291,7 +298,36 @@ def post_start(body: _StartBody | None = None) -> dict:
         out["intraday_buy_reason_message"] = buy_reason_message_ko(_code)
     except Exception:  # noqa: BLE001 — 표시용, 시작 자체엔 영향 없음.
         pass
+    # P1-A: 실제로 KIS 모의주문이 나갈 수 있는 모드인지 + 차단 사유 (추가 필드).
+    try:
+        from app.kis_paper.one_click_session import (
+            effective_session_settings, order_path_blockers,
+        )
+        _settings = get_settings()
+        out["order_mode"] = resolve_paper_auto_mode(
+            effective_session_settings(_settings)).mode
+        out["order_blockers"] = order_path_blockers(_settings)
+    except Exception:  # noqa: BLE001 — fail closed 표시.
+        out["order_mode"] = "VIRTUAL_ONLY"
+        out["order_blockers"] = ["ORDER_MODE_UNAVAILABLE"]
     return out
+
+
+@_AP.get("/next-trading-day")
+def get_next_trading_day() -> dict:
+    """KRX 달력 기준 승인 대상 거래일 (오늘 장 마감 전이면 오늘). read-only."""
+    from datetime import datetime as _dt, timezone as _tz
+    from app.kis_paper.one_click_session import KST as _KST, _calendar_for
+    from app.scheduler.intraday_session import next_trading_day
+    now = _dt.now(_tz.utc)
+    target = next_trading_day(now, calendar=_calendar_for(get_settings()))
+    today = now.astimezone(_KST).date()
+    return {
+        "today": today.isoformat(),
+        "target_date": target.isoformat(),
+        "is_today": target == today,
+        "weekday": target.weekday(),
+    }
 
 
 @_AP.post("/stop")
@@ -304,9 +340,38 @@ def post_stop() -> dict:
     return snap.to_dict()
 
 
+_ap_log = logging.getLogger("autotrade.auto_paper.routes")
+
+
 @_AP.post("/emergency-stop")
-def post_emergency_stop() -> dict:
-    return get_auto_paper_loop().emergency_stop().to_dict()
+def post_emergency_stop(db=Depends(get_db)) -> dict:
+    snap = get_auto_paper_loop().emergency_stop()
+    out = snap.to_dict()
+    # 대기/진행 중 승인 세션을 승인 파일 + 운영 DB 에 BLOCKED 로 영속 저장 —
+    #   재시작 후에도 복원·주문 불가 (새 명시적 승인 필요). 이 프로세스는 즉시 fail-closed.
+    from app.kis_paper.one_click_session import (
+        EmergencyBlockPersistError, block_session_for_emergency,
+    )
+    try:
+        result = block_session_for_emergency(db)
+        out["session_block"] = result
+        out["session_block_persisted"] = bool(result.get("file") or result.get("db"))
+        if result.get("blocked") and not (result.get("file") and result.get("db")):
+            _ap_log.error("[auto-paper] emergency session block partially persisted: %s",
+                          result.get("errors"))
+    except EmergencyBlockPersistError as exc:
+        _ap_log.critical("[auto-paper] emergency session block NOT persisted (%s) - "
+                         "this process stays blocked; restart may restore the session", exc)
+        out["session_block"] = {"blocked": True, "file": False, "db": False,
+                                "errors": str(exc).split(",")}
+        out["session_block_persisted"] = False
+    except Exception as exc:  # noqa: BLE001 — 프로세스 차단은 이미 적용됨.
+        _ap_log.critical("[auto-paper] emergency session block failed: %s",
+                         type(exc).__name__)
+        out["session_block"] = {"blocked": True, "file": False, "db": False,
+                                "errors": [type(exc).__name__]}
+        out["session_block_persisted"] = False
+    return out
 
 
 @_AP.post("/reset")
@@ -2161,6 +2226,14 @@ def _loop_health_label(state: str, cycle_count: int) -> tuple[str, str]:
     return "NOT_RUNNING", "자동 루프가 실행 중이 아닙니다 — 시작 버튼을 누르세요."
 
 
+def _order_blockers_safe(settings) -> list[str]:
+    try:
+        from app.kis_paper.one_click_session import order_path_blockers
+        return order_path_blockers(settings)
+    except Exception:  # noqa: BLE001
+        return ["ORDER_MODE_UNAVAILABLE"]
+
+
 @_AP.get("/run-readiness")
 def get_run_readiness() -> dict:
     """자동매매 실행 *준비 상태* 한눈에 — read-only.
@@ -2200,6 +2273,7 @@ def get_run_readiness() -> dict:
             "last_error":     snap.last_error,
             "health_code":    health_code,
             "health_message": health_msg,
+            "armed_for":      snap.armed_for,
         },
         "market_session": {
             "phase":       phase.value,
@@ -2225,6 +2299,8 @@ def get_run_readiness() -> dict:
         # V2: 4-모드 분류 (VIRTUAL_ONLY / KIS_REALTIME_DRYRUN /
         # KIS_REALTIME_PAPER_AUTO / KIS_REALTIME_SMOKE_TEST) + 정상/스모크 한도.
         "paper_auto_mode": resolve_paper_auto_mode(effective_settings).to_dict(),
+        # P1-A: 승인해도 KIS 모의주문이 나갈 수 없는 사유 ([] = 준비됨).
+        "order_blockers": _order_blockers_safe(settings),
         "paper_auto_limits": {
             "smoke_mode":               bool(getattr(settings, "kis_paper_smoke_mode", False)),
             "smoke_symbol":             str(getattr(settings, "kis_paper_smoke_symbol", "005930")),

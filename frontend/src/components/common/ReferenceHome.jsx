@@ -36,6 +36,9 @@ import { BriefingBoard } from "./BriefingBoard";
 import { PreflightPanel } from "./PreflightPanel";
 import { IntradaySessionPanel } from "./IntradaySessionPanel";
 import { ThemeFilterCard } from "./ThemeFilterCard";
+import {
+  ORDER_PATH_NOT_READY, orderBlockerMessage, formatKoreanDate,
+} from "../../services/paperSessionApproval";
 import { themeBriefingById } from "../../utils/themeBriefing";
 
 // 등락 색 — 한국식(+빨강 −파랑). 라이트/다크 모두 대비 확보.
@@ -103,7 +106,14 @@ export function ReferenceHome({
   const handleStart = async () => {
     const closed = !isMarketOpen();
     const res = await loop.start();
-    if (closed && res.ok && res.state === "WAITING_MARKET") {
+    if (!res.ok && (res.reasons || [])[0] === ORDER_PATH_NOT_READY) {
+      // P1-A: 승인해도 KIS 모의주문이 0건인 설정 — 팝업 없이 정확한 사유 안내.
+      const lines = (res.blockers || []).map(orderBlockerMessage).join(" · ");
+      setStartNote({ kind: "blocked", text: `KIS 모의주문이 나갈 수 없어 시작하지 않았어요 — ${lines || "설정을 확인하세요"}` });
+    } else if (res.ok && res.state === "WAITING_MARKET" && res.armedFor) {
+      // P2: 다음 거래일 자동 대기.
+      setStartNote({ kind: "closed", text: `${formatKoreanDate(res.armedFor)} 09:00에 자동 시작해요` });
+    } else if (closed && res.ok && res.state === "WAITING_MARKET") {
       setStartNote({ kind: "closed", text: "지금은 장 시간이 아니에요 — 장이 열리면(평일 09:00) 자동으로 거래를 시작해요" });
     } else if (closed && res.ok && res.state === "MARKET_CLOSED") {
       setStartNote({ kind: "blocked", text: "현재 장이 종료됐거나 휴장 상태입니다. 자동 대기 중이 아니므로 다음 거래일에 자동매매 시작을 다시 눌러야 합니다." });
@@ -340,6 +350,16 @@ export function ReferenceHome({
               🛑 {emergencyStop ? "긴급정지 해제" : "긴급정지"}
             </button>
           </div>
+          {/* P1-A: 루프가 돌아도 KIS 주문이 안 나가는 모드면 고정 경고 배지 */}
+          {loop.orderMode && loop.orderMode !== "KIS_REALTIME_PAPER_AUTO"
+            && ["RUNNING", "WAITING_MARKET"].includes(loop.state) && (
+            <div data-testid="refhome-virtual-only-badge" style={{
+              marginTop: 10, fontSize: F.sm, fontWeight: 800, borderRadius: 10, padding: "8px 12px",
+              background: "#fde68a", color: "#5a3b00", border: "1px solid #f59e0b",
+            }}>
+              ⚠️ 가상 전용 — KIS 주문 안 나감
+            </div>
+          )}
           {/* INTRADAY-FLAT-BY-CLOSE-V1: 14:30 매수마감 · 15:15 강제청산 · EOD 상태 (서버 시계) */}
           <IntradaySessionPanel />
           {/* pre-market gate / 시작 결과 안내 */}

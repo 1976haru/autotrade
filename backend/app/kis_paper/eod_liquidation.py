@@ -596,9 +596,10 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
     db = session_factory()
     try:
         from app.kis_paper.one_click_session import (
-            effective_session_settings, session_trading_authorized,
+            effective_exit_settings, session_exit_authorized,
         )
-        approved_session = session_trading_authorized(settings, db=db)
+        # 청산 전용 세션 권한 — EXIT_ONLY 에서도 EOD 강제청산은 계속 (BUY 는 별도 거부).
+        approved_session = session_exit_authorized(settings, db=db)
         sell_authorized = False
         if approved_session:
             from app.kis_paper.one_click_session import load_approval, public_status
@@ -610,7 +611,7 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
                 public_status(approval_record).get("allowed_sides") or []
             )
         if approved_session:
-            settings = effective_session_settings(settings, db=db)
+            settings = effective_exit_settings(settings, db=db)
         from app.auto_paper.paper_auto_mode import resolve_paper_auto_mode
         mode = resolve_paper_auto_mode(settings)
         row = get_state_row(db, trading_date)

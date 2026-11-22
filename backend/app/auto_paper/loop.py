@@ -57,12 +57,12 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import StrEnum
 from functools import lru_cache
 from typing import Any, Callable, Optional
 
-from app.scheduler.market_clock import MarketPhase, current_market_phase
+from app.scheduler.market_clock import MarketPhase, current_market_phase, to_kst
 
 
 _log = logging.getLogger("autotrade.auto_paper")
@@ -212,6 +212,8 @@ class AutoPaperStatus:
     # NO_CANDIDATE / WAITING_APPROVAL / CANDIDATE_READY 중 하나.
     candidate_readiness:     str  = "NO_CANDIDATE"
     has_active_candidate:    bool = False
+    # P2: 다음 거래일 대기 대상 (YYYY-MM-DD) — WAITING_MARKET 에서만 값.
+    armed_for:               str | None = None
     is_order_signal:     bool = False
     auto_apply_allowed:  bool = False
 
@@ -241,6 +243,7 @@ class AutoPaperStatus:
             "last_decision_log_count": self.last_decision_log_count,
             "candidate_readiness":     self.candidate_readiness,
             "has_active_candidate":    self.has_active_candidate,
+            "armed_for":               self.armed_for,
             "is_order_signal":     self.is_order_signal,
             "auto_apply_allowed":  self.auto_apply_allowed,
         }
@@ -291,12 +294,21 @@ class AutoPaperLoop:
         self._last_consumer_action: str | None = None
         self._last_consumer_ledger_events: int = 0
         self._last_consumer_decision_log_count: int = 0
+        # P2 next-session arming: 장 마감 후/휴장일에 *다음 거래일* 승인으로 시작하면
+        # 그 날짜까지 WAITING_MARKET 유지. 주문 권한이 아니다 (authorize_order 가
+        # target_date == 오늘 을 별도 검사).
+        self._armed_for: date | None = None
+
+    @property
+    def armed_for(self) -> date | None:
+        return self._armed_for
 
     def start(
         self,
         *,
         pre_market: PreMarketSummary | None = None,
         now: datetime | None = None,
+        armed_for: date | None = None,
     ) -> AutoPaperStatus:
         """자동 시작.
 
@@ -346,8 +358,19 @@ class AutoPaperLoop:
             phase = current_market_phase(now)
             self._started_at = datetime.now(timezone.utc)
             self._last_error = None
+            self._armed_for = None
+            today_kst = to_kst(now or datetime.now(timezone.utc)).date()
 
-            if phase == MarketPhase.OPEN:
+            if (phase in (MarketPhase.CLOSED, MarketPhase.WEEKEND)
+                    and armed_for is not None and armed_for > today_kst):
+                # 다음 거래일 승인 — 그날 09:00 까지 대기.
+                self._state = AutoPaperState.WAITING_MARKET
+                self._armed_for = armed_for
+                _log.info(
+                    "[auto-paper] start → WAITING_MARKET armed for next session %s "
+                    "(market phase=%s).", armed_for.isoformat(), phase.value,
+                )
+            elif phase == MarketPhase.OPEN:
                 self._state = AutoPaperState.RUNNING
                 _log.info(
                     "[auto-paper] start → RUNNING (market phase=OPEN)"
@@ -390,6 +413,7 @@ class AutoPaperLoop:
                     f"nothing to stop"
                 )
             self._state = AutoPaperState.STOPPED
+            self._armed_for = None
             self._stopped_at = datetime.now(timezone.utc)
             return self._snapshot_unlocked()
 
@@ -397,6 +421,7 @@ class AutoPaperLoop:
         """어떤 상태에서든 EMERGENCY_STOP 으로 전이. start() 차단까지 carry."""
         with self._lock:
             self._state = AutoPaperState.EMERGENCY_STOP
+            self._armed_for = None
             self._emergency_at = datetime.now(timezone.utc)
             return self._snapshot_unlocked()
 
@@ -404,6 +429,7 @@ class AutoPaperLoop:
         """EMERGENCY_STOP / STOPPED → PAUSED. 운영자 명시 호출 후에만 재시작 가능."""
         with self._lock:
             self._state = AutoPaperState.PAUSED
+            self._armed_for = None
             self._stopped_at = None
             self._emergency_at = None
             self._last_error = None
@@ -536,6 +562,20 @@ class AutoPaperLoop:
         """
         with self._lock:
             cur = self._state
+            if cur == AutoPaperState.WAITING_MARKET and self._armed_for is not None:
+                today_kst = to_kst(now or datetime.now(timezone.utc)).date()
+                armed = self._armed_for
+                if today_kst < armed:
+                    return self._snapshot_unlocked()   # 다음 거래일까지 대기 유지
+                if today_kst > armed:
+                    self._armed_for = None
+                    self._state = AutoPaperState.MARKET_CLOSED
+                    _log.info(
+                        "[auto-paper] status() armed session %s missed → MARKET_CLOSED.",
+                        armed.isoformat(),
+                    )
+                    return self._snapshot_unlocked()
+                # 오늘 == armed: 이하 일반 phase 규칙 (OPEN → RUNNING 시 해제).
             if cur in (AutoPaperState.WAITING_MARKET, AutoPaperState.RUNNING):
                 phase = current_market_phase(now)
                 target: AutoPaperState | None = None
@@ -547,6 +587,8 @@ class AutoPaperLoop:
                     # CLOSED / WEEKEND
                     target = AutoPaperState.MARKET_CLOSED
 
+                if target != AutoPaperState.WAITING_MARKET:
+                    self._armed_for = None
                 if target != cur:
                     self._state = target
                     if target == AutoPaperState.RUNNING:
@@ -585,6 +627,7 @@ class AutoPaperLoop:
             readiness = "NO_CANDIDATE"
             has_active = False
         return AutoPaperStatus(
+            armed_for=self._armed_for.isoformat() if self._armed_for else None,
             state=self._state.value,
             cycle_count=self._cycle_count,
             last_tick_at=self._last_tick_at.isoformat() if self._last_tick_at else None,
