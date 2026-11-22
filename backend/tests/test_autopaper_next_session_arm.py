@@ -202,7 +202,7 @@ def test_http_emergency_stop_blocks_pending_session(client, db, freeze):
     approve(db, MON)
     try:
         assert client.post("/api/auto-paper/emergency-stop").status_code == 200
-        assert ocs.load_approval()["status"] == "BLOCKED"
+        assert ocs.load_approval()["status"] == "EXIT_ONLY"   # BUY 차단, 청산 허용
     finally:
         get_auto_paper_loop().reset()
 

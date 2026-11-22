@@ -742,14 +742,15 @@ class BackgroundTickDriver:
         s = self._settings()
         if bool(getattr(s, "enable_live_trading", False)):
             return None
+        # EOD 는 청산 전용 — EXIT_ONLY(긴급정지/재시작 후 재승인 대기) 세션에서도 계속.
         from app.kis_paper.one_click_session import (
-            effective_session_settings, session_trading_authorized,
+            effective_exit_settings, session_exit_authorized,
         )
         from app.db.session import SessionLocal
         approval_db = SessionLocal()
         try:
-            approved_session = session_trading_authorized(s, db=approval_db)
-            eod_settings = effective_session_settings(s, db=approval_db) if approved_session else s
+            approved_session = session_exit_authorized(s, db=approval_db)
+            eod_settings = effective_exit_settings(s, db=approval_db) if approved_session else s
         finally:
             approval_db.close()
         injected_legacy_step = (
@@ -1123,11 +1124,11 @@ class EodGuardian:
         s = self._driver._settings()
         if bool(getattr(s, "enable_live_trading", False)):
             return False
-        from app.kis_paper.one_click_session import session_trading_authorized
+        from app.kis_paper.one_click_session import session_exit_authorized
         from app.db.session import SessionLocal
         db = SessionLocal()
         try:
-            approved = session_trading_authorized(s, db=db)
+            approved = session_exit_authorized(s, db=db)
         finally:
             db.close()
         return approved or (

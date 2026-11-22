@@ -1718,6 +1718,8 @@ def test_V3_precheck_warns_on_capacity_risk_without_behavior_change(session_fact
 def test_eod_valid_session_overrides_global_auto_and_dry_run(session_factory, db, monkeypatch):
     from app.kis_paper import one_click_session
     monkeypatch.setattr(one_click_session, "session_trading_authorized", lambda *_a, **_k: True)
+    # EOD 는 청산 전용 세션 권한(session_exit_authorized)을 쓴다 — 같은 "유효 세션" 가정.
+    monkeypatch.setattr(one_click_session, "session_exit_authorized", lambda *_a, **_k: True)
     monkeypatch.setattr(one_click_session, "load_approval",
                         lambda *_a, **_k: {"status": "ACTIVE", "allowed_sides": ["BUY", "SELL"]})
     seed_bot_position(db, "005930", 2)

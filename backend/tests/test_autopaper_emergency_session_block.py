@@ -1,12 +1,15 @@
-"""긴급정지 → 승인 세션 차단의 영속성 (PR #199 보완).
+"""긴급정지·재시작 시 승인 세션의 fail-closed 정책 (PR #199 보완).
 
-- 긴급정지는 승인 *파일* 과 운영 *DB* 기록 둘 다를 BLOCKED + emergency_blocked 로 저장.
-- 파일/DB 가 충돌하면 더 제한적인 상태가 이긴다.
-- 저장 실패는 숨기지 않는다: 한쪽만 성공해도 재시작 후 차단, 둘 다 실패하면
-  예외 + 프로세스 내 fail-closed.
-- 차단 해제는 새 *명시적* 승인으로만 가능. LIVE/PAPER 및 기존 주문 게이트 유지.
+- 긴급정지는 세션을 EXIT_ONLY(신규 BUY 차단, 청산 SELL·EOD 허용)로 승인 파일과 운영 DB
+  둘 다에 저장한다. 파일/DB 충돌 시 더 제한적인 상태가 이긴다.
+- 자동 복구는 *정상 종료* 가 남긴 일회용 허가(restore permit)가 현재 승인과 일치하고
+  DB 대조가 성공할 때만. 그 외(크래시·강제 종료·긴급정지 저장 실패·DB 조회 실패)는
+  복구 거부 + EXIT_ONLY + 이 프로세스 BUY 차단 → 새 명시적 승인 필요.
+- 신규 BUY 경로는 DB 대조 실패 시 차단 (DB BLOCKED + 오래된 파일 SCHEDULED 대비).
+- LIVE/PAPER 및 기존 주문 게이트, EOD 청산 경로 유지.
 
-실제 KIS 호출 0건 — broker 는 호출되면 실패하는 가짜. 승인 파일은 tmp 경로, DB 는 in-memory.
+실제 KIS 호출 0건 — broker 는 호출되면 실패하는 가짜. 승인 파일은 tmp, DB 는 in-memory.
+실제 프로세스 재시작 시나리오는 test_autopaper_restart_subprocess.py.
 """
 from __future__ import annotations
 
@@ -46,7 +49,7 @@ def settings(**over):
 
 
 class _NoCallBroker:
-    """KIS 호출이 일어나면 테스트 실패 — 차단은 broker 조회 *전* 에 끝나야 한다."""
+    """KIS 호출이 일어나면 테스트 실패 — BUY 차단은 broker 조회 *전* 에 끝나야 한다."""
 
     def __getattr__(self, name):
         raise AssertionError(f"broker.{name} must not be called")
@@ -89,7 +92,7 @@ def freeze(monkeypatch):
 
 @pytest.fixture
 def default_db(monkeypatch, db_factory):
-    """db 인자 없이 호출되는 경로(main.py lifespan 복원 등)가 쓰는 '운영 DB' 대역."""
+    """db 인자 없이 호출되는 경로(main.py lifespan 등)가 쓰는 '운영 DB' 대역."""
     monkeypatch.setattr(ocs, "_open_default_db", lambda: db_factory())
 
 
@@ -100,12 +103,21 @@ def approve(db, target: date, **over):
                                explicit_ack=True)
 
 
-def restart():
-    """새 프로세스 — 메모리 상태(프로세스 차단 표식) 초기화."""
-    ocs._PROCESS_EMERGENCY_BLOCK = False
+def new_process():
+    """새 프로세스 — 메모리 상태(프로세스 BUY 차단 표식) 초기화."""
+    ocs._clear_process_buy_block()
 
 
-def authorize(db, at: datetime, s=None):
+def clean_shutdown(loop_state="WAITING_MARKET"):
+    return ocs.write_restore_permit(settings(), loop_state=loop_state)
+
+
+def startup(at: datetime, *, risk_emergency=False):
+    """main.py lifespan 시작 경로와 같은 호출 (db 인자 없음)."""
+    return ocs.evaluate_restart_restore(settings(), risk_emergency=risk_emergency, now=at)
+
+
+def buy(db, at: datetime, s=None):
     return asyncio.run(ocs.authorize_order(
         db=db, settings=s or settings(), broker=_NoCallBroker(),
         risk=SimpleNamespace(emergency_stop=False), side="BUY", symbol="005930",
@@ -116,29 +128,169 @@ def db_row(db):
     return db.execute(select(PaperSessionApproval)).scalars().one()
 
 
-def lifespan_restore(at: datetime):
-    """main.py lifespan 복원 경로와 같은 호출 (db 인자 없음)."""
-    cfg = settings()
-    if not ocs.session_trading_authorized(cfg):
-        return None
-    return AutoPaperLoop().start(now=at, armed_for=ocs.armed_session_date(cfg, now=at))
+# ── 기본: 정상 종료 → 재시작 = 자동 복구 (기존 동작 유지) ──────────────────────
+def test_clean_shutdown_permit_allows_one_restore(db, freeze, default_db):
+    freeze(kst(SAT, 12))
+    approve(db, MON)
+    assert clean_shutdown()["written"] is True
+    new_process()
+    d = startup(kst(SAT, 13))
+    assert d["restore"] is True and d["armed_for"] == MON
+    assert not ocs.restore_permit_path().exists()          # 일회용 — 소모됨
+    # 같은 허가로 두 번째(=크래시 후 재시작) 복구는 불가.
+    new_process()
+    d2 = startup(kst(SAT, 14))
+    assert d2["restore"] is False and d2["reason"] == "NO_CLEAN_SHUTDOWN_PERMIT"
 
 
-# ── 1. 예약 승인 → 긴급정지 → 재시작 → 주문 차단 ─────────────────────────────
-def test_scheduled_then_emergency_then_restart_blocks_orders(db, freeze, default_db):
+@pytest.mark.parametrize("state", ["PAUSED", "STOPPED", "MARKET_CLOSED", "EMERGENCY_STOP", None])
+def test_permit_not_written_when_loop_not_active(db, freeze, default_db, state):
+    freeze(kst(SAT, 12))
+    approve(db, MON)
+    assert clean_shutdown(state) == {"written": False, "reason": "LOOP_NOT_ACTIVE"}
+
+
+# ── 1·2. 긴급정지 저장이 모두 실패 → 재시작 후에도 자동 복구 금지 ────────────────
+def test_emergency_persist_total_failure_then_restart_never_restores(db, freeze, monkeypatch,
+                                                                      default_db, approval_file):
+    freeze(kst(SAT, 12))
+    approve(db, MON)
+    real_write, real_persist = ocs._write_atomic, ocs._persist_approval
+
+    def _fail_write(_data):
+        raise OSError("disk full")
+
+    def _fail_db(_db, _record):
+        raise RuntimeError("db locked")
+    monkeypatch.setattr(ocs, "_write_atomic", _fail_write)
+    monkeypatch.setattr(ocs, "_persist_approval", _fail_db)
+    with pytest.raises(ocs.EmergencyBlockPersistError):
+        ocs.block_session_for_emergency(db)
+    # 파일·DB 는 여전히 SCHEDULED (저장 실패). 정상 종료해도 허가는 기록되지 않는다.
+    assert json.loads(approval_file.read_text(encoding="utf-8"))["status"] == "SCHEDULED"
+    assert clean_shutdown() == {"written": False, "reason": "PROCESS_BUY_BLOCKED"}
+
+    # 재시작 — 저장소가 여전히 고장이어도 복구 금지 + 프로세스 BUY 차단.
+    new_process()
+    d = startup(kst(SAT, 13))
+    assert d["restore"] is False and d["reason"] == "NO_CLEAN_SHUTDOWN_PERMIT"
+    assert ocs._PROCESS_EMERGENCY_BLOCK is True
+    assert ocs.session_trading_authorized(settings(), db=db) is False
+    freeze(kst(MON, 10))
+    assert buy(db, kst(MON, 10)) == (False, "RESTART_REAPPROVAL_REQUIRED")
+
+    # 저장소가 복구된 뒤 재시작 — 허가 없음 → EXIT_ONLY 로 저장, 계속 재승인 필요.
+    monkeypatch.setattr(ocs, "_write_atomic", real_write)
+    monkeypatch.setattr(ocs, "_persist_approval", real_persist)
+    freeze(kst(SAT, 15))
+    new_process()
+    d = startup(kst(SAT, 15))
+    assert d["restore"] is False and d["persisted"]["file"] and d["persisted"]["db"]
+    assert db_row(db).status == "EXIT_ONLY"
+    new_process()                                          # 그다음 재시작에도 BUY 불가
+    assert ocs.session_trading_authorized(settings(), db=db) is False
+    freeze(kst(MON, 10))
+    assert buy(db, kst(MON, 10)) == (False, "RESTART_REAPPROVAL_REQUIRED")
+
+
+def test_crash_without_shutdown_requires_reapproval(db, freeze, default_db):
+    freeze(kst(SAT, 12))
+    approve(db, MON)                                       # 허가 없이 프로세스 종료(크래시)
+    new_process()
+    d = startup(kst(SAT, 13))
+    assert d["restore"] is False and d["reason"] == "NO_CLEAN_SHUTDOWN_PERMIT"
+    rec = ocs.load_approval(db)
+    assert rec["status"] == "EXIT_ONLY" and rec["buy_block_reason"] == "RESTART_REAPPROVAL_REQUIRED"
+
+
+@pytest.mark.parametrize("damage", ["corrupt", "mismatch"])
+def test_bad_permit_is_rejected(db, freeze, default_db, damage):
+    freeze(kst(SAT, 12))
+    approve(db, MON)
+    clean_shutdown()
+    path = ocs.restore_permit_path()
+    if damage == "corrupt":
+        path.write_text("{oops", encoding="utf-8")
+    else:
+        permit = json.loads(path.read_text(encoding="utf-8"))
+        permit["approved_at"] = "2026-01-01T00:00:00+00:00"   # 다른(이전) 승인의 허가
+        path.write_text(json.dumps(permit), encoding="utf-8")
+    new_process()
+    d = startup(kst(SAT, 13))
+    assert d["restore"] is False
+    assert d["reason"] == ("PERMIT_CORRUPT" if damage == "corrupt" else "PERMIT_MISMATCH")
+    assert not path.exists()
+
+
+def test_permit_not_consumable_is_rejected(db, freeze, default_db, monkeypatch):
+    freeze(kst(SAT, 12))
+    approve(db, MON)
+    clean_shutdown()
+    monkeypatch.setattr(ocs, "discard_restore_permit", lambda: False)
+    new_process()
+    d = startup(kst(SAT, 13))
+    assert d["restore"] is False and d["reason"] == "PERMIT_NOT_CONSUMABLE"
+
+
+# ── 3. DB 에 차단이 있는데 DB 조회 실패 → 파일의 오래된 SCHEDULED 만 읽힘 ────────
+def test_db_blocked_but_db_read_fails_stale_file_scheduled_blocks(db, freeze, default_db,
+                                                                 approval_file, monkeypatch):
+    freeze(kst(SAT, 12))
+    approve(db, MON)
+    clean_shutdown()                                       # 정상 종료 허가까지 있음
+    row = db_row(db)                                        # DB 만 차단(파일 쓰기 실패 상황)
+    rec = dict(row.record)
+    rec.update(status="EXIT_ONLY", buy_blocked=True, buy_block_reason="EMERGENCY_STOP_SESSION_BLOCKED",
+               emergency_blocked=True)
+    row.status, row.record = "EXIT_ONLY", rec
+    db.commit()
+    assert json.loads(approval_file.read_text(encoding="utf-8"))["status"] == "SCHEDULED"
+
+    def _db_down(*_a, **_k):
+        raise RuntimeError("database is locked")
+    monkeypatch.setattr(ocs, "_db_record", _db_down)
+    # (a) 실행 중 프로세스: 파일의 오래된 SCHEDULED 만 보이지만 DB 대조 실패 → BUY 차단.
+    new_process()
+    assert ocs.load_approval(db)["status"] == "SCHEDULED"      # 파일만 보임 (오래된 값)
+    assert ocs.session_trading_authorized(settings(), db=db) is False
+    freeze(kst(MON, 10))
+    assert buy(db, kst(MON, 10)) == (False, "APPROVAL_DB_UNVERIFIED")
+    # (b) 재시작: 정상 종료 허가가 있어도 DB 대조 실패 → 복구 금지 + 재승인 필요.
+    freeze(kst(SAT, 13))
+    new_process()
+    d = startup(kst(SAT, 13))
+    assert d["restore"] is False and d["reason"] == "APPROVAL_DB_UNVERIFIED"
+    assert ocs.session_trading_authorized(settings(), db=db) is False
+    freeze(kst(MON, 10))
+    assert buy(db, kst(MON, 10))[0] is False
+
+
+def test_db_more_restrictive_than_file_fails_verification(db, freeze):
+    freeze(kst(SAT, 12))
+    approve(db, MON)
+    file_rec = ocs._read_file_record()
+    row = db_row(db)
+    rec = dict(row.record)
+    rec.update(status="EXIT_ONLY", buy_blocked=True)
+    row.status, row.record = "EXIT_ONLY", rec
+    db.commit()
+    assert ocs._db_verified(db, file_rec) is False
+
+
+# ── 긴급정지 영속화 (cd44279 의 시나리오, EXIT_ONLY 모델) ───────────────────────
+def test_emergency_persists_exit_only_to_file_and_db(db, freeze, default_db):
     freeze(kst(SAT, 12))
     approve(db, MON)
     result = ocs.block_session_for_emergency(db)
-    assert result == {"blocked": True, "reason": "AUTO_PAPER_EMERGENCY_STOP",
-                      "file": True, "db": True, "errors": []}
+    assert result["file"] and result["db"] and result["status"] == "EXIT_ONLY"
     row = db_row(db)
-    assert row.status == "BLOCKED" and row.record["emergency_blocked"] is True
-
-    restart()
-    assert lifespan_restore(kst(SAT, 13)) is None          # 대기 상태로 복원 안 됨
+    assert row.status == "EXIT_ONLY" and row.record["emergency_blocked"] is True
+    new_process()
+    assert startup(kst(SAT, 13))["restore"] is False
     assert ocs.session_trading_authorized(settings(), db=db) is False
-    freeze(kst(MON, 10))                                   # 승인 대상일 장중이어도
-    assert authorize(db, kst(MON, 10)) == (False, "EMERGENCY_STOP_SESSION_BLOCKED")
+    assert ocs.session_exit_authorized(settings(), db=db) is True   # 청산·EOD 는 계속
+    freeze(kst(MON, 10))
+    assert buy(db, kst(MON, 10)) == (False, "EMERGENCY_STOP_SESSION_BLOCKED")
 
 
 def test_http_emergency_stop_persists_to_db(client, freeze):
@@ -147,22 +299,19 @@ def test_http_emergency_stop_persists_to_db(client, freeze):
     s = client.test_db_factory()
     approve(s, MON)
     try:
-        r = client.post("/api/auto-paper/emergency-stop")
-        assert r.status_code == 200
-        body = r.json()
+        body = client.post("/api/auto-paper/emergency-stop").json()
         assert body["state"] == "EMERGENCY_STOP"
         assert body["session_block_persisted"] is True
         assert body["session_block"]["file"] is True and body["session_block"]["db"] is True
         s.expire_all()
-        assert db_row(s).status == "BLOCKED"
+        assert db_row(s).status == "EXIT_ONLY"
     finally:
         get_auto_paper_loop().reset()
         s.close()
 
 
-# ── 2. 긴급정지 후 승인 파일 삭제·손상 → DB 복구해도 차단 ─────────────────────
 @pytest.mark.parametrize("damage", ["delete", "corrupt", "not_a_dict"])
-def test_file_lost_after_emergency_db_restores_blocked(db, freeze, approval_file, damage):
+def test_file_lost_after_emergency_db_restores_block(db, freeze, approval_file, damage):
     freeze(kst(SAT, 12))
     approve(db, MON)
     ocs.block_session_for_emergency(db)
@@ -172,31 +321,28 @@ def test_file_lost_after_emergency_db_restores_blocked(db, freeze, approval_file
         approval_file.write_text("{not json", encoding="utf-8")
     else:
         approval_file.write_text("[1, 2, 3]", encoding="utf-8")
-
-    restart()
+    new_process()
     rec = ocs.load_approval(db)
-    assert rec["status"] == "BLOCKED" and rec["emergency_blocked"] is True
-    assert json.loads(approval_file.read_text(encoding="utf-8"))["status"] == "BLOCKED"
+    assert rec["status"] == "EXIT_ONLY" and rec["emergency_blocked"] is True
+    assert json.loads(approval_file.read_text(encoding="utf-8"))["status"] == "EXIT_ONLY"
     assert ocs.session_trading_authorized(settings(), db=db) is False
     freeze(kst(MON, 10))
-    assert authorize(db, kst(MON, 10)) == (False, "EMERGENCY_STOP_SESSION_BLOCKED")
+    assert buy(db, kst(MON, 10)) == (False, "EMERGENCY_STOP_SESSION_BLOCKED")
 
 
-# ── 3. 파일/DB 불일치 → 더 제한적인 상태 우선 ─────────────────────────────────
-def test_file_blocked_db_scheduled_blocks(db, freeze, approval_file, default_db):
+def test_file_blocked_db_scheduled_blocks(db, freeze, approval_file):
     freeze(kst(SAT, 12))
     approve(db, MON)
     rec = json.loads(approval_file.read_text(encoding="utf-8"))
-    rec.update(status="BLOCKED", block_reason="AUTO_PAPER_EMERGENCY_STOP", emergency_blocked=True)
+    rec.update(status="EXIT_ONLY", buy_blocked=True, emergency_blocked=True,
+               buy_block_reason="EMERGENCY_STOP_SESSION_BLOCKED")
     approval_file.write_text(json.dumps(rec), encoding="utf-8")
-    assert db_row(db).status == "SCHEDULED"                # DB 는 아직 SCHEDULED
-
-    restart()
-    assert ocs.load_approval(db)["status"] == "BLOCKED"
+    assert db_row(db).status == "SCHEDULED"
+    new_process()
+    assert ocs.load_approval(db)["status"] == "EXIT_ONLY"
     assert ocs.session_trading_authorized(settings(), db=db) is False
-    assert lifespan_restore(kst(SAT, 13)) is None
     freeze(kst(MON, 10))
-    assert authorize(db, kst(MON, 10)) == (False, "EMERGENCY_STOP_SESSION_BLOCKED")
+    assert buy(db, kst(MON, 10)) == (False, "EMERGENCY_STOP_SESSION_BLOCKED")
 
 
 def test_file_generic_blocked_db_scheduled_not_authorized(db, freeze, approval_file):
@@ -205,69 +351,25 @@ def test_file_generic_blocked_db_scheduled_not_authorized(db, freeze, approval_f
     rec = json.loads(approval_file.read_text(encoding="utf-8"))
     rec.update(status="BLOCKED", block_reason="SOMETHING")
     approval_file.write_text(json.dumps(rec), encoding="utf-8")
-    assert ocs.load_approval(db)["status"] == "BLOCKED"     # 파일(제한적) 우선
+    assert ocs.load_approval(db)["status"] == "BLOCKED"
     assert ocs.session_trading_authorized(settings(), db=db) is False
     assert ocs.armed_session_date(settings(), now=kst(SAT, 13), db=db) is None
 
 
-def test_file_scheduled_db_blocked_blocks_and_resyncs_file(db, freeze, approval_file,
-                                                           monkeypatch, default_db):
-    """파일 쓰기 실패로 파일은 SCHEDULED, DB 만 BLOCKED 인 경우."""
-    freeze(kst(SAT, 12))
-    approve(db, MON)
-    real_write = ocs._write_atomic
-
-    def _fail(_data):
-        raise OSError("disk full")
-    monkeypatch.setattr(ocs, "_write_atomic", _fail)
-    result = ocs.block_session_for_emergency(db)
-    assert result["file"] is False and result["db"] is True
-    assert result["errors"] == ["file:OSError"]
-    monkeypatch.setattr(ocs, "_write_atomic", real_write)
-    assert json.loads(approval_file.read_text(encoding="utf-8"))["status"] == "SCHEDULED"
-
-    restart()
-    assert lifespan_restore(kst(SAT, 13)) is None           # db 인자 없는 경로도 DB 를 봄
-    assert ocs.load_approval(db)["status"] == "BLOCKED"
-    assert json.loads(approval_file.read_text(encoding="utf-8"))["emergency_blocked"] is True
-    freeze(kst(MON, 10))
-    assert authorize(db, kst(MON, 10)) == (False, "EMERGENCY_STOP_SESSION_BLOCKED")
-
-
-def test_db_persist_failure_file_still_blocks(db, freeze, monkeypatch):
-    freeze(kst(SAT, 12))
-    approve(db, MON)
-
-    def _fail(_db, _record):
-        raise RuntimeError("db locked")
-    monkeypatch.setattr(ocs, "_persist_approval", _fail)
-    result = ocs.block_session_for_emergency(db)
-    assert result["file"] is True and result["db"] is False
-    assert result["errors"] == ["db:RuntimeError"]
-    restart()
-    assert ocs.session_trading_authorized(settings(), db=db) is False
-    freeze(kst(MON, 10))
-    assert authorize(db, kst(MON, 10)) == (False, "EMERGENCY_STOP_SESSION_BLOCKED")
-
-
-def test_both_persist_failures_raise_and_fail_closed_in_process(db, freeze, monkeypatch):
+def test_partial_persist_file_only_or_db_only_still_blocks(db, freeze, monkeypatch, approval_file):
     freeze(kst(SAT, 12))
     approve(db, MON)
 
     def _fail_write(_data):
         raise OSError("disk full")
-
-    def _fail_db(_db, _record):
-        raise RuntimeError("db locked")
+    real_write = ocs._write_atomic
     monkeypatch.setattr(ocs, "_write_atomic", _fail_write)
-    monkeypatch.setattr(ocs, "_persist_approval", _fail_db)
-    with pytest.raises(ocs.EmergencyBlockPersistError, match="file:OSError,db:RuntimeError"):
-        ocs.block_session_for_emergency(db)
-    # 같은 프로세스: 저장은 실패했어도 즉시 차단.
-    assert ocs._PROCESS_EMERGENCY_BLOCK is True
-    assert ocs.session_trading_authorized(settings(), db=db) is False
-    freeze(kst(MON, 10))
-    assert authorize(db, kst(MON, 10)) == (False, "EMERGENCY_STOP_SESSION_BLOCKED")
+    r = ocs.block_session_for_emergency(db)
+    assert r["file"] is False and r["db"] is True and r["errors"] == ["file:OSError"]
+    monkeypatch.setattr(ocs, "_write_atomic", real_write)
+    new_process()
+    assert ocs.load_approval(db)["status"] == "EXIT_ONLY"       # DB 가 이기고 파일 재동기화
+    assert json.loads(approval_file.read_text(encoding="utf-8"))["status"] == "EXIT_ONLY"
 
 
 def test_http_emergency_reports_persist_failure(client, freeze, monkeypatch):
@@ -285,10 +387,9 @@ def test_http_emergency_reports_persist_failure(client, freeze, monkeypatch):
     monkeypatch.setattr(ocs, "_persist_approval", _fail_db)
     try:
         r = client.post("/api/auto-paper/emergency-stop")
-        assert r.status_code == 200                         # 루프 정지는 성공
+        assert r.status_code == 200
         body = r.json()
-        assert body["state"] == "EMERGENCY_STOP"
-        assert body["session_block_persisted"] is False     # 숨기지 않고 보고
+        assert body["session_block_persisted"] is False
         assert body["session_block"]["errors"] == ["file:OSError", "db:RuntimeError"]
         assert ocs._PROCESS_EMERGENCY_BLOCK is True
     finally:
@@ -301,21 +402,20 @@ def test_no_restore_without_new_explicit_approval(db, freeze, default_db):
     freeze(kst(SAT, 12))
     approve(db, MON)
     ocs.block_session_for_emergency(db)
-    restart()
-    # 명시 승인 없는 재요청은 거부되고 차단 유지.
+    new_process()
     with pytest.raises(ValueError, match="EXPLICIT_APPROVAL_REQUIRED"):
         ocs.create_approval(db=db, settings=settings(), risk=SimpleNamespace(emergency_stop=False),
                             target_date=MON.isoformat(), actor="op", explicit_ack=False)
     assert ocs.session_trading_authorized(settings(), db=db) is False
-    assert lifespan_restore(kst(SAT, 13)) is None
-
-    # 새 명시적 승인 → 긴급정지 표식 없는 *새* 기록 (이전 기록 재사용 아님).
+    assert startup(kst(SAT, 13))["restore"] is False
+    # 새 명시적 승인 → 차단 표식 없는 새 기록, 그 프로세스에서 다시 시작 가능.
     fresh = approve(db, MON)
-    assert fresh["status"] == "SCHEDULED" and not fresh.get("emergency_blocked")
+    assert fresh["status"] == "SCHEDULED" and not ocs._buy_blocked(fresh)
     assert db_row(db).status == "SCHEDULED"
     assert ocs.session_trading_authorized(settings(), db=db) is True
-    s = lifespan_restore(kst(SAT, 13))
-    assert s is not None and s.state == "WAITING_MARKET"
+    loop = AutoPaperLoop()
+    s = loop.start(now=kst(SAT, 13), armed_for=ocs.armed_session_date(settings(), now=kst(SAT, 13), db=db))
+    assert s.state == "WAITING_MARKET"
 
 
 def test_new_explicit_approval_clears_in_process_block(db, freeze, monkeypatch):
@@ -334,7 +434,7 @@ def test_new_explicit_approval_clears_in_process_block(db, freeze, monkeypatch):
     assert ocs.session_trading_authorized(settings(), db=db) is True
 
 
-# ── 5. LIVE=false 및 기존 주문 안전 게이트 유지 ───────────────────────────────
+# ── 5. LIVE=false·기존 게이트·EOD 청산 경로 유지 ─────────────────────────────
 def test_live_flag_and_paper_flag_still_enforced(db, freeze):
     freeze(kst(SAT, 12))
     with pytest.raises(ValueError, match="LIVE_TRADING_MUST_BE_OFF"):
@@ -342,24 +442,85 @@ def test_live_flag_and_paper_flag_still_enforced(db, freeze):
     with pytest.raises(ValueError, match="PAPER_ACCOUNT_REQUIRED"):
         approve(db, MON, kis_is_paper=False)
     approve(db, MON)
-    assert ocs.session_trading_authorized(settings(enable_live_trading=True), db=db) is False
-    assert ocs.session_trading_authorized(settings(kis_is_paper=False), db=db) is False
+    for over in ({"enable_live_trading": True}, {"kis_is_paper": False}):
+        assert ocs.session_trading_authorized(settings(**over), db=db) is False
+        assert ocs.session_exit_authorized(settings(**over), db=db) is False
 
 
 def test_existing_order_gates_unchanged_after_reapproval(db, freeze):
     freeze(kst(MON, 8, 0))
     approve(db, MON)
     ocs.block_session_for_emergency(db)
-    restart()
-    approve(db, MON)                                        # 새 명시 승인
-    # 기존 게이트 그대로: 09:05 전 대기, 날짜 불일치, LIVE/PAPER 불일치.
-    assert authorize(db, kst(MON, 9, 0)) == (False, "WAITING_FOR_0905_KST")
+    new_process()
     approve(db, MON)
-    ok, reason = authorize(db, kst(MON, 10), s=settings(enable_live_trading=True))
-    assert (ok, reason) == (False, "PAPER_LIVE_MODE_MISMATCH")
+    assert buy(db, kst(MON, 9, 0)) == (False, "WAITING_FOR_0905_KST")
+    approve(db, MON)
+    assert buy(db, kst(MON, 10), s=settings(enable_live_trading=True)) == (
+        False, "PAPER_LIVE_MODE_MISMATCH")
+
+
+class _SellBroker:
+    """SELL 사전검증용 가짜 KIS — 읽기만, 주문 API 없음."""
+
+    def __init__(self, qty):
+        self.qty = qty
+
+    async def get_positions(self):
+        return [SimpleNamespace(symbol="005930", quantity=self.qty, sellable_quantity=self.qty)]
+
+    async def list_today_orders(self, *, kst_date):
+        return []
+
+
+def test_exit_only_still_allows_verified_sell_and_keeps_status(db, freeze):
+    freeze(kst(MON, 8, 0))
+    approve(db, MON)
+    ocs.block_session_for_emergency(db)
+    new_process()
+    freeze(kst(MON, 15, 16))
+    ok, reason = asyncio.run(ocs.authorize_order(
+        db=db, settings=settings(), broker=_SellBroker(2),
+        risk=SimpleNamespace(emergency_stop=False), side="SELL", symbol="005930",
+        quantity=2, notional_krw=100_000, now=kst(MON, 15, 16)))
+    assert (ok, reason) == (True, "ONE_CLICK_PAPER_AUTHORIZED")
+    rec = ocs.load_approval(db)
+    assert rec["status"] == "EXIT_ONLY" and ocs._buy_blocked(rec)   # ACTIVE 로 풀리지 않음
+    # 기존 SELL 검사 그대로: 보유 초과 매도는 거부, 그래도 EXIT_ONLY 유지(청산 경로 보존).
+    ok, reason = asyncio.run(ocs.authorize_order(
+        db=db, settings=settings(), broker=_SellBroker(1),
+        risk=SimpleNamespace(emergency_stop=False), side="SELL", symbol="005930",
+        quantity=2, notional_krw=100_000, now=kst(MON, 15, 16)))
+    assert (ok, reason) == (False, "KIS_SELL_QUANTITY_UNVERIFIED")
+    assert ocs.load_approval(db)["status"] == "EXIT_ONLY"
+    assert ocs.session_exit_authorized(settings(), db=db) is True
+
+
+def test_effective_exit_settings_opens_paper_path_for_eod_only(db, freeze):
+    freeze(kst(MON, 8, 0))
+    approve(db, MON)
+    ocs.block_session_for_emergency(db)
+    base = settings(enable_kis_paper_auto_trading=False, kis_paper_auto_order_dry_run=True)
+    assert ocs.effective_session_settings(base, db=db) is base          # BUY 경로 닫힘
+    eff = ocs.effective_exit_settings(base, db=db)                      # EOD 청산 경로 열림
+    assert eff.enable_kis_paper_auto_trading is True and eff.enable_live_trading is False
 
 
 def test_emergency_without_any_approval_is_noop_but_fail_closed(db):
     result = ocs.block_session_for_emergency(db)
     assert result["blocked"] is False and result["reason"] == "NO_APPROVAL"
     assert ocs._PROCESS_EMERGENCY_BLOCK is True
+
+
+def test_startup_without_session_is_noop(db, default_db):
+    d = startup(kst(SAT, 13))
+    assert d == {"restore": False, "reason": "NO_ACTIVE_SESSION", "armed_for": None}
+    assert ocs._PROCESS_EMERGENCY_BLOCK is False
+
+
+def test_startup_with_risk_kill_switch_never_restores(db, freeze, default_db):
+    freeze(kst(SAT, 12))
+    approve(db, MON)
+    clean_shutdown()
+    new_process()
+    d = startup(kst(SAT, 13), risk_emergency=True)
+    assert d["restore"] is False and d["reason"] == "RISK_EMERGENCY_STOP"

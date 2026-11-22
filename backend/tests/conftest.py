@@ -88,9 +88,9 @@ def safe_default_flags(monkeypatch):
 def _reset_process_emergency_session_block():
     """one_click_session 의 프로세스 내 긴급정지 차단 표식이 테스트 사이에 새지 않게."""
     from app.kis_paper import one_click_session
-    one_click_session._PROCESS_EMERGENCY_BLOCK = False
+    one_click_session._clear_process_buy_block()
     yield
-    one_click_session._PROCESS_EMERGENCY_BLOCK = False
+    one_click_session._clear_process_buy_block()
 
 
 @pytest.fixture(autouse=True)

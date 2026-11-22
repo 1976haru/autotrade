@@ -452,6 +452,9 @@ def test_guardian_reconciles_and_flattens_two_approved_paper_holdings(
 
     monkeypatch.setattr(one_click_session, "session_trading_authorized",
                         lambda *_a, **_k: True)
+    # EOD 는 청산 전용 세션 권한(session_exit_authorized)을 쓴다 — 같은 "승인 세션" 가정.
+    monkeypatch.setattr(one_click_session, "session_exit_authorized",
+                        lambda *_a, **_k: True)
     monkeypatch.setattr(one_click_session, "load_approval", lambda *_a, **_k: {
         "status": "ACTIVE", "allowed_sides": ["BUY", "SELL"],
     })
