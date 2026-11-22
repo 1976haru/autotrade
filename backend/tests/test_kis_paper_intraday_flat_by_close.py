@@ -411,8 +411,8 @@ def test_E_daily_loss_limit_does_not_block_reduce_only_sell():
 
 @pytest.mark.parametrize("override,expect_state", [
     (dict(enable_live_trading=True), EodState.BLOCKED.value),
-    (dict(market_data_provider="mock"), EodState.IDLE.value),
-    (dict(enable_kis_paper_auto_trading=False), EodState.IDLE.value),
+    (dict(market_data_provider="mock"), EodState.BLOCKED.value),
+    (dict(enable_kis_paper_auto_trading=False), EodState.BLOCKED.value),
 ])
 def test_F_safety_flags_mean_zero_orders(session_factory, db, override, expect_state):
     seed_bot_position(db, "005930", 3)
@@ -541,8 +541,14 @@ def test_fill_then_flat_confirmed(session_factory, db):
     broker = FakeKisPaperBroker({"005930": 3, "000660": 2})
     step(session_factory, broker, kst(15, 15))
     assert sorted(o.symbol for o in broker.place_calls) == ["000660", "005930"]
+    # A transient query failure from an earlier EOD tick is audit history, not
+    # an active failure after the final reconciliation proves the account flat.
+    row = db.query(EodLiquidationState).one()
+    row.summary = {**(row.summary or {}), "last_failure_code": "EOD_POSITIONS_QUERY_FAILED"}
+    db.commit()
     out = step(session_factory, broker, kst(15, 30, 1))
     assert out["state"] == EodState.FLAT_CONFIRMED.value
+    assert out["summary"]["last_failure_code"] is None
     # 판정 확정 후엔 API/주문 0 (재호출해도 동일).
     broker.fail_positions = True
     again = step(session_factory, broker, kst(15, 45))
@@ -638,6 +644,8 @@ def test_L_open_orders_after_close_incomplete_and_next_day_buy_block(session_fac
     step(session_factory, broker, kst(15, 16))
     out = step(session_factory, broker, kst(15, 30, 10), events=events)
     assert out["state"] == EodState.FLATTEN_INCOMPLETE.value
+    assert out["lifecycle_state"] == "FAILED"
+    assert db.query(EodLiquidationState).one().summary["lifecycle_state"] == "FAILED"
     assert any(e["level"] == "CRITICAL" for e in events)
     nxt = kst(10, 0, d=date(2026, 10, 23))
     code, _ = program_buy_block_reason(db, settings=make_settings(), now=nxt)
@@ -646,6 +654,29 @@ def test_L_open_orders_after_close_incomplete_and_next_day_buy_block(session_fac
     code2, _ = program_buy_block_reason(db, settings=make_settings(), now=nxt)
     assert code2 is None
     assert db.query(EodLiquidationState).one().state == "FLATTEN_INCOMPLETE"  # 기록 보존
+
+
+def test_20261117_uses_latest_flat_eod_and_preserves_older_incident(db):
+    """11/13 failure remains audit history; latest 11/16 FLAT releases 11/17 BUY gate."""
+    from app.kis_paper.eod_liquidation import _get_or_create_row
+
+    failed = _get_or_create_row(db, "2026-11-13", kst(15, 30, d=date(2026, 11, 13)))
+    failed.state = EodState.FLATTEN_INCOMPLETE.value
+    failed.reason_code = "EOD_POSITIONS_REMAIN"
+    failed.incident_acknowledged = False
+
+    flat = _get_or_create_row(db, "2026-11-16", kst(15, 30, d=date(2026, 11, 16)))
+    flat.state = EodState.FLAT_CONFIRMED.value
+    flat.reason_code = "EOD_FLAT_CONFIRMED"
+    flat.last_reconcile_ok = True
+    db.commit()
+
+    code, _ = program_buy_block_reason(
+        db, settings=make_settings(), now=kst(10, 0, d=date(2026, 11, 17)),
+    )
+    assert code is None
+    assert failed.state == EodState.FLATTEN_INCOMPLETE.value
+    assert failed.incident_acknowledged is False
 
 
 def test_L_reconcile_failure_after_close_is_not_success(session_factory, db):
@@ -859,11 +890,20 @@ def test_U_status_shape_and_reason_codes(session_factory, db):
     assert st["is_live_authorization"] is False
 
 
+def test_eod_status_idle_row_after_close_is_unresolved(db):
+    from app.kis_paper.eod_liquidation import _get_or_create_row
+    _get_or_create_row(db, "2026-10-22", kst(15, 31))
+    st = eod_status(db, settings=make_settings(), now=kst(15, 31))
+    assert st["eod_state"] == EodState.IDLE.value
+    assert st["lifecycle_state"] == "UNRESOLVED"
+    assert st["eod_reason_code"] == "EOD_FINAL_RECONCILIATION_MISSING"
+
+
 def test_U_api_routes(client):
     r = client.get("/api/kis-paper/eod/status")
     assert r.status_code == 200
     body = r.json()
-    for k in ("phase", "schedule", "buy_allowed", "eod_state", "paper_auto_mode",
+    for k in ("phase", "schedule", "buy_allowed", "eod_state", "lifecycle_state", "paper_auto_mode",
               "service_kind", "background_driver_running"):
         assert k in body
     assert body["is_live_authorization"] is False
@@ -1156,7 +1196,7 @@ def test_V2_kis_cancel_paper_payload(monkeypatch):
 # ── 15:00 사전점검 + 단계적 청산 / 15:15 전량 ─────────────────────────────────
 
 
-def test_V2_precheck_at_1500_staged_losers_first(session_factory, db):
+def test_V2_precheck_at_1500_is_read_only_and_1515_starts_flatten(session_factory, db):
     for sym in ("000001", "000002", "000003"):
         seed_bot_position(db, sym, 1)
     broker = FakeKisPaperBroker({"000001": 1, "000002": 1, "000003": 1})
@@ -1170,12 +1210,15 @@ def test_V2_precheck_at_1500_staged_losers_first(session_factory, db):
     events: list = []
     out = step(session_factory, broker, kst(15, 0, 5), events=events)
     assert out["phase"] == "EOD_PRECHECK"
-    assert out["reason_code"] == "EOD_STAGED_FLATTEN_IN_PROGRESS"
-    assert [o.symbol for o in broker.place_calls] == ["000002", "000003"]   # 손실 큰 순, 2종목
+    assert out["reason_code"] == "EOD_PRECHECK_RECONCILED"
+    assert out["lifecycle_state"] == "RECONCILING"
+    assert broker.place_calls == []
     assert out["summary"]["precheck"]["ok"] is True
     assert any(e["code"] == "KIS_PAPER_EOD_PRECHECK_OK" for e in events)
     step(session_factory, broker, kst(15, 0, 35))
-    assert [o.symbol for o in broker.place_calls] == ["000002", "000003", "000001"]
+    assert broker.place_calls == []
+    step(session_factory, broker, kst(15, 15, 0))
+    assert {o.symbol for o in broker.place_calls} == {"000001", "000002", "000003"}
 
 
 def test_V2_precheck_failure_is_critical_early(session_factory, db):
@@ -1372,9 +1415,10 @@ def test_V3_full_day_clock_injected_integration(session_factory, db):
     assert at("14:29:30")[2] == "IDLE" and at("14:29:30")[3] == 0
     assert at("14:30:00")[1:4] == ("BUY_CUTOFF", "BUY_CUTOFF_ACTIVE", 1)    # 미체결 BUY 취소
     assert at("14:59:30")[4] == 0                                           # 15:00 전 청산 0
-    assert at("15:00:00")[1] == "EOD_PRECHECK" and at("15:00:00")[4] == 2   # 단계적 2종목
-    assert at("15:00:30")[4] == 3                                           # 나머지
-    assert all(t[4] == 3 for t in timeline if t[0] >= "15:00:30")           # 중복 매도 0
+    assert at("15:00:00")[1] == "EOD_PRECHECK" and at("15:00:00")[4] == 0   # read-only 대조
+    assert at("15:00:30")[4] == 0
+    assert at("15:15:00")[4] == 3
+    assert all(t[4] == 3 for t in timeline if t[0] >= "15:15:00")           # 중복 매도 0
     assert at("15:31:00")[3] == 1                                           # 취소 재요청 0
     final = timeline[-1]
     assert final[1:3] == ("POST_CLOSE", "FLAT_CONFIRMED")
@@ -1668,7 +1712,50 @@ def test_V3_precheck_warns_on_capacity_risk_without_behavior_change(session_fact
                settings=make_settings(kis_rate_limit_calls=1, kis_rate_limit_window_seconds=1.1))
     assert out["summary"]["precheck"]["capacity"]["risk"] == "TIGHT"
     assert any(e["code"] == "KIS_PAPER_EOD_CAPACITY_RISK" and e["level"] == "WARN" for e in events)
-    assert len(broker.place_calls) == 2          # 단계적 정책(2종목/tick) 그대로 — 경고만
+    assert broker.place_calls == []               # 사전점검은 조회만, 매도는 15:15부터
+
+
+def test_eod_valid_session_overrides_global_auto_and_dry_run(session_factory, db, monkeypatch):
+    from app.kis_paper import one_click_session
+    monkeypatch.setattr(one_click_session, "session_trading_authorized", lambda *_a, **_k: True)
+    monkeypatch.setattr(one_click_session, "load_approval",
+                        lambda *_a, **_k: {"status": "ACTIVE", "allowed_sides": ["BUY", "SELL"]})
+    seed_bot_position(db, "005930", 2)
+    broker = FakeKisPaperBroker({"005930": 2})
+    s = make_settings(enable_kis_paper_auto_trading=False,
+                      kis_paper_auto_order_dry_run=True)
+    out = step(session_factory, broker, kst(15, 15), settings=s)
+    assert out["summary"]["mode"] == "KIS_REALTIME_PAPER_AUTO"
+    assert out["summary"]["dry_run"] is False
+    assert [(o.side, o.quantity) for o in broker.place_calls] == [(OrderSide.SELL, 2)]
+
+
+def test_eod_no_approval_and_global_virtual_mode_is_blocked(session_factory, db):
+    seed_bot_position(db, "005930", 2)
+    broker = FakeKisPaperBroker({"005930": 2})
+    s = make_settings(enable_kis_paper_auto_trading=False,
+                      kis_paper_auto_order_dry_run=True)
+    out = step(session_factory, broker, kst(15, 15), settings=s)
+    assert out["state"] == EodState.BLOCKED.value
+    assert out["reason_code"] == "EOD_SESSION_NOT_APPROVED"
+    assert broker.place_calls == []
+
+
+def test_kis_paper_adapter_factory_is_pinned_to_paper_even_for_sim_global(monkeypatch):
+    import app.api.deps as deps
+    created = {}
+
+    def fake_client(key, secret, *, is_paper, rate_limiter):
+        created["is_paper"] = is_paper
+        return object()
+
+    monkeypatch.setattr(deps, "KisClient", fake_client)
+    settings = SimpleNamespace(enable_live_trading=False, kis_is_paper=True,
+                               kis_app_key="test", kis_app_secret="test",
+                               kis_account_no="1234567801", default_mode="SIMULATION")
+    broker = deps.get_kis_paper_broker(settings)
+    assert isinstance(broker, KisBrokerAdapter)
+    assert broker.is_paper is True and created["is_paper"] is True
 
 
 # ═══════════════════ FIRST-ORDER-PREFLIGHT-01 (실제 KIS 호출 0) ═══════════════════
@@ -1802,9 +1889,10 @@ def test_PF_run_once_buy_becomes_eod_managed_and_is_liquidated(run_once_env, ses
     pre = step(session_factory, broker, kst(14, 45), settings=s)
     assert pre["summary"]["symbols"]["005930"]["managed_qty"] == 1   # EOD 관리 대상
     st = step(session_factory, broker, kst(15, 0, 5), settings=s, loop_state="PAUSED")
-    assert [(o.side, o.quantity) for o in broker.place_calls] == [
-        (OrderSide.BUY, 1), (OrderSide.SELL, 1)]
+    assert [(o.side, o.quantity) for o in broker.place_calls] == [(OrderSide.BUY, 1)]
     assert st["phase"] == "EOD_PRECHECK"
+    step(session_factory, broker, kst(15, 15, 5), settings=s, loop_state="PAUSED")
+    assert broker.holdings["005930"] == 0
     final = step(session_factory, broker, kst(15, 30, 5), settings=s, loop_state="PAUSED")
     assert final["state"] == EodState.FLAT_CONFIRMED.value and broker.holdings["005930"] == 0
 
@@ -1816,7 +1904,7 @@ def test_PF_eod_runs_without_start_button_paused_loop(session_factory, db):
     broker = CountingBroker({"000001": 1, "000002": 1, "000003": 1})
     drv = _day_driver(session_factory, broker, loop_state="PAUSED")
     r1 = asyncio.run(drv.maybe_eod_step(kst(15, 0, 5)))
-    assert r1["phase"] == "EOD_PRECHECK" and broker.calls["place"] == 2
+    assert r1["phase"] == "EOD_PRECHECK" and broker.calls["place"] == 0
     r2 = asyncio.run(drv.maybe_eod_step(kst(15, 15, 5)))
     assert r2["phase"] == "EOD_FLATTEN" and broker.calls["place"] == 3
 
@@ -1828,6 +1916,8 @@ def test_PF_smoke_mode_never_blocks_eod_sell(session_factory, db):
                       kis_paper_smoke_qty=1)
     out = step(session_factory, broker, kst(15, 0, 5), settings=s)
     assert out["summary"]["mode"] == "KIS_REALTIME_SMOKE_TEST"
+    assert broker.place_calls == []
+    out = step(session_factory, broker, kst(15, 15, 5), settings=s)
     assert [(o.side, o.quantity) for o in broker.place_calls] == [(OrderSide.SELL, 1)]
 
 
@@ -1889,6 +1979,8 @@ def test_PF_rehearsal_second_buy_blocked_but_eod_sell_allowed(run_once_env, sess
         return True, "TEST_OPERATOR_APPROVAL"
     monkeypatch.setattr(one_click_session, "authorize_order", _test_authorized_sell)
     out = step(session_factory, broker, kst(15, 0, 5), settings=_rehearsal())
+    assert out["orders_submitted_this_step"] == 0
+    out = step(session_factory, broker, kst(15, 15, 5), settings=_rehearsal())
     assert [(o.side, o.quantity) for o in broker.place_calls][-1] == (OrderSide.SELL, 1)
     assert out["orders_submitted_this_step"] == 1
 

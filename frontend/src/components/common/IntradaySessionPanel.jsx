@@ -12,11 +12,22 @@ export const EOD_POLL_MS = 15_000;
 const STATE_LABEL = {
   IDLE: "대기 (매수 가능 시간)",
   BUY_CUTOFF_ACTIVE: "신규매수 마감 — 보유 청산만",
-  FLATTENING: "장마감 강제청산 진행 중 (15:00 단계적 · 15:15 전량)",
+  FLATTENING: "장마감 강제청산 진행 중 (15:15부터 잔여 봇 보유분)",
   WAITING_FOR_FILLS: "청산 주문 체결/최종 대조 대기",
   FLAT_CONFIRMED: "당일 청산 완료 확인 (보유 0)",
   FLATTEN_INCOMPLETE: "청산 미완료 — 운영자 확인 필요",
   BLOCKED: "청산 차단 — 수동 대응 필요",
+};
+
+const LIFECYCLE_LABEL = {
+  SCHEDULED: "예약됨",
+  RECONCILING: "잔고·미체결 대조 중",
+  LIQUIDATING: "봇 보유분 청산 중",
+  WAITING_FILL: "청산 주문 체결 확인 중",
+  COMPLETED: "KIS 잔고 대조로 청산 완료 확인",
+  FAILED: "청산 실패 — 운영자 확인 필요",
+  UNRESOLVED: "대조 불명 — 운영자 확인 필요",
+  BLOCKED: "안전 조건 차단",
 };
 
 const CANCEL_LABEL = {
@@ -122,6 +133,9 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
   const sch = st.schedule || {};
   const mode = st.paper_auto_mode?.mode || "VIRTUAL_ONLY";
   const sum = st.summary || {};
+  const activeFailureCode = st.eod_state === "FLAT_CONFIRMED" && st.last_reconcile_ok
+    ? null
+    : sum.last_failure_code;
   const prog = summarizeEodProgress(sum);
   const tone = stateTone(st.eod_state);
   const isKisPaper = st.broker_label === "KIS_PAPER" && st.kis_is_paper && !st.enable_live_trading;
@@ -200,11 +214,12 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
       </div>
 
       <div className="isp-meta" data-testid="isp-meta">
+        <span data-testid="isp-eod-lifecycle">장마감 청산: {LIFECYCLE_LABEL[st.lifecycle_state] || STATE_LABEL[st.eod_state] || st.eod_state || "예약됨"}</span>
         <span>운용 모드: <b data-testid="isp-mode">{MODE_LABEL[mode] || mode}</b></span>
         <span>시세: {st.paper_auto_mode?.price_source || "—"} · 브로커: {st.broker_label}</span>
         <span>점검 모드(주문 전송 0): {st.paper_auto_mode?.dry_run ? "예" : "아니오"} · 1주 시험(smoke): {st.paper_auto_mode?.smoke_mode ? "예" : "아니오"}</span>
         <span>마지막 주문번호: {sum.last_broker_order_no || "—"} · 마지막 체결 감지: {hm(sum.last_fill_detected_at)}</span>
-        <span>실패 코드: {sum.last_failure_code || "—"} · 잔고 대조: {hm(st.last_reconcile_at)}{st.last_reconcile_at && !st.last_reconcile_ok ? " (실패)" : ""}</span>
+        <span>실패 코드: {activeFailureCode || "—"} · 잔고 대조: {hm(st.last_reconcile_at)}{st.last_reconcile_at && !st.last_reconcile_ok ? " (실패)" : ""}</span>
         {!st.background_driver_running && (
           <span className="isp-warn" data-testid="isp-driver-off">
             ⚠ 백엔드 상시 실행기가 꺼져 있어 15:15 자동 청산이 실행되지 않습니다.

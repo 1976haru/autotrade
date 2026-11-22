@@ -90,6 +90,8 @@ EOD_FLAT                   = "EOD_FLAT_CONFIRMED"
 EOD_POSITIONS_REMAIN       = "EOD_POSITIONS_REMAIN"
 EOD_OPEN_ORDERS_REMAIN     = "EOD_OPEN_ORDERS_REMAIN"
 EOD_RECONCILE_FAILED       = "EOD_FINAL_RECONCILE_FAILED"
+EOD_SESSION_NOT_APPROVED   = "EOD_SESSION_NOT_APPROVED"
+EOD_SELL_NOT_AUTHORIZED    = "EOD_SELL_NOT_AUTHORIZED"
 
 _MESSAGES_KO = {
     EOD_NOT_TRADING_DAY:      "휴장일/주말 — 장마감 청산 대상이 아닙니다.",
@@ -585,21 +587,32 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
                  IntradayPhase.ENTRY_OPEN):
         return _out(EodState.IDLE, EOD_BEFORE_CUTOFF)
 
-    from app.auto_paper.paper_auto_mode import resolve_paper_auto_mode
-    mode = resolve_paper_auto_mode(settings)
     if bool(getattr(settings, "enable_live_trading", False)):
         return _out(EodState.BLOCKED, EOD_LIVE_TRADING_ENABLED)
-    # VIRTUAL_ONLY(provider≠kis 또는 KIS 자동매매 OFF)면 KIS 조회/주문 0.
-    #   (kis_realtime 은 VIRTUAL_ONLY 에서도 provider=kis 면 True 라 mode 로 판정.)
-    if mode.mode == "VIRTUAL_ONLY" or not mode.kis_realtime:
-        return _out(EodState.IDLE, EOD_NOT_KIS_PAPER_MODE)
-
     if session_factory is None:
         from app.db.session import SessionLocal
         session_factory = SessionLocal
     owner = owner_id or process_owner_id()
     db = session_factory()
     try:
+        from app.kis_paper.one_click_session import (
+            effective_session_settings, session_trading_authorized,
+        )
+        approved_session = session_trading_authorized(settings, db=db)
+        sell_authorized = False
+        if approved_session:
+            from app.kis_paper.one_click_session import load_approval, public_status
+            try:
+                approval_record = load_approval(db)
+            except TypeError:
+                approval_record = load_approval()
+            sell_authorized = "SELL" in (
+                public_status(approval_record).get("allowed_sides") or []
+            )
+        if approved_session:
+            settings = effective_session_settings(settings, db=db)
+        from app.auto_paper.paper_auto_mode import resolve_paper_auto_mode
+        mode = resolve_paper_auto_mode(settings)
         row = get_state_row(db, trading_date)
         if row is not None and row.state in {s.value for s in _FINAL_STATES} \
                 and row.final_verdict_at is not None:
@@ -615,9 +628,41 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
             return _out(EodState(row.state) if row else EodState.IDLE, EOD_LEASE_HELD)
         row = get_state_row(db, trading_date)
 
+        if approved_session and not sell_authorized:
+            summary = dict(row.summary or {})
+            summary.update(lifecycle_state="BLOCKED",
+                           last_failure_code=EOD_SELL_NOT_AUTHORIZED,
+                           updated_by=owner)
+            _persist(db, row, state=EodState.BLOCKED,
+                     reason=EOD_SELL_NOT_AUTHORIZED, now=now, summary=summary)
+            return _out(EodState.BLOCKED, EOD_SELL_NOT_AUTHORIZED,
+                        lifecycle_state="BLOCKED")
+
+        if not approved_session and not bool(
+            getattr(settings, "enable_kis_paper_auto_trading", False)
+        ):
+            summary = dict(row.summary or {})
+            summary.update(lifecycle_state="BLOCKED",
+                           last_failure_code=EOD_SESSION_NOT_APPROVED,
+                           updated_by=owner)
+            _persist(db, row, state=EodState.BLOCKED,
+                     reason=EOD_SESSION_NOT_APPROVED, now=now, summary=summary)
+            return _out(EodState.BLOCKED, EOD_SESSION_NOT_APPROVED,
+                        lifecycle_state="BLOCKED")
+
+        if mode.mode == "VIRTUAL_ONLY" or not mode.kis_realtime:
+            _persist(db, row, state=EodState.BLOCKED,
+                     reason=EOD_NOT_KIS_PAPER_MODE, now=now,
+                     summary={"lifecycle_state": "BLOCKED",
+                              "last_failure_code": EOD_NOT_KIS_PAPER_MODE,
+                              "updated_by": owner})
+            return _out(EodState.BLOCKED, EOD_NOT_KIS_PAPER_MODE,
+                        lifecycle_state="BLOCKED")
+
         if broker is None:
-            from app.api.deps import get_broker
-            broker = get_broker()
+            from app.api.deps import get_broker, get_kis_paper_broker
+            broker = (get_kis_paper_broker(settings) if approved_session
+                      else get_broker(settings_override=settings))
         if risk is None:
             from app.api.deps import get_risk_manager
             risk = get_risk_manager()
@@ -625,13 +670,22 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
             broker_is_kis_paper = _broker_is_kis_paper(broker)
         if not broker_is_kis_paper:
             _persist(db, row, state=EodState.BLOCKED, reason=EOD_BROKER_NOT_KIS_PAPER, now=now)
-            return _out(EodState.BLOCKED, EOD_BROKER_NOT_KIS_PAPER)
+            return _out(EodState.BLOCKED, EOD_BROKER_NOT_KIS_PAPER,
+                        lifecycle_state="BLOCKED")
+        from app.brokers.kis import KisBrokerAdapter
+        if type(broker) is KisBrokerAdapter and not approved_session and not mode.dry_run:
+            _persist(db, row, state=EodState.BLOCKED,
+                     reason=EOD_SESSION_NOT_APPROVED, now=now)
+            return _out(EodState.BLOCKED, EOD_SESSION_NOT_APPROVED,
+                        lifecycle_state="BLOCKED")
 
         rec = await reconcile(db, broker, trading_date=trading_date)
         prev_summary = dict(row.summary or {})
         summary = {
             "symbols": rec.symbols, "unmanaged_holdings": rec.unmanaged,
             "program_open_buys": rec.program_open_buys, "totals": rec.totals,
+            "bot_isolated": False,
+            "ownership_basis": "ACCOUNT_SCOPED_ORDER_AUDIT_NET_FILLS",
             "reconcile_ok": rec.ok, "reconcile_error": rec.error_code,
             "mode": mode.mode, "dry_run": bool(mode.dry_run), "smoke_mode": bool(mode.smoke_mode),
             # 판정 근거 — dry-run 은 KIS 주문 0건이라 FLAT/INCOMPLETE 가 *실제 청산 결과가 아님*.
@@ -666,8 +720,19 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
                 verdict, reason = EodState.FLATTEN_INCOMPLETE, EOD_OPEN_ORDERS_REMAIN
             else:
                 verdict, reason = EodState.FLAT_CONFIRMED, EOD_FLAT
+                # A transient balance/order lookup failure may have been stored by an
+                # earlier EOD tick.  Once the final broker reconciliation succeeds and
+                # proves that managed/open quantities are zero, that failure is no
+                # longer active.  Keep the event/audit history, but do not expose the
+                # stale code as the current failure beside FLAT_CONFIRMED.
+                summary["last_failure_code"] = None
             first_incomplete = (verdict == EodState.FLATTEN_INCOMPLETE
                                 and row.state != EodState.FLATTEN_INCOMPLETE.value)
+            summary["lifecycle_state"] = (
+                "UNRESOLVED" if not rec.ok else
+                "FAILED" if verdict == EodState.FLATTEN_INCOMPLETE else "COMPLETED"
+            )
+            summary["final_checked_at"] = now.isoformat()
             _persist(db, row, state=verdict, reason=reason, now=now, summary=summary,
                      reconcile_ok=rec.ok, final=rec.ok)
             if first_incomplete:
@@ -680,7 +745,8 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
                 _emit(event_sink, level="INFO", code="KIS_PAPER_EOD_FLAT_CONFIRMED",
                       message=eod_message_ko(reason),
                       details={"trading_date": trading_date, "totals": rec.totals})
-            return _out(verdict, reason, summary=summary)
+            return _out(verdict, reason, summary=summary,
+                        lifecycle_state=summary["lifecycle_state"])
 
         # ── 14:30 ~ 15:30 : 강한 긴급정지 → 주문/취소 0 + 수동 청산 경고 ────────
         #   P0-SAFETY-FIX-V1: 새 정책 LEVEL_1(신규 매수만 차단)은 청산·BUY 취소를 계속 한다.
@@ -693,6 +759,8 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
             emergency and int((summary.get("totals") or {}).get("managed_qty", 0) or 0) > 0)
         if emergency:
             first = row.state != EodState.BLOCKED.value or row.reason_code != EOD_EMERGENCY_STOP
+            summary["lifecycle_state"] = "BLOCKED"
+            summary["last_failure_code"] = EOD_EMERGENCY_STOP
             _persist(db, row, state=EodState.BLOCKED, reason=EOD_EMERGENCY_STOP, now=now,
                      summary=summary, reconcile_ok=rec.ok)
             if first:
@@ -707,6 +775,8 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
             # 조회 실패 — 주문/취소 0 (중복/초과 매도 방지). 소유권 불명은 BLOCKED+CRITICAL.
             if rec.error_code == EOD_OWNERSHIP_UNKNOWN:
                 first = row.state != EodState.BLOCKED.value or row.reason_code != EOD_OWNERSHIP_UNKNOWN
+                summary["lifecycle_state"] = "UNRESOLVED"
+                summary["last_failure_code"] = EOD_OWNERSHIP_UNKNOWN
                 _persist(db, row, state=EodState.BLOCKED, reason=EOD_OWNERSHIP_UNKNOWN,
                          now=now, summary=summary, reconcile_ok=False)
                 if first:
@@ -716,11 +786,14 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
                 return _out(EodState.BLOCKED, EOD_OWNERSHIP_UNKNOWN, summary=summary)
             st = (EodState.BUY_CUTOFF_ACTIVE if phase == IntradayPhase.BUY_CUTOFF
                   else EodState.FLATTENING)
+            summary["lifecycle_state"] = "UNRESOLVED"
+            summary["last_failure_code"] = rec.error_code
             _persist(db, row, state=st, reason=rec.error_code, now=now, summary=summary,
                      reconcile_ok=False)
             if phase == IntradayPhase.EOD_PRECHECK and "precheck" not in prev_summary:
                 summary["precheck"] = {"at": now.isoformat(), "ok": False,
                                        "error": rec.error_code}
+                summary["lifecycle_state"] = "UNRESOLVED"
                 _persist(db, row, state=st, reason=rec.error_code, now=now, summary=summary)
                 _emit(event_sink, level="CRITICAL", code="KIS_PAPER_EOD_PRECHECK_FAILED",
                       message="15:00 장마감 청산 사전점검 실패 — KIS 잔고/주문 조회 불가.",
@@ -733,7 +806,7 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
 
         # ── 14:30~ : 프로그램 미체결 BUY 취소 (취소도 OrderExecutor 단일 경로) ──
         cancels = 0
-        if not in_auction or allow_auction:
+        if phase == IntradayPhase.BUY_CUTOFF:
             cancels = await _cancel_open_buys(
                 db, rec=rec, summary=summary, settings=settings, broker=broker, risk=risk,
                 route_cancel_fn=route_cancel_fn, now=now, trading_date=trading_date,
@@ -749,7 +822,8 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
             return out
 
         # ── 15:00 사전점검 (1회 기록) ─────────────────────────────────────────
-        if phase == IntradayPhase.EOD_PRECHECK and "precheck" not in prev_summary:
+        previous_precheck = prev_summary.get("precheck") or {}
+        if phase == IntradayPhase.EOD_PRECHECK and not previous_precheck.get("ok"):
             summary["precheck"] = {
                 "at": now.isoformat(), "ok": True,
                 "managed_symbols": rec.totals["managed_symbols"],
@@ -770,13 +844,12 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
                                f"{cap['est_seconds_worst']}초 / 15:15~15:20 창 "
                                f"{cap['window_seconds']}초 (추정치 — KIS 실측 아님)."),
                       details={"trading_date": trading_date, **cap})
-        elif "precheck" in prev_summary:
-            summary["precheck"] = prev_summary["precheck"]
+        elif previous_precheck:
+            summary["precheck"] = previous_precheck
 
         # ── 15:00~15:15 단계적 / 15:15~ 전량 강제청산 ─────────────────────────
-        may_submit = phase in (IntradayPhase.EOD_PRECHECK, IntradayPhase.EOD_FLATTEN) or (
-            in_auction and allow_auction)
-        staged = phase == IntradayPhase.EOD_PRECHECK
+        may_submit = phase == IntradayPhase.EOD_FLATTEN or (in_auction and allow_auction)
+        staged = False
         submitted = 0
         if may_submit:
             submitted = await _submit_sells(
@@ -792,6 +865,15 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
 
         remaining = sum(sell_quantity_for(v) for v in rec.symbols.values())
         pending = rec.totals["open_sell_qty"] + rec.totals["unconfirmed_eod_qty"] + submitted
+
+        if phase == IntradayPhase.EOD_PRECHECK:
+            summary["lifecycle_state"] = "RECONCILING"
+            _persist(db, row, state=EodState.WAITING_FOR_FILLS,
+                     reason="EOD_PRECHECK_RECONCILED", now=now, summary=summary,
+                     reconcile_ok=True)
+            return _out(EodState.WAITING_FOR_FILLS, "EOD_PRECHECK_RECONCILED",
+                        lifecycle_state="RECONCILING", summary=summary,
+                        orders_submitted_this_step=0, cancels_sent_this_step=cancels)
         if mode.dry_run:
             state, reason = EodState.FLATTENING, EOD_DRY_RUN
         elif rec.totals["managed_qty"] == 0 and rec.totals["program_open_buy_qty"] == 0:
@@ -805,9 +887,15 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
         else:
             # 보유는 있으나 더 보낼 수 없음(시도 상한/주문가능 0) — 대기, 최종 대조에서 판정.
             state, reason = EodState.WAITING_FOR_FILLS, EOD_IN_PROGRESS
+        summary["lifecycle_state"] = (
+            "WAITING_FILL" if pending > 0 else
+            "LIQUIDATING" if phase == IntradayPhase.EOD_FLATTEN and remaining > 0 else
+            "SCHEDULED"
+        )
         _persist(db, row, state=state, reason=reason, now=now, summary=summary,
                  reconcile_ok=True)
-        out = _out(state, reason, summary=summary)
+        out = _out(state, reason, summary=summary,
+                   lifecycle_state=summary["lifecycle_state"])
         out["orders_submitted_this_step"] = submitted
         out["cancels_sent_this_step"] = cancels
         return out
@@ -817,6 +905,16 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
         except Exception:  # noqa: BLE001
             pass
         _log.warning("[eod] step error: %s: %s", type(exc).__name__, exc)
+        try:
+            if db is not None and row is not None:
+                failed = dict(row.summary or {})
+                failed.update(lifecycle_state="UNRESOLVED",
+                              last_failure_code=f"EOD_STEP_ERROR:{type(exc).__name__}")
+                _persist(db, row, state=EodState.BLOCKED,
+                         reason="EOD_STEP_ERROR", now=now, summary=failed,
+                         reconcile_ok=False)
+        except Exception:  # noqa: BLE001 — 상태 저장 오류도 fail closed.
+            pass
         return _out(EodState.BLOCKED, "EOD_STEP_ERROR", error=type(exc).__name__)
     finally:
         try:
@@ -1123,6 +1221,23 @@ def eod_status(db: Any, *, settings: Any = None, now: datetime | None = None,
     state = row.state if row is not None else (
         EodState.BUY_CUTOFF_ACTIVE.value if phase in (IntradayPhase.BUY_CUTOFF, IntradayPhase.EOD_PRECHECK)
         else EodState.IDLE.value)
+    summary = (row.summary or {}) if row else {}
+    lifecycle = summary.get("lifecycle_state")
+    final_states = {EodState.FLAT_CONFIRMED.value, EodState.FLATTEN_INCOMPLETE.value}
+    unresolved_after_close = phase == IntradayPhase.POST_CLOSE and state not in final_states
+    if unresolved_after_close:
+        lifecycle = "UNRESOLVED"
+    if not lifecycle:
+        lifecycle = {
+            EodState.FLAT_CONFIRMED.value: "COMPLETED",
+            EodState.FLATTEN_INCOMPLETE.value: "FAILED",
+            EodState.BLOCKED.value: "FAILED",
+            EodState.FLATTENING.value: "LIQUIDATING",
+            EodState.WAITING_FOR_FILLS.value: "WAITING_FILL",
+        }.get(state, "SCHEDULED" if phase in (
+            IntradayPhase.EOD_PRECHECK, IntradayPhase.EOD_FLATTEN,
+            IntradayPhase.CLOSING_AUCTION, IntradayPhase.POST_CLOSE,
+        ) else "SCHEDULED")
 
     def _iso(dt):
         return dt.replace(tzinfo=timezone.utc).isoformat() if dt is not None else None
@@ -1137,12 +1252,20 @@ def eod_status(db: Any, *, settings: Any = None, now: datetime | None = None,
         "buy_block_reason_code": buy_code,
         "buy_block_reason_message": buy_msg,
         "eod_state": state,
-        "eod_reason_code": row.reason_code if row else None,
-        "eod_reason_message": eod_message_ko(row.reason_code) if row else None,
+        "lifecycle_state": lifecycle,
+        "eod_reason_code": (
+            "EOD_FINAL_RECONCILIATION_MISSING" if unresolved_after_close
+            else row.reason_code if row else None
+        ),
+        "eod_reason_message": (
+            "장 종료 후 KIS 최종 대조 기록이 없습니다. 청산 완료로 판정하지 않았습니다."
+            if unresolved_after_close else
+            eod_message_ko(row.reason_code) if row else None
+        ),
         "last_reconcile_at": _iso(row.last_reconcile_at) if row else None,
         "last_reconcile_ok": bool(row.last_reconcile_ok) if row else False,
         "final_verdict_at": _iso(row.final_verdict_at) if row else None,
-        "summary": (row.summary or {}) if row else {},
+        "summary": summary,
         "lease_owner": row.lease_owner if row else None,
         "previous_incident_trading_date": prev_incident,
         "incident_acknowledged": bool(row.incident_acknowledged) if row else False,
@@ -1162,6 +1285,8 @@ def eod_status(db: Any, *, settings: Any = None, now: datetime | None = None,
         "emergency_stop": emergency_on,
         "kill_switch": ks_policy.to_dict(),
         "program_ledger_holdings": ledger_holdings,
+        "bot_isolated": False,
+        "ownership_basis": "ACCOUNT_SCOPED_ORDER_AUDIT_NET_FILLS",
         "account_scope": account_label,
         "legacy_unverified_holdings": legacy_holdings,
         "manual_liquidation_required": bool(strict_stop and (

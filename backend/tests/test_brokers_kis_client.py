@@ -382,13 +382,32 @@ def test_inquire_balance_live_uses_live_tr_id():
 
 
 def test_inquire_balance_endpoint_failure_raises_api_error():
+    seen = []
     def handler(request):
         if request.url.path.endswith("/oauth2/tokenP"):
             return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        seen.append(request)
         return httpx.Response(500, text="internal error")
     c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
-    with pytest.raises(KisApiError, match="500"):
+    with pytest.raises(KisApiError, match="500") as caught:
         run(c.inquire_balance("12345678", "01"))
+    assert len(seen) == 2
+    assert caught.value.diagnostic["http_status"] == 500
+    assert caught.value.diagnostic["tr_id"] == "VTTC8434R"
+
+
+def test_inquire_balance_retries_transient_5xx_once_then_accepts_valid_reply():
+    calls = []
+    def handler(request):
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx.Response(503, text="upstream unavailable")
+        return httpx.Response(200, json=_BALANCE_RESPONSE)
+    c = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    assert run(c.inquire_balance("12345678", "01")) == _BALANCE_RESPONSE
+    assert len(calls) == 2
 
 
 def test_inquire_balance_http_200_kis_error_does_not_look_like_zero_balance():
@@ -396,8 +415,43 @@ def test_inquire_balance_http_200_kis_error_does_not_look_like_zero_balance():
     seen = []
     c = KisClient("k", "s", is_paper=True,
                   transport=httpx.MockTransport(_balance_handler(seen, response)))
-    with pytest.raises(KisApiError, match="EGW00201"):
+    with pytest.raises(KisApiError, match="EGW00201") as caught:
         run(c.inquire_balance("12345678", "01"))
+    assert caught.value.diagnostic["http_status"] == 200
+    assert caught.value.diagnostic["kis_rt_cd"] == "1"
+    assert caught.value.diagnostic["kis_msg_cd"] == "EGW00201"
+
+
+def test_inquire_balance_missing_output1_is_unknown_not_empty_account():
+    response = {"rt_cd": "0", "msg_cd": "20310000", "output2": [
+        {"dnca_tot_amt": "0", "tot_evlu_amt": "0"},
+    ]}
+    c = KisClient("k", "s", is_paper=True,
+                  transport=httpx.MockTransport(_balance_handler([], response)))
+    with pytest.raises(KisApiError, match="missing output1") as caught:
+        run(c.inquire_balance("12345678", "01"))
+    assert caught.value.diagnostic["http_status"] == 200
+    assert caught.value.diagnostic["sanitized_error_summary"].endswith("unknown.")
+
+
+def test_inquire_balance_missing_cash_or_equity_is_unknown_not_zero():
+    response = {"rt_cd": "0", "msg_cd": "20310000", "output1": [], "output2": [
+        {"dnca_tot_amt": "0"},
+    ]}
+    c = KisClient("k", "s", is_paper=True,
+                  transport=httpx.MockTransport(_balance_handler([], response)))
+    with pytest.raises(KisApiError, match="tot_evlu_amt") as caught:
+        run(c.inquire_balance("12345678", "01"))
+    assert caught.value.diagnostic["http_status"] == 200
+
+
+def test_inquire_balance_valid_explicit_zero_is_a_verified_empty_account():
+    response = {"rt_cd": "0", "msg_cd": "20310000", "output1": [], "output2": [
+        {"dnca_tot_amt": "0", "tot_evlu_amt": "0"},
+    ]}
+    c = KisClient("k", "s", is_paper=True,
+                  transport=httpx.MockTransport(_balance_handler([], response)))
+    assert run(c.inquire_balance("12345678", "01")) == response
 
 
 _DAILY_CCLD_RESPONSE = {

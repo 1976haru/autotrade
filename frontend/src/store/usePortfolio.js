@@ -80,22 +80,29 @@ export function usePortfolio() {
 
   const codesKey = positions.map((p) => p.code).sort().join(",");
   useEffect(() => {
-    if (!codesKey) return;
-    const codes = codesKey.split(",");
+    const codes = codesKey ? codesKey.split(",") : [];
     const t = setInterval(async () => {
       // ratelimit_fix v2(2026-07-11): 종목마다 개별 brokerPrice 호출(N콜)을
       // brokerPrices 일괄 호출(1콜)로 교체 — 프론트가 15초(→20초)마다 보유종목
       // 전부를 동시발사하던 게 KIS 레이트리밋 예산의 최대 병목이었다
       // (results/ratelimit_fix/design_v2.md). balance 는 여전히 독립 처리
       // (Promise.allSettled) — 한쪽이 죽어도 다른 쪽은 정상 표시.
-      const [balRes, pricesRes] = await Promise.allSettled([
+      const requests = [
         backendApi.brokerBalance(),
-        backendApi.brokerPrices(codes),
-      ]);
+        backendApi.brokerPositions(),
+      ];
+      if (codes.length > 0) requests.push(backendApi.brokerPrices(codes));
+      const [balRes, positionsRes, pricesRes] = await Promise.allSettled(requests);
       const bal = balRes.status === "fulfilled" ? balRes.value : null;
       if (bal && typeof bal.cash === "number") setCash(bal.cash);
       if (bal && typeof bal.equity === "number") setEquity(bal.equity);
-      const quotes = pricesRes.status === "fulfilled" ? (pricesRes.value?.quotes ?? {}) : {};
+      // Holdings are mutable broker state.  Refresh the list itself, not only
+      // prices, so a filled SELL removes the position from the account card.
+      if (positionsRes.status === "fulfilled") {
+        const list = Array.isArray(positionsRes.value) ? positionsRes.value : [];
+        setPositions(list.map(toFrontPosition));
+      }
+      const quotes = pricesRes?.status === "fulfilled" ? (pricesRes.value?.quotes ?? {}) : {};
       setPositions((prev) =>
         prev.map((p) => {
           const q = quotes[p.code];

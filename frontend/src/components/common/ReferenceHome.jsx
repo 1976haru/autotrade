@@ -103,8 +103,10 @@ export function ReferenceHome({
   const handleStart = async () => {
     const closed = !isMarketOpen();
     const res = await loop.start();
-    if (closed) {
+    if (closed && res.ok && res.state === "WAITING_MARKET") {
       setStartNote({ kind: "closed", text: "지금은 장 시간이 아니에요 — 장이 열리면(평일 09:00) 자동으로 거래를 시작해요" });
+    } else if (closed && res.ok && res.state === "MARKET_CLOSED") {
+      setStartNote({ kind: "blocked", text: "현재 장이 종료됐거나 휴장 상태입니다. 자동 대기 중이 아니므로 다음 거래일에 자동매매 시작을 다시 눌러야 합니다." });
     } else if (res.ok && res.buyAllowed === false) {
       // INTRADAY-FLAT-BY-CLOSE-V1: 14:30 이후 Start — 보유 청산 관리만, 신규 매수 0 (서버 판단).
       setStartNote({ kind: "closed", text: `자동매매를 켰지만 신규 매수는 하지 않아요 — ${res.buyReasonMessage || "신규 매수 마감"} (보유 종목 청산은 계속 관리)` });

@@ -1015,6 +1015,18 @@ export function AutoPaperLoopCard({
                 </span>
               </div>
               <div data-testid="bg-tick-message">{msg}</div>
+              {bt && (
+                <div data-testid="bg-tick-runtime-stage" style={{ marginTop: 4, color: "var(--c-text-2)" }}>
+                  Engine stage: <strong>{bt.execution_stage || (running ? "STARTING" : "IDLE")}</strong>
+                  {bt.last_tick_completed_at && (
+                    <> · last tick completed {String(bt.last_tick_completed_at).replace("T", " ").slice(0, 19)} UTC</>
+                  )}
+                  {bt.warmup && (
+                    <> · warmup {bt.warmup.status}: {bt.warmup.completed_symbols ?? 0}/{bt.warmup.total_symbols ?? 0}
+                      {bt.warmup.failed_symbols ? ` (${bt.warmup.failed_symbols} unavailable)` : ""}</>
+                  )}
+                </div>
+              )}
 
               {/* tick 실행 모드 — 진단 dry-run vs Paper 모의 체결. */}
               {bt && (

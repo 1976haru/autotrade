@@ -86,6 +86,8 @@ _SESSION_MIN = 390          # 장중 09:00~15:30 = 390분
 _ORB_START, _ORB_END = "090000", "093000"   # ORB 레인지 09:00–09:30(봉주기 무관, 1분봉서 계산)
 # 과거일 N분봉 캐시: (symbol, asof_date_kst, N) -> list[dict OHLCV]. 하루 1회만 채움.
 _prior_bars_cache: dict[tuple[str, str, int], list[dict]] = {}
+_prior_bars_inflight: dict[tuple[str, str, int], asyncio.Task] = {}
+_prior_bars_inflight: dict[tuple[str, str, int], asyncio.Task] = {}
 
 # 5/30/60 = 멀티데이 리샘플 경로, 그 외(0/1) = legacy 1분봉 당일 경로.
 _USE_INTRADAY_RESAMPLE = BAR_INTERVAL_MINUTES in (5, 30, 60)
@@ -109,6 +111,12 @@ def _prior_max_cal() -> int:
 def reset_bars_cache() -> None:
     """테스트/드라이런용 — 과거일 N분봉 캐시 비우기."""
     _prior_bars_cache.clear()
+    _prior_bars_inflight.clear()
+    _today_min_cache.clear()
+    _today_min_inflight.clear()
+    _prior_bars_inflight.clear()
+    _today_min_cache.clear()
+    _today_min_inflight.clear()
 
 
 # 하위호환 alias(기존 호출부 보존).
@@ -384,36 +392,41 @@ async def _fetch_full_day_minutes(client: Any, symbol: str, date: str) -> list[d
 #   본 캐시를 *전혀 경유하지 않는다* → 손절 신선도 100% 보존(설계 dedup_design.md).
 _TODAY_MIN_TTL_SEC = 180.0
 _today_min_cache: dict[tuple[str, str], tuple[float, list[dict]]] = {}
+_today_min_inflight: dict[tuple[str, str], asyncio.Task] = {}
 
 
 async def _fetch_full_day_minutes_cached(client: Any, symbol: str, date: str) -> list[dict]:
-    """오늘자 분봉 TTL 캐시 래퍼. 같은 (symbol, date) 를 TTL 내 재요청하면 KIS 재호출 0.
-
-    진입 신호 전용 — 청산용 현재가(inquire-price)는 본 경로를 타지 않는다.
-    """
+    """TTL cache same-day bars and merge concurrent requests for one symbol/date."""
     ck = (symbol, date)
     mono = _time.perf_counter()
     hit = _today_min_cache.get(ck)
     if hit is not None and (mono - hit[0]) < _TODAY_MIN_TTL_SEC:
         return hit[1]
-    bars = await _fetch_full_day_minutes(client, symbol, date)
-    if bars:                        # 빈 결과는 캐시 안 함(다음 틱 재시도, 합성 금지)
-        _today_min_cache[ck] = (mono, bars)
-    return bars
+    task = _today_min_inflight.get(ck)
+    if task is None:
+        async def _load() -> list[dict]:
+            bars = await _fetch_full_day_minutes(client, symbol, date)
+            if bars:
+                _today_min_cache[ck] = (_time.perf_counter(), bars)
+            return bars
+        task = asyncio.create_task(_load())
+        _today_min_inflight[ck] = task
+        task.add_done_callback(
+            lambda done, key=ck: _today_min_inflight.pop(key, None)
+            if _today_min_inflight.get(key) is done else None
+        )
+    try:
+        return await asyncio.shield(task)
+    finally:
+        if task.done() and _today_min_inflight.get(ck) is task:
+            _today_min_inflight.pop(ck, None)
 
 
-async def _prior_days_bars(client: Any, symbol: str, now: datetime) -> list[dict]:
-    """과거 _prior_days() *데이터 있는* 거래일의 N분봉(캐시). 하루 1회만 채움.
-
-    ★달력 캘린더 불필요 — 날짜를 역행하며 분봉이 *실제로 있는 날* 만 카운트(주말·공휴일 자동 skip).
-    캐시 키에 BAR_INTERVAL_MINUTES 포함 → 봉주기 바꾸면 캐시 자동 분리.
-    """
+async def _load_prior_days_bars(
+    client: Any, symbol: str, now: datetime, cache_key: tuple[str, str, int],
+) -> list[dict]:
     from datetime import timedelta
     asof = to_kst(now)
-    asof_key = asof.strftime("%Y%m%d")
-    ck = (symbol, asof_key, BAR_INTERVAL_MINUTES)
-    if ck in _prior_bars_cache:
-        return _prior_bars_cache[ck]
     out: list[dict] = []
     collected = 0
     need_days = _prior_days()
@@ -422,38 +435,77 @@ async def _prior_days_bars(client: Any, symbol: str, now: datetime) -> list[dict
             break
         d = (asof - timedelta(days=back)).strftime("%Y%m%d")
         try:
-            mins = await _fetch_full_day_minutes(client, symbol, d)
-        except Exception as exc:  # noqa: BLE001 — 그 날 실패는 skip, 다른 날로.
-            _log.info("[kis-%dm] prior %s %s unavailable: %s", BAR_INTERVAL_MINUTES, symbol, d, _redact(str(type(exc).__name__)))
+            mins = await _fetch_full_day_minutes_cached(client, symbol, d)
+        except Exception as exc:  # noqa: BLE001
+            _log.info("[kis-%dm] prior %s %s unavailable: %s", BAR_INTERVAL_MINUTES,
+                      symbol, d, _redact(str(type(exc).__name__)))
             continue
-        if not mins:                                   # 데이터 없는 날(주말/공휴일) → skip
+        if not mins:
             continue
         out.extend(_resample_bars(mins))
         collected += 1
     out.sort(key=lambda b: (b["d"], b["t"]))
-    _prior_bars_cache[ck] = out
+    _prior_bars_cache[cache_key] = out
     return out
+
+
+async def _prior_days_bars(client: Any, symbol: str, now: datetime) -> list[dict]:
+    """Return cached historical bars or join the in-flight symbol/day fetch."""
+    cache_key = (symbol, to_kst(now).strftime("%Y%m%d"), BAR_INTERVAL_MINUTES)
+    cached = _prior_bars_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    task = _prior_bars_inflight.get(cache_key)
+    if task is None:
+        task = asyncio.create_task(_load_prior_days_bars(client, symbol, now, cache_key))
+        _prior_bars_inflight[cache_key] = task
+        task.add_done_callback(
+            lambda done, key=cache_key: _prior_bars_inflight.pop(key, None)
+            if _prior_bars_inflight.get(key) is done else None
+        )
+    try:
+        return await asyncio.shield(task)
+    finally:
+        if task.done() and _prior_bars_inflight.get(cache_key) is task:
+            _prior_bars_inflight.pop(cache_key, None)
 
 
 # 하위호환 alias.
 _prior_days_60m = _prior_days_bars
 
 
-async def warmup_bars_cache(symbols: list[str], *, client: Any, now: datetime | None = None) -> dict[str, int]:
-    """개장 전(예: 08:40) 과거일 N분봉 캐시 워밍업. 종목→과거 N분봉 수. 봇 미가동·주문 0.
-
-    ★스케줄러 연결(08:40 트리거)은 background_driver/scheduler 변경이 필요해 *별도 1파일 작업*.
-    미연결 시에도 각 종목 첫 틱에서 lazy 워밍(첫 틱만 느림).
-    """
+async def warmup_bars_cache(
+    symbols: list[str], *, client: Any, now: datetime | None = None,
+    concurrency: int = 3, on_progress: Any = None,
+) -> dict[str, int]:
+    """Warm bars with bounded concurrency, per-symbol deadlines and progress."""
     now = now or datetime.now(timezone.utc)
     result: dict[str, int] = {}
-    for sym in symbols:
-        try:
-            bars = await _prior_days_bars(client, sym, now)
-            result[sym] = len(bars)
-        except Exception as exc:  # noqa: BLE001
-            _log.info("[kis-%dm] warmup %s 실패: %s", BAR_INTERVAL_MINUTES, sym, _redact(str(type(exc).__name__)))
-            result[sym] = 0
+    semaphore = asyncio.Semaphore(max(1, min(4, int(concurrency or 1))))
+    completed = 0
+    failed = 0
+
+    async def _warm_one(sym: str) -> None:
+        nonlocal completed, failed
+        async with semaphore:
+            try:
+                bars = await asyncio.wait_for(_prior_days_bars(client, sym, now), timeout=60.0)
+                result[sym] = len(bars)
+                if not bars:
+                    failed += 1
+            except Exception as exc:  # noqa: BLE001
+                _log.info("[kis-%dm] warmup %s failed: %s", BAR_INTERVAL_MINUTES,
+                          sym, _redact(str(type(exc).__name__)))
+                result[sym] = 0
+                failed += 1
+            completed += 1
+            if on_progress is not None:
+                try:
+                    on_progress(completed, len(symbols), failed)
+                except Exception:  # noqa: BLE001
+                    pass
+
+    await asyncio.gather(*(_warm_one(sym) for sym in symbols))
     return result
 
 

@@ -444,6 +444,40 @@ def test_guardian_flattens_program_holding_with_driver_off(session_factory, db):
     assert [(o.side.value, o.quantity) for o in broker.place_calls] == [("SELL", 1)]
 
 
+def test_guardian_reconciles_and_flattens_two_approved_paper_holdings(
+    session_factory, db, monkeypatch,
+):
+    """The 15:00/15:15 guardian path owns only today's approved PAPER positions."""
+    from app.kis_paper import one_click_session
+
+    monkeypatch.setattr(one_click_session, "session_trading_authorized",
+                        lambda *_a, **_k: True)
+    monkeypatch.setattr(one_click_session, "load_approval", lambda *_a, **_k: {
+        "status": "ACTIVE", "allowed_sides": ["BUY", "SELL"],
+    })
+    seed_bot_position(db, "105560", 5)
+    seed_bot_position(db, "319660", 8)
+    broker = FakeKisPaperBroker({"105560": 5, "319660": 8})
+    settings = make_settings(
+        enable_kis_paper_auto_trading=False,
+        kis_paper_auto_order_dry_run=True,
+    )
+    guardian = EodGuardian(_driver(
+        settings, session_factory, broker, RiskManager(RiskPolicy()),
+    ))
+
+    precheck = asyncio.run(guardian.run_once(kst(15, 0)))
+    assert precheck["phase"] == "EOD_PRECHECK"
+    assert precheck["lifecycle_state"] == "RECONCILING"
+    assert broker.place_calls == []
+
+    flatten = asyncio.run(guardian.run_once(kst(15, 15)))
+    assert flatten["state"] == EodState.FLATTENING.value
+    assert sorted((o.symbol, o.quantity) for o in broker.place_calls) == [
+        ("105560", 5), ("319660", 8),
+    ]
+
+
 def test_guardian_never_buys_or_scans_and_idles_before_cutoff(session_factory, db):
     seed_bot_position(db, "005930", 1)
     broker = FakeKisPaperBroker({"005930": 1})
@@ -467,13 +501,14 @@ def test_guardian_requires_kis_paper_auto_approval(session_factory, db):
     assert EodGuardian(drv2)._approved() is False
 
 
-def test_guardian_skips_when_driver_running(session_factory, db):
+def test_guardian_runs_independently_when_driver_running(session_factory, db):
     seed_bot_position(db, "005930", 1)
     broker = FakeKisPaperBroker({"005930": 1})
     drv = _driver(make_settings(), session_factory, broker, RiskManager(RiskPolicy()))
     drv._task = SimpleNamespace(done=lambda: False)      # driver 실행 중으로 간주
-    assert asyncio.run(EodGuardian(drv).run_once(kst(15, 16))) is None
-    assert broker.place_calls == []
+    out = asyncio.run(EodGuardian(drv).run_once(kst(15, 16)))
+    assert out["state"] == EodState.FLATTENING.value
+    assert len(broker.place_calls) == 1
 
 
 def test_guardian_honors_loop_emergency_stop(session_factory, db):

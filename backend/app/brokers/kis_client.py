@@ -73,7 +73,9 @@ def _safe_orderable_error_summary(http_status: int, message_code: object) -> str
 
 
 class KisAuthError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, diagnostic: dict | None = None):
+        super().__init__(message)
+        self.diagnostic = diagnostic or {}
 
 
 class KisTokenRateLimitedError(KisAuthError):
@@ -175,19 +177,38 @@ class KisClient:
         # T1: 발급 직렬화 락 + EGW00133 백오프 창(이 시각 전엔 KIS 미호출).
         self._token_lock = asyncio.Lock()
         self._token_retry_not_before: datetime | None = None
+        self._token_source: str | None = None
 
     async def _throttle(self) -> None:
         if self._rate_limiter is not None:
             await self._rate_limiter.acquire()
 
     @staticmethod
-    def _raise_kis_response_error(endpoint: str, data: dict) -> None:
+    def _raise_kis_response_error(
+        endpoint: str,
+        data: dict,
+        *,
+        http_status: int = 200,
+        api_path: str | None = None,
+        tr_id: str | None = None,
+    ) -> None:
         """Do not let HTTP 200 application errors become empty/zero account data."""
         if str(data.get("rt_cd", "0")) == "0":
             return
         code = str(data.get("msg_cd") or "")[:32]
-        message = str(data.get("msg1") or "")[:160]
-        raise KisApiError(f"KIS {endpoint} rt_cd={data.get('rt_cd')} msg_cd={code} msg1={message}")
+        # Do not include msg1 in exception text: KIS messages can echo request
+        # or account details. The protocol codes are enough to classify failure.
+        raise KisApiError(
+            f"KIS {endpoint} rt_cd={_safe_protocol_code(data.get('rt_cd'))} msg_cd={code}",
+            diagnostic={
+                "http_status": http_status,
+                "kis_rt_cd": _safe_protocol_code(data.get("rt_cd")),
+                "kis_msg_cd": _safe_protocol_code(data.get("msg_cd")),
+                "sanitized_error_summary": _safe_orderable_error_summary(http_status, data.get("msg_cd")),
+                "api_path": api_path,
+                "tr_id": tr_id,
+            },
+        )
 
     def _client(self) -> httpx.AsyncClient:
         kwargs = {"base_url": self.base_url, "timeout": self._timeout}
@@ -201,18 +222,21 @@ class KisClient:
     async def _ensure_token(self) -> str:
         now = datetime.now(timezone.utc)
         if self._token_valid(now):
+            self._token_source = "memory"
             return self._token
 
         # T1⒜: 발급을 락으로 직렬화 — 동시/연속 콜드스타트 호출이 발급을 *1회만* 트리거.
         async with self._token_lock:
             now = datetime.now(timezone.utc)
             if self._token_valid(now):
+                self._token_source = "memory"
                 return self._token
 
             # T1⒞: 디스크 캐시에 유효 토큰이 있으면 재사용(발급 자체 회피, 재기동 포함).
             cached = _load_cached_token(self.app_key, self.is_paper)
             if cached and now < cached[1]:
                 self._token, self._token_expires_at = cached
+                self._token_source = "disk_cache"
                 return self._token
 
             # T1⒝: 레이트리밋 보호 창 안이면 KIS 를 때리지 않고 즉시 실패(폭격 차단).
@@ -237,14 +261,32 @@ class KisClient:
                     # 발급 1분당 1회 초과 → 60초 백오프 창 기록(그 전 호출은 KIS 무호출).
                     self._token_retry_not_before = now + _TOKEN_RATELIMIT_BACKOFF
                     raise KisTokenRateLimitedError(
-                        f"KIS token rate-limited ({_TOKEN_RATELIMIT_CODE}); backing off 60s"
+                        f"KIS token rate-limited ({_TOKEN_RATELIMIT_CODE}); backing off 60s",
+                        diagnostic={
+                            "http_status": r.status_code,
+                            "kis_msg_cd": _TOKEN_RATELIMIT_CODE,
+                            "sanitized_error_summary": "KIS token issuance was rate-limited.",
+                        },
                     )
-                raise KisAuthError(f"KIS token endpoint returned {r.status_code}: {body}")
+                raise KisAuthError(
+                    f"KIS token endpoint returned {r.status_code}",
+                    diagnostic={
+                        "http_status": r.status_code,
+                        "sanitized_error_summary": "KIS token endpoint returned a non-success HTTP status.",
+                    },
+                )
             data = r.json()
             token = data.get("access_token")
             if not token:
-                raise KisAuthError(f"KIS token response missing access_token: {data}")
+                raise KisAuthError(
+                    "KIS token response missing access_token",
+                    diagnostic={
+                        "http_status": r.status_code,
+                        "sanitized_error_summary": "KIS token response was missing the required token field.",
+                    },
+                )
             self._token = token
+            self._token_source = "refreshed"
             expires_in = int(data.get("expires_in", 86400))
             self._token_expires_at = now + timedelta(seconds=expires_in) - _TOKEN_REFRESH_MARGIN
             self._token_retry_not_before = None  # 성공 → 백오프 해제
@@ -253,7 +295,31 @@ class KisClient:
 
     async def get_price(self, symbol: str) -> dict:
         """Returns raw JSON from KIS quote endpoint. Caller extracts fields."""
-        token = await self._ensure_token()
+        try:
+            token = await self._ensure_token()
+        except (KisAuthError, httpx.TransportError) as exc:
+            # A token refresh failure is distinct from a market data response.
+            code_match = re.search(r"\b(EGW\d{5})\b", str(exc))
+            token_diag = {
+                "http_status": getattr(exc, "diagnostic", {}).get("http_status"),
+                "kis_rt_cd": None,
+                "kis_msg_cd": code_match.group(1) if code_match else None,
+                "sanitized_error_summary": (
+                    "KIS token issuance was rate-limited."
+                    if isinstance(exc, KisTokenRateLimitedError)
+                    else "KIS token endpoint connection failed."
+                    if isinstance(exc, httpx.TransportError)
+                    else "KIS PAPER token acquisition failed."
+                ),
+                "failure_stage": "TOKEN_REFRESH",
+                "failure_kind": type(exc).__name__,
+                "api_path": "/oauth2/tokenP",
+            }
+            token_diag.update(getattr(exc, "diagnostic", {}) or {})
+            raise KisApiError(
+                "KIS PAPER token acquisition failed",
+                diagnostic=token_diag,
+            ) from exc
         await self._throttle()
         async with self._client() as client:
             r = await client.get(
@@ -392,38 +458,156 @@ class KisClient:
         Returns raw JSON with `output1` (positions) and `output2` (cash, equity).
         cano/prdt_cd are the 8-digit / 2-digit halves of the KIS account number.
         """
-        token = await self._ensure_token()
-        await self._throttle()
-        async with self._client() as client:
-            r = await client.get(
-                "/uapi/domestic-stock/v1/trading/inquire-balance",
-                params={
-                    "CANO":                   cano,
-                    "ACNT_PRDT_CD":           prdt_cd,
-                    "AFHR_FLPR_YN":           "N",
-                    "OFL_YN":                 "",
-                    "INQR_DVSN":              "02",
-                    "UNPR_DVSN":              "01",
-                    "FUND_STTL_ICLD_YN":      "N",
-                    "FNCG_AMT_AUTO_RDPT_YN":  "N",
-                    "PRCS_DVSN":              "00",
-                    "CTX_AREA_FK100":         "",
-                    "CTX_AREA_NK100":         "",
-                },
-                headers={
-                    "authorization": f"Bearer {token}",
-                    "appkey":        self.app_key,
-                    "appsecret":     self.app_secret,
-                    "tr_id":         self._balance_tr_id(),
-                    "custtype":      "P",
+        try:
+            token = await self._ensure_token()
+        except (KisAuthError, httpx.TransportError) as exc:
+            code_match = re.search(r"\b(EGW\d{5})\b", str(exc))
+            token_diag = {
+                "http_status": None,
+                "kis_rt_cd": None,
+                "kis_msg_cd": code_match.group(1) if code_match else None,
+                "sanitized_error_summary": (
+                    "KIS token issuance was rate-limited."
+                    if isinstance(exc, KisTokenRateLimitedError)
+                    else "KIS token endpoint connection failed before balance inquiry."
+                    if isinstance(exc, httpx.TransportError)
+                    else "KIS PAPER token acquisition failed before balance inquiry."
+                ),
+                "failure_stage": "TOKEN_REFRESH",
+                "failure_kind": type(exc).__name__,
+                "api_path": "/oauth2/tokenP",
+            }
+            token_diag.update(getattr(exc, "diagnostic", {}) or {})
+            raise KisApiError(
+                "KIS PAPER token acquisition failed before balance inquiry",
+                diagnostic=token_diag,
+            ) from exc
+        path = "/uapi/domestic-stock/v1/trading/inquire-balance"
+        tr_id = self._balance_tr_id()
+        token_source = self._token_source or "unknown"
+        request_kwargs = {
+            "params": {
+                "CANO": cano, "ACNT_PRDT_CD": prdt_cd, "AFHR_FLPR_YN": "N",
+                "OFL_YN": "", "INQR_DVSN": "02", "UNPR_DVSN": "01",
+                "FUND_STTL_ICLD_YN": "N", "FNCG_AMT_AUTO_RDPT_YN": "N",
+                "PRCS_DVSN": "00", "CTX_AREA_FK100": "", "CTX_AREA_NK100": "",
+            },
+            "headers": {
+                "authorization": f"Bearer {token}", "appkey": self.app_key,
+                "appsecret": self.app_secret, "tr_id": tr_id, "custtype": "P",
+            },
+        }
+        # One bounded retry for read-only transient transport / upstream failures.
+        # Never retry application-level KIS errors or malformed successful replies.
+        r = None
+        transport_failure = None
+        for attempt in range(2):
+            await self._throttle()
+            try:
+                async with self._client() as client:
+                    r = await client.get(path, **request_kwargs)
+            except httpx.TransportError as exc:
+                transport_failure = exc
+                if attempt == 0:
+                    await asyncio.sleep(1.0)
+                    continue
+                kind = "timeout" if isinstance(exc, httpx.TimeoutException) else "transport"
+                raise KisApiError(
+                    f"KIS balance transport {kind} failure; account state is unknown",
+                    diagnostic={
+                        "http_status": None, "kis_rt_cd": None, "kis_msg_cd": None,
+                        "sanitized_error_summary": f"KIS balance transport {kind} failure after one retry.",
+                        "api_path": path, "tr_id": tr_id,
+                        "failure_stage": "KIS_REQUEST", "failure_kind": type(exc).__name__,
+                        "token_source": token_source,
+                    },
+                ) from exc
+            if r.status_code >= 500 and attempt == 0:
+                await asyncio.sleep(1.0)
+                continue
+            break
+        if r is None:
+            raise KisApiError("KIS balance request did not produce a response; account state is unknown") from transport_failure
+        if r.status_code != 200:
+            raise KisApiError(
+                f"KIS balance endpoint returned HTTP {r.status_code}; account state is unknown",
+                diagnostic={
+                    "http_status": r.status_code,
+                    "kis_rt_cd": None,
+                    "kis_msg_cd": None,
+                    "sanitized_error_summary": "KIS balance inquiry failed; response body omitted.",
+                    "server_request_id": _safe_request_id(r.headers),
+                    "api_path": path,
+                    "tr_id": tr_id,
+                    "failure_stage": "KIS_REQUEST",
+                    "failure_kind": "HTTP_STATUS",
+                    "token_source": token_source,
                 },
             )
-        if r.status_code != 200:
-            raise KisApiError(f"KIS balance endpoint returned {r.status_code}: {r.text[:200]}")
-        data = r.json()
-        self._raise_kis_response_error("balance", data)
-        if not isinstance(data.get("output2"), list) or not data["output2"]:
-            raise KisApiError("KIS balance response missing output2; account state is unknown")
+        try:
+            data = r.json()
+        except (ValueError, json.JSONDecodeError) as exc:
+            raise KisApiError(
+                "KIS balance response is not valid JSON; account state is unknown",
+                diagnostic={
+                    "http_status": r.status_code,
+                    "kis_rt_cd": None,
+                    "kis_msg_cd": None,
+                    "sanitized_error_summary": "KIS balance response was unreadable.",
+                    "server_request_id": _safe_request_id(r.headers),
+                    "api_path": path,
+                    "tr_id": tr_id,
+                    "failure_stage": "RESPONSE_PARSE",
+                    "failure_kind": "INVALID_JSON",
+                    "token_source": token_source,
+                },
+            ) from exc
+        if not isinstance(data, dict):
+            raise KisApiError(
+                "KIS balance response has unexpected shape; account state is unknown",
+                diagnostic={"http_status": r.status_code, "api_path": path, "tr_id": tr_id,
+                            "failure_stage": "RESPONSE_PARSE", "failure_kind": "ROOT_SHAPE",
+                            "token_source": token_source},
+            )
+        try:
+            self._raise_kis_response_error("balance", data, http_status=r.status_code, api_path=path, tr_id=tr_id)
+        except KisApiError as exc:
+            exc.diagnostic.update({"failure_stage": "KIS_REQUEST", "token_source": token_source})
+            raise
+        output1 = data.get("output1")
+        output2 = data.get("output2")
+        diagnostic = {
+            "http_status": r.status_code,
+            "kis_rt_cd": _safe_protocol_code(data.get("rt_cd")),
+            "kis_msg_cd": _safe_protocol_code(data.get("msg_cd")),
+            "sanitized_error_summary": "KIS balance response is incomplete; account state is unknown.",
+            "server_request_id": _safe_request_id(r.headers),
+            "api_path": "/uapi/domestic-stock/v1/trading/inquire-balance",
+            "tr_id": self._balance_tr_id(),
+            "failure_stage": "RESPONSE_PARSE",
+            "token_source": token_source,
+        }
+        if not isinstance(output1, list):
+            raise KisApiError("KIS balance response missing output1; account state is unknown", diagnostic=diagnostic)
+        if any(not isinstance(row, dict) for row in output1):
+            raise KisApiError("KIS balance output1 row has unexpected shape; account state is unknown", diagnostic=diagnostic)
+        for row in output1:
+            qty = row.get("hldg_qty")
+            if not re.fullmatch(r"\d+", str(qty or "")) or not str(row.get("pdno") or "").strip():
+                raise KisApiError("KIS balance output1 holding fields are incomplete; account state is unknown", diagnostic=diagnostic)
+        if not isinstance(output2, list) or not output2 or not isinstance(output2[0], dict):
+            raise KisApiError("KIS balance response missing output2; account state is unknown", diagnostic=diagnostic)
+        for field in ("dnca_tot_amt", "tot_evlu_amt"):
+            value = output2[0].get(field)
+            if value is None or not re.fullmatch(r"\d+", str(value).strip()):
+                raise KisApiError(
+                    f"KIS balance response missing or invalid {field}; account state is unknown",
+                    diagnostic=diagnostic,
+                )
+        held_qty = sum(int(row["hldg_qty"]) for row in output1)
+        if held_qty > 0 and int(output2[0]["tot_evlu_amt"]) == 0:
+            diagnostic["failure_stage"] = "BALANCE_VALIDATE"
+            raise KisApiError("KIS balance holdings conflict with zero total equity; account state is unknown", diagnostic=diagnostic)
         return data
 
     async def inquire_orderable_cash(

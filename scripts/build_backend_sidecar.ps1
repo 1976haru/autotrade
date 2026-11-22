@@ -94,7 +94,7 @@ try {
 }
 
 # 5. PyInstaller 빌드.
-Write-Host "[3/5] pyinstaller build (--onefile)..." -ForegroundColor Cyan
+Write-Host "[3/5] pyinstaller build (--onedir; no runtime extraction)..." -ForegroundColor Cyan
 
 # hidden-imports: FastAPI / uvicorn / alembic 의 plugin-style import 들이
 # PyInstaller static analyzer 에 잡히지 않아 명시 필요.
@@ -124,7 +124,7 @@ $collectAll = @("--collect-submodules", "app")
 # --noconsole 은 *쓰지 않는다* — 디버그 출력 가능하도록 console window 유지.
 # 베타테스터에게는 Tauri main window 가 떠 있고 backend console 은 background.
 try {
-    & python -m PyInstaller --noconfirm --onefile `
+    & python -m PyInstaller --noconfirm --onedir `
         --name "autotrade-backend" `
         --distpath "$backend\dist" `
         --workpath "$backend\build" `
@@ -143,7 +143,8 @@ try {
 }
 Pop-Location
 
-$builtExe = Join-Path $backend "dist\autotrade-backend.exe"
+$builtDir = Join-Path $backend "dist\autotrade-backend"
+$builtExe = Join-Path $builtDir "autotrade-backend.exe"
 if (-not (Test-Path $builtExe)) {
     Write-Host "[ERR] 산출물이 없습니다: $builtExe" -ForegroundColor Red
     exit 4
@@ -155,16 +156,17 @@ $sidecarDir   = Join-Path $repoRoot "src-tauri\binaries"
 $null = New-Item -ItemType Directory -Force -Path $sidecarDir
 
 # Tauri externalBin 규칙: <name>-<target-triple>.exe (Windows x64 default).
-$sidecarName  = "autotrade-backend-x86_64-pc-windows-msvc.exe"
-$sidecarPath  = Join-Path $sidecarDir $sidecarName
-Copy-Item -Force -Path $builtExe -Destination $sidecarPath
+$sidecarPath = Join-Path $sidecarDir "autotrade-backend"
+if (Test-Path $sidecarPath) { Remove-Item -Recurse -Force $sidecarPath }
+Copy-Item -Recurse -Force -Path $builtDir -Destination $sidecarPath
 
-$exeSize = (Get-Item $sidecarPath).Length
-$exeHash = (Get-FileHash -Algorithm SHA256 -Path $sidecarPath).Hash
+$sidecarExe = Join-Path $sidecarPath "autotrade-backend.exe"
+$exeSize = (Get-Item $sidecarExe).Length
+$exeHash = (Get-FileHash -Algorithm SHA256 -Path $sidecarExe).Hash
 
 Write-Host "[5/5] done." -ForegroundColor Green
 Write-Host ""
-Write-Host "  built : $builtExe"
+Write-Host "  built : $builtDir"
 Write-Host "  copy  : $sidecarPath"
 Write-Host "  size  : $exeSize bytes"
 Write-Host "  sha256: $exeHash"

@@ -423,34 +423,46 @@ def _scan_universe_symbols(
     return window
 
 
-async def premarket_warmup_tick(now: datetime | None = None) -> dict[str, Any]:
-    """개장 전(PRE_OPEN) 1회 — 전체 universe 분봉 캐시 선채움. ★주문 0·평가 0·판단 0.
-
-    회전 cap 무시: `_prior_days_bars` 캐시(하루 1회/종목)만 채워 장 초반 콜드
-    스파이크(400이면 ~3200콜)를 개장 전으로 이동·평탄화한다. broker.place_order /
-    route_order / council / RiskManager 호출 0건 — read-only 시세 warmup 뿐.
-    실패/미가용해도 예외를 던지지 않는다(장중 lazy 채움으로 자연 폴백).
-    """
-    out: dict[str, Any] = {"warmed": 0, "reason_code": "WARMUP_DONE",
-                           "is_order_signal": False, "broker_order_sent": False}
+async def premarket_warmup_tick(
+    now: datetime | None = None, on_progress: Any = None,
+) -> dict[str, Any]:
+    """Prepare only the next scan window; warmup never gates the live tick loop."""
+    out: dict[str, Any] = {
+        "warmed": 0, "total_symbols": 0, "completed_symbols": 0,
+        "failed_symbols": 0, "reason_code": "WARMUP_DONE",
+        "is_order_signal": False, "broker_order_sent": False,
+    }
     try:
         from app.api.deps import get_broker
         from app.core.config import get_settings
+        from app.core.runtime_config import effective_disabled_theme_ids
         from app.market_data.kis_realtime import warmup_bars_cache
+        from app.theme_filter.catalog import filter_new_entry_symbols
         settings = get_settings()
-        syms = _full_universe_pool(settings)
+        pool = _full_universe_pool(settings)
+        symbols = filter_new_entry_symbols(pool, effective_disabled_theme_ids(now))
+        cap = max(1, int(getattr(settings, "kis_paper_scan_max_symbols", 10) or 10))
+        cap_max = max(1, int(getattr(settings, "kis_paper_scan_cap_max", 30) or 30))
+        symbols = symbols[:min(cap, cap_max)]
+        out["universe_size"] = len(pool)
+        out["total_symbols"] = len(symbols)
         broker = get_broker()
         client = getattr(broker, "client", None) if broker is not None else None
         if client is None:
             out["reason_code"] = "WARMUP_NO_CLIENT"
             return out
-        res = await warmup_bars_cache(syms, client=client, now=now)
-        out["warmed"] = int(len(res or {}))
-        out["pool_size"] = len(syms)
-    except Exception as exc:  # noqa: BLE001 — warmup 실패는 거래 무관(lazy 폴백).
-        _log.warning("[kis-warmup] premarket warmup 실패(무시): %s: %s",
+        bars = await warmup_bars_cache(
+            symbols, client=client, now=now, concurrency=3, on_progress=on_progress,
+        )
+        out["completed_symbols"] = len(bars)
+        out["warmed"] = sum(1 for count in bars.values() if count > 0)
+        out["failed_symbols"] = len(bars) - out["warmed"]
+        out["reason_code"] = "WARMUP_DONE" if not out["failed_symbols"] else "WARMUP_PARTIAL"
+    except Exception as exc:  # noqa: BLE001 ? warmup failure is retried and never gates trading.
+        _log.warning("[kis-warmup] premarket warmup failed: %s: %s",
                      type(exc).__name__, exc)
         out["reason_code"] = "WARMUP_ERROR"
+        out["error_type"] = type(exc).__name__
     return out
 
 
@@ -761,6 +773,7 @@ async def kis_paper_realtime_scan_tick(
         "market_inputs_failed": 0,
         "council_evaluated": 0,
         "council_actions": {"BUY": 0, "HOLD": 0, "SELL": 0},
+        "council_results": [],
         "strategy_signals": {},
     }
 
@@ -915,6 +928,11 @@ async def kis_paper_realtime_scan_tick(
             diagnostics["council_actions"][_final_name] = (
                 diagnostics["council_actions"].get(_final_name, 0) + 1
             )
+            diagnostics["council_results"].append({
+                "symbol": symbol,
+                "action": _final_name,
+                "confidence": round(float(getattr(council, "confidence", 0) or 0), 4),
+            })
             for _vote in council.votes:
                 _strategy = str(_vote.strategy)
                 _signal = str(getattr(_vote.signal, "value", _vote.signal)).upper()
@@ -936,6 +954,21 @@ async def kis_paper_realtime_scan_tick(
 
             price = int(quote.price or 0)
             if final == CouncilAction.BUY:
+                # A single share above the approved per-symbol budget cannot
+                # be bought regardless of the account's aggregate cash. Avoid
+                # an unnecessary KIS capacity request and report the local
+                # budget constraint explicitly instead of calling it a KIS
+                # zero-quantity response.
+                if per_symbol_notional > 0 and price > per_symbol_notional:
+                    skipped.append({
+                        "symbol": symbol,
+                        "reason_code": "PRICE_EXCEEDS_ENTRY_NOTIONAL_LIMIT",
+                        "price_source": "kis",
+                        "price": price,
+                        "entry_notional_limit": per_symbol_notional,
+                        "minimum_shares": 1,
+                    })
+                    continue
                 # Resolve state gates before issuing a capacity inquiry.
                 if not positions_verified:
                     skipped.append({"symbol": symbol, "reason_code": "KIS_POSITIONS_UNVERIFIED",
@@ -992,6 +1025,14 @@ async def kis_paper_realtime_scan_tick(
                         "price_source": "kis",
                         "price": price,
                         "entry_notional_limit": per_symbol_notional,
+                        "kis_orderable_quantity": int(capacity.get("no_credit_buy_quantity", 0))
+                            if _broker_is_kis_paper(broker) else None,
+                        "kis_calculation_price": int(capacity.get("calculation_price_krw", 0))
+                            if _broker_is_kis_paper(broker) else None,
+                        "kis_orderable_cash": int(capacity.get("orderable_cash_krw", 0))
+                            if _broker_is_kis_paper(broker) else None,
+                        "kis_no_credit_buy_amount": int(capacity.get("no_credit_buy_amount_krw", 0))
+                            if _broker_is_kis_paper(broker) else None,
                     })
                     continue
             else:
@@ -1067,7 +1108,7 @@ async def kis_paper_realtime_scan_tick(
                     held_symbols.add(symbol)
                     daily_buy_used += notional
 
-        return _scan_summary(
+        summary = _scan_summary(
             mode=mode, symbols_scanned=symbols_scanned,
             candidates_found=candidates_found, orders_attempted=orders_attempted,
             orders_submitted=orders_submitted, orders=out_orders, skipped=skipped,
@@ -1078,24 +1119,72 @@ async def kis_paper_realtime_scan_tick(
             ),
             diagnostics=diagnostics,
         )
+        _persist_scan_audit(db, now=now, summary=summary)
+        return summary
     except Exception as exc:  # noqa: BLE001 — 스캔 오류는 loop 를 죽이지 않음.
         try:
             db.rollback()
         except Exception:  # noqa: BLE001
             pass
         _log.warning("[kis-paper-scan] tick error: %s: %s", type(exc).__name__, exc)
-        return _scan_summary(
+        summary = _scan_summary(
             mode=mode, symbols_scanned=symbols_scanned,
             candidates_found=candidates_found, orders_attempted=orders_attempted,
             orders_submitted=orders_submitted, orders=out_orders, skipped=skipped,
             reason_code="KIS_PAPER_ERROR", reason_message=f"{type(exc).__name__}",
             diagnostics=diagnostics,
         )
+        _persist_scan_audit(db, now=now, summary=summary)
+        return summary
     finally:
         try:
             db.close()
         except Exception:  # noqa: BLE001
             pass
+
+
+def _persist_scan_audit(db: Any, *, now: datetime, summary: dict[str, Any]) -> None:
+    """Persist one order-neutral scan audit row for post-session reconstruction."""
+    try:
+        from app.db.models import AgentDecisionLog
+
+        diagnostics = dict(summary.get("scan_diagnostics") or {})
+        skipped = list(summary.get("skipped") or [])
+        reason_codes = sorted({
+            str(item.get("reason_code") or "UNKNOWN") for item in skipped
+        })
+        row = AgentDecisionLog(
+            created_at=now.astimezone(timezone.utc).replace(tzinfo=None),
+            agent_name="kis_paper_scan_audit",
+            symbol=None,
+            mode="PAPER",
+            decision="INFO",
+            confidence=None,
+            reasons=[str(summary.get("reason_code") or "KIS_REALTIME_SCAN_DONE"), *reason_codes],
+            meta={
+                "audit_schema": "KIS_PAPER_SCAN_V1",
+                "symbols_scanned": int(summary.get("symbols_scanned") or 0),
+                "candidates_found": int(summary.get("candidates_found") or 0),
+                "orders_attempted": int(summary.get("orders_attempted") or 0),
+                "orders_submitted": int(summary.get("orders_submitted") or 0),
+                "council_evaluated": int(diagnostics.get("council_evaluated") or 0),
+                "council_actions": dict(diagnostics.get("council_actions") or {}),
+                "council_results": list(diagnostics.get("council_results") or []),
+                "excluded_reasons": dict(diagnostics.get("excluded_reasons") or {}),
+                "skipped": skipped,
+                "broker_order_sent": bool(summary.get("broker_order_sent")),
+                "is_order_signal": False,
+                "is_live_authorization": False,
+            },
+        )
+        db.add(row)
+        db.commit()
+    except Exception as exc:  # noqa: BLE001 -- audit failure must not stop trading.
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        _log.warning("[kis-paper-scan] persistent scan audit failed: %s", type(exc).__name__)
 
 
 def _scan_summary(

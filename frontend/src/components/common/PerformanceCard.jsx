@@ -16,6 +16,16 @@ const _pct = (v) => `${v > 0 ? "+" : ""}${Number(v).toFixed(1)}%`;
 const _pp = (v) => (v == null ? "" : ` (${v > 0 ? "+" : ""}${Number(v).toFixed(1)}%p)`);
 const _signed = (v) => `${v > 0 ? "+" : ""}${fmtKRW(v)}원`;
 
+function Metric({ k, v, sub, testid }) {
+  return (
+    <div style={{ flex: 1, textAlign: "center" }}>
+      <div style={{ fontSize: 12, color: "rgba(40,20,24,.7)", fontWeight: 600 }}>{k}</div>
+      <div data-testid={testid} style={{ fontSize: 16, fontWeight: 800, color: "#2a1418", marginTop: 3 }}>{v}</div>
+      {sub && <div style={{ fontSize: 11, color: "rgba(40,20,24,.6)", marginTop: 1 }}>{sub}</div>}
+    </div>
+  );
+}
+
 export function PerformanceCard({ api = backendApi }) {
   const [period, setPeriod] = useState("daily");
   const [from, setFrom] = useState("");
@@ -51,14 +61,6 @@ export function PerformanceCard({ api = backendApi }) {
     : `${Math.round(data.win_rate * 100)}% (${data.win_count}승 ${data.loss_count}패)`;
   const payoffText = noData || data?.payoff_ratio == null ? "—" : Number(data.payoff_ratio).toFixed(1);
   const netText = noData || data?.net_pnl_krw == null ? "—" : _signed(data.net_pnl_krw);
-
-  const Metric = ({ k, v, sub, testid }) => (
-    <div style={{ flex: 1, textAlign: "center" }}>
-      <div style={{ fontSize: 12, color: "rgba(40,20,24,.7)", fontWeight: 600 }}>{k}</div>
-      <div data-testid={testid} style={{ fontSize: 16, fontWeight: 800, color: "#2a1418", marginTop: 3 }}>{v}</div>
-      {sub && <div style={{ fontSize: 11, color: "rgba(40,20,24,.6)", marginTop: 1 }}>{sub}</div>}
-    </div>
-  );
 
   return (
     <div data-testid="perf-card" style={{

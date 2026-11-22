@@ -39,6 +39,80 @@ use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+// The Tauri single-instance plugin normally forwards a second launch through
+// its hidden event window. Its Windows implementation fails open if that
+// window cannot be found, so hold an independent mutex for the full GUI
+// lifetime and refuse to initialize a second app/Sidecar.
+#[cfg(windows)]
+struct DesktopInstanceGuard(isize);
+
+#[cfg(windows)]
+impl Drop for DesktopInstanceGuard {
+    fn drop(&mut self) {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn CloseHandle(handle: *mut core::ffi::c_void) -> i32;
+            fn ReleaseMutex(handle: *mut core::ffi::c_void) -> i32;
+        }
+        unsafe {
+            ReleaseMutex(self.0 as *mut core::ffi::c_void);
+            CloseHandle(self.0 as *mut core::ffi::c_void);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn acquire_desktop_instance(name: &str) -> Result<Option<DesktopInstanceGuard>, String> {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateMutexW(attributes: *mut core::ffi::c_void, initial_owner: i32,
+                        name: *const u16) -> *mut core::ffi::c_void;
+        fn GetLastError() -> u32;
+        fn CloseHandle(handle: *mut core::ffi::c_void) -> i32;
+    }
+    const ERROR_ALREADY_EXISTS: u32 = 183;
+    let name_wide: Vec<u16> = std::ffi::OsStr::new(name).encode_wide()
+        .chain(std::iter::once(0)).collect();
+    let handle = unsafe { CreateMutexW(std::ptr::null_mut(), 1, name_wide.as_ptr()) };
+    if handle.is_null() {
+        return Err(format!("CreateMutexW failed ({})", unsafe { GetLastError() }));
+    }
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        unsafe { CloseHandle(handle); }
+        return Ok(None);
+    }
+    Ok(Some(DesktopInstanceGuard(handle as isize)))
+}
+
+#[cfg(not(windows))]
+struct DesktopInstanceGuard;
+
+#[cfg(not(windows))]
+fn acquire_desktop_instance(_name: &str) -> Result<Option<DesktopInstanceGuard>, String> {
+    Ok(Some(DesktopInstanceGuard))
+}
+
+#[cfg(all(test, windows))]
+mod desktop_instance_tests {
+    use super::acquire_desktop_instance;
+
+    #[test]
+    fn runtime_guard_refuses_a_second_instance_and_releases_on_drop() {
+        let name = format!(
+            r"Local\com.agenttrader.beta.AgentTraderV1.Test-{}",
+            std::process::id()
+        );
+        let first = acquire_desktop_instance(&name).unwrap();
+        assert!(first.is_some());
+        let second = acquire_desktop_instance(&name).unwrap();
+        assert!(second.is_none());
+        drop(first);
+        let after_release = acquire_desktop_instance(&name).unwrap();
+        assert!(after_release.is_some());
+    }
+}
+
 use tauri::async_runtime;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -258,6 +332,18 @@ fn purge_stale_service_worker(profile_default_dir: &std::path::Path) -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Keep this guard alive until App::run returns. A duplicate launch exits
+    // before Tauri setup can spawn a second Sidecar or connect another UI.
+    let _instance_guard = match acquire_desktop_instance(
+        r"Local\com.agenttrader.beta.AgentTraderV1.RuntimeGuard",
+    ) {
+        Ok(Some(guard)) => guard,
+        Ok(None) => return,
+        Err(error) => {
+            eprintln!("single-instance guard failed: {error}");
+            return; // fail closed; never start another order-capable Sidecar
+        }
+    };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     let context = tauri::generate_context!();
@@ -294,14 +380,21 @@ pub fn run() {
             ));
 
             // #90: backend sidecar 자동 실행.
-            // tauri.conf.json 의 externalBin 에 등록된 "binaries/autotrade-backend" 를 spawn.
+            // Bundle the PyInstaller onedir folder as a Tauri resource; its DLLs stay beside the EXE.
             // .env / Secret / API Key 인자 전달 0건 — backend 가 %APPDATA%/Autotrade/.env
             // 등에서 직접 로드한다. (Windows 에서 shell plugin sidecar 는 콘솔 창 없이 실행)
             let desktop_token = secure_desktop_token()
                 .expect("secure Windows desktop authentication token unavailable");
             let _ = DESKTOP_AUTH_TOKEN.set(desktop_token.clone());
-            match app.shell().sidecar("autotrade-backend") {
-                Ok(cmd) => match cmd.env("AUTOTRADE_DESKTOP_AUTH_TOKEN", desktop_token).spawn() {
+            let sidecar_path = app
+                .path()
+                .resource_dir()
+                .map(|dir| dir.join("autotrade-backend").join("autotrade-backend.exe"));
+            match sidecar_path {
+                Ok(path) if path.is_file() => match app.shell().command(path.to_string_lossy().as_ref())
+                    .env("AUTOTRADE_DESKTOP_AUTH_TOKEN", desktop_token)
+                    .spawn()
+                {
                     Ok((mut rx, child)) => {
                         let pid = child.pid();
                         append_log(&format!("sidecar spawned (pid={})", pid));
@@ -357,6 +450,11 @@ pub fn run() {
                         );
                     }
                 },
+                Ok(path) => {
+                    let msg = format!("SIDECAR_NOT_AVAILABLE: bundled onedir executable missing at {}", path.display());
+                    append_log(&msg);
+                    log::warn!("{}", msg);
+                }
                 Err(err) => {
                     let msg = format!("SIDECAR_NOT_AVAILABLE: {}", err);
                     append_log(&msg);
@@ -397,6 +495,12 @@ pub fn run() {
                 tray = tray.icon(icon.clone());
             }
             tray.build(app)?;
+
+            // Explicitly surface the configured main window on startup. Some
+            // Windows tray launches created the app process without exposing
+            // the window, leaving users with no visible way to start trading.
+            show_main_window(app.handle());
+            append_log("main window shown during startup");
 
             #[cfg(debug_assertions)]
             {

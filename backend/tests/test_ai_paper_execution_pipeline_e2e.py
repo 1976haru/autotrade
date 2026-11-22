@@ -326,6 +326,15 @@ def test_api_run_readiness(client):
     assert "health_code" in j["loop"]
 
 
+def test_run_readiness_reports_runtime_watch_universe_size(client, monkeypatch):
+    from app.core import runtime_config
+    monkeypatch.setattr(runtime_config, "effective_universe_size", lambda: 200)
+    res = client.get("/api/auto-paper/run-readiness")
+    assert res.status_code == 200
+    assert res.json()["universe"]["count"] == 200
+    assert res.json()["universe"]["source"] == "FALLBACK_MARKET_CAP_TOP200"
+
+
 def test_api_run_once_diagnostic_normal(client):
     res = client.post("/api/auto-paper/run-once-diagnostic", json={
         "symbol": "005930", "price": 75_000,

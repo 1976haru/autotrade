@@ -259,6 +259,34 @@ def _tick(harness, symbols, side=None):
     return asyncio.run(harness.driver.kis_paper_tick(NOW))
 
 
+def test_scan_cycle_persists_order_neutral_council_audit(harness):
+    _tick(harness, [SYMBOLS[0]], side="HOLD")
+
+    from app.db.models import AgentDecisionLog
+
+    db = harness.session_factory()
+    try:
+        row = db.query(AgentDecisionLog).filter_by(
+            agent_name="kis_paper_scan_audit",
+        ).one()
+        assert row.mode == "PAPER"
+        assert row.decision == "INFO"
+        assert row.meta["audit_schema"] == "KIS_PAPER_SCAN_V1"
+        assert row.meta["symbols_scanned"] == 1
+        assert row.meta["council_evaluated"] == 1
+        assert row.meta["council_actions"] == {"BUY": 0, "HOLD": 1, "SELL": 0}
+        assert row.meta["council_results"] == [{
+            "symbol": SYMBOLS[0], "action": "HOLD", "confidence": 0.95,
+        }]
+        assert row.meta["orders_attempted"] == 0
+        assert row.meta["orders_submitted"] == 0
+        assert row.meta["broker_order_sent"] is False
+        assert row.meta["is_order_signal"] is False
+        assert row.meta["is_live_authorization"] is False
+    finally:
+        db.close()
+
+
 def test_background_driver_router_fills_five_positions_and_exits(harness):
     initial_cash = harness.broker.cash
     results = [_tick(harness, [symbol]) for symbol in SYMBOLS[:5]]
@@ -311,10 +339,30 @@ def test_background_driver_router_fills_five_positions_and_exits(harness):
 
 
 def test_two_million_allocation_resizes_to_five_positions_with_cost_reserve(harness):
+    import os
+    from pathlib import Path
     from app.kis_paper.one_click_session import create_approval
 
     harness.settings.kis_paper_per_symbol_notional_krw = 2_000_000
+    # Keep the per-order ceiling aligned with this isolated scenario. The
+    # normal operating profile remains 1M; this fixture alone validates the
+    # existing 2M hard PAPER ceiling.
+    harness.settings.kis_paper_auto_max_order_notional = 2_000_000
+    harness.risk.policy.max_order_notional = 2_000_000
+    # The shared fixture already created a 1M approval. Replace only its
+    # isolated temp approval file so the 2M scenario exercises a fresh,
+    # matching approval snapshot (never the operator's APPDATA approval).
+    approval_file = Path(os.environ["AUTOTRADE_PAPER_APPROVAL_FILE"])
+    approval_file.unlink(missing_ok=True)
     approval_db = harness.session_factory()
+    # create_approval is intentionally idempotent for an already approved
+    # date/account in its DB ledger too. Remove only the fixture's in-memory
+    # test row before writing the matching snapshot.
+    from app.db.models import PaperSessionApproval
+    approval_db.query(PaperSessionApproval).filter_by(
+        trading_date="2026-11-04",
+    ).delete(synchronize_session=False)
+    approval_db.commit()
     create_approval(
         db=approval_db, settings=harness.settings, risk=harness.risk,
         target_date="2026-11-04", actor="deterministic-test-operator",
@@ -323,7 +371,15 @@ def test_two_million_allocation_resizes_to_five_positions_with_cost_reserve(harn
     approval_db.close()
 
     results = [_tick(harness, [symbol]) for symbol in SYMBOLS[:5]]
-    assert len([qty for qty in harness.broker.holdings.values() if qty > 0]) == 5
+    assert len([qty for qty in harness.broker.holdings.values() if qty > 0]) == 5, [
+        (harness.selected["last_scan"].get("candidates_found"),
+         harness.selected["last_scan"].get("orders_attempted"),
+         harness.selected["last_scan"].get("orders_submitted"),
+         [{k: order.get(k) for k in ("reason_code", "reason_message", "submitted",
+                                      "dry_run", "extra_meta", "routing_reasons")}
+          for order in harness.selected["last_scan"].get("orders", [])],
+         harness.selected["last_scan"].get("skipped"))
+    ]
     assert sum(harness.broker.holdings.values()) == 990
     invested = sum(harness.broker.holdings.values()) * 10_000
     assert invested == 9_900_000

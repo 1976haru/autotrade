@@ -180,4 +180,24 @@ describe("usePortfolio ratelimit_fix v2 — 일괄 시세 폴링 stale/부분실
     expect(result.current.positions[0].cur).toBe(71_000);  // 갱신 실패 → 이전 값 유지
     expect(result.current.equity).toBe(2_000_000);          // balance 는 무관하게 정상
   });
+
+  it("refreshes broker holdings so a filled sell removes a stale account position", async () => {
+    backendApi.brokerBalance.mockResolvedValue({ cash: 100, equity: 1_000_000 });
+    backendApi.brokerPositions
+      .mockResolvedValueOnce([
+        { symbol: "105560", quantity: 5, avg_price: 158_320, market_price: 160_900 },
+      ])
+      .mockResolvedValue([]);
+
+    const { result } = renderHook(() => usePortfolio());
+    await flush();
+    expect(result.current.positions).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    await flush();
+
+    expect(backendApi.brokerPositions).toHaveBeenCalledTimes(2);
+    expect(result.current.positions).toEqual([]);
+    expect(result.current.invested).toBe(0);
+  });
 });

@@ -29,6 +29,8 @@ credentials.json
 *.pfx
 *.keystore
 *.jks
+**/kis_token_cache.json
+**/*token_cache*.json
 
 
 # ---------- Python ----------
@@ -57,6 +59,8 @@ build/
 .vite/
 .cache/
 coverage/
+*.exe
+*.dll
 
 
 # ---------- IDE / OS ----------
@@ -72,6 +76,35 @@ logs/
 data/
 *.sqlite
 *.db
+backend/.readonly-balance-probe/
+backend/reports/
+
+# ---------- local Codex/Claude/test/deploy work areas ----------
+# Local verification sandboxes and deployment snapshots may contain copied
+# runtime state.  They are never source inputs and must not enter the public
+# repository.
+.autotrade-pytest-*/
+.codex-test-run/
+.codex-tmp/
+.codex-v24tests/
+.paper-*/
+.sidecar-*/
+.scratch-*/
+.sqlite-root-probe-*/
+.test-dir-probe/
+.testtmp/
+.tmp/
+.worktrees/
+autotrade-pytest-*/
+tmp*/
+backend/.codex-*/
+backend/.eod-test-tmp/
+backend/.paper-*/
+backend/.testtmp_local/
+backend/.tmp/
+.desktop-state-proof.png
+.gui-current-proof.png
+direct-python-write.txt
 
 
 # ---------- local reports — daily_report_agent 산출물 ----------

@@ -15,7 +15,10 @@ Usage:
   ii) 코스피 시가 갭다운 <= -1.0%
   iii) 코스피 전일 종가 < 20일 이동평균
 """
-import sys, os, csv, sqlite3, argparse
+import argparse
+import csv
+import os
+import sqlite3
 from datetime import date, datetime, timedelta
 
 # ── paths ──────────────────────────────────────────────
@@ -105,9 +108,12 @@ def compute_verdict(target_date: str, sp_data: dict, ks_data: dict):
                 cond3 = prev_ks_close < ma20
 
     reasons = []
-    if cond1: reasons.append("i")
-    if cond2: reasons.append("ii")
-    if cond3: reasons.append("iii")
+    if cond1:
+        reasons.append("i")
+    if cond2:
+        reasons.append("ii")
+    if cond3:
+        reasons.append("iii")
     verdict = "SKIP" if reasons else "TRADE"
 
     details = {

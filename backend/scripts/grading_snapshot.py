@@ -11,7 +11,6 @@ Windows Task Scheduler 가 장중 1시간 간격 + 마감 후 호출한다. 매 
 from __future__ import annotations
 
 import os
-import re
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path

@@ -88,6 +88,7 @@ export function useAutoPaperLoop({
       // INTRADAY-FLAT-BY-CLOSE-V1: 서버 시계 기준 신규매수 가능 여부 carry (14:30 이후 Start).
       const res = {
         ok: true, reasons: [],
+        state: snap?.state || null,
         buyAllowed: snap?.intraday_buy_allowed !== false,
         buyReasonCode: snap?.intraday_buy_reason_code || null,
         buyReasonMessage: snap?.intraday_buy_reason_message || null,

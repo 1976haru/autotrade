@@ -18,6 +18,13 @@ const base = {
 const api = (d) => ({ kisPaperEodStatus: vi.fn(async () => d), kisPaperEodAcknowledge: vi.fn(async () => ({})) });
 
 describe("IntradaySessionPanel (INTRADAY-FLAT-BY-CLOSE-V1)", () => {
+  it("EOD lifecycle distinguishes reconciliation from successful completion", async () => {
+    const d = { ...base, lifecycle_state: "RECONCILING" };
+    const { getByTestId } = render(<IntradaySessionPanel api={api(d)} pollMs={60_000} />);
+    await waitFor(() => expect(getByTestId("isp-eod-lifecycle").textContent)
+      .toContain("잔고·미체결 대조 중"));
+  });
+
   it("서버 일정(14:30/15:15/15:30) + 모의계좌 배지 + 운용모드 표시", async () => {
     const { getByTestId } = render(<IntradaySessionPanel api={api(base)} pollMs={60_000} />);
     await waitFor(() => expect(getByTestId("isp-buy-cutoff").textContent).toBe("14:30"));

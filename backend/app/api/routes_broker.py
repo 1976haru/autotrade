@@ -108,25 +108,66 @@ async def get_balance(broker: BrokerAdapter = Depends(get_broker)):
     try:
         bal = await broker.get_balance()
         out = _balance_dict(bal)
-        out.update({"stale": False, "as_of_kst": _now_hm_kst(), "broker_healthy": True})
+        out.update({
+            "stale": False,
+            "as_of_kst": _now_hm_kst(),
+            "broker_healthy": True,
+            "account_balance_verified": True,
+            "account_state": "VERIFIED",
+        })
         _last_good_balance = dict(out)
         return out
     except Exception as exc:  # noqa: BLE001 — KIS 일시 실패는 stale 폴백(앱 전면 실패 금지).
         _log.warning("[broker] balance 조회 실패: %s", exc)
+        diagnostic = getattr(exc, "diagnostic", {}) or {}
+        safe_context = {
+            key: diagnostic[key]
+            for key in (
+                "http_status", "kis_rt_cd", "kis_msg_cd", "sanitized_error_summary",
+                "server_request_id", "api_path", "tr_id", "failure_stage", "failure_kind",
+                "token_source",
+            )
+            if key in diagnostic and diagnostic[key] is not None
+        }
         if _last_good_balance is not None:
             stale = dict(_last_good_balance)
             stale["stale"] = True
             stale["broker_healthy"] = False
+            stale["account_balance_verified"] = False
+            stale["account_state"] = "ACCOUNT_BALANCE_UNVERIFIED"
+            stale["diagnostic"] = safe_context
             return stale  # 옛 정상값(as_of_kst 그대로) — 가짜 0 아님
         return JSONResponse(
             status_code=503,
-            content={"detail": "증권사(KIS) 응답이 없어요", "broker_healthy": False, "kis_error": True},
+            content={
+                "code": "ACCOUNT_BALANCE_UNVERIFIED",
+                "detail": "KIS balance could not be verified; account state is unknown.",
+                "account_balance_verified": False,
+                "account_state": "ACCOUNT_BALANCE_UNVERIFIED",
+                "broker_healthy": False,
+                "kis_error": True,
+                "diagnostic": safe_context,
+            },
         )
 
 
 @router.get("/positions")
 async def get_positions(broker: BrokerAdapter = Depends(get_broker)) -> list[Position]:
-    return await broker.get_positions()
+    try:
+        return await broker.get_positions()
+    except Exception as exc:  # noqa: BLE001 - never turn errors into an empty account.
+        _log.warning("[broker] positions inquiry failed; account state is unverified: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "code": "ACCOUNT_BALANCE_UNVERIFIED",
+                "detail": "KIS positions could not be verified; account state is unknown.",
+                "account_balance_verified": False,
+                "account_state": "ACCOUNT_BALANCE_UNVERIFIED",
+                "broker_healthy": False,
+                "kis_error": True,
+            },
+        )
 
 
 @router.post("/orders")

@@ -105,6 +105,7 @@ async def lifespan(_app: FastAPI):
     if _src_block is not None:
         _startup_logger.error("[startup] start refused (FAIL_CLOSED): %s", _src_block)
         raise RuntimeError(_src_block)
+    _startup_logger.info("[startup] source-run safety guard passed")
 
     # PART1-3: capital_state 영속화 활성화를 env 로 동기화. capital_state 는
     # get_settings 를 import 하지 않는다는 원칙(안전 flag 결합 0건)을 지키기
@@ -132,12 +133,19 @@ async def lifespan(_app: FastAPI):
     def _build_and_start_poller() -> FillPoller:
         from app.api.deps import get_broker
         from app.db.session import SessionLocal
+        _startup_logger.info("[startup] fill_poller initializing")
         p = FillPoller(
             broker_factory=get_broker,
             session_factory=SessionLocal,
             interval=cfg.fill_polling_interval_seconds,
         )
-        p.start()
+        try:
+            p.start()
+        except Exception as exc:
+            _startup_logger.error(
+                "[startup] fill_poller failed (error_type=%s)", type(exc).__name__,
+            )
+            raise
         return p
 
     if cfg.migration_nonblocking:
@@ -166,6 +174,8 @@ async def lifespan(_app: FastAPI):
                         return
                     await asyncio.sleep(1.0)
             poller_starter_task = asyncio.create_task(_start_poller_when_db_ready())
+        else:
+            _startup_logger.info("[startup] fill_poller skipped (enable_fill_polling=false)")
 
         _startup_logger.info(
             "[startup] backend ready (non-blocking) — /health and /api/status "
@@ -192,6 +202,9 @@ async def lifespan(_app: FastAPI):
         _startup_logger.info("[startup] alembic migration complete")
         if cfg.enable_fill_polling:
             poller = _build_and_start_poller()
+            _startup_logger.info("[startup] fill_poller started")
+        else:
+            _startup_logger.info("[startup] fill_poller skipped (enable_fill_polling=false)")
         _startup_logger.info(
             "[startup] backend ready — uvicorn accepting requests on /health, "
             "/api/status, /api/kis-paper/readiness"
@@ -210,7 +223,7 @@ async def lifespan(_app: FastAPI):
             restored = get_auto_paper_loop().start()
             _startup_logger.info(
                 "[startup] approved PAPER session restored: state=%s",
-                restored.state.value,
+                getattr(restored.state, "value", restored.state),
             )
     except Exception as exc:  # fail closed; readiness exposes the reason
         _startup_logger.warning(
@@ -241,10 +254,14 @@ async def lifespan(_app: FastAPI):
                 "[startup] AI Paper background tick driver started "
                 "(opt-in, PAPER only — no broker orders)"
             )
+        else:
+            _startup_logger.info(
+                "[startup] AI Paper background tick driver skipped "
+                "(disabled or not eligible; no broker orders)"
+            )
     except Exception as exc:  # noqa: BLE001
         _startup_logger.warning(
-            "[startup] background tick driver not started: %s: %s",
-            type(exc).__name__, exc,
+            "[startup] background tick driver failed (error_type=%s)", type(exc).__name__,
         )
 
     # P0-SAFETY-FIX-V1: EOD guardian — driver 가 꺼져 있어도(EXE 기본·재실행) 프로그램 보유의
@@ -255,8 +272,10 @@ async def lifespan(_app: FastAPI):
         eod_guardian = get_eod_guardian()
         if eod_guardian.start():
             _startup_logger.info("[startup] EOD guardian started (independent of tick driver)")
+        else:
+            _startup_logger.info("[startup] EOD guardian skipped (disabled or not eligible)")
     except Exception as exc:  # noqa: BLE001
-        _startup_logger.warning("[startup] EOD guardian not started: %s", type(exc).__name__)
+        _startup_logger.warning("[startup] EOD guardian failed (error_type=%s)", type(exc).__name__)
 
     # MULTI-TF-SHADOW-V1 — *opt-in*, 기본 OFF. results/multi_timeframe 후속 —
     # 5m entry + 60m confirm(Council) 콤보를 read-only 관측(신호빈도 + 슬리피지).
@@ -279,9 +298,19 @@ async def lifespan(_app: FastAPI):
                 )
     except Exception as exc:  # noqa: BLE001
         _startup_logger.warning(
-            "[startup] multi-tf shadow not started: %s: %s", type(exc).__name__, exc,
+            "[startup] multi-tf shadow failed (error_type=%s)", type(exc).__name__,
         )
 
+    mig = get_migration_status()
+    _startup_logger.info(
+        "[startup] application startup complete; migration=%s db_ready=%s "
+        "fill_polling=%s auto_paper_tick=%s live_trading=%s",
+        mig.state.value,
+        db_is_ready(),
+        cfg.enable_fill_polling,
+        cfg.enable_ai_paper_background_tick,
+        cfg.enable_live_trading,
+    )
     try:
         yield
     finally:

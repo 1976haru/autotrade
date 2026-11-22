@@ -328,6 +328,102 @@ def test_start_then_stop_cancels_task():
     asyncio.run(_run())
 
 
+def test_premarket_warmup_does_not_block_open_tick():
+    async def _run():
+        warmup_started = asyncio.Event()
+        release_warmup = asyncio.Event()
+
+        async def slow_warmup(*, now, on_progress=None):
+            warmup_started.set()
+            await release_warmup.wait()
+            return {"total_symbols": 300, "completed_symbols": 300,
+                    "failed_symbols": 0, "reason_code": "WARMUP_DONE"}
+
+        loop = _FakeLoop("RUNNING")
+        async def paper_tick(*, now):
+            return {"reason_code": "NO_CANDIDATE", "candidates_found": 0}
+
+        d = BackgroundTickDriver(
+            settings_provider=lambda: _settings(enable_kis_paper_auto_trading=True),
+            loop_provider=lambda: loop,
+            now_provider=lambda: PRE_OPEN_TIME,
+            premarket_warmup_fn=slow_warmup,
+            kis_auto_tick_fn=paper_tick,
+        )
+        await asyncio.wait_for(d._maybe_premarket_warmup(PRE_OPEN_TIME), timeout=0.1)
+        await asyncio.wait_for(warmup_started.wait(), timeout=0.1)
+        # Warmup intentionally remains blocked while an open-market tick executes.
+        result = await asyncio.wait_for(d.kis_paper_tick(OPEN_TIME), timeout=0.1)
+        assert result.reason_code == "NO_CANDIDATE"
+        assert loop._cycle == 1
+        assert d.status()["warmup"]["status"] == "WARMING_UP"
+        release_warmup.set()
+        await d._cancel_warmup()
+
+    asyncio.run(_run())
+
+
+def test_kis_tick_persists_scan_audit_details():
+    async def _run():
+        captured = []
+
+        async def paper_tick(*, now):
+            return {
+                "reason_code": "KIS_REALTIME_SCAN_DONE",
+                "candidates_found": 1,
+                "orders_attempted": 0,
+                "orders_submitted": 0,
+                "scan_diagnostics": {
+                    "symbols_scanned": 3,
+                    "council_evaluated": 2,
+                    "council_actions": {"BUY": 1, "HOLD": 1, "SELL": 0},
+                    "excluded_reasons": {"BUY_BLOCKED_BY_EOD_INCIDENT": 1},
+                },
+            }
+
+        d = BackgroundTickDriver(
+            settings_provider=lambda: _settings(enable_kis_paper_auto_trading=True),
+            loop_provider=lambda: _FakeLoop("RUNNING"),
+            event_sink=lambda **kw: captured.append(kw),
+            kis_auto_tick_fn=paper_tick,
+        )
+        result = await d.kis_paper_tick(OPEN_TIME)
+        assert result.reason_code == "KIS_REALTIME_SCAN_DONE"
+        scan = captured[-1]["details"]["scan_diagnostics"]
+        assert scan["council_actions"]["BUY"] == 1
+        assert scan["excluded_reasons"]["BUY_BLOCKED_BY_EOD_INCIDENT"] == 1
+        assert scan["orders_attempted"] == 0
+        assert scan["orders_submitted"] == 0
+
+    asyncio.run(_run())
+
+
+def test_minute_bar_cache_merges_concurrent_symbol_day_fetches(monkeypatch):
+    from app.market_data import kis_realtime
+
+    async def _run():
+        calls = 0
+        expected = [{"d": "20261113", "t": "090000", "close": 100}]
+
+        async def fetch(_client, _symbol, _date):
+            nonlocal calls
+            calls += 1
+            await asyncio.sleep(0.02)
+            return expected
+
+        kis_realtime.reset_bars_cache()
+        monkeypatch.setattr(kis_realtime, "_fetch_full_day_minutes", fetch)
+        results = await asyncio.gather(
+            kis_realtime._fetch_full_day_minutes_cached(object(), "005930", "20261113"),
+            kis_realtime._fetch_full_day_minutes_cached(object(), "005930", "20261113"),
+        )
+        assert calls == 1
+        assert results == [expected, expected]
+        kis_realtime.reset_bars_cache()
+
+    asyncio.run(_run())
+
+
 # ── singleton + status ───────────────────────────────────────────────────────
 
 
@@ -347,7 +443,13 @@ def test_singleton_status_keys():
 def test_run_readiness_includes_background_tick(safe_default_flags, client):
     res = client.get("/api/auto-paper/run-readiness")
     assert res.status_code == 200
-    bt = res.json()["background_tick"]
+    body = res.json()
+    limits = body["paper_auto_limits"]
+    assert limits["total_budget_krw"] == 10_000_000
+    assert limits["daily_buy_limit_krw"] == 10_000_000
+    assert limits["per_symbol_notional_krw"] == 1_000_000
+    assert limits["max_concurrent_positions"] == 5
+    bt = body["background_tick"]
     assert bt["enabled"] is False         # 기본 OFF.
     assert bt["running"] is False
     assert bt["interval_seconds"] == 30
