@@ -33,6 +33,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import json
 import logging
 import os
@@ -121,7 +122,8 @@ def _anchor_relative_db_to_absolute(log: logging.Logger) -> None:
         if not cur.startswith("sqlite:///"):
             return
         raw = cur[len("sqlite:///"):]
-        if Path(raw).is_absolute():
+        # Keep Windows drive paths absolute when inspected by Linux CI too.
+        if Path(raw).is_absolute() or re.match(r"^[A-Za-z]:[\\/]", raw):
             log.info("database already absolute: %s", cur)
             return
         base = Path(__file__).resolve().parent  # backend/

@@ -209,8 +209,10 @@ def test_rust_log_lines_are_masked_before_write():
 
 def test_bundle_contains_no_secrets_or_data():
     conf = json.loads((TAURI / "tauri.conf.json").read_text(encoding="utf-8"))
-    assert conf["bundle"]["resources"] == []
-    assert conf["bundle"]["externalBin"] == ["binaries/autotrade-backend"]
+    assert conf["bundle"]["resources"] == {
+        "binaries/autotrade-backend/": "autotrade-backend/",
+    }
+    assert conf["bundle"]["externalBin"] == []
     assert conf["bundle"]["targets"] == ["nsis"]
     sidecar = (ROOT / "scripts" / "build_backend_sidecar.ps1").read_text(encoding="utf-8")
     add_data = re.findall(r'--add-data\s+"([^"]+)"', sidecar)
@@ -299,7 +301,7 @@ def test_migration_chain_single_head_includes_0027_0028():
     assert len(heads) == 1
     revs = {r.revision for r in sd.walk_revisions()}
     assert {"0027", "0028", "0029"} <= revs
-    assert heads[0] == "0032"   # account-scoped order idempotency is the current head
+    assert heads[0] == "0033"   # EOD reconciliation evidence is the current head
 
 
 def test_migrations_upgrade_preserves_existing_rows(tmp_path):

@@ -933,7 +933,7 @@ async def kis_paper_realtime_scan_tick(
                 "action": _final_name,
                 "confidence": round(float(getattr(council, "confidence", 0) or 0), 4),
             })
-            for _vote in council.votes:
+            for _vote in getattr(council, "votes", ()):
                 _strategy = str(_vote.strategy)
                 _signal = str(getattr(_vote.signal, "value", _vote.signal)).upper()
                 _bucket = diagnostics["strategy_signals"].setdefault(
