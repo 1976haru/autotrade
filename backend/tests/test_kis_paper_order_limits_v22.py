@@ -46,7 +46,7 @@ def test_paper_limits_clamp_oversized_overrides_and_generic_hard_caps(monkeypatc
     limits = resolve_kis_paper_order_limits(_settings(kis_paper_auto_max_order_notional=10_000_000))
     assert limits.per_symbol_krw == limits.max_order_krw == 2_000_000
     assert limits.max_positions == 5
-    assert limits.daily_buy_krw == 10_000_000
+    assert limits.daily_buy_krw == 50_000_000
     assert limits.daily_buy_count == 10 and limits.buys_per_tick == 1
 
 

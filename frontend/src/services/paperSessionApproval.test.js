@@ -73,6 +73,29 @@ describe("P1-A order path readiness before the approval popup", () => {
     expect(r.isNextSession).toBe(true);
   });
 
+  it("requires explicit confirmation of a higher saved limit for an active session", async () => {
+    const api = baseApi({
+      paperSessionApprovalGet: vi.fn(async () => ({
+        status: "ACTIVE", target_date: "2026-11-23",
+        limits: { daily_buy_krw: 10_000_000, total_budget_krw: 10_000_000 },
+      })),
+      runtimeConfigGet: vi.fn(async () => ({
+        daily_buy_limit_krw: { value: 50_000_000 },
+        total_paper_budget_krw: { value: 8_000_000 },
+      })),
+    });
+    const confirmFn = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const args = { api, capitalSettings: {}, confirmFn };
+    expect(await ensurePaperSessionApproval(args)).toMatchObject({ cancelled: true });
+    expect(invoke).not.toHaveBeenCalled();
+    expect(await ensurePaperSessionApproval(args)).toMatchObject({ ok: true, reused: false });
+    expect(confirmFn.mock.calls[1][0]).toContain((50_000_000).toLocaleString());
+    expect(invoke).toHaveBeenCalledWith("approve_paper_session", {
+      targetDate: "2026-11-23", explicitAck: true,
+      confirmedDailyBuyKrw: 50_000_000, confirmedTotalBudgetKrw: 8_000_000,
+    });
+  });
+
   it("readiness fetch failure does not block (server 409 is final)", async () => {
     const confirmFn = vi.fn(() => true);
     const api = baseApi({ autoPaperRunReadiness: vi.fn(async () => { throw new Error("down"); }) });

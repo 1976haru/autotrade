@@ -13,6 +13,29 @@ const cfg = (over = {}) => ({
 afterEach(() => cleanup());
 
 describe("RuntimeConfigCard (R3/R4)", () => {
+  it("saves the 50 million preset and displays the lower server-applied approval ceiling", async () => {
+    const meta = { value: 10_000_000, min: 10_000, max: 50_000_000 };
+    const initial = cfg({ daily_buy_limit_krw: meta });
+    const saved = {
+      ...initial,
+      daily_buy_limit_krw: { ...meta, value: 50_000_000 },
+      total_paper_budget_krw: { value: 8_000_000, min: 100_000, max: 50_000_000 },
+      paper_entry_limits: {
+        daily_buy_krw: 10_000_000, total_budget_krw: 8_000_000,
+        max_order_krw: 1_000_000, max_positions: 5, daily_buy_count: 10,
+      },
+    };
+    const api = { runtimeConfigPut: vi.fn(async () => saved) };
+    const view = render(<RuntimeConfigCard config={initial} api={api}
+      onSaved={(config) => view.rerender(<RuntimeConfigCard config={config} api={api} />)} />);
+    fireEvent.click(view.getByRole("button", { name: /5,000/ }));
+    fireEvent.click(view.getByTestId("rtcfg-save"));
+    await waitFor(() => expect(view.getByTestId("rtcfg-affordable").textContent).toContain("8,000,000"));
+    expect(api.runtimeConfigPut).toHaveBeenCalledWith(expect.objectContaining({ daily_buy_limit_krw: 50_000_000 }));
+    expect(view.getByTestId("rtcfg-dl-value").textContent).toContain("50,000,000");
+    expect(view.getByTestId("rtcfg-affordable").textContent).toContain("10,000,000");
+  });
+
   it("F2: config=null → 로딩, 저장 버튼 없음(서버값 모른 채 저장 금지)", () => {
     const { getByTestId, queryByTestId } = render(<RuntimeConfigCard config={null} api={{}} />);
     expect(getByTestId("rtcfg-loading")).toBeTruthy();
@@ -58,8 +81,7 @@ describe("RuntimeConfigCard (R3/R4)", () => {
     fireEvent.click(getByTestId("rtcfg-save"));
     await waitFor(() => expect(put).toHaveBeenCalledWith({ max_concurrent_positions: 3, per_stock_budget: 1_000_000 }));
     await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
-    expect(getByTestId("rtcfg-note").textContent).toContain("적용됐어요");
-    expect(getByTestId("rtcfg-note").textContent).toContain("보유 중인 종목은 그대로");
+    expect(getByTestId("rtcfg-note").textContent).toContain("저장했어요");
   });
 
   it("저장 실패 → 정직한 실패 표시 (가짜 성공 금지)", async () => {
@@ -71,25 +93,27 @@ describe("RuntimeConfigCard (R3/R4)", () => {
     expect(getByTestId("rtcfg-note").textContent).not.toContain("적용됐어요");
   });
 
-  it("정합 표시(충돌): 종목당 × 종목수 > 일일 한도 → 약 N종목 + 한도 모자람 안내", () => {
-    // 1,000,000 × 5 = 5,000,000 > 3,000,000 → affordable = floor(3M / 1M) = 3
-    const { getByTestId } = render(<RuntimeConfigCard config={cfg()} api={{}} />);
-    const w = getByTestId("rtcfg-affordable");
-    expect(w.textContent).toContain("3종목");
-    expect(w.textContent).toContain("3,000,000");
-    expect(w.textContent).toContain("모자라요");
+  it("shows the server limits and an amount range for new positions", () => {
+    const config = cfg({
+      daily_buy_limit_krw: { value: 50_000_000, min: 10_000, max: 50_000_000 },
+      total_paper_budget_krw: { value: 8_000_000, min: 100_000, max: 50_000_000 },
+      paper_entry_limits: {
+        daily_buy_krw: 50_000_000, total_budget_krw: 8_000_000,
+        max_order_krw: 2_000_000, max_positions: 5, daily_buy_count: 10,
+      },
+    });
+    const { getByTestId, getByRole } = render(<RuntimeConfigCard config={config} api={{}} />);
+    const summary = getByTestId("rtcfg-affordable");
+    expect(summary.textContent).toContain("50,000,000");
+    expect(summary.textContent).toContain("0~8,000,000");
+    expect(summary.textContent).toContain("20,000,000");
+    expect(getByTestId("rtcfg-dl-inc").disabled).toBe(true);
+    fireEvent.click(getByTestId("rtcfg-dl-dec"));
+    expect(getByTestId("rtcfg-dl-value").textContent).toContain("49,000,000");
+    fireEvent.click(getByRole("button", { name: /5,000/ }));
+    expect(getByTestId("rtcfg-dl-value").textContent).toContain("50,000,000");
   });
 
-  it("정합 표시(충돌 없음): 한도 이내면 약 N종목만 안내(경고 문구 없음)", () => {
-    // 500,000 × 5 = 2,500,000 ≤ 3,000,000 → affordable = floor(3M / 500k) = 6, 모자람 문구 없음
-    const { getByTestId } = render(
-      <RuntimeConfigCard config={cfg({ per_stock_budget: { value: 500_000, min: 100_000, max: 10_000_000 } })} api={{}} />);
-    const w = getByTestId("rtcfg-affordable");
-    expect(w.textContent).toContain("6종목");
-    expect(w.textContent).not.toContain("모자라요");
-  });
-
-  // ── 종목 풀 확장(0일차): universe_mode / universe_size 토글 ──────────────────
   const cfgUni = (over = {}) => cfg({
     universe_size: { value: 100, options: [100, 200, 400], source: "env" },
     universe_mode: { value: "auto", options: ["auto", "watchlist"], source: "env" },

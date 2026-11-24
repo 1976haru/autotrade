@@ -20,6 +20,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from app.core.runtime_config import DAILY_BUY_LIMIT_MAX, TOTAL_PAPER_BUDGET_MAX
 from app.db.session import get_db
 
 from app.auto_paper.loop import (
@@ -170,10 +171,10 @@ class _PaperCapitalSettingsBody(BaseModel):
     모든 필드는 *Paper 정책 입력값* 일 뿐 실거래 한도가 아님.
     """
 
-    total_paper_capital:    int   | None = Field(None, ge=1, le=10_000_000)
+    total_paper_capital:    int   | None = Field(None, ge=1, le=TOTAL_PAPER_BUDGET_MAX)
     per_symbol_allocation:  int   | None = Field(None, ge=1, le=2_000_000)
     max_positions:          int   | None = Field(None, ge=1, le=5)
-    max_daily_buy_amount:   int   | None = Field(None, ge=1, le=10_000_000)
+    max_daily_buy_amount:   int   | None = Field(None, ge=1, le=DAILY_BUY_LIMIT_MAX)
     max_symbol_weight_pct:  float | None = Field(None, gt=0, le=1)
     allow_additional_buy:   bool  | None = Field(None)
     # AI 운용 성향 — CONSERVATIVE/BALANCED/AGGRESSIVE. 소문자/한국어/별칭/None
@@ -195,6 +196,8 @@ class _PaperSessionApprovalBody(BaseModel):
     target_date: str
     explicit_ack: bool = False
     actor: str = Field(default="", min_length=1, max_length=128)
+    confirmed_daily_buy_krw: int | None = None
+    confirmed_total_budget_krw: int | None = None
 
 
 def _one_click_risk_dependency():
@@ -230,6 +233,8 @@ def post_paper_session_approval(
         record = create_approval(
             db=db, settings=get_settings(), risk=risk, target_date=body.target_date,
             actor=body.actor, explicit_ack=body.explicit_ack,
+            confirmed_daily_buy_krw=body.confirmed_daily_buy_krw,
+            confirmed_total_budget_krw=body.confirmed_total_budget_krw,
         )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -2090,7 +2095,7 @@ def save_persistent_paper_capital_settings(
             set_runtime_overrides,
         )
         from app.settings.persistent_settings import load_paper_capital_settings
-        current = load_paper_capital_settings().settings
+        current = _paper_capital_settings_response(load_paper_capital_settings())["settings"]
         merged = {**current, **dict(body or {})}
         normalized, validation_errors = validate_paper_capital_settings(merged)
         if validation_errors:

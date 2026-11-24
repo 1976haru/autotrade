@@ -3,11 +3,10 @@ import { useEffect, useState } from "react";
 import { backendApi } from "../../services/backend/client";
 import { fmtKRW, nowKstHm } from "../../utils/format";
 
-// R3: 장중 런타임 설정 카드 — 동시진입 종목 수 / 종목당 투자금 2개 전용.
-//   서버가 돌려준 실효값만 신뢰(낙관적 갱신 금지). 저장은 PUT /api/runtime-config.
 const BUDGET_STEP = 100_000; // 10만 단위
 const PCT_STEP = 0.5;        // C1: 손절/익절 0.5% 단위
 const DAILY_STEP = 1_000_000; // T2: 일일 매수 한도 100만 단위
+const BUDGET_PRESETS = [10_000_000, 20_000_000, 30_000_000, 50_000_000];
 const _round1 = (v) => Math.round(v * 10) / 10;   // 0.1% 정밀도 보존
 
 export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
@@ -18,6 +17,8 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
   // T2: 일일 매수 한도 — 신 백엔드는 {value,min,max} 객체, 구 백엔드는 평수(plain int).
   const dlRaw = config?.daily_buy_limit_krw;
   const dlMeta = (dlRaw && typeof dlRaw === "object") ? dlRaw : null;
+  const totalMeta = config?.total_paper_budget_krw;
+  const entryLimits = config?.paper_entry_limits;
   const effMc = mcMeta?.value;
   const effBud = budMeta?.value;
   const effSl = slMeta?.value;
@@ -43,6 +44,7 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
   const [sl, setSl] = useState(effSl ?? 2);
   const [tp, setTp] = useState(effTp ?? 3.5);
   const [dl, setDl] = useState(effDl ?? 10_000_000);
+  const [total, setTotal] = useState(totalMeta?.value ?? 10_000_000);
   const [usz, setUsz] = useState(effUsz ?? 100);
   const [um, setUm] = useState(effUm ?? "auto");
   const [note, setNote] = useState(null); // { kind: "ok"|"err", text }
@@ -54,6 +56,8 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
   useEffect(() => { if (effSl != null) setSl(effSl); }, [effSl]);
   useEffect(() => { if (effTp != null) setTp(effTp); }, [effTp]);
   useEffect(() => { if (effDl != null) setDl(effDl); }, [effDl]);
+  const effTotal = totalMeta?.value;
+  useEffect(() => { if (effTotal != null) setTotal(effTotal); }, [effTotal]);
   useEffect(() => { if (effUsz != null) setUsz(effUsz); }, [effUsz]);
   useEffect(() => { if (effUm != null) setUm(effUm); }, [effUm]);
 
@@ -62,16 +66,20 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
   const clampSl = (v) => Math.max(SL_MIN, Math.min(SL_MAX, _round1(v)));
   const clampTp = (v) => Math.max(TP_MIN, Math.min(TP_MAX, _round1(v)));
   const clampDl = (v) => Math.max(DL_MIN, Math.min(DL_MAX, Math.round(v / DAILY_STEP) * DAILY_STEP));
+  const clampTotal = (v) => Math.max(totalMeta.min, Math.min(totalMeta.max, v));
 
   const stDirty = effSl != null && effTp != null && (sl !== effSl || tp !== effTp);
   const dlDirty = dlMeta != null && dl !== effDl;
   const uniDirty = (uszMeta != null && usz !== effUsz) || (umMeta != null && um !== effUm);
-  const dirty = (effMc != null && effBud != null && (mc !== effMc || bud !== effBud)) || stDirty || dlDirty || uniDirty;
-  // 일일 매수 한도 — 스테퍼가 있으면 그 값, 없으면 서버 실효값(정합 계산 단일 소스).
-  const dailyLimit = dl;
-  // 충돌 경고(저장은 막지 않음): 종목당 금액 × 종목 수 > 일일 매수 한도.
-  const conflict = bud * mc > dailyLimit;
-  const affordable = Math.max(0, Math.floor(dailyLimit / Math.max(1, bud)));
+  const totalDirty = totalMeta != null && total !== totalMeta.value;
+  const dirty = (effMc != null && effBud != null && (mc !== effMc || bud !== effBud)) || stDirty || dlDirty || totalDirty || uniDirty;
+  const dailyApplied = entryLimits?.daily_buy_krw ?? effDl;
+  const totalApplied = entryLimits?.total_budget_krw ?? totalMeta?.value ?? dailyApplied;
+  const buyCount = entryLimits?.daily_buy_count ?? 10;
+  const orderCap = entryLimits?.max_order_krw ?? effBud;
+  const positionCap = entryLimits?.max_positions ?? effMc;
+  const turnoverCap = Math.min(dailyApplied, buyCount * orderCap);
+  const entryCap = Math.min(turnoverCap, totalApplied, positionCap * orderCap);
 
   const save = async () => {
     setSaving(true);
@@ -79,17 +87,20 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
     try {
       const payload = { max_concurrent_positions: mc, per_stock_budget: bud };
       if (slMeta && tpMeta) { payload.stop_loss_pct = sl; payload.take_profit_pct = tp; }
-      if (dlMeta) { payload.daily_buy_limit_krw = dl; }
+      if (dlDirty) { payload.daily_buy_limit_krw = dl; }
+      if (totalDirty) { payload.total_paper_budget_krw = total; }
       if (uszMeta) { payload.universe_size = usz; }
       if (umMeta) { payload.universe_mode = um; }
       const res = await api.runtimeConfigPut(payload);
+      if (res.daily_buy_limit_krw?.value != null) setDl(res.daily_buy_limit_krw.value);
+      if (res.total_paper_budget_krw?.value != null) setTotal(res.total_paper_budget_krw.value);
       onSaved?.(res); // 서버 재확인 실효값만 신뢰.
       // 손절/익절이 바뀌면 *보유 종목에도* 적용(C1). 그 외(종목수·투자금)는 다음 매수부터.
       setNote({
         kind: "ok",
         text: stDirty
           ? `적용됐어요 (${nowKstHm()}) — 손절/익절은 보유 종목에도 적용돼요`
-          : `적용됐어요 (${nowKstHm()}) — 다음 매수부터 새 설정으로 진행해요. 지금 보유 중인 종목은 그대로 둬요.`,
+          : `저장했어요 (${nowKstHm()})`,
       });
     } catch {
       setNote({ kind: "err", text: `저장 실패(${nowKstHm()}) — 다시 시도해주세요` });
@@ -201,6 +212,28 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
           </div>
         </div>
       )}
+      {dlMeta && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+          {BUDGET_PRESETS.filter((value) => value >= DL_MIN && value <= DL_MAX).map((value) => (
+            <button key={value} type="button" aria-pressed={dl === value}
+              onClick={() => setDl(value)} disabled={saving}>
+              {fmtKRW(value / 10_000)}만원
+            </button>
+          ))}
+        </div>
+      )}
+      {totalMeta && (
+        <div style={rowStyle}>
+          <span style={{ fontSize: 14, color: "#2a1418", fontWeight: 700 }}>총 PAPER 운용 예산</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button type="button" aria-label="총 PAPER 운용 예산 줄이기" style={stepBtn}
+              onClick={() => setTotal((v) => clampTotal(v - DAILY_STEP))} disabled={total <= totalMeta.min || saving}>−</button>
+            <span style={valBox}>{fmtKRW(total)}원</span>
+            <button type="button" aria-label="총 PAPER 운용 예산 늘리기" style={stepBtn}
+              onClick={() => setTotal((v) => clampTotal(v + DAILY_STEP))} disabled={total >= totalMeta.max || saving}>+</button>
+          </div>
+        </div>
+      )}
 
       {/* 종목 풀 확장 — universe_mode(자동/관심종목) + universe_size(100/200/400). */}
       {umMeta && (
@@ -242,16 +275,27 @@ export function RuntimeConfigCard({ config, onSaved, api = backendApi }) {
         </div>
       )}
 
-      {/* T2: 정합 표시 — 항상(충돌 여부 무관) "하루 약 N종목" 실시간 안내. */}
       <div data-testid="rtcfg-affordable" style={{
         marginTop: 8, fontSize: 12.5, fontWeight: 700, lineHeight: 1.5, borderRadius: 8,
         padding: "8px 10px",
-        background: conflict ? "rgba(245,170,30,.18)" : "rgba(40,20,24,.06)",
-        color: conflict ? "#7a4a00" : "rgba(40,20,24,.7)",
+        background: "rgba(40,20,24,.06)", color: "rgba(40,20,24,.7)",
       }}>
-        지금 설정이면 하루에 약 <b>{affordable}종목</b>까지 새로 살 수 있어요
-        {" "}(종목당 {fmtKRW(bud)}원 × 한도 {fmtKRW(dailyLimit)}원)
-        {conflict && ` — 동시진입 ${mc}종목엔 한도가 모자라요`}
+        <div>현재 적용 중인 일일 매수 한도 {fmtKRW(dailyApplied)}원</div>
+        {totalMeta && <div>현재 적용 중인 총 PAPER 운용 예산 {fmtKRW(totalApplied)}원</div>}
+        {totalApplied < dailyApplied && (
+          <div>총 운용 예산이 더 낮아요. 신규 매수는 보유 평가액과 주문 비용을 포함해 {fmtKRW(totalApplied)}원 안에서 가능해요.</div>
+        )}
+        {entryLimits && (dailyApplied < effDl || totalApplied < totalMeta?.value) && (
+          <div>저장된 한도를 모두 적용하려면 자동매매 시작 화면에서 새 한도를 승인해주세요.</div>
+        )}
+        <div>
+          주문당 최대 {fmtKRW(orderCap)}원 · 동시 보유 최대 {positionCap}종목 · 일일 매수 최대 {buyCount}회
+        </div>
+        <div>
+          한도 기준 신규 보유에 투입 가능한 금액은 0~{fmtKRW(entryCap)}원이에요.
+          보유 종목을 매도해 다시 매수할 경우 일일 누적 상한 추정치는 {fmtKRW(turnoverCap)}원이에요.
+          실제 매수는 현재 보유, 남은 일일 한도·횟수, 주가, 수수료, KIS 주문 가능 현금에 따라 달라져요.
+        </div>
       </div>
 
       <button type="button" data-testid="rtcfg-save" onClick={save} disabled={!dirty || saving}

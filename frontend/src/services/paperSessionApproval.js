@@ -84,26 +84,36 @@ export async function ensurePaperSessionApproval({ api, capitalSettings, confirm
   const current = typeof api.paperSessionApprovalGet === "function"
     ? await api.paperSessionApprovalGet()
     : null;
+  const runtime = await api.runtimeConfigGet?.();
+  const configuredDaily = runtime?.daily_buy_limit_krw?.value;
+  const configuredTotal = runtime?.total_paper_budget_krw?.value;
   const reusable = current?.target_date === targetDate
-    && ["SCHEDULED", "ACTIVE"].includes(current?.status);
+    && ["SCHEDULED", "ACTIVE"].includes(current?.status)
+    && (configuredDaily == null || configuredDaily <= (current?.limits?.daily_buy_krw ?? 10_000_000))
+    && (configuredTotal == null || configuredTotal <= (current?.limits?.total_budget_krw ?? 10_000_000));
   if (reusable) return { ok: true, reused: true, targetDate, isNextSession };
 
   const perSymbol = Number(capitalSettings?.perSymbolAllocation || capitalSettings?.per_symbol_krw || 0);
   const maxPositions = Number(capitalSettings?.maxPositions || capitalSettings?.max_positions || 0);
-  const daily = Number(capitalSettings?.maxDailyBuyAmount || capitalSettings?.daily_buy_limit_krw || 0);
+  const daily = configuredDaily ?? Number(capitalSettings?.maxDailyBuyAmount || capitalSettings?.daily_buy_limit_krw || 0);
+  const total = configuredTotal ?? Number(capitalSettings?.totalPaperCapital || capitalSettings?.total_budget_krw || 0);
   const dayLabel = isNextSession ? `${targetDate} (다음 거래일)` : targetDate;
   const when = isNextSession ? `${formatKoreanDate(targetDate)} (다음 거래일) 장중` : "오늘 장중";
   const approved = confirmFn(
     `KIS 모의계좌 자동매매 승인 (${dayLabel})\n\n`
     + `${when} 실제 KIS PAPER 매수·매도 주문이 자동 전송될 수 있습니다.\n`
     + `종목당 목표 ${perSymbol.toLocaleString()}원, 최대 ${maxPositions}종목, `
-    + `일일 최대 ${daily.toLocaleString()}원\n\n`
+    + `일일 매수 한도 ${daily.toLocaleString()}원, 총 PAPER 운용 예산 ${total.toLocaleString()}원\n\n`
     + "LIVE 계좌 주문은 허용되지 않습니다. 승인하시겠습니까?",
   );
   if (!approved) return { ok: false, cancelled: true, reason: "PAPER_APPROVAL_CANCELLED" };
 
   try {
-    await invoke("approve_paper_session", { targetDate, explicitAck: true });
+    await invoke("approve_paper_session", {
+      targetDate, explicitAck: true,
+      ...(configuredDaily != null && { confirmedDailyBuyKrw: configuredDaily }),
+      ...(configuredTotal != null && { confirmedTotalBudgetKrw: configuredTotal }),
+    });
   } catch (err) {
     const codes = parseOrderPathBlockers(err);
     if (codes) return { ok: false, reason: ORDER_PATH_NOT_READY, blockers: codes };

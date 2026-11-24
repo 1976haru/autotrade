@@ -32,6 +32,11 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import get_settings
+from app.kis_paper.order_limits import (
+    PAPER_MAX_DAILY_BUY_KRW,
+    PAPER_MAX_TOTAL_BUDGET_KRW,
+    PAPER_TOTAL_BUDGET_KRW,
+)
 
 _log = logging.getLogger("autotrade.runtime_config")
 
@@ -39,12 +44,6 @@ _log = logging.getLogger("autotrade.runtime_config")
 #   확장 대응(종목수·투자금과 동일 메커니즘, 화이트리스트 확장). 안전 플래그 미포함.
 _INT_KEYS = ("max_concurrent_positions", "per_stock_budget", "daily_buy_limit_krw",
              "total_paper_budget_krw")
-_INT_RANGES = {
-    "max_concurrent_positions": (1, 5),
-    "per_stock_budget": (1_000_000, 2_000_000),
-    "daily_buy_limit_krw": (10_000, 10_000_000),
-    "total_paper_budget_krw": (100_000, 10_000_000),
-}
 # C1(2026-06-10): 손절/익절 % 도 런타임 오버라이드 대상(양수 magnitude — 손절 2.0=−2%).
 _FLOAT_KEYS = ("stop_loss_pct", "take_profit_pct")
 _PROFILE_KEY = "active_profile"
@@ -69,8 +68,15 @@ PER_STOCK_BUDGET_MIN, PER_STOCK_BUDGET_MAX = 1_000_000, 2_000_000  # 100만 ~ 20
 STOP_LOSS_PCT_MIN, STOP_LOSS_PCT_MAX = 0.5, 10.0     # 손절 -0.5% ~ -10% (magnitude)
 TAKE_PROFIT_PCT_MIN, TAKE_PROFIT_PCT_MAX = 0.5, 20.0  # 익절 +0.5% ~ +20%
 # T2: 일일 매수금액 한도 300만 ~ 3억(100종목×300만 수용), 스테퍼 100만 단위.
-DAILY_BUY_LIMIT_MIN, DAILY_BUY_LIMIT_MAX = 10_000, 10_000_000
+DAILY_BUY_LIMIT_MIN, DAILY_BUY_LIMIT_MAX = 10_000, PAPER_MAX_DAILY_BUY_KRW
 DEFAULT_DAILY_BUY_LIMIT_KRW = 10_000_000
+TOTAL_PAPER_BUDGET_MIN, TOTAL_PAPER_BUDGET_MAX = 100_000, PAPER_MAX_TOTAL_BUDGET_KRW
+_INT_RANGES = {
+    "max_concurrent_positions": (MAX_CONCURRENT_MIN, MAX_CONCURRENT_MAX),
+    "per_stock_budget": (PER_STOCK_BUDGET_MIN, PER_STOCK_BUDGET_MAX),
+    "daily_buy_limit_krw": (DAILY_BUY_LIMIT_MIN, DAILY_BUY_LIMIT_MAX),
+    "total_paper_budget_krw": (TOTAL_PAPER_BUDGET_MIN, TOTAL_PAPER_BUDGET_MAX),
+}
 
 # S1: AI 운용 성향 — 런타임 전환 대상(보수/안정/공격).
 VALID_PROFILES = ("conservative", "balanced", "aggressive")
@@ -252,7 +258,7 @@ def effective_daily_buy_limit() -> int:
 def effective_total_paper_budget() -> int:
     """Internal PAPER exposure ceiling, bounded by the immutable hard cap."""
     ov = _load().get("total_paper_budget_krw")
-    return min(10_000_000, max(0, int(ov))) if ov is not None else 10_000_000
+    return int(ov) if ov is not None else PAPER_TOTAL_BUDGET_KRW
 
 
 def effective_active_profile() -> str:
@@ -383,7 +389,7 @@ def set_theme_enabled(
 def _source(key: str) -> str:
     if _load().get(key) is not None:
         return "override"
-    if key == "daily_buy_limit_krw":
+    if key in ("daily_buy_limit_krw", "total_paper_budget_krw"):
         return "paper_policy_default"
     return "env"
 
@@ -431,7 +437,7 @@ def get_runtime_config() -> dict[str, Any]:
         "total_paper_budget_krw": {
             "value": effective_total_paper_budget(),
             "source": _source("total_paper_budget_krw"),
-            "min": 100_000, "max": 10_000_000,
+            "min": TOTAL_PAPER_BUDGET_MIN, "max": TOTAL_PAPER_BUDGET_MAX,
         },
         "active_profile": {
             "value":  effective_active_profile(),
@@ -479,10 +485,12 @@ def _validate(max_concurrent_positions: int | None, per_stock_budget: int | None
         v = int(daily_buy_limit_krw)
         if not (DAILY_BUY_LIMIT_MIN <= v <= DAILY_BUY_LIMIT_MAX):
             raise RuntimeConfigValidationError(
-                "일일 매수 한도는 1만 원 ~ 1,000만 원 사이여야 해요."
+                "일일 매수 한도는 1만 원 ~ 5,000만 원 사이여야 해요."
             )
-    if total_paper_budget_krw is not None and not (100_000 <= int(total_paper_budget_krw) <= 10_000_000):
-        raise RuntimeConfigValidationError("총 PAPER 운용 예산은 10만 원 ~ 1,000만 원 사이여야 해요.")
+    if total_paper_budget_krw is not None and not (
+        TOTAL_PAPER_BUDGET_MIN <= int(total_paper_budget_krw) <= TOTAL_PAPER_BUDGET_MAX
+    ):
+        raise RuntimeConfigValidationError("총 PAPER 운용 예산은 10만 원 ~ 5,000만 원 사이여야 해요.")
     if stop_loss_pct is not None:
         try:
             v = float(stop_loss_pct)

@@ -106,6 +106,7 @@ export function ReferenceHome({
   const handleStart = async () => {
     const closed = !isMarketOpen();
     const res = await loop.start();
+    if (res.ok) backendApi.runtimeConfigGet?.().then(setRtConfig).catch(() => {});
     if (!res.ok && (res.reasons || [])[0] === ORDER_PATH_NOT_READY) {
       // P1-A: 승인해도 KIS 모의주문이 0건인 설정 — 팝업 없이 정확한 사유 안내.
       const lines = (res.blockers || []).map(orderBlockerMessage).join(" · ");

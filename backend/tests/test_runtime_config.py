@@ -147,9 +147,37 @@ def test_api_get_runtime_config():
     assert b["max_concurrent_positions"]["source"] == "env"
     assert b["is_live_authorization"] is False
     # T2(2026-06-12): daily_buy_limit_krw 가 {value,min,max,source} 객체로 — 스테퍼 meta.
-    assert b["daily_buy_limit_krw"]["value"] >= 1  # 하드코딩 아님 — config/override 에서
+    assert b["daily_buy_limit_krw"]["value"] == 10_000_000
     assert b["daily_buy_limit_krw"]["min"] == 10_000
-    assert b["daily_buy_limit_krw"]["max"] == 10_000_000
+    assert b["daily_buy_limit_krw"]["max"] == 50_000_000
+    assert b["total_paper_budget_krw"]["value"] == 10_000_000
+
+
+@pytest.mark.parametrize("amount", [20_000_000, 30_000_000, 50_000_000])
+def test_api_expanded_paper_limits_persist_independently(amount):
+    with _diag_app() as (c, _):
+        endpoint = "/api/runtime-config"
+        r = _diag_put(c, endpoint, json={"daily_buy_limit_krw": amount})
+        assert r.status_code == 200
+        assert r.json()["daily_buy_limit_krw"]["value"] == amount
+        assert r.json()["total_paper_budget_krw"]["value"] == 10_000_000
+        assert r.json()["paper_entry_limits"]["daily_buy_krw"] == 10_000_000
+
+        r = _diag_put(c, endpoint, json={"total_paper_budget_krw": amount})
+        assert r.status_code == 200
+        rc._cache = None
+        reloaded = c.get(endpoint).json()
+        for key in ("daily_buy_limit_krw", "total_paper_budget_krw", "paper_entry_limits"):
+            assert reloaded[key] == r.json()[key]
+        assert reloaded["total_paper_budget_krw"]["value"] == amount
+
+
+@pytest.mark.parametrize("key,status", [("daily_buy_limit_krw", 400), ("total_paper_budget_krw", 422)])
+def test_api_rejects_paper_limits_one_won_over_max(key, status):
+    with _diag_app() as (c, _):
+        r = _diag_put(c, "/api/runtime-config", json={key: 50_000_001})
+        assert r.status_code == status
+        assert c.get("/api/runtime-config").json()[key]["value"] == 10_000_000
 
 
 def test_api_put_valid_returns_reread_effective():

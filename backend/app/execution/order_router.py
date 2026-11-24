@@ -374,16 +374,23 @@ async def route_order(
 
         if isinstance(broker, KisBrokerAdapter) and bool(getattr(broker, "is_paper", False)):
             from app.core.config import get_settings
+            from app.kis_paper.one_click_session import account_fingerprint, entry_budget_caps
             from app.kis_paper.order_limits import resolve_kis_paper_order_limits
             from app.risk.position_limits import policy_from_risk_policy
 
-            limits = resolve_kis_paper_order_limits(get_settings())
+            settings = get_settings()
+            limits = resolve_kis_paper_order_limits(settings)
+            approved_daily, approved_total = limits.daily_buy_krw, limits.total_budget_krw
+            if order.side == OrderSide.BUY:
+                approved_daily, approved_total = entry_budget_caps(
+                    db, fingerprint=account_fingerprint(broker.account_no, settings.kis_product_code), now=now,
+                )
             paper_position_limits = replace(
                 policy_from_risk_policy(risk.policy),
                 max_order_notional=limits.max_order_krw,
                 max_symbol_exposure=limits.per_symbol_krw,
                 max_positions=limits.max_positions,
-                max_total_exposure=limits.total_budget_krw,
+                max_total_exposure=min(limits.total_budget_krw, approved_total),
             )
             # The driver-level daily budget is advisory for scan flow. Enforce
             # the same account-scoped cap here so manual/direct BUY callers
@@ -393,7 +400,7 @@ async def route_order(
                 account_scope=account_scope,
                 order=order,
                 current_price=int(quote.price or 0),
-                daily_limit_krw=limits.daily_buy_krw,
+                daily_limit_krw=min(limits.daily_buy_krw, approved_daily),
                 now=now,
                 cost_reserve_bps=limits.cost_reserve_bps,
             )

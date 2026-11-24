@@ -1,11 +1,4 @@
-"""장중 런타임 설정 변경 API — 동시진입 종목 수 / 종목당 투자금 *2개 전용*.
-
-GET  /api/runtime-config → 실효값 + 출처(override/env) + 마지막 변경 시각(KST)
-PUT  /api/runtime-config → 검증 통과 시 저장, "저장 후 다시 읽은 실효값" 반환
-
-안전: 주문 경로 / 안전 플래그 미접촉. 본 모듈은 runtime_config(config 모듈)만 호출.
-변경 가능한 값은 max_concurrent_positions, per_stock_budget *둘 뿐*.
-"""
+"""Read and update runtime settings and report the current PAPER entry ceilings."""
 
 from __future__ import annotations
 
@@ -15,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.runtime_config import (
+    TOTAL_PAPER_BUDGET_MAX,
+    TOTAL_PAPER_BUDGET_MIN,
     VALID_PROFILES,
     RuntimeConfigValidationError,
     effective_active_profile,
@@ -22,6 +17,8 @@ from app.core.runtime_config import (
     set_runtime_overrides,
 )
 from app.db.session import get_db
+from app.kis_paper.one_click_session import account_fingerprint, entry_budget_caps
+from app.kis_paper.order_limits import resolve_kis_paper_order_limits
 
 router = APIRouter(tags=["runtime-config"])
 
@@ -35,7 +32,7 @@ class _RuntimeConfigBody(BaseModel):
     take_profit_pct:          float | None = Field(None)
     # T2(2026-06-12): 일일 매수금액 한도(원) — 종목수·투자금과 동일 메커니즘.
     daily_buy_limit_krw:      int | None = Field(None)
-    total_paper_budget_krw:  int | None = Field(None, ge=100_000, le=10_000_000)
+    total_paper_budget_krw:  int | None = Field(None, ge=TOTAL_PAPER_BUDGET_MIN, le=TOTAL_PAPER_BUDGET_MAX)
     # 종목 풀 확장 — 단계(100/200/400) + 소스(auto/watchlist). cap 은 미포함(고정).
     universe_size:            int | None = Field(None)
     universe_mode:            str | None = Field(None)
@@ -74,14 +71,30 @@ def _bot_is_running() -> bool:
         return False
 
 
+def _with_paper_entry_limits(cfg: dict, db: Session) -> dict:
+    settings = get_settings()
+    limits = resolve_kis_paper_order_limits(settings)
+    approved_daily, approved_total = entry_budget_caps(
+        db, fingerprint=account_fingerprint(settings.kis_account_no, settings.kis_product_code),
+    )
+    cfg["paper_entry_limits"] = {
+        "daily_buy_krw": min(limits.daily_buy_krw, approved_daily),
+        "total_budget_krw": min(limits.total_budget_krw, approved_total),
+        "max_order_krw": limits.max_order_krw,
+        "max_positions": limits.max_positions,
+        "daily_buy_count": limits.daily_buy_count,
+    }
+    return cfg
+
+
 @router.get("/runtime-config")
-def get_runtime_config_endpoint() -> dict:
+def get_runtime_config_endpoint(db: Session = Depends(get_db)) -> dict:
     cfg = get_runtime_config()
     cfg["active_profile"]["effective"] = _profile_effective(effective_active_profile())
     # 모든 성향의 *클램프 적용 후* 실효값 — 프론트 전환 다이얼로그가 대상 성향을
     #   미리 정직하게 보여줄 수 있게(프리셋 원값 표시 금지, U3).
     cfg["profiles_effective"] = {p: _profile_effective(p) for p in VALID_PROFILES}
-    return cfg
+    return _with_paper_entry_limits(cfg, db)
 
 
 @router.put("/runtime-config/profile")
@@ -148,4 +161,4 @@ def put_runtime_config_endpoint(
     except Exception:  # noqa: BLE001 — 기록 실패가 저장을 무효화하지 않는다.
         pass
 
-    return result
+    return _with_paper_entry_limits(result, db)

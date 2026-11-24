@@ -46,10 +46,10 @@ export const DEFAULT_PAPER_CAPITAL_SETTINGS = Object.freeze({
 
 // 사용자 요청서 §6 validation 정책.
 export const PAPER_CAPITAL_LIMITS = Object.freeze({
-  totalPaperCapital:   { min: 100_000,   max: 10_000_000 },
+  totalPaperCapital:   { min: 100_000,   max: 50_000_000 },
   perSymbolAllocation: { min: 1_000_000, max: 2_000_000 },
   maxPositions:        { min: 1,         max: 5 },
-  maxDailyBuyAmount:   { min: 10_000,    max: 10_000_000 },
+  maxDailyBuyAmount:   { min: 10_000,    max: 50_000_000 },
   maxSymbolWeightPct:  { min: 0,         max: 1,   exclusiveMin: true },
 });
 
