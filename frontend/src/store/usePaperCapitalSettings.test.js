@@ -140,7 +140,7 @@ describe("loadPaperCapitalSettings", () => {
     const loaded = loadPaperCapitalSettings(s);
     // bad maxPositions → default 5.
     expect(loaded.maxPositions).toBe(5);
-    expect(loaded.totalPaperCapital).toBe(10_000_000);
+    expect(loaded.totalPaperCapital).toBe(30_000_000);
   });
 });
 

@@ -6,10 +6,11 @@ from dataclasses import dataclass
 
 PAPER_ORDER_LIMITS_POLICY_VERSION = "KIS_PAPER_V2.2"
 PAPER_TOTAL_BUDGET_KRW = 10_000_000
+PAPER_MAX_TOTAL_BUDGET_KRW = 50_000_000
 PAPER_MAX_ORDER_KRW = 2_000_000
 PAPER_MAX_POSITIONS = 5
 PAPER_MAX_BUYS_PER_DAY = 10
-PAPER_MAX_DAILY_BUY_KRW = 10_000_000
+PAPER_MAX_DAILY_BUY_KRW = 50_000_000
 PAPER_MAX_BUYS_PER_TICK = 1
 PAPER_COST_RESERVE_BPS = 100
 
@@ -103,7 +104,7 @@ def resolve_kis_paper_order_limits(settings) -> KisPaperOrderLimits:
     )
     return KisPaperOrderLimits(
         policy_version=PAPER_ORDER_LIMITS_POLICY_VERSION,
-        total_budget_krw=min(PAPER_TOTAL_BUDGET_KRW, effective_total_paper_budget()),
+        total_budget_krw=min(PAPER_MAX_TOTAL_BUDGET_KRW, effective_total_paper_budget()),
         per_symbol_krw=per_symbol,
         max_order_krw=min(PAPER_MAX_ORDER_KRW, max(0, configured_order_cap), per_symbol),
         max_positions=positions,

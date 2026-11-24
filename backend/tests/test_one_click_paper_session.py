@@ -127,6 +127,51 @@ def test_date_account_scoped_and_cancel_denied(db, tmp_path, monkeypatch):
                              account_fingerprint_value=r["account_fingerprint"])[0] is False
 
 
+def test_limit_increase_requires_confirmed_reapproval(db, tmp_path, monkeypatch):
+    from app.core import runtime_config
+    from app.kis_paper.one_click_session import entry_budget_caps
+
+    monkeypatch.setenv("AUTOTRADE_PAPER_APPROVAL_FILE", str(tmp_path / "approval.json"))
+    day = datetime.now(KST).date()
+    params = dict(db=db, settings=settings(), risk=risk(), target_date=day.isoformat(),
+                  actor="operator", explicit_ack=True)
+    prior = create_approval(**params)
+    scope = dict(fingerprint=prior["account_fingerprint"], now=_at(day, 10, 0))
+    monkeypatch.setattr(runtime_config, "effective_daily_buy_limit", lambda: 50_000_000)
+    monkeypatch.setattr(runtime_config, "effective_total_paper_budget", lambda: 30_000_000)
+    assert entry_budget_caps(db, **scope) == (10_000_000, 10_000_000)
+    with pytest.raises(ValueError, match="PAPER_LIMITS_CONFIRMATION_REQUIRED"):
+        create_approval(**params, confirmed_daily_buy_krw=30_000_000,
+                        confirmed_total_budget_krw=30_000_000)
+    assert load_approval(db)["approved_at"] == prior["approved_at"]
+    renewed = create_approval(**params, confirmed_daily_buy_krw=50_000_000,
+                              confirmed_total_budget_krw=30_000_000)
+    assert renewed["approved_at"] != prior["approved_at"]
+    assert entry_budget_caps(db, **scope) == (50_000_000, 30_000_000)
+
+
+def test_lower_total_budget_blocks_buy_under_approved_daily_limit(db, tmp_path, monkeypatch):
+    from app.core import runtime_config
+
+    monkeypatch.setenv("AUTOTRADE_PAPER_APPROVAL_FILE", str(tmp_path / "lower-total.json"))
+    monkeypatch.setattr(runtime_config, "effective_daily_buy_limit", lambda: 50_000_000)
+    day = datetime.now(KST).date()
+    create_approval(
+        db=db, settings=settings(), risk=risk(), target_date=day.isoformat(),
+        actor="operator", explicit_ack=True, confirmed_daily_buy_krw=50_000_000,
+    )
+    monkeypatch.setattr(runtime_config, "effective_total_paper_budget", lambda: 2_000_000)
+    broker = Broker(positions=[
+        Position(symbol="000001", quantity=1, avg_price=1_600_000, market_price=1_600_000),
+    ])
+    ok, reason = asyncio.run(authorize_order(
+        db=db, settings=settings(), broker=broker, risk=risk(), side="BUY",
+        symbol="005930", quantity=1, notional_krw=500_000, now=_at(day, 10, 0),
+    ))
+    assert not ok
+    assert reason == "PAPER_TOTAL_BUDGET_OR_COST_RESERVE_EXCEEDED"
+
+
 def test_before_0905_is_zero_write_wait(db, tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOTRADE_PAPER_APPROVAL_FILE", str(tmp_path / "approval.json"))
     day = datetime.now(KST).date()

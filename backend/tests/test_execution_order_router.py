@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -371,10 +372,17 @@ def test_paper_daily_buy_limit_helper_is_account_scoped_and_reserves_costs():
         ) is None
 
 
-def test_paper_daily_buy_limit_is_enforced_before_kis_order_submission(monkeypatch):
+@pytest.mark.parametrize("approved_daily,committed_quantity", [
+    (None, 99), (10_000_000, 99), (50_000_000, 495),
+])
+def test_paper_daily_buy_limit_is_enforced_before_kis_order_submission(
+    monkeypatch, approved_daily, committed_quantity,
+):
     from dataclasses import dataclass
 
     from app.kis_paper.account_scope import account_id_for
+    from app.kis_paper.one_click_session import account_fingerprint
+    from app.db.models import PaperSessionApproval
 
     @dataclass
     class Limits:
@@ -384,7 +392,7 @@ def test_paper_daily_buy_limit_is_enforced_before_kis_order_submission(monkeypat
         max_order_krw: int = 2_000_000
         max_positions: int = 5
         daily_buy_count: int = 10
-        daily_buy_krw: int = 10_000_000
+        daily_buy_krw: int = 50_000_000
         buys_per_tick: int = 1
         cost_reserve_bps: int = 100
 
@@ -421,8 +429,15 @@ def test_paper_daily_buy_limit_is_enforced_before_kis_order_submission(monkeypat
     scope = account_id_for("1234567801", is_paper=True)
     when = datetime(2026, 11, 6, 10, 0, tzinfo=timezone(timedelta(hours=9)))
     with Session() as db:
+        if approved_daily is not None:
+            fingerprint = account_fingerprint("1234567801")
+            db.add(PaperSessionApproval(
+                trading_date=when.date().isoformat(), account_fingerprint=fingerprint,
+                status="ACTIVE", approved_by="test", approved_at=when, expires_at=when,
+                record={"status": "ACTIVE", "limits": {"daily_buy_krw": approved_daily}},
+            ))
         db.add(OrderAuditLog(
-            mode="PAPER", symbol="000001", side="BUY", quantity=99,
+            mode="PAPER", symbol="000001", side="BUY", quantity=committed_quantity,
             order_type="MARKET", latest_price=100_000, decision="APPROVED",
             reasons=[], executed=True, broker_order_id="existing", account_id=scope,
             created_at=when,

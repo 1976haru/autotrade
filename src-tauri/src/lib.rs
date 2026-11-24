@@ -628,7 +628,12 @@ fn post_desktop_json(port: u16, path: &str, token: &str, body: &str) -> Result<S
 /// One explicit click in the authenticated Windows desktop session.  The
 /// secret is never returned to JavaScript/localStorage.
 #[tauri::command]
-fn approve_paper_session(target_date: String, explicit_ack: bool) -> Result<serde_json::Value, String> {
+fn approve_paper_session(
+    target_date: String,
+    explicit_ack: bool,
+    confirmed_daily_buy_krw: Option<u64>,
+    confirmed_total_budget_krw: Option<u64>,
+) -> Result<serde_json::Value, String> {
     if !explicit_ack { return Err("explicit PAPER BUY/SELL approval required".into()); }
     let info = backend_port_info();
     let port = info.get("port").and_then(|v| v.as_u64()).and_then(|v| u16::try_from(v).ok())
@@ -641,6 +646,8 @@ fn approve_paper_session(target_date: String, explicit_ack: bool) -> Result<serd
         "target_date": target_date,
         "explicit_ack": true,
         "actor": actor,
+        "confirmed_daily_buy_krw": confirmed_daily_buy_krw,
+        "confirmed_total_budget_krw": confirmed_total_budget_krw,
     }).to_string();
     let payload = post_desktop_json(
         port, "/api/auto-paper/paper-session-approval", token, &body,

@@ -6,6 +6,7 @@ import AgentRiskProfileSelector, {
   normalizeRiskProfile,
 } from "../AgentRiskProfileSelector";
 import { backendApi } from "../../services/backend/client";
+import { ensurePaperSessionApproval } from "../../services/paperSessionApproval";
 import { formatBuyBlockReason } from "../../utils/buyBlockReasons";
 import { formatNoTradeReason } from "../../utils/noTradeReasons";
 import {
@@ -337,39 +338,10 @@ export function AutoPaperLoopCard({
   // 시작 버튼: pre-market 결과 + 선택된 risk_profile 을 backend 에 동봉.
   // 서버가 최종 거절 권한 (pre_market BLOCK / EMERGENCY_STOP 등).
   const onStart = useCallback(wrap(async () => {
-    // ONE-CLICK-PAPER-V1: localStorage/operatorName is not authentication.
-    // The native command keeps its desktop token outside the webview and adds
-    // the authenticated Windows session user to the audit record.
-    const nativeInvoke = window?.__TAURI_INTERNALS__?.invoke;
-    if (typeof nativeInvoke === "function") {
-      const dateParts = new Intl.DateTimeFormat("en-US", {
-        timeZone: "Asia/Seoul", year: "numeric", month: "2-digit", day: "2-digit",
-      }).formatToParts(new Date()).reduce((out, part) => {
-        if (part.type !== "literal") out[part.type] = part.value;
-        return out;
-      }, {});
-      const targetDate = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
-      let approval = null;
-      if (typeof apiClient.paperSessionApprovalGet === "function") {
-        approval = await apiClient.paperSessionApprovalGet();
-      }
-      const reusable = approval?.target_date === targetDate
-        && ["SCHEDULED", "ACTIVE"].includes(approval?.status);
-      if (!reusable) {
-        const approved = window.confirm(
-          `KIS 모의계좌 자동매매 승인 (${targetDate})\n\n`
-          + "오늘 장중 실제 KIS PAPER 매수·매도 주문이 자동 전송될 수 있습니다.\n"
-          + `종목당 목표 ${Number(capitalSummary.perSymbolAllocation || 0).toLocaleString()}원, `
-          + `최대 ${Number(capitalSummary.maxPositions || 0)}종목, `
-          + `일일 최대 ${Number(capitalSummary.maxDailyBuyAmount || 0).toLocaleString()}원\n`
-          + "LIVE 계좌 주문은 허용되지 않습니다. 승인하시겠습니까?",
-        );
-        if (!approved) return;
-        await nativeInvoke("approve_paper_session", {
-          targetDate,
-          explicitAck: true,
-        });
-      }
+    if (typeof window?.__TAURI_INTERNALS__?.invoke === "function") {
+      const approval = await ensurePaperSessionApproval({ api: apiClient, capitalSettings });
+      if (approval.cancelled) return;
+      if (!approval.ok) throw new Error(approval.reason);
     }
     // 항상 body 생성 — risk_profile 은 반드시 carry (기본값 BALANCED).
     const body = {
@@ -388,7 +360,7 @@ export function AutoPaperLoopCard({
         : {}),
     };
     return apiClient.autoPaperStart(body);
-  }), [apiClient, refresh, preMarketCheckResult, riskProfile, capitalPayload]);
+  }), [apiClient, refresh, preMarketCheckResult, riskProfile, capitalPayload, capitalSettings]);
   // fix/frontend-ci-operator-and-autopaper: onStop 은 canStop 가드 *별도*.
   // 버튼 disabled 가 어떤 환경 차이로 우회되더라도 *handler 안에서* 한 번
   // 더 검증 — 호출 안전 보장. arrow function 으로 wrap 하여 apiClient.

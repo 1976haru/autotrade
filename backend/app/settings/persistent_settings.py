@@ -37,6 +37,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.core.runtime_config import (
+    DAILY_BUY_LIMIT_MAX,
+    DAILY_BUY_LIMIT_MIN,
+    TOTAL_PAPER_BUDGET_MAX,
+    TOTAL_PAPER_BUDGET_MIN,
+)
+
 
 _log = logging.getLogger("autotrade.settings.persistent")
 
@@ -64,10 +71,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 }
 
 _LIMITS = {
-    "total_paper_capital":  (100_000, 10_000_000),
+    "total_paper_capital":  (TOTAL_PAPER_BUDGET_MIN, TOTAL_PAPER_BUDGET_MAX),
     "per_symbol_allocation": (1_000_000, 2_000_000),
     "max_positions":        (1, 5),
-    "max_daily_buy_amount": (10_000, 10_000_000),
+    "max_daily_buy_amount": (DAILY_BUY_LIMIT_MIN, DAILY_BUY_LIMIT_MAX),
 }
 
 

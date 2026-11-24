@@ -232,6 +232,31 @@ def _db_verified(db: Any | None, record: dict[str, Any] | None) -> bool:
             own.close()
 
 
+def entry_budget_caps(db: Any, *, fingerprint: str, now: datetime | None = None) -> tuple[int, int]:
+    """Return the daily and exposure ceilings authorized for this account and day."""
+    from app.core.runtime_config import DEFAULT_DAILY_BUY_LIMIT_KRW
+    from app.kis_paper.order_limits import PAPER_TOTAL_BUDGET_KRW
+
+    baseline = (DEFAULT_DAILY_BUY_LIMIT_KRW, PAPER_TOTAL_BUDGET_KRW)
+    day = (now or datetime.now(timezone.utc)).astimezone(KST).date().isoformat()
+    try:
+        record = _db_record(db, target_date=day, fingerprint=fingerprint)
+    except Exception:  # noqa: BLE001
+        return baseline
+    if record is None:
+        return baseline
+    limits = record.get("limits") or {}
+    caps = (int(limits.get("daily_buy_krw", baseline[0])),
+            int(limits.get("total_budget_krw", baseline[1])))
+    file_record = _read_file_record()
+    if (file_record and file_record.get("target_date") == day
+            and file_record.get("account_fingerprint") == fingerprint):
+        record = _merge_restrictive(record, file_record)
+    if record.get("status") not in _USABLE_STATUSES or _buy_blocked(record) or _PROCESS_EMERGENCY_BLOCK:
+        return min(caps[0], baseline[0]), min(caps[1], baseline[1])
+    return caps
+
+
 def _persist_approval(db: Any, record: dict[str, Any]) -> None:
     fp = str(record["account_fingerprint"])
     day = str(record["target_date"])
@@ -252,6 +277,8 @@ def _persist_approval(db: Any, record: dict[str, Any]) -> None:
         db.add(row)
     else:
         row.status = str(record["status"])
+        row.approved_by = str(record["approved_by"])
+        row.approved_at = approved
         row.record = dict(record)
         row.expires_at = expires
     db.commit()
@@ -524,7 +551,8 @@ def _calendar_for(settings: Any):
 
 
 def create_approval(*, db: Any, settings: Any, risk: Any, target_date: str, actor: str,
-                    explicit_ack: bool) -> dict[str, Any]:
+                    explicit_ack: bool, confirmed_daily_buy_krw: int | None = None,
+                    confirmed_total_budget_krw: int | None = None) -> dict[str, Any]:
     if not explicit_ack:
         raise ValueError("EXPLICIT_APPROVAL_REQUIRED")
     blockers = order_path_blockers(settings)
@@ -546,18 +574,33 @@ def create_approval(*, db: Any, settings: Any, risk: Any, target_date: str, acto
     if len(account) < 8:
         raise ValueError("PAPER_ACCOUNT_MISSING")
     fp = account_fingerprint(account, str(getattr(settings, "kis_product_code", "01")))
+    from app.core.runtime_config import DEFAULT_DAILY_BUY_LIMIT_KRW
+    from app.kis_paper.order_limits import PAPER_TOTAL_BUDGET_KRW, resolve_kis_paper_order_limits
+
+    limits = resolve_kis_paper_order_limits(settings)
     existing = db.execute(
         select(PaperSessionApproval).where(
             PaperSessionApproval.trading_date == target.isoformat(),
             PaperSessionApproval.account_fingerprint == fp,
         )
     ).scalars().first()
+    prior = dict(existing.record or {}) if existing is not None else {}
+    prior_limits = prior.get("limits") or {}
+    prior_daily = int(prior_limits.get("daily_buy_krw", DEFAULT_DAILY_BUY_LIMIT_KRW))
+    prior_total = int(prior_limits.get("total_budget_krw", PAPER_TOTAL_BUDGET_KRW))
+    for configured, confirmed, threshold in (
+        (limits.daily_buy_krw, confirmed_daily_buy_krw, min(prior_daily, DEFAULT_DAILY_BUY_LIMIT_KRW)),
+        (limits.total_budget_krw, confirmed_total_budget_krw, min(prior_total, PAPER_TOTAL_BUDGET_KRW)),
+    ):
+        if confirmed != configured and (confirmed is not None or configured > threshold):
+            raise ValueError("PAPER_LIMITS_CONFIRMATION_REQUIRED")
     if existing is not None:
-        prior = dict(existing.record or {})
         if (public_status(prior).get("status") in _USABLE_STATUSES
                 and str(existing.status or "") in _USABLE_STATUSES
                 and not _buy_blocked(prior)
-                and not _PROCESS_EMERGENCY_BLOCK):
+                and not _PROCESS_EMERGENCY_BLOCK
+                and limits.daily_buy_krw <= prior_daily
+                and limits.total_budget_krw <= prior_total):
             _write_atomic(prior)
             return prior
     latest = db.execute(
@@ -566,8 +609,6 @@ def create_approval(*, db: Any, settings: Any, risk: Any, target_date: str, acto
     if bool(getattr(risk, "emergency_stop", False)) or (latest is not None and bool(latest.enabled)):
         raise ValueError("EMERGENCY_STOP_ACTIVE")
     approved_at = datetime.now(timezone.utc)
-    from app.kis_paper.order_limits import resolve_kis_paper_order_limits
-    limits = resolve_kis_paper_order_limits(settings)
     record = {
         "schema_version": 1,
         "status": "SCHEDULED",
