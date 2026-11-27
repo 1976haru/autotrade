@@ -74,7 +74,7 @@ def buy(db, broker, now):
 # ══ 1. EOD 구계좌·신규계좌 격리 ══════════════════════════════════════════════
 
 
-def test_legacy_incident_blocks_new_account_buy_until_acknowledged(db, monkeypatch):
+def test_unscoped_legacy_incident_blocks_new_account_buy(db, monkeypatch):
     use_scope(monkeypatch, NEW)
     eod_row(db, PREV_DAY, "", EodState.FLATTEN_INCOMPLETE.value)          # 구계좌 미완료
     code, msg = program_buy_block_reason(db, settings=make_settings(), now=kst(10, 0))
@@ -95,9 +95,10 @@ def test_ack_legacy_targets_only_legacy_row_audited_and_survives_restart(session
     assert lrow.ack_note and lrow.acknowledged_at is not None
     assert lrow.state == EodState.FLATTEN_INCOMPLETE.value              # 사고 기록 보존(완료 처리 아님)
     assert fresh.get(EodLiquidationState, mine.id).incident_acknowledged is False
-    assert program_buy_block_reason(fresh, settings=make_settings(), now=kst(10, 0))[0] is None
+    code, message = program_buy_block_reason(fresh, settings=make_settings(), now=kst(10, 0))
+    assert code == BUY_BLOCKED_BY_EOD_INCIDENT and "LEGACY_ACCOUNT" in message
     broker = FakeKisPaperBroker({})
-    assert buy(fresh, broker, kst(10, 0)).decision == RiskDecision.APPROVED and len(broker.place_calls) == 1
+    assert buy(fresh, broker, kst(10, 0)).decision == RiskDecision.REJECTED and not broker.place_calls
 
 
 def test_ack_without_account_never_touches_legacy(db, monkeypatch):
@@ -276,7 +277,7 @@ def test_upgrade_preserves_rows_and_isolates_eod(mig_db):
     from alembic import command
     (od, on), (ed, en) = _seed_0029(mig_db)
     command.upgrade(_cfg(mig_db), "head")
-    assert _version(mig_db) == "0033"
+    assert _version(mig_db) == "0034"
     con = sqlite3.connect(mig_db)
     assert _digest(con, "order_audit_log", ("account_id",)) == (od, on)
     assert _digest(con, "eod_liquidation_state", ("account_key",)) == (ed, en)
@@ -372,10 +373,10 @@ def test_failed_upgrade_is_recoverable_from_automatic_backup(mig_db):
     con.close()
     cfg = _cfg(mig_db)
     bak = backup_sqlite_before_upgrade(cfg, url=f"sqlite:///{mig_db.as_posix()}")
-    assert bak is not None and bak.exists() and ".pre-0033-" in bak.name
+    assert bak is not None and bak.exists() and ".pre-0034-" in bak.name
     with pytest.raises(Exception):
         command.upgrade(cfg, "head")
-    assert _version(mig_db) != "0033"                                # 실패 — head 아님
+    assert _version(mig_db) != "0034"                                # 실패 — head 아님
     shutil.copyfile(bak, mig_db)                                     # 운영자 복구 = 백업 복원
     con = sqlite3.connect(mig_db)
     assert (_digest(con, "order_audit_log"), _digest(con, "eod_liquidation_state")) == pre
@@ -384,7 +385,7 @@ def test_failed_upgrade_is_recoverable_from_automatic_backup(mig_db):
     con.close()
     assert _version(mig_db) == "0029"
     command.upgrade(cfg, "head")
-    assert _version(mig_db) == "0033"
+    assert _version(mig_db) == "0034"
 
 
 def test_backup_skipped_when_already_at_head_or_not_sqlite_file(mig_db):

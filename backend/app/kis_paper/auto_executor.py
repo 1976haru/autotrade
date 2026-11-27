@@ -379,6 +379,7 @@ async def execute_kis_paper_auto_order(
                     quantity=int(decision.quantity), now=now,
                     notional_krw=int(decision.notional_krw or 0),
                     daily_order_count=int(daily_count),
+                    order_purpose=str(getattr(decision, "order_purpose", "") or ""),
                 )
                 if approved:
                     perm = replace(perm, dry_run=False)

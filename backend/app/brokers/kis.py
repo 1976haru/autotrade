@@ -230,17 +230,20 @@ class KisBrokerAdapter(BrokerAdapter):
             self._quote_cache[symbol] = (self._clock(), quote)
         return quote
 
-    async def _cached_inquire_balance(self) -> dict:
+    async def _cached_inquire_balance(self, *, fresh: bool = False) -> dict:
         """inquire-balance with a short TTL cache shared by get_balance and
         get_positions. Balance is effectively constant within a scan tick, so a
         few-second TTL collapses many identical calls into one. Invalidated on
         place_order so post-fill reads are fresh."""
         cano, prdt = self._split_account()
-        if self._balance_cache_ttl > 0 and self._balance_cache is not None:
+        if not fresh and self._balance_cache_ttl > 0 and self._balance_cache is not None:
             ts, cached = self._balance_cache
             if (self._clock() - ts) < self._balance_cache_ttl:
                 return cached
-        raw = await self.client.inquire_balance(cano, prdt)
+        if fresh:
+            raw = await self.client.inquire_balance(cano, prdt, require_complete=True)
+        else:
+            raw = await self.client.inquire_balance(cano, prdt)
         if self._balance_cache_ttl > 0:
             self._balance_cache = (self._clock(), raw)
         return raw
@@ -299,8 +302,8 @@ class KisBrokerAdapter(BrokerAdapter):
             raise KisApiError("KIS orderable-cash response invalid psbl_qty_calc_unpr")
         return parsed
 
-    async def get_positions(self) -> list[Position]:
-        raw = await self._cached_inquire_balance()
+    async def get_positions(self, *, fresh: bool = False) -> list[Position]:
+        raw = await self._cached_inquire_balance(fresh=fresh)
         positions: list[Position] = []
         for item in raw.get("output1") or []:
             qty = int(item.get("hldg_qty", "0") or "0")
@@ -393,6 +396,16 @@ class KisBrokerAdapter(BrokerAdapter):
         """
         cano, prdt = self._split_account()
         raw_rows = await self.client.inquire_daily_ccld_all(cano, prdt, kst_date=kst_date)
+        for row in raw_rows:
+            if (not str(row.get("odno") or "").strip()
+                    or not str(row.get("pdno") or "").strip()
+                    or row.get("sll_buy_dvsn_cd") not in ("01", "02")
+                    or any(not str(row.get(field, "")).strip().isdigit()
+                           for field in ("ord_qty", "tot_ccld_qty"))
+                    or any(row.get(field) not in (None, "")
+                           and not str(row[field]).strip().isdigit()
+                           for field in ("rmn_qty", "cncl_cfrm_qty"))):
+                raise KisApiError("KIS daily-ccld order quantities or identity are unverified")
         return [parse_ccld_row(r) for r in raw_rows]
 
     async def get_order_status(self, order_id: str) -> OrderResult:

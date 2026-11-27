@@ -585,6 +585,33 @@ def get_kis_paper_eod_status(db: Session = Depends(get_db)) -> dict:
     )
     out["eod_manager"] = ("BACKGROUND_DRIVER" if drv.is_running
                           else "EOD_GUARDIAN" if guardian.is_running else "NONE")
+    try:
+        from app.kis_paper.morning_recovery import get_verification
+        from app.scheduler.market_clock import to_kst
+        from datetime import datetime
+        recovery_date = to_kst(datetime.now(timezone.utc)).date().isoformat()
+        recovery = get_verification(db, recovery_date=recovery_date)
+        out["morning_recovery"] = ({
+            "status": recovery.status,
+            "incident_date": recovery.incident_date,
+            "recovery_date": recovery.recovery_date,
+            "verified_at": recovery.verified_at.isoformat() if recovery.verified_at else None,
+            "reason_code": recovery.reason_code,
+            "summary": recovery.summary or {},
+            "buy_blocked": recovery.status != "VERIFIED",
+            "is_live_authorization": False,
+        } if recovery else {
+            "status": "NOT_STARTED", "incident_date": "2026-11-27",
+            "recovery_date": recovery_date, "verified_at": None,
+            "reason_code": None, "summary": {}, "buy_blocked": True,
+            "is_live_authorization": False,
+        })
+    except Exception:  # status unavailable must never imply recovery succeeded
+        out["morning_recovery"] = {
+            "status": "UNKNOWN", "buy_blocked": True,
+            "reason_code": "RECOVERY_STATUS_UNAVAILABLE",
+            "is_live_authorization": False,
+        }
     out["notice"] = (
         "정상 종일 운용은 백엔드 상시 서비스(background driver)가 수행합니다. "
         "설정 화면의 quick(3틱)/slow(20틱) 시험은 단발 점검이며 종일 운용이 아닙니다. "
@@ -610,7 +637,7 @@ class _EodAckBody(BaseModel):
 
 @router.post("/eod/acknowledge")
 def post_kis_paper_eod_acknowledge(body: _EodAckBody, db: Session = Depends(get_db)) -> dict:
-    """FLATTEN_INCOMPLETE(또는 미판정) 운영자 확인 — 다음 거래일 신규 BUY 차단 해제.
+    """Record the operator's acknowledgment of an incomplete EOD close.
 
     사고 기록(state)은 그대로 보존. 주문 0건. 운영자는 KIS 모의계좌에서 잔여 보유를
     직접 확인/정리한 뒤 호출해야 한다.

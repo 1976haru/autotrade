@@ -452,7 +452,7 @@ class KisClient:
             return "VTTC0802U" if is_buy else "VTTC0801U"
         return "TTTC0802U" if is_buy else "TTTC0801U"
 
-    async def inquire_balance(self, cano: str, prdt_cd: str) -> dict:
+    async def inquire_balance(self, cano: str, prdt_cd: str, *, require_complete: bool = False) -> dict:
         """Single-call balance + positions endpoint.
 
         Returns raw JSON with `output1` (positions) and `output2` (cash, equity).
@@ -501,6 +501,8 @@ class KisClient:
         # Never retry application-level KIS errors or malformed successful replies.
         r = None
         transport_failure = None
+        rate_limited = False
+        rate_code = None
         for attempt in range(2):
             await self._throttle()
             try:
@@ -522,7 +524,15 @@ class KisClient:
                         "token_source": token_source,
                     },
                 ) from exc
-            if r.status_code >= 500 and attempt == 0:
+            if r.status_code >= 400:
+                try:
+                    error_body = r.json()
+                except ValueError:
+                    error_body = None
+                rate_code = (_safe_protocol_code(error_body.get("msg_cd"))
+                             if isinstance(error_body, dict) else None)
+                rate_limited = r.status_code == 429 or rate_code == "EGW00201"
+            if r.status_code >= 500 and not rate_limited and attempt == 0:
                 await asyncio.sleep(1.0)
                 continue
             break
@@ -534,16 +544,18 @@ class KisClient:
                 diagnostic={
                     "http_status": r.status_code,
                     "kis_rt_cd": None,
-                    "kis_msg_cd": None,
+                    "kis_msg_cd": rate_code,
                     "sanitized_error_summary": "KIS balance inquiry failed; response body omitted.",
                     "server_request_id": _safe_request_id(r.headers),
                     "api_path": path,
                     "tr_id": tr_id,
                     "failure_stage": "KIS_REQUEST",
-                    "failure_kind": "HTTP_STATUS",
+                    "failure_kind": "RATE_LIMIT" if rate_limited else "HTTP_STATUS",
                     "token_source": token_source,
                 },
             )
+        if require_complete and str(r.headers.get("tr_cont", "")).strip().upper() in ("F", "M"):
+            raise KisApiError("KIS balance has additional pages; reconciliation is unverified")
         try:
             data = r.json()
         except (ValueError, json.JSONDecodeError) as exc:
@@ -885,7 +897,10 @@ class KisClient:
                 raise KisApiError(
                     f"KIS daily-ccld rt_cd={body.get('rt_cd')} "
                     f"msg_cd={body.get('msg_cd', '')} msg={body.get('msg1', '')}")
-            rows.extend(body.get("output1") or [])
+            page = body.get("output1")
+            if not isinstance(page, list) or any(not isinstance(row, dict) for row in page):
+                raise KisApiError("KIS daily-ccld order list is missing or malformed")
+            rows.extend(page)
             tr_cont = str(r.headers.get("tr_cont", "") or "").strip().upper()
             fk = str(body.get("ctx_area_fk100", "") or "").strip()
             nk = str(body.get("ctx_area_nk100", "") or "").strip()

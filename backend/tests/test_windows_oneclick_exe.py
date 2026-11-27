@@ -301,7 +301,7 @@ def test_migration_chain_single_head_includes_0027_0028():
     assert len(heads) == 1
     revs = {r.revision for r in sd.walk_revisions()}
     assert {"0027", "0028", "0029"} <= revs
-    assert heads[0] == "0033"   # EOD reconciliation evidence is the current head
+    assert heads[0] == "0034"   # Morning recovery proof is the current head
 
 
 def test_migrations_upgrade_preserves_existing_rows(tmp_path):

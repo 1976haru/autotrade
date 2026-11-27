@@ -334,7 +334,10 @@ def armed_session_date(settings: Any, *, now: datetime | None = None,
     """
     from app.scheduler.intraday_session import next_trading_day
     now = now or datetime.now(timezone.utc)
-    if not session_trading_authorized(settings, db=db):
+    if (not bool(getattr(settings, "kis_is_paper", False))
+            or bool(getattr(settings, "enable_live_trading", False))
+            or not str(getattr(settings, "kis_account_no", "") or "")
+            or _PROCESS_EMERGENCY_BLOCK):
         return None
     try:
         record = load_approval(db)
@@ -346,7 +349,17 @@ def armed_session_date(settings: Any, *, now: datetime | None = None,
     except ValueError:
         return None
     today = now.astimezone(KST).date()
-    if target <= today:
+    if target <= today or not record or not _db_verified(db, record):
+        return None
+    if (str(record.get("status", "")).upper() != "SCHEDULED"
+            or _buy_blocked(record)
+            or not {"BUY", "SELL"}.issubset(set(record.get("allowed_sides") or []))):
+        return None
+    expected = account_fingerprint(
+        str(getattr(settings, "kis_account_no", "") or ""),
+        str(getattr(settings, "kis_product_code", "01")),
+    )
+    if not hmac.compare_digest(str(record.get("account_fingerprint", "")), expected):
         return None
     calendar = _calendar_for(settings)
     return target if target == next_trading_day(now, calendar=calendar) else None
@@ -396,6 +409,7 @@ def block_session_for_emergency(db: Any | None = None,
     EOD/청산 SELL 은 막지 않는다 (당일 청산 원칙 보존). 해제는 새 명시적 승인만.
     """
     _set_process_buy_block(BUY_BLOCKED_EMERGENCY)
+    marker_ok = _write_restart_block_marker(reason)
     discard_restore_permit()
     own = None
     session = db
@@ -411,6 +425,7 @@ def block_session_for_emergency(db: Any | None = None,
             extra={"emergency_blocked": True,
                    "emergency_blocked_at": datetime.now(timezone.utc).isoformat()},
         )
+        result["restart_block_marker"] = marker_ok
         if not (result["file"] or result["db"]):
             raise EmergencyBlockPersistError(",".join(result["errors"]) or "PERSIST_FAILED")
         return result
@@ -421,10 +436,47 @@ def block_session_for_emergency(db: Any | None = None,
 
 # ── 재시작 복구 허가 (정상 종료 시에만 기록되는 일회용 표식) ──────────────────
 RESTORE_PERMIT_FILE = "paper-session-restore-permit.json"
+RESTART_BLOCK_FILE = "paper-session-emergency-block.json"
 
 
 def restore_permit_path() -> Path:
     return approval_path().parent / RESTORE_PERMIT_FILE
+
+
+def restart_block_path() -> Path:
+    return approval_path().parent / RESTART_BLOCK_FILE
+
+
+def _write_restart_block_marker(reason: str) -> bool:
+    path = restart_block_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps({"reason": reason,
+                                   "blocked_at": datetime.now(timezone.utc).isoformat()},
+                                  sort_keys=True), encoding="utf-8")
+        os.replace(tmp, path)
+        return True
+    except OSError:
+        return False
+
+
+def _clear_restart_block_marker() -> None:
+    try:
+        restart_block_path().unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _has_restart_block_marker() -> bool:
+    try:
+        value = json.loads(restart_block_path().read_text(encoding="utf-8"))
+        return isinstance(value, dict) and bool(value.get("reason"))
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError):
+        # A corrupt/unreadable durable block must not reopen auto-start.
+        return True
 
 
 def discard_restore_permit() -> bool:
@@ -513,6 +565,44 @@ def evaluate_restart_restore(settings: Any, *, risk_emergency: bool,
         return {"restore": False, "reason": "NO_ACTIVE_SESSION", "armed_for": None}
     if risk_emergency:
         return {"restore": False, "reason": "RISK_EMERGENCY_STOP", "armed_for": None}
+    if _has_restart_block_marker():
+        _set_process_buy_block(BUY_BLOCKED_EMERGENCY)
+        return {"restore": False, "reason": "PERSISTED_EMERGENCY_BLOCK", "armed_for": None}
+    # A date/account scoped, explicitly scheduled next-session approval is
+    # already user consent for that date. Preserve it across a clean app restart
+    # without requiring the user to press the same approval button again. The
+    # opt-in background driver remains mandatory; incident BUY gates still apply.
+    if (record and verified and not _buy_blocked(record)
+            and not _PROCESS_EMERGENCY_BLOCK
+            and permit_reason == "NO_CLEAN_SHUTDOWN_PERMIT"):
+        try:
+            target = datetime.strptime(str(record.get("target_date", "")), "%Y-%m-%d").date()
+            current = (now or datetime.now(timezone.utc)).astimezone(KST).date()
+            from app.scheduler.intraday_session import next_trading_day
+            scheduled_next = (
+                str(record.get("status", "")).upper() == "SCHEDULED"
+                and target > current
+                and target == next_trading_day(now or datetime.now(timezone.utc),
+                                                calendar=_calendar_for(settings))
+                and {"BUY", "SELL"}.issubset(set(record.get("allowed_sides") or []))
+                and bool(getattr(settings, "enable_ai_paper_background_tick", False))
+                and bool(getattr(settings, "kis_is_paper", False))
+                and not bool(getattr(settings, "enable_live_trading", False))
+                and target > current
+                and _db_verified(db, record)
+                and hmac.compare_digest(
+                    str(record.get("account_fingerprint", "")),
+                    account_fingerprint(
+                        str(getattr(settings, "kis_account_no", "") or ""),
+                        str(getattr(settings, "kis_product_code", "01")),
+                    ),
+                )
+            )
+            if scheduled_next:
+                return {"restore": True, "reason": "VALID_SCHEDULED_APPROVAL",
+                        "armed_for": target}
+        except (TypeError, ValueError):
+            pass
     reason = permit_reason
     if reason is None:
         same = all(str(permit.get(k)) == str(record.get(k))
@@ -640,6 +730,7 @@ def create_approval(*, db: Any, settings: Any, risk: Any, target_date: str, acto
     }
     _persist_approval(db, record)
     _write_atomic(record)
+    _clear_restart_block_marker()
     _clear_process_buy_block()   # 새 *명시적* 승인만이 BUY 차단을 해제한다.
     return record
 
@@ -770,7 +861,8 @@ def _block(record: dict[str, Any], reason: str) -> tuple[bool, str]:
 async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
                           side: str, now: datetime, symbol: str = "",
                           quantity: int = 0, notional_krw: int = 0,
-                          daily_order_count: int = 0) -> tuple[bool, str]:
+                          daily_order_count: int = 0,
+                          order_purpose: str = "") -> tuple[bool, str]:
     """Final fail-closed gate.  Read-only KIS checks run before first order."""
     try:
         r = load_approval(db)
@@ -796,6 +888,19 @@ async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
         return False, "BUY_CUTOFF_1430_KST"
     if side.upper() not in set(r.get("allowed_sides") or []):
         return False, "ORDER_SIDE_NOT_APPROVED"
+    if side.upper() == "SELL" and order_purpose != "EOD_FORCED_EXIT":
+        # Recovery serializes all program exits while it reconciles the same
+        # holdings. Only its sanctioned EOD-purpose sell may pass this lock.
+        try:
+            from app.db.models import MorningRecoveryVerification
+            from app.kis_paper.eod_liquidation import eod_account_key
+            recovery = (db.query(MorningRecoveryVerification)
+                        .filter_by(recovery_date=local.date().isoformat(),
+                                   account_key=eod_account_key()).first())
+            if recovery is not None and recovery.status != "VERIFIED":
+                return False, "MORNING_RECOVERY_SELL_IN_PROGRESS"
+        except Exception:  # fail closed if recovery ownership cannot be checked
+            return False, "MORNING_RECOVERY_STATE_UNAVAILABLE"
     limits = r.get("limits") or {}
     from app.kis_paper.order_limits import resolve_kis_paper_order_limits
     current_limits = resolve_kis_paper_order_limits(settings)
@@ -835,7 +940,16 @@ async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
     if not bool(getattr(settings, "kis_paper_fill_polling", False)):
         return _block(r, "FILL_POLLER_DISABLED")
     try:
-        positions = await broker.get_positions()
+        if side.upper() == "SELL":
+            # EOD/morning risk reduction must use a new broker balance read,
+            # never the short TTL shared with dashboard/scan requests.
+            from app.brokers.kis import KisBrokerAdapter
+            if type(broker).get_positions is KisBrokerAdapter.get_positions:
+                positions = await broker.get_positions(fresh=True)
+            else:
+                positions = await broker.get_positions()
+        else:
+            positions = await broker.get_positions()
         orders = await broker.list_today_orders(kst_date=local.date().strftime("%Y%m%d"))
         balance = await broker.get_balance() if side.upper() == "BUY" else None
         buy_capacity = None

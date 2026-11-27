@@ -505,14 +505,16 @@ def test_G_existing_open_sell_blocks_new_sell(session_factory, db):
     assert broker.place_calls == []
 
 
-def test_H_already_flat_symbol_zero_orders(session_factory, db):
+def test_H_zero_broker_holdings_with_positive_ledger_does_not_prove_recovery(session_factory, db):
     seed_bot_position(db, "005930", 3)
-    broker = FakeKisPaperBroker({})        # 이미 전량 매도됨
+    broker = FakeKisPaperBroker({})
     out = step(session_factory, broker, kst(15, 16))
     assert broker.place_calls == []
     assert out["state"] == EodState.WAITING_FOR_FILLS.value
     final = step(session_factory, broker, kst(15, 30, 5))
-    assert final["state"] == EodState.FLAT_CONFIRMED.value
+    assert final["state"] == EodState.FLATTEN_INCOMPLETE.value
+    assert final["summary"]["recovery_verified"] is False
+    assert final["summary"]["totals"]["ledger_qty"] == 3
 
 
 def test_T_received_is_not_flat_until_broker_confirms(session_factory, db):
@@ -652,7 +654,7 @@ def test_L_open_orders_after_close_incomplete_and_next_day_buy_block(session_fac
     assert code == "BUY_BLOCKED_BY_EOD_INCIDENT"
     acknowledge_incident(db, trading_date="2026-10-22", decided_by="operator", now=nxt)
     code2, _ = program_buy_block_reason(db, settings=make_settings(), now=nxt)
-    assert code2 is None
+    assert code2 == "BUY_BLOCKED_BY_EOD_INCIDENT"
     assert db.query(EodLiquidationState).one().state == "FLATTEN_INCOMPLETE"  # 기록 보존
 
 
@@ -669,6 +671,8 @@ def test_20261117_uses_latest_flat_eod_and_preserves_older_incident(db):
     flat.state = EodState.FLAT_CONFIRMED.value
     flat.reason_code = "EOD_FLAT_CONFIRMED"
     flat.last_reconcile_ok = True
+    flat.final_verdict_at = kst(15, 30, d=date(2026, 11, 16))
+    flat.summary = {"recovery_verified": True}
     db.commit()
 
     code, _ = program_buy_block_reason(
@@ -677,6 +681,41 @@ def test_20261117_uses_latest_flat_eod_and_preserves_older_incident(db):
     assert code is None
     assert failed.state == EodState.FLATTEN_INCOMPLETE.value
     assert failed.incident_acknowledged is False
+
+
+def test_nov30_recovery_preserves_incident_and_only_verified_close_releases_buy(session_factory, db):
+    from app.kis_paper.eod_liquidation import _get_or_create_row
+
+    incident_at = kst(15, 42, d=date(2026, 11, 27))
+    incident = _get_or_create_row(db, "2026-11-27", incident_at)
+    incident.state = EodState.FLATTEN_INCOMPLETE.value
+    incident.reason_code = "EOD_POSITIONS_REMAIN"
+    db.commit()
+    acknowledge_incident(db, trading_date="2026-11-27", decided_by="operator", now=incident_at)
+    for symbol, quantity in (("001740", 155), ("103140", 16), ("267260", 1)):
+        seed_bot_position(db, symbol, quantity)
+    broker = FakeKisPaperBroker({"001740": 155, "103140": 16, "267260": 1, "035420": 9})
+    next_day = date(2026, 11, 30)
+    code, _ = program_buy_block_reason(db, settings=make_settings(), now=kst(10, 0, d=next_day))
+    assert code == "BUY_BLOCKED_BY_EOD_INCIDENT"
+    broker.fail_positions = True
+    step(session_factory, broker, kst(15, 0, d=next_day), loop_state="PAUSED")
+    assert not broker.place_calls
+    broker.fail_positions = False
+    step(session_factory, broker, kst(15, 1, d=next_day), loop_state="PAUSED")
+    step(session_factory, broker, kst(15, 15, d=next_day), loop_state="PAUSED")
+    assert {o.symbol: o.quantity for o in broker.place_calls} == {
+        "001740": 155, "103140": 16, "267260": 1,
+    }
+    assert broker.holdings["035420"] == 9
+    final = step(session_factory, broker, kst(15, 30, d=next_day), loop_state="PAUSED")
+    assert final["state"] == "FLAT_CONFIRMED"
+    assert final["summary"]["recovery_verified"] is True
+    code, _ = program_buy_block_reason(db, settings=make_settings(),
+                                       now=kst(10, 0, d=date(2026, 12, 1)))
+    assert code is None
+    db.refresh(incident)
+    assert incident.state == "FLATTEN_INCOMPLETE" and incident.incident_acknowledged
 
 
 def test_L_reconcile_failure_after_close_is_not_success(session_factory, db):

@@ -142,6 +142,7 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
   const isKisPaper = st.broker_label === "KIS_PAPER" && st.kis_is_paper && !st.enable_live_trading;
   const nonTrading = sch.calendar && sch.calendar !== "TRADING_DAY";
   const cancelRows = Object.entries(sum.buy_cancels || {});
+  const recovery = st.morning_recovery || null;
 
   return (
     <div className={`isp isp-${tone}`} data-testid="intraday-session-panel">
@@ -171,6 +172,17 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
       <div className="isp-line" data-testid="isp-buy-status">
         {st.buy_allowed ? "🟢 지금은 신규 매수 가능" : `⛔ 신규 매수 불가 — ${st.buy_block_reason_message || st.buy_block_reason_code}`}
       </div>
+
+      {recovery && (recovery.status !== "NOT_STARTED" || st.previous_incident_trading_date) && (
+        <div className={`isp-line ${recovery.status === "VERIFIED" ? "" : "isp-warn"}`}
+          data-testid="isp-morning-recovery">
+          Morning recovery: <b>{recovery.status}</b>
+          {recovery.verified_at ? ` · verified ${hm(recovery.verified_at)}` : " · BUY blocked"}
+          {recovery.reason_code ? ` · ${recovery.reason_code}` : ""}
+          {recovery.summary?.symbols && ` · managed remaining ${Object.values(recovery.summary.symbols)
+            .reduce((total, row) => total + Number(row.managed_qty || 0), 0)} shares`}
+        </div>
+      )}
 
       <div className="isp-line" data-testid="isp-eod-state">
         청산 상태: <b>{STATE_LABEL[st.eod_state] || st.eod_state}</b>
@@ -263,9 +275,9 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
       {st.previous_incident_trading_date && (
         <div className="isp-incident" data-testid="isp-incident">
           🚨 {st.previous_incident_trading_date} 장마감 청산이 확인되지 않아 신규 매수가 막혀 있어요.
-          KIS 모의계좌 잔고를 직접 확인한 뒤 확인 버튼을 누르세요.
+          사고 확인은 기록에 남아요. KIS 잔고·원장·미체결 대조가 완료될 때까지 신규 매수는 차단돼요.
           <button type="button" onClick={acknowledge} disabled={ackBusy} data-testid="isp-ack">
-            {ackBusy ? "처리 중…" : "확인했음 (매수 차단 해제)"}
+            {ackBusy ? "처리 중…" : "사고 확인 기록"}
           </button>
         </div>
       )}

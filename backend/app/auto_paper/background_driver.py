@@ -1119,6 +1119,7 @@ class EodGuardian:
         self._task: asyncio.Task | None = None
         self._stop_event: asyncio.Event | None = None
         self.last_result: dict[str, Any] | None = None
+        self.last_morning_recovery_result: dict[str, Any] | None = None
         self.last_started_at: datetime | None = None
         self.last_finished_at: datetime | None = None
 
@@ -1144,6 +1145,21 @@ class EodGuardian:
         self.last_started_at = self._now()
         try:
             self.last_result = await self._driver.maybe_eod_step(now or self.last_started_at)
+            try:
+                from app.kis_paper.morning_recovery import run_morning_recovery_step
+                s = self._driver._settings()
+                self.last_morning_recovery_result = await run_morning_recovery_step(
+                    now=now or self.last_started_at, settings=s,
+                )
+            except Exception as exc:  # Guardian must survive recovery errors.
+                self.last_morning_recovery_result = {
+                    "status": "BLOCKED",
+                    "reason_code": f"RECOVERY_GUARDIAN_ERROR:{type(exc).__name__}",
+                    "buy_blocked": True,
+                    "is_live_authorization": False,
+                }
+                _log.warning("[eod-guardian] morning recovery failed: %s", _redact_secret(
+                    f"{type(exc).__name__}: {exc}"))
             return self.last_result
         finally:
             self.last_finished_at = self._now()

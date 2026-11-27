@@ -202,6 +202,7 @@ async def route_order(
             is_manual_buy,
             is_program_order,
             manual_buy_block_reason,
+            paper_recovery_buy_block_reason,
             program_buy_block_reason,
         )
         block_code: str | None = None
@@ -213,6 +214,11 @@ async def route_order(
         elif is_manual_buy(order.trade_reason) and isinstance(broker, KisBrokerAdapter):
             # V2: 수동매매 패널 BUY 도 14:30 이후/휴장일 차단 (KIS 세션 대상).
             block_code, block_msg = manual_buy_block_reason(now=now)
+        if (block_code is None and mode == OperationMode.PAPER
+                and isinstance(broker, KisBrokerAdapter) and broker.is_paper):
+            block_code, block_msg = paper_recovery_buy_block_reason(
+                db, account_scope=account_scope, now=now,
+            )
         if block_code is not None:
             cutoff_reasons = [f"{block_code}: {block_msg}"]
             cutoff_audit = OrderAuditLog(

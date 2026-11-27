@@ -863,3 +863,33 @@ class PaperSessionApproval(Base):
             "trading_date", "account_fingerprint", unique=True,
         ),
     )
+
+
+class MorningRecoveryVerification(Base):
+    """Account-scoped evidence that an earlier EOD incident was cleared intraday.
+
+    This is deliberately separate from EodLiquidationState: morning recovery must
+    never rewrite a prior day's FLATTEN_INCOMPLETE or manufacture FLAT_CONFIRMED.
+    """
+
+    __tablename__ = "morning_recovery_verification"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    incident_date: Mapped[str] = mapped_column(String(10), index=True)
+    recovery_date: Mapped[str] = mapped_column(String(10), index=True)
+    account_key: Mapped[str] = mapped_column(String(48), default="", server_default="")
+    status: Mapped[str] = mapped_column(String(16), index=True, default="PENDING")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    lease_owner: Mapped[str | None] = mapped_column(String(96), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "uq_morning_recovery_incident_date_account",
+            "incident_date", "recovery_date", "account_key", unique=True,
+        ),
+    )

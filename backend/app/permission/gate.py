@@ -250,6 +250,7 @@ class PermissionGate:
                 is_manual_buy,
                 is_program_order,
                 manual_buy_block_reason,
+                paper_recovery_buy_block_reason,
                 program_buy_block_reason,
             )
             block_code = None
@@ -259,6 +260,13 @@ class PermissionGate:
                     self.db, symbol=order.symbol, quantity=order.quantity)
             elif is_manual_buy(audit.trade_reason) and isinstance(broker, KisBrokerAdapter):
                 block_code, block_msg = manual_buy_block_reason()
+            if (block_code is None and approval.mode == OperationMode.PAPER.value
+                    and isinstance(broker, KisBrokerAdapter) and broker.is_paper):
+                from app.kis_paper.account_scope import account_scope_for_broker
+
+                block_code, block_msg = paper_recovery_buy_block_reason(
+                    self.db, account_scope=account_scope_for_broker(broker),
+                )
             if block_code is not None:
                 re_eval.reasons.append(f"{block_code}: {block_msg}")
                 re_eval.decision = RiskDecision.REJECTED

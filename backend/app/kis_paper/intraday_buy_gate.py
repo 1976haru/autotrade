@@ -13,7 +13,7 @@
 차단 사유:
 1. 시간/달력 — intraday_session.IntradayPolicy.buy_entry_decision (14:30 컷오프,
    휴장일, 달력 미등록 연도, 개장 직후 버퍼, 장 종료 후).
-2. 직전 거래일 EOD 청산 미완료(FLATTEN_INCOMPLETE 또는 판정 없음) + 운영자 미확인.
+2. EOD 사고 후 계좌별 최종 청산 대조 미완료.
 
 CLAUDE.md: broker / OrderExecutor / route_order import 0건 (순환/우회 방지). 순수 판단
 + DB read 1회. 실패 시 *차단* 쪽으로 기운다(fail-closed) — 신규 BUY 는 위험 증가.
@@ -76,33 +76,62 @@ def manual_buy_block_reason(*, settings: Any = None,
         return BUY_BLOCKED_GATE_ERROR, "신규 매수 게이트 판단 실패 — 안전을 위해 차단합니다."
 
 
-def eod_incident_block(db: Any, now: datetime) -> str | None:
-    """직전 거래일 EOD 미해결 행의 trading_date (없으면 None).
-
-    오늘보다 *이전* 날짜 중 가장 최근 행만 본다. 운영자가 acknowledge 하면 해제.
-    """
+def eod_incident_block(db: Any, now: datetime, *, account_scope: str | None = None) -> str | None:
+    """An unresolved incident requires a later, verified close on the same account."""
     from app.db.models import EodLiquidationState
     from app.kis_paper.account_scope import current_account_scope, kis_scope_required
     from app.kis_paper.eod_liquidation import LEGACY_EOD_KEY
     today = to_kst(now).date().isoformat()
-    scope = current_account_scope()
+    scope = account_scope if account_scope is not None else current_account_scope()
     if scope is None and kis_scope_required():
         return "ACCOUNT_SCOPE_UNKNOWN"
 
-    def latest(key: str):
-        return (db.query(EodLiquidationState)
+    def unresolved(key: str) -> str | None:
+        from app.db.models import MorningRecoveryVerification
+        rows = (db.query(EodLiquidationState)
                 .filter(EodLiquidationState.trading_date < today)
                 .filter(EodLiquidationState.account_key == key)
-                .order_by(EodLiquidationState.trading_date.desc()).first())
+                .order_by(EodLiquidationState.trading_date.desc()))
+        for row in rows:
+            if row.state in _UNRESOLVED_STATES:
+                verified = (db.query(MorningRecoveryVerification)
+                            .filter_by(incident_date=str(row.trading_date),
+                                       recovery_date=today, account_key=key,
+                                       status="VERIFIED")
+                            .filter(MorningRecoveryVerification.verified_at.is_not(None))
+                            .first())
+                if verified is not None:
+                    continue
+                return str(row.trading_date)
+            if (row.state == "FLAT_CONFIRMED" and row.last_reconcile_ok
+                    and row.final_verdict_at is not None
+                    and (row.summary or {}).get("recovery_verified") is True):
+                return None
+        return None
 
-    row = latest(scope or LEGACY_EOD_KEY)
-    if row and row.state in _UNRESOLVED_STATES and not bool(row.incident_acknowledged):
-        return str(row.trading_date)
+    incident = unresolved(scope or LEGACY_EOD_KEY)
+    if incident:
+        return incident
     if scope is not None:
-        legacy = latest(LEGACY_EOD_KEY)
-        if legacy and legacy.state in _UNRESOLVED_STATES and not bool(legacy.incident_acknowledged):
-            return f"LEGACY_ACCOUNT {legacy.trading_date}"
+        legacy = unresolved(LEGACY_EOD_KEY)
+        if legacy:
+            return f"LEGACY_ACCOUNT {legacy}"
     return None
+
+
+def paper_recovery_buy_block_reason(db: Any, *, account_scope: str | None = None,
+                                   now: datetime | None = None) -> tuple[str | None, str]:
+    try:
+        incident = eod_incident_block(db, now or datetime.now(timezone.utc),
+                                      account_scope=account_scope)
+    except Exception:  # noqa: BLE001 — BUY must fail closed when recovery cannot be checked.
+        return BUY_BLOCKED_GATE_ERROR, "장마감 사고 복구 상태를 확인할 수 없어 신규 매수를 차단합니다."
+    if incident:
+        return BUY_BLOCKED_BY_EOD_INCIDENT, (
+            f"{incident} 장마감 사고가 미해결 상태입니다. "
+            "KIS 잔고·프로그램 원장·미체결 대조에서 청산이 검증될 때까지 신규 매수를 차단합니다."
+        )
+    return None, ""
 
 
 REHEARSAL_SYMBOL_NOT_ALLOWED = "REHEARSAL_SYMBOL_NOT_ALLOWED"
@@ -173,11 +202,9 @@ def program_buy_block_reason(
                 return "LEGACY_ACCOUNT_HOLDINGS_UNVERIFIED", (
                     "계좌 귀속을 확인할 수 없는 과거 원장 보유가 있어 신규 매수를 차단합니다."
                 )
-            prev = eod_incident_block(db, now)
-            if prev is not None:
-                return BUY_BLOCKED_BY_EOD_INCIDENT, (
-                    f"{prev} 장마감 청산이 확인되지 않았습니다(FLATTEN_INCOMPLETE/미판정). "
-                    "운영자 확인(acknowledge) 전까지 신규 매수를 차단합니다.")
+            incident_code, incident_message = paper_recovery_buy_block_reason(db, now=now)
+            if incident_code:
+                return incident_code, incident_message
         r_code, r_msg = rehearsal_buy_block_reason(
             db, settings=settings, now=now, symbol=symbol, quantity=quantity)
         if r_code is not None:
