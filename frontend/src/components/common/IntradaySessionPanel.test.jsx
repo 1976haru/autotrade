@@ -25,6 +25,16 @@ describe("IntradaySessionPanel (INTRADAY-FLAT-BY-CLOSE-V1)", () => {
       .toContain("잔고·미체결 대조 중"));
   });
 
+  it("keeps BUY visibly blocked until an account scoped morning proof is verified", async () => {
+    const d = { ...base, previous_incident_trading_date: "2026-11-27",
+      morning_recovery: { status: "WAITING", reason_code: "RECOVERY_AWAITING_FILLS_OR_RECONCILIATION",
+        buy_blocked: true, summary: { symbols: { "001740": { managed_qty: 155 } } } } };
+    const { getByTestId } = render(<IntradaySessionPanel api={api(d)} pollMs={60_000} />);
+    await waitFor(() => expect(getByTestId("isp-morning-recovery").textContent)
+      .toContain("managed remaining 155 shares"));
+    expect(getByTestId("isp-morning-recovery").textContent).toContain("BUY blocked");
+  });
+
   it("서버 일정(14:30/15:15/15:30) + 모의계좌 배지 + 운용모드 표시", async () => {
     const { getByTestId } = render(<IntradaySessionPanel api={api(base)} pollMs={60_000} />);
     await waitFor(() => expect(getByTestId("isp-buy-cutoff").textContent).toBe("14:30"));

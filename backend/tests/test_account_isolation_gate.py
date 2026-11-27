@@ -277,7 +277,7 @@ def test_upgrade_preserves_rows_and_isolates_eod(mig_db):
     from alembic import command
     (od, on), (ed, en) = _seed_0029(mig_db)
     command.upgrade(_cfg(mig_db), "head")
-    assert _version(mig_db) == "0033"
+    assert _version(mig_db) == "0034"
     con = sqlite3.connect(mig_db)
     assert _digest(con, "order_audit_log", ("account_id",)) == (od, on)
     assert _digest(con, "eod_liquidation_state", ("account_key",)) == (ed, en)
@@ -373,10 +373,10 @@ def test_failed_upgrade_is_recoverable_from_automatic_backup(mig_db):
     con.close()
     cfg = _cfg(mig_db)
     bak = backup_sqlite_before_upgrade(cfg, url=f"sqlite:///{mig_db.as_posix()}")
-    assert bak is not None and bak.exists() and ".pre-0033-" in bak.name
+    assert bak is not None and bak.exists() and ".pre-0034-" in bak.name
     with pytest.raises(Exception):
         command.upgrade(cfg, "head")
-    assert _version(mig_db) != "0033"                                # 실패 — head 아님
+    assert _version(mig_db) != "0034"                                # 실패 — head 아님
     shutil.copyfile(bak, mig_db)                                     # 운영자 복구 = 백업 복원
     con = sqlite3.connect(mig_db)
     assert (_digest(con, "order_audit_log"), _digest(con, "eod_liquidation_state")) == pre
@@ -385,7 +385,7 @@ def test_failed_upgrade_is_recoverable_from_automatic_backup(mig_db):
     con.close()
     assert _version(mig_db) == "0029"
     command.upgrade(cfg, "head")
-    assert _version(mig_db) == "0033"
+    assert _version(mig_db) == "0034"
 
 
 def test_backup_skipped_when_already_at_head_or_not_sqlite_file(mig_db):

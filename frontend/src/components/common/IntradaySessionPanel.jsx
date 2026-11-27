@@ -142,6 +142,7 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
   const isKisPaper = st.broker_label === "KIS_PAPER" && st.kis_is_paper && !st.enable_live_trading;
   const nonTrading = sch.calendar && sch.calendar !== "TRADING_DAY";
   const cancelRows = Object.entries(sum.buy_cancels || {});
+  const recovery = st.morning_recovery || null;
 
   return (
     <div className={`isp isp-${tone}`} data-testid="intraday-session-panel">
@@ -171,6 +172,17 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
       <div className="isp-line" data-testid="isp-buy-status">
         {st.buy_allowed ? "🟢 지금은 신규 매수 가능" : `⛔ 신규 매수 불가 — ${st.buy_block_reason_message || st.buy_block_reason_code}`}
       </div>
+
+      {recovery && (recovery.status !== "NOT_STARTED" || st.previous_incident_trading_date) && (
+        <div className={`isp-line ${recovery.status === "VERIFIED" ? "" : "isp-warn"}`}
+          data-testid="isp-morning-recovery">
+          Morning recovery: <b>{recovery.status}</b>
+          {recovery.verified_at ? ` · verified ${hm(recovery.verified_at)}` : " · BUY blocked"}
+          {recovery.reason_code ? ` · ${recovery.reason_code}` : ""}
+          {recovery.summary?.symbols && ` · managed remaining ${Object.values(recovery.summary.symbols)
+            .reduce((total, row) => total + Number(row.managed_qty || 0), 0)} shares`}
+        </div>
+      )}
 
       <div className="isp-line" data-testid="isp-eod-state">
         청산 상태: <b>{STATE_LABEL[st.eod_state] || st.eod_state}</b>

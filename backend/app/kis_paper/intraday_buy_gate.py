@@ -87,12 +87,21 @@ def eod_incident_block(db: Any, now: datetime, *, account_scope: str | None = No
         return "ACCOUNT_SCOPE_UNKNOWN"
 
     def unresolved(key: str) -> str | None:
+        from app.db.models import MorningRecoveryVerification
         rows = (db.query(EodLiquidationState)
                 .filter(EodLiquidationState.trading_date < today)
                 .filter(EodLiquidationState.account_key == key)
                 .order_by(EodLiquidationState.trading_date.desc()))
         for row in rows:
             if row.state in _UNRESOLVED_STATES:
+                verified = (db.query(MorningRecoveryVerification)
+                            .filter_by(incident_date=str(row.trading_date),
+                                       recovery_date=today, account_key=key,
+                                       status="VERIFIED")
+                            .filter(MorningRecoveryVerification.verified_at.is_not(None))
+                            .first())
+                if verified is not None:
+                    continue
                 return str(row.trading_date)
             if (row.state == "FLAT_CONFIRMED" and row.last_reconcile_ok
                     and row.final_verdict_at is not None

@@ -144,7 +144,7 @@ def test_saturday_approval_for_monday_allowed_and_arms(db, freeze):
     freeze(kst(SAT, 12))
     rec = approve(db, MON)
     assert rec["target_date"] == MON.isoformat()
-    assert ocs.armed_session_date(settings(), now=kst(SAT, 12)) == MON
+    assert ocs.armed_session_date(settings(), now=kst(SAT, 12), db=db) == MON
 
 
 def test_approval_beyond_next_trading_day_rejected(db, freeze):
@@ -176,10 +176,14 @@ def test_weekday_morning_rejects_tomorrow(db, freeze):
 def test_restart_restores_waiting_state(db, freeze):
     freeze(kst(SAT, 12))
     approve(db, MON)
-    assert ocs.session_trading_authorized(settings())
+    restored_approval = ocs.evaluate_restart_restore(
+        settings(), risk_emergency=False, now=kst(SAT, 12), db=db,
+    )
+    assert restored_approval["restore"] is True
+    assert restored_approval["armed_for"] == MON
     restored = AutoPaperLoop()   # 새 프로세스
     s = restored.start(now=kst(SAT, 13),
-                       armed_for=ocs.armed_session_date(settings(), now=kst(SAT, 13)))
+                       armed_for=ocs.armed_session_date(settings(), now=kst(SAT, 13), db=db))
     assert s.state == "WAITING_MARKET" and s.armed_for == MON.isoformat()
 
 

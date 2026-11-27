@@ -129,7 +129,7 @@ def db_row(db):
 
 
 # ── 기본: 정상 종료 → 재시작 = 자동 복구 (기존 동작 유지) ──────────────────────
-def test_clean_shutdown_permit_allows_one_restore(db, freeze, default_db):
+def test_explicit_next_day_approval_survives_restart_without_repeated_button(db, freeze, default_db):
     freeze(kst(SAT, 12))
     approve(db, MON)
     assert clean_shutdown()["written"] is True
@@ -140,7 +140,31 @@ def test_clean_shutdown_permit_allows_one_restore(db, freeze, default_db):
     # 같은 허가로 두 번째(=크래시 후 재시작) 복구는 불가.
     new_process()
     d2 = startup(kst(SAT, 14))
-    assert d2["restore"] is False and d2["reason"] == "NO_CLEAN_SHUTDOWN_PERMIT"
+    assert d2["restore"] is True and d2["reason"] == "VALID_SCHEDULED_APPROVAL"
+
+
+def test_explicit_scheduled_next_day_approval_arms_without_duplicate_button(db, freeze, default_db):
+    freeze(kst(SAT, 12))
+    approve(db, MON)
+    new_process()
+    d = startup(kst(SAT, 13))
+    assert d["restore"] is True
+    assert d["reason"] == "VALID_SCHEDULED_APPROVAL"
+    assert d["armed_for"] == MON
+
+
+def test_scheduled_next_day_does_not_arm_when_background_opt_in_off(db, freeze, default_db,
+                                                                    monkeypatch):
+    freeze(kst(SAT, 12))
+    approve(db, MON)
+    new_process()
+    monkeypatch.setattr(ocs, "_open_default_db", lambda: db)
+    out = ocs.evaluate_restart_restore(
+        settings(enable_ai_paper_background_tick=False), risk_emergency=False,
+        now=kst(SAT, 13), db=db,
+    )
+    assert out["restore"] is False
+    assert out["reason"] == "NO_CLEAN_SHUTDOWN_PERMIT"
 
 
 @pytest.mark.parametrize("state", ["PAUSED", "STOPPED", "MARKET_CLOSED", "EMERGENCY_STOP", None])
@@ -173,11 +197,11 @@ def test_emergency_persist_total_failure_then_restart_never_restores(db, freeze,
     # 재시작 — 저장소가 여전히 고장이어도 복구 금지 + 프로세스 BUY 차단.
     new_process()
     d = startup(kst(SAT, 13))
-    assert d["restore"] is False and d["reason"] == "NO_CLEAN_SHUTDOWN_PERMIT"
+    assert d["restore"] is False and d["reason"] == "PERSISTED_EMERGENCY_BLOCK"
     assert ocs._PROCESS_EMERGENCY_BLOCK is True
     assert ocs.session_trading_authorized(settings(), db=db) is False
     freeze(kst(MON, 10))
-    assert buy(db, kst(MON, 10)) == (False, "RESTART_REAPPROVAL_REQUIRED")
+    assert buy(db, kst(MON, 10)) == (False, "EMERGENCY_STOP_SESSION_BLOCKED")
 
     # 저장소가 복구된 뒤 재시작 — 허가 없음 → EXIT_ONLY 로 저장, 계속 재승인 필요.
     monkeypatch.setattr(ocs, "_write_atomic", real_write)
@@ -185,22 +209,22 @@ def test_emergency_persist_total_failure_then_restart_never_restores(db, freeze,
     freeze(kst(SAT, 15))
     new_process()
     d = startup(kst(SAT, 15))
-    assert d["restore"] is False and d["persisted"]["file"] and d["persisted"]["db"]
-    assert db_row(db).status == "EXIT_ONLY"
-    new_process()                                          # 그다음 재시작에도 BUY 불가
+    assert d["restore"] is False and d["reason"] == "PERSISTED_EMERGENCY_BLOCK"
+    assert db_row(db).status == "SCHEDULED"
     assert ocs.session_trading_authorized(settings(), db=db) is False
     freeze(kst(MON, 10))
-    assert buy(db, kst(MON, 10)) == (False, "RESTART_REAPPROVAL_REQUIRED")
+    assert buy(db, kst(MON, 10)) == (False, "EMERGENCY_STOP_SESSION_BLOCKED")
 
 
-def test_crash_without_shutdown_requires_reapproval(db, freeze, default_db):
+def test_crash_without_shutdown_keeps_explicit_future_approval_armed(db, freeze, default_db):
     freeze(kst(SAT, 12))
     approve(db, MON)                                       # 허가 없이 프로세스 종료(크래시)
     new_process()
     d = startup(kst(SAT, 13))
-    assert d["restore"] is False and d["reason"] == "NO_CLEAN_SHUTDOWN_PERMIT"
+    assert d["restore"] is True and d["reason"] == "VALID_SCHEDULED_APPROVAL"
     rec = ocs.load_approval(db)
-    assert rec["status"] == "EXIT_ONLY" and rec["buy_block_reason"] == "RESTART_REAPPROVAL_REQUIRED"
+    assert rec["status"] == "SCHEDULED" and not rec.get("buy_blocked")
+    assert ocs.session_trading_authorized(settings(), db=db) is True
 
 
 @pytest.mark.parametrize("damage", ["corrupt", "mismatch"])

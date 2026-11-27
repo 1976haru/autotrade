@@ -396,6 +396,24 @@ def test_inquire_balance_endpoint_failure_raises_api_error():
     assert caught.value.diagnostic["tr_id"] == "VTTC8434R"
 
 
+@pytest.mark.parametrize("http_status", [429, 500])
+def test_inquire_balance_does_not_retry_broker_rate_limit(http_status):
+    balance_calls = []
+
+    def handler(request):
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        balance_calls.append(request)
+        return httpx.Response(http_status, json={"rt_cd": "1", "msg_cd": "EGW00201"})
+
+    client = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    with pytest.raises(KisApiError) as caught:
+        run(client.inquire_balance("12345678", "01"))
+    assert len(balance_calls) == 1
+    assert caught.value.diagnostic["kis_msg_cd"] == "EGW00201"
+    assert caught.value.diagnostic["failure_kind"] == "RATE_LIMIT"
+
+
 def test_inquire_balance_retries_transient_5xx_once_then_accepts_valid_reply():
     calls = []
     def handler(request):
