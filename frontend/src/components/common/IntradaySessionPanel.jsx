@@ -221,7 +221,7 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
         <span>점검 모드(주문 전송 0): {st.paper_auto_mode?.dry_run ? "예" : "아니오"} · 1주 시험(smoke): {st.paper_auto_mode?.smoke_mode ? "예" : "아니오"}</span>
         <span>마지막 주문번호: {sum.last_broker_order_no || "—"} · 마지막 체결 감지: {hm(sum.last_fill_detected_at)}</span>
         <span>실패 코드: {activeFailureCode || "—"} · 잔고 대조: {hm(st.last_reconcile_at)}{st.last_reconcile_at && !st.last_reconcile_ok ? " (실패)" : ""}</span>
-        <span>Guardian 최근 완료: {hm(st.eod_guardian_last_finished_at)}</span>
+        <span>Guardian 최근 완료: {hm(st.eod_guardian_last_finished_at)}{st.eod_guardian_stalled ? " · 응답 지연" : ""}</span>
         <span>최근 청산 시도: {hm(sum.last_sell_attempt_at)} · 접수 {sum.totals?.eod_orders_submitted ?? "—"}건 · 체결 {sum.totals?.eod_filled_qty ?? "—"}주</span>
         {!st.background_driver_running && !st.eod_guardian_running && (
           <span className="isp-warn" data-testid="isp-driver-off">

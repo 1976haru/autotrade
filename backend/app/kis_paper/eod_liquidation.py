@@ -758,8 +758,8 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
         # ── 14:30 ~ 15:30 : 강한 긴급정지 → 주문/취소 0 + 수동 청산 경고 ────────
         #   P0-SAFETY-FIX-V1: 새 정책 LEVEL_1(신규 매수만 차단)은 청산·BUY 취소를 계속 한다.
         #   LEVEL_2/3·이전 정책(legacy strict) 정지·루프 EMERGENCY_STOP 만 차단.
-        from app.risk.kill_switch_policy import emergency_order_policy
-        ks = emergency_order_policy(risk)
+        from app.risk.emergency_stop import synchronize_kill_switch_for_order
+        ks = synchronize_kill_switch_for_order(risk, db)
         summary["kill_switch"] = ks.to_dict()
         emergency = not ks.allows_eod_forced_exit or (
             loop_state == "EMERGENCY_STOP" and not ks.active

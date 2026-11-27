@@ -562,6 +562,8 @@ def get_kis_paper_eod_status(db: Session = Depends(get_db)) -> dict:
     read-only — broker 호출 0건 (driver 의 마지막 대조 결과만). 서버 시계 기준
     판단이므로 프론트 시각과 무관하다. 실거래 권한 아님.
     """
+    from datetime import datetime, timezone
+
     from app.auto_paper.background_driver import get_background_tick_driver
     from app.kis_paper.eod_liquidation import eod_status
     out = eod_status(db)
@@ -575,6 +577,12 @@ def get_kis_paper_eod_status(db: Session = Depends(get_db)) -> dict:
     out["eod_guardian_running"] = bool(guardian.is_running)
     out["eod_guardian_last_started_at"] = guardian.last_started_at
     out["eod_guardian_last_finished_at"] = guardian.last_finished_at
+    last_activity = guardian.last_finished_at or guardian.last_started_at
+    interval = int(get_settings().ai_paper_tick_interval_seconds or 30)
+    out["eod_guardian_stalled"] = bool(
+        guardian.is_running and last_activity is not None
+        and (datetime.now(timezone.utc) - last_activity).total_seconds() > max(90, 3 * interval)
+    )
     out["eod_manager"] = ("BACKGROUND_DRIVER" if drv.is_running
                           else "EOD_GUARDIAN" if guardian.is_running else "NONE")
     out["notice"] = (

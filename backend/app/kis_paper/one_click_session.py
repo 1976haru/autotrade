@@ -855,7 +855,9 @@ async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
             )
     except Exception as exc:  # no order is sent on read failure
         reason = f"KIS_PREFLIGHT_FAILED:{type(exc).__name__}"
-        if r.get("status") in _EXIT_STATUSES:
+        if r.get("status") == EXIT_ONLY:
+            return False, reason
+        if r.get("status") in _USABLE_STATUSES:
             # A read failure cannot confirm this order. Preserve the existing
             # SELL authorization so the next Guardian cycle can reconcile.
             _set_process_buy_block(reason)

@@ -471,11 +471,13 @@ def test_guardian_reconciles_and_flattens_two_approved_paper_holdings(
 
     precheck = asyncio.run(guardian.run_once(kst(15, 0)))
     assert precheck["phase"] == "EOD_PRECHECK"
-    assert precheck["lifecycle_state"] == "RECONCILING"
-    assert broker.place_calls == []
+    assert precheck["lifecycle_state"] == "WAITING_FILL"
+    assert precheck["orders_submitted_this_step"] == 2
+    assert guardian.last_started_at <= guardian.last_finished_at
 
     flatten = asyncio.run(guardian.run_once(kst(15, 15)))
-    assert flatten["state"] == EodState.FLATTENING.value
+    assert flatten["state"] == EodState.WAITING_FOR_FILLS.value
+    assert flatten["orders_submitted_this_step"] == 0
     assert sorted((o.symbol, o.quantity) for o in broker.place_calls) == [
         ("105560", 5), ("319660", 8),
     ]
