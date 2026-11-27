@@ -565,6 +565,13 @@ async def route_order(
         )
 
     # APPROVED → execute
+    if (mode == OperationMode.PAPER and order.side == OrderSide.SELL
+            and isinstance(broker, KisBrokerAdapter)
+            and order.trade_reason == "kis_paper_auto"
+            and (order.client_order_id or "").startswith("eod-")):
+        # Keep the reservation across a lost response or Sidecar restart.
+        # Reconciliation treats an approved attempt without a result as unknown.
+        db.commit()
     result = await OrderExecutor(broker, db).execute(order, audit)
     db.commit()
     return OrderRoutingResult(

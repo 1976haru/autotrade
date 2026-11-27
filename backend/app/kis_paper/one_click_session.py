@@ -789,13 +789,13 @@ async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
             return False, APPROVAL_DB_UNVERIFIED
     local = now.astimezone(KST)
     if r.get("target_date") != local.date().isoformat():
-        return _block(r, "APPROVAL_DATE_MISMATCH")
+        return False, "APPROVAL_DATE_MISMATCH"
     if local.time() < time(9, 5):
         return False, "WAITING_FOR_0905_KST"
     if side.upper() == "BUY" and local.time() >= time(14, 30):
         return False, "BUY_CUTOFF_1430_KST"
     if side.upper() not in set(r.get("allowed_sides") or []):
-        return _block(r, "ORDER_SIDE_NOT_APPROVED")
+        return False, "ORDER_SIDE_NOT_APPROVED"
     limits = r.get("limits") or {}
     from app.kis_paper.order_limits import resolve_kis_paper_order_limits
     current_limits = resolve_kis_paper_order_limits(settings)
@@ -803,9 +803,9 @@ async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
         int(limits.get("max_order_krw", 0) or 0), current_limits.max_order_krw,
     )
     if int(notional_krw or 0) > approved_order_limit:
-        return _block(r, "APPROVED_ORDER_LIMIT_EXCEEDED")
+        return False, "APPROVED_ORDER_LIMIT_EXCEEDED"
     if side.upper() == "BUY" and int(daily_order_count) >= int(limits.get("daily_buy_count", 0) or 0):
-        return _block(r, "APPROVED_DAILY_BUY_COUNT_EXCEEDED")
+        return False, "APPROVED_DAILY_BUY_COUNT_EXCEEDED"
     if not bool(getattr(settings, "kis_is_paper", False)) or bool(getattr(settings, "enable_live_trading", False)):
         return _block(r, "PAPER_LIVE_MODE_MISMATCH")
     current_fp = account_fingerprint(
@@ -814,15 +814,23 @@ async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
     )
     if not hmac.compare_digest(str(r.get("account_fingerprint", "")), current_fp):
         return _block(r, "PAPER_ACCOUNT_CHANGED")
-    if bool(getattr(risk, "emergency_stop", False)):
+    if r.get("status") not in (_EXIT_STATUSES if side.upper() == "SELL" else _USABLE_STATUSES):
+        return False, "PAPER_SESSION_NOT_AUTHORIZED"
+    from app.risk.kill_switch_policy import KILL_SWITCH_POLICY_VERSION, emergency_order_policy
+
+    kill_switch = emergency_order_policy(risk)
+    reduce_only_allowed = side.upper() == "SELL" and kill_switch.allows_reduce_only_sell
+    if kill_switch.active and not reduce_only_allowed:
         return _block(r, "EMERGENCY_STOP_ACTIVE")
-    newer_stop = db.execute(
-        select(EmergencyStopEvent.id).where(
+    newer_stops = db.execute(
+        select(EmergencyStopEvent.level, EmergencyStopEvent.policy_version).where(
             EmergencyStopEvent.id > int(r.get("emergency_baseline_id", 0)),
             EmergencyStopEvent.enabled.is_(True),
-        ).limit(1)
-    ).first()
-    if newer_stop is not None:
+        )
+    ).all()
+    if any(not reduce_only_allowed or level != "LEVEL_1"
+           or (version or 0) < KILL_SWITCH_POLICY_VERSION
+           for level, version in newer_stops):
         return _block(r, "NEW_EMERGENCY_STOP_AFTER_APPROVAL")
     if not bool(getattr(settings, "kis_paper_fill_polling", False)):
         return _block(r, "FILL_POLLER_DISABLED")
@@ -846,12 +854,20 @@ async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
                 else None
             )
     except Exception as exc:  # no order is sent on read failure
-        return _block(r, f"KIS_PREFLIGHT_FAILED:{type(exc).__name__}")
+        reason = f"KIS_PREFLIGHT_FAILED:{type(exc).__name__}"
+        if r.get("status") in _EXIT_STATUSES:
+            # A read failure cannot confirm this order. Preserve the existing
+            # SELL authorization so the next Guardian cycle can reconcile.
+            _set_process_buy_block(reason)
+            discard_restore_permit()
+            _persist_buy_block(db, r, buy_reason=reason, block_reason=reason)
+            return False, reason
+        return _block(r, reason)
     if side.upper() == "BUY" and any(
         str(o.get("side", "")).upper() == "BUY"
         and int(o.get("remaining", 0) or 0) > 0 for o in orders
     ):
-        return _block(r, "OPEN_ORDER_PRESENT_CANCEL_NOT_AUTHORIZED")
+        return False, "OPEN_ORDER_PRESENT_CANCEL_NOT_AUTHORIZED"
     if side.upper() == "SELL":
         position = next((p for p in (positions or [])
                          if str(getattr(p, "symbol", "")) == symbol), None)
@@ -859,7 +875,7 @@ async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
         orderable = getattr(position, "sellable_quantity", None) if position else 0
         orderable = held if orderable is None else int(orderable or 0)
         if not symbol or int(quantity or 0) <= 0 or int(quantity) > min(held, orderable):
-            return _block(r, "KIS_SELL_QUANTITY_UNVERIFIED")
+            return False, "KIS_SELL_QUANTITY_UNVERIFIED"
     if side.upper() == "BUY":
         notional = int(notional_krw or 0)
         effective_unit_price = notional // max(1, int(quantity))
@@ -867,13 +883,13 @@ async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
             kis_qty = int(buy_capacity["no_credit_buy_quantity"])
             calc_price = int(buy_capacity["calculation_price_krw"])
             if int(quantity) <= 0 or calc_price <= 0:
-                return _block(r, "KIS_ORDERABLE_CAPACITY_UNVERIFIED")
+                return False, "KIS_ORDERABLE_CAPACITY_UNVERIFIED"
             if int(quantity) > kis_qty:
-                return _block(r, "KIS_NO_CREDIT_BUY_QUANTITY_EXCEEDED")
+                return False, "KIS_NO_CREDIT_BUY_QUANTITY_EXCEEDED"
             effective_unit_price = max(effective_unit_price, calc_price)
         risk_notional = int(quantity) * effective_unit_price
         if risk_notional > approved_order_limit:
-            return _block(r, "APPROVED_ORDER_LIMIT_EXCEEDED_AT_KIS_CALC_PRICE")
+            return False, "APPROVED_ORDER_LIMIT_EXCEEDED_AT_KIS_CALC_PRICE"
         positions_by_symbol = {
             str(getattr(p, "symbol", "")): p for p in (positions or [])
             if int(getattr(p, "quantity", 0) or 0) > 0
@@ -883,10 +899,10 @@ async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
             qty = int(getattr(p, "quantity", 0) or 0)
             price = int(getattr(p, "market_price", 0) or getattr(p, "avg_price", 0) or 0)
             if price <= 0:
-                return _block(r, "KIS_POSITION_VALUE_UNAVAILABLE")
+                return False, "KIS_POSITION_VALUE_UNAVAILABLE"
             current_total += qty * price
         if not symbol:
-            return _block(r, "PAPER_SYMBOL_REQUIRED")
+            return False, "PAPER_SYMBOL_REQUIRED"
         symbol_position = positions_by_symbol.get(symbol)
         symbol_price = int(
             getattr(symbol_position, "market_price", 0)
@@ -904,19 +920,19 @@ async def authorize_order(*, db: Any, settings: Any, broker: Any, risk: Any,
         reserve_bps = int(limits.get("cost_reserve_bps", current_limits.cost_reserve_bps))
         cash_required = risk_notional + (risk_notional * reserve_bps + 9_999) // 10_000
         if symbol_exposure + cash_required > symbol_cap:
-            return _block(r, "PAPER_SYMBOL_EXPOSURE_EXCEEDED")
+            return False, "PAPER_SYMBOL_EXPOSURE_EXCEEDED"
         if orderable_cash is None:
-            return _block(r, "KIS_ORDERABLE_CASH_UNAVAILABLE")
+            return False, "KIS_ORDERABLE_CASH_UNAVAILABLE"
         available_cash = min(
             int(orderable_cash), int(getattr(balance, "buying_power", 0) or 0),
         )
         if available_cash < cash_required:
-            return _block(r, "KIS_ORDERABLE_CASH_INSUFFICIENT")
+            return False, "KIS_ORDERABLE_CASH_INSUFFICIENT"
         if current_total + cash_required > min(
             int(limits.get("total_budget_krw", 0) or 0), current_limits.total_budget_krw,
         ):
-            return _block(r, "PAPER_TOTAL_BUDGET_OR_COST_RESERVE_EXCEEDED")
-    if r.get("status") in _USABLE_STATUSES or r.get("status") == "BLOCKED":
+            return False, "PAPER_TOTAL_BUDGET_OR_COST_RESERVE_EXCEEDED"
+    if r.get("status") in _USABLE_STATUSES:
         if not _buy_blocked(r):
             r["status"] = "ACTIVE"
             r["block_reason"] = None

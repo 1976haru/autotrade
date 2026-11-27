@@ -573,6 +573,8 @@ def get_kis_paper_eod_status(db: Session = Depends(get_db)) -> dict:
     from app.auto_paper.background_driver import get_eod_guardian
     guardian = get_eod_guardian()
     out["eod_guardian_running"] = bool(guardian.is_running)
+    out["eod_guardian_last_started_at"] = guardian.last_started_at
+    out["eod_guardian_last_finished_at"] = guardian.last_finished_at
     out["eod_manager"] = ("BACKGROUND_DRIVER" if drv.is_running
                           else "EOD_GUARDIAN" if guardian.is_running else "NONE")
     out["notice"] = (

@@ -1119,6 +1119,8 @@ class EodGuardian:
         self._task: asyncio.Task | None = None
         self._stop_event: asyncio.Event | None = None
         self.last_result: dict[str, Any] | None = None
+        self.last_started_at: datetime | None = None
+        self.last_finished_at: datetime | None = None
 
     def _approved(self) -> bool:
         s = self._driver._settings()
@@ -1139,10 +1141,12 @@ class EodGuardian:
 
     async def run_once(self, now: datetime | None = None) -> dict[str, Any] | None:
         # Independent from scan/warmup. EOD lease/step lock serialize duplicates.
-        res = await self._driver.maybe_eod_step(now or self._now())
-        if res is not None:
-            self.last_result = res
-        return res
+        self.last_started_at = self._now()
+        try:
+            self.last_result = await self._driver.maybe_eod_step(now or self.last_started_at)
+            return self.last_result
+        finally:
+            self.last_finished_at = self._now()
 
     async def _run(self) -> None:
         assert self._stop_event is not None
