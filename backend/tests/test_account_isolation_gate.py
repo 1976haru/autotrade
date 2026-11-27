@@ -74,7 +74,7 @@ def buy(db, broker, now):
 # ══ 1. EOD 구계좌·신규계좌 격리 ══════════════════════════════════════════════
 
 
-def test_legacy_incident_blocks_new_account_buy_until_acknowledged(db, monkeypatch):
+def test_unscoped_legacy_incident_blocks_new_account_buy(db, monkeypatch):
     use_scope(monkeypatch, NEW)
     eod_row(db, PREV_DAY, "", EodState.FLATTEN_INCOMPLETE.value)          # 구계좌 미완료
     code, msg = program_buy_block_reason(db, settings=make_settings(), now=kst(10, 0))
@@ -95,9 +95,10 @@ def test_ack_legacy_targets_only_legacy_row_audited_and_survives_restart(session
     assert lrow.ack_note and lrow.acknowledged_at is not None
     assert lrow.state == EodState.FLATTEN_INCOMPLETE.value              # 사고 기록 보존(완료 처리 아님)
     assert fresh.get(EodLiquidationState, mine.id).incident_acknowledged is False
-    assert program_buy_block_reason(fresh, settings=make_settings(), now=kst(10, 0))[0] is None
+    code, message = program_buy_block_reason(fresh, settings=make_settings(), now=kst(10, 0))
+    assert code == BUY_BLOCKED_BY_EOD_INCIDENT and "LEGACY_ACCOUNT" in message
     broker = FakeKisPaperBroker({})
-    assert buy(fresh, broker, kst(10, 0)).decision == RiskDecision.APPROVED and len(broker.place_calls) == 1
+    assert buy(fresh, broker, kst(10, 0)).decision == RiskDecision.REJECTED and not broker.place_calls
 
 
 def test_ack_without_account_never_touches_legacy(db, monkeypatch):
