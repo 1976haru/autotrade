@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0ea5e9" />
+  <title>오프라인 · AI 자동매매</title>
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <style>
+    :root {
+      color-scheme: light;
+      --c-bg:    #f0f9ff;
+      --c-card:  #ffffff;
+      --c-text:  #0f172a;
+      --c-muted: #64748b;
+      --c-warn:  #f59e0b;
+      --c-accent:#0ea5e9;
+      --c-border:#cbd5e1;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; min-height: 100%;
+      background: var(--c-bg); color: var(--c-text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                   "Noto Sans KR", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap {
+      max-width: 480px; margin: 0 auto; padding: 24px 16px;
+      display: flex; flex-direction: column; gap: 16px;
+      min-height: 100vh;
+    }
+    .card {
+      background: var(--c-card);
+      border: 1px solid var(--c-border);
+      border-radius: 16px;
+      padding: 20px 18px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    h1 {
+      font-size: 22px; margin: 0 0 8px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    p { margin: 6px 0; line-height: 1.55; }
+    .muted { color: var(--c-muted); font-size: 13px; }
+    .warn {
+      padding: 10px 12px;
+      background: #fef3c7;
+      border: 1px solid #fbbf24;
+      border-radius: 8px;
+      color: #92400e;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    ul.checks {
+      margin: 6px 0; padding-left: 18px;
+      color: var(--c-muted); font-size: 13px; line-height: 1.7;
+    }
+    .btn-row {
+      display: flex; gap: 8px; margin-top: 8px;
+    }
+    button {
+      flex: 1;
+      padding: 12px 14px;
+      font-size: 14px; font-weight: 700;
+      border-radius: 10px; border: none; cursor: pointer;
+      font-family: inherit;
+    }
+    .btn-primary {
+      background: var(--c-accent); color: #fff;
+    }
+    .btn-secondary {
+      background: #e2e8f0; color: #0f172a;
+    }
+    .small { font-size: 11px; color: var(--c-muted); }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="card">
+      <h1>📡 오프라인 상태</h1>
+      <p class="muted">
+        백엔드 연결이 없어 실시간 계좌 / 주문 / Agent 결정 데이터를
+        가져올 수 없습니다.
+      </p>
+
+      <div class="warn" data-testid="offline-disabled-warning">
+        ⚠ 오프라인에서는 <b>주문 / 승인 / 봇 시작 / Kill Switch 토글</b>이
+        동작하지 않습니다. 화면에 보이는 데이터는 마지막 캐시된 정적 자산만
+        반영됩니다 — 실제 잔고 / 미체결 / 포지션과 다를 수 있습니다.
+      </div>
+
+      <h2 style="font-size:14px; margin: 14px 0 4px;">확인해 보세요</h2>
+      <ul class="checks">
+        <li>스마트폰 데이터 / Wi-Fi가 켜져 있는지</li>
+        <li>로컬 backend(<code>uvicorn app.main:app</code>)가 실행 중인지</li>
+        <li>같은 네트워크에 PC가 연결되어 있는지</li>
+        <li>Tailscale / VPN이 필요한 경로면 연결되어 있는지</li>
+      </ul>
+
+      <div class="btn-row">
+        <button class="btn-primary" type="button" onclick="location.reload()">
+          🔄 다시 시도
+        </button>
+        <button class="btn-secondary" type="button"
+                onclick="history.length > 1 ? history.back() : location.href = './'">
+          ← 뒤로
+        </button>
+      </div>
+
+      <p class="small" style="margin-top: 14px;">
+        ※ 본 PWA는 *관제 대시보드*입니다. 실제 매매 / 주문 / Secret 입력 기능은
+        백엔드 연결이 필요하며, 푸시 알림은 보안 검토 후 별도 제공 예정입니다.
+      </p>
+    </section>
+  </main>
+</body>
+</html>
