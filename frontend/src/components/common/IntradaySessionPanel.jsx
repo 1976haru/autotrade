@@ -263,9 +263,9 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
       {st.previous_incident_trading_date && (
         <div className="isp-incident" data-testid="isp-incident">
           🚨 {st.previous_incident_trading_date} 장마감 청산이 확인되지 않아 신규 매수가 막혀 있어요.
-          KIS 모의계좌 잔고를 직접 확인한 뒤 확인 버튼을 누르세요.
+          사고 확인은 기록에 남아요. KIS 잔고·원장·미체결 대조가 완료될 때까지 신규 매수는 차단돼요.
           <button type="button" onClick={acknowledge} disabled={ackBusy} data-testid="isp-ack">
-            {ackBusy ? "처리 중…" : "확인했음 (매수 차단 해제)"}
+            {ackBusy ? "처리 중…" : "사고 확인 기록"}
           </button>
         </div>
       )}

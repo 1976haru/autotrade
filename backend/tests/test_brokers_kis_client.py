@@ -410,6 +410,28 @@ def test_inquire_balance_retries_transient_5xx_once_then_accepts_valid_reply():
     assert len(calls) == 2
 
 
+def test_complete_balance_rejects_an_unfetched_continuation():
+    def handler(request):
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        return httpx.Response(200, headers={"tr_cont": "M"}, json=_BALANCE_RESPONSE)
+
+    client = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    with pytest.raises(KisApiError, match="additional pages"):
+        run(client.inquire_balance("12345678", "01", require_complete=True))
+
+
+def test_daily_ccld_without_order_list_is_not_verified_empty():
+    def handler(request):
+        if request.url.path.endswith("/oauth2/tokenP"):
+            return httpx.Response(200, json={"access_token": "tok", "expires_in": 86400})
+        return httpx.Response(200, json={"rt_cd": "0"})
+
+    client = KisClient("k", "s", is_paper=True, transport=httpx.MockTransport(handler))
+    with pytest.raises(KisApiError, match="order list"):
+        run(client.inquire_daily_ccld_all("12345678", "01", kst_date="20261130"))
+
+
 def test_inquire_balance_http_200_kis_error_does_not_look_like_zero_balance():
     response = {"rt_cd": "1", "msg_cd": "EGW00201", "msg1": "rate limited"}
     seen = []

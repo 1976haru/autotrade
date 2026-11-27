@@ -339,7 +339,11 @@ async def reconcile(db: Any, broker: Any, *, trading_date: str) -> Reconciliatio
         return Reconciliation(False, code, {}, [], [], {})
 
     try:
-        positions = await broker.get_positions()
+        from app.brokers.kis import KisBrokerAdapter
+        if type(broker).get_positions is KisBrokerAdapter.get_positions:
+            positions = await broker.get_positions(fresh=True)
+        else:
+            positions = await broker.get_positions()
     except Exception as exc:  # noqa: BLE001
         _log.warning("[eod] get_positions 실패: %s", type(exc).__name__)
         return _fail(EOD_POSITIONS_FAILED)
@@ -478,6 +482,8 @@ async def reconcile(db: Any, broker: Any, *, trading_date: str) -> Reconciliatio
             "eod_orders": eod_orders,
         }
     totals = {
+        "ledger_qty": sum(max(0, q) for q in net.values()),
+        "account_open_order_qty": sum(max(0, int(o.get("remaining", 0) or 0)) for o in orders),
         "managed_symbols": sum(1 for v in symbols.values() if v["managed_qty"] > 0),
         "managed_qty": sum(v["managed_qty"] for v in symbols.values()),
         "open_sell_qty": sum(v["open_sell_qty"] for v in symbols.values()),
@@ -716,17 +722,21 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
 
         # ── 최종 대조 (15:30 ~) ─────────────────────────────────────────────
         if phase == IntradayPhase.POST_CLOSE:
+            summary["recovery_verified"] = False
             if not rec.ok:
                 verdict, reason = EodState.FLATTEN_INCOMPLETE, (
                     EOD_OWNERSHIP_UNKNOWN if rec.error_code == EOD_OWNERSHIP_UNKNOWN
                     else EOD_RECONCILE_FAILED)
             elif rec.totals["managed_qty"] > 0:
                 verdict, reason = EodState.FLATTEN_INCOMPLETE, EOD_POSITIONS_REMAIN
+            elif rec.totals["ledger_qty"] > 0:
+                verdict, reason = EodState.FLATTEN_INCOMPLETE, EOD_OWNERSHIP_UNKNOWN
             elif (rec.totals["open_sell_qty"] + rec.totals["program_open_buy_qty"]
                   + rec.totals["unconfirmed_eod_qty"]) > 0:
                 verdict, reason = EodState.FLATTEN_INCOMPLETE, EOD_OPEN_ORDERS_REMAIN
             else:
                 verdict, reason = EodState.FLAT_CONFIRMED, EOD_FLAT
+                summary["recovery_verified"] = not mode.dry_run and rec.totals["account_open_order_qty"] == 0
                 # A transient balance/order lookup failure may have been stored by an
                 # earlier EOD tick.  Once the final broker reconciliation succeeds and
                 # proves that managed/open quantities are zero, that failure is no
@@ -746,7 +756,7 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
                 _emit(event_sink, level="CRITICAL", code=f"KIS_PAPER_EOD_{reason}",
                       message=eod_message_ko(reason),
                       details={"trading_date": trading_date, "totals": rec.totals,
-                               "next_day_buy_blocked_until_ack": True,
+                               "next_day_buy_blocked_until_verified_recovery": True,
                                "is_live_authorization": False})
             elif verdict == EodState.FLAT_CONFIRMED:
                 _emit(event_sink, level="INFO", code="KIS_PAPER_EOD_FLAT_CONFIRMED",
@@ -1374,7 +1384,7 @@ def shutdown_check(db: Any, *, settings: Any = None, now: datetime | None = None
 def acknowledge_incident(db: Any, *, trading_date: str, decided_by: str,
                          note: str | None = None, now: datetime | None = None,
                          account_key: str | None = None) -> Any:
-    """운영자 확인 — FLATTEN_INCOMPLETE/미판정 행을 확인 처리(다음 BUY 차단 해제).
+    """Record acknowledgment separately from broker-verified recovery.
     상태 자체는 바꾸지 않는다(사고 기록 보존). 주문 0건."""
     if now is None:
         now = datetime.now(timezone.utc)

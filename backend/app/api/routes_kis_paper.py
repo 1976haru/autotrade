@@ -610,7 +610,7 @@ class _EodAckBody(BaseModel):
 
 @router.post("/eod/acknowledge")
 def post_kis_paper_eod_acknowledge(body: _EodAckBody, db: Session = Depends(get_db)) -> dict:
-    """FLATTEN_INCOMPLETE(또는 미판정) 운영자 확인 — 다음 거래일 신규 BUY 차단 해제.
+    """Record the operator's acknowledgment of an incomplete EOD close.
 
     사고 기록(state)은 그대로 보존. 주문 0건. 운영자는 KIS 모의계좌에서 잔여 보유를
     직접 확인/정리한 뒤 호출해야 한다.
