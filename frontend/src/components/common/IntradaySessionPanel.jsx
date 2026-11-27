@@ -137,6 +137,7 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
     ? null
     : sum.last_failure_code;
   const prog = summarizeEodProgress(sum);
+  const reconciled = !failed && st.last_reconcile_ok && sum.totals?.managed_qty != null;
   const tone = stateTone(st.eod_state);
   const isKisPaper = st.broker_label === "KIS_PAPER" && st.kis_is_paper && !st.enable_live_trading;
   const nonTrading = sch.calendar && sch.calendar !== "TRADING_DAY";
@@ -185,8 +186,8 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
       {(st.eod_state !== "IDLE" || prog.heldQty > 0) && (
         <div className="isp-grid" data-testid="isp-progress">
           <span>청산 대상 {prog.symbols}종목</span>
-          <span>남은 보유 {prog.heldQty}주</span>
-          <span>미체결 {prog.openQty}주</span>
+          <span>남은 보유 {reconciled ? `${prog.heldQty}주` : "확인 불가"}</span>
+          <span>미체결 {reconciled ? `${prog.openQty}주` : "확인 불가"}</span>
           <span>주문 접수 {prog.submitted}건</span>
           <span>체결 {prog.filledQty}주</span>
           <span>제외(수동) {prog.unmanaged}종목</span>
@@ -208,7 +209,7 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
               : "⏸ 정지 (시작 버튼을 눌러야 신규 매수)"}
         </span>
         <span data-testid="isp-holdings">
-          프로그램 보유 {(st.program_ledger_holdings || []).length}종목 · 미체결 {prog.openQty}주
+          원장상 프로그램 보유 {(st.program_ledger_holdings || []).length}종목 · 미체결 {reconciled ? `${prog.openQty}주` : "확인 불가"}
         </span>
         <span>오류가 있으면 설정 탭의 &apos;로그 보기&apos; 또는 %APPDATA%\Autotrade\logs 를 확인하세요.</span>
       </div>
@@ -220,9 +221,11 @@ export function IntradaySessionPanel({ api = backendApi, pollMs = EOD_POLL_MS })
         <span>점검 모드(주문 전송 0): {st.paper_auto_mode?.dry_run ? "예" : "아니오"} · 1주 시험(smoke): {st.paper_auto_mode?.smoke_mode ? "예" : "아니오"}</span>
         <span>마지막 주문번호: {sum.last_broker_order_no || "—"} · 마지막 체결 감지: {hm(sum.last_fill_detected_at)}</span>
         <span>실패 코드: {activeFailureCode || "—"} · 잔고 대조: {hm(st.last_reconcile_at)}{st.last_reconcile_at && !st.last_reconcile_ok ? " (실패)" : ""}</span>
-        {!st.background_driver_running && (
+        <span>Guardian 최근 완료: {hm(st.eod_guardian_last_finished_at)}</span>
+        <span>최근 청산 시도: {hm(sum.last_sell_attempt_at)} · 접수 {sum.totals?.eod_orders_submitted ?? "—"}건 · 체결 {sum.totals?.eod_filled_qty ?? "—"}주</span>
+        {!st.background_driver_running && !st.eod_guardian_running && (
           <span className="isp-warn" data-testid="isp-driver-off">
-            ⚠ 백엔드 상시 실행기가 꺼져 있어 15:15 자동 청산이 실행되지 않습니다.
+            ⚠ 백엔드 실행기가 모두 꺼져 있어 자동 청산이 실행되지 않습니다.
           </span>
         )}
       </div>
