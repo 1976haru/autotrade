@@ -343,8 +343,9 @@ async def execute_kis_paper_auto_order(
             eod_incident = eod_incident_block(db, now) is not None
         except Exception:  # noqa: BLE001
             eod_incident = False
-    from app.kis_paper.one_click_session import effective_session_settings
-    permission_settings = effective_session_settings(settings, db=db)
+    from app.kis_paper.one_click_session import effective_exit_settings, effective_session_settings
+    permission_settings = (effective_exit_settings(settings, db=db) if decision.side == "SELL"
+                           else effective_session_settings(settings, db=db))
     perm = evaluate_kis_paper_order_permission(build_permission_input(
         settings=permission_settings, decision=decision,
         broker_is_kis_paper=broker_is_kis_paper,

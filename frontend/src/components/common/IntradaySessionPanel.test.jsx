@@ -40,6 +40,7 @@ describe("IntradaySessionPanel (INTRADAY-FLAT-BY-CLOSE-V1)", () => {
       ...base, phase: "EOD_FLATTEN", buy_allowed: false, buy_block_reason_code: "BUY_CUTOFF_ACTIVE",
       buy_block_reason_message: "신규 매수 마감 시각이 지나 신규 매수를 하지 않습니다 (보유 청산만 진행).",
       eod_state: "FLATTENING", eod_reason_code: "EOD_FLATTEN_IN_PROGRESS",
+      last_reconcile_ok: true,
       summary: {
         symbols: { "005930": { managed_qty: 7 }, "000660": { managed_qty: 0 } },
         totals: { managed_qty: 7, open_sell_qty: 3, unconfirmed_eod_qty: 0, program_open_buy_qty: 0,
@@ -86,6 +87,14 @@ describe("IntradaySessionPanel (INTRADAY-FLAT-BY-CLOSE-V1)", () => {
     await waitFor(() => expect(r2.getByTestId("isp-failed").textContent).toContain("불러오지 못했어요"));
   });
 
+  it("keeps an unverified balance unknown when only the Guardian is running", async () => {
+    const d = { ...base, background_driver_running: false, eod_guardian_running: true,
+      eod_state: "FLATTEN_INCOMPLETE", summary: { totals: { managed_qty: 0 } } };
+    const { getByTestId, queryByTestId } = render(<IntradaySessionPanel api={api(d)} pollMs={60_000} />);
+    await waitFor(() => expect(getByTestId("isp-progress").textContent).toContain("남은 보유 확인 불가"));
+    expect(queryByTestId("isp-driver-off")).toBeNull();
+  });
+
   it("V2: 15:00 사전점검 시각 + 자동청산 보장 아님 안내 항상 표시", async () => {
     const d = { ...base, schedule: { ...base.schedule, precheck_start: "15:00" } };
     const { getByTestId } = render(<IntradaySessionPanel api={api(d)} pollMs={60_000} />);
@@ -116,7 +125,7 @@ describe("IntradaySessionPanel (INTRADAY-FLAT-BY-CLOSE-V1)", () => {
     const d = { ...base, kis_credentials_present: true, rehearsal_mode: true,
       rehearsal_symbol: "005930", rehearsal_max_buy_qty: 1, auto_loop_state: "PAUSED",
       program_ledger_holdings: [{ symbol: "005930", quantity: 1 }],
-      summary: { totals: { open_sell_qty: 1 } } };
+      last_reconcile_ok: true, summary: { totals: { managed_qty: 1, open_sell_qty: 1 } } };
     const { getByTestId } = render(<IntradaySessionPanel api={api(d)} pollMs={60_000} />);
     await waitFor(() => expect(getByTestId("isp-kis-conn").textContent).toContain("연결 정보 있음"));
     expect(getByTestId("isp-rehearsal").textContent).toContain("005930 최대 1주");

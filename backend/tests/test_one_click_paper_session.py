@@ -245,6 +245,48 @@ def test_account_poller_and_open_order_fail_closed(db, tmp_path, monkeypatch):
         assert not ok and reason == expected
 
 
+def test_failed_sell_preflight_preserves_exit_only_across_restart(db, tmp_path, monkeypatch):
+    from app.kis_paper import one_click_session as session
+
+    monkeypatch.setenv("AUTOTRADE_PAPER_APPROVAL_FILE", str(tmp_path / "approval.json"))
+    monkeypatch.setattr(session, "_PROCESS_EMERGENCY_BLOCK", False)
+    monkeypatch.setattr(session, "_PROCESS_BUY_BLOCK_REASON", None)
+    day = datetime.now(KST).date()
+    create_approval(db=db, settings=settings(), risk=risk(), target_date=day.isoformat(),
+                    actor="operator", explicit_ack=True)
+    params = dict(db=db, settings=settings(), risk=risk(), side="SELL",
+                  symbol="005930", quantity=1, notional_krw=100_000, now=_at(day, 15, 0))
+    ok, reason = asyncio.run(authorize_order(**params, broker=Broker(fail=True)))
+    assert not ok and reason == "KIS_PREFLIGHT_FAILED:RuntimeError"
+    assert session.load_approval(db)["status"] == "EXIT_ONLY"
+    session._clear_process_buy_block()
+    assert not session.session_trading_authorized(settings(), db=db)
+    assert session.session_exit_authorized(settings(), db=db)
+    recovery = Broker(positions=[Position(symbol="005930", quantity=1, avg_price=100_000,
+                                          market_price=100_000)])
+    assert asyncio.run(authorize_order(**params, broker=recovery))[0]
+    assert session.load_approval(db)["status"] == "EXIT_ONLY"
+
+
+@pytest.mark.parametrize("level,allowed", [("LEVEL_1", True), ("LEVEL_2", False), ("LEVEL_3", False)])
+def test_only_level_one_preserves_verified_sell(db, tmp_path, monkeypatch, level, allowed):
+    monkeypatch.setenv("AUTOTRADE_PAPER_APPROVAL_FILE", str(tmp_path / "approval.json"))
+    day = datetime.now(KST).date()
+    create_approval(db=db, settings=settings(), risk=risk(), target_date=day.isoformat(),
+                    actor="operator", explicit_ack=True)
+    db.add(EmergencyStopEvent(enabled=True, level=level, policy_version=2,
+                              decided_by="operator"))
+    db.commit()
+    active_risk = SimpleNamespace(emergency_stop=True, kill_switch_level=level,
+                                  kill_switch_policy_version=2)
+    broker = Broker(positions=[Position(symbol="005930", quantity=1, avg_price=100_000,
+                                        market_price=100_000)])
+    ok, _ = asyncio.run(authorize_order(db=db, settings=settings(), risk=active_risk,
+                                      broker=broker, side="SELL", symbol="005930",
+                                      quantity=1, notional_krw=100_000, now=_at(day, 15, 0)))
+    assert ok is allowed
+
+
 def test_explicit_ack_required(db, tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOTRADE_PAPER_APPROVAL_FILE", str(tmp_path / "approval.json"))
     day = datetime.now(KST).date()

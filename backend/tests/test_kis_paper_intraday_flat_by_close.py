@@ -1196,7 +1196,7 @@ def test_V2_kis_cancel_paper_payload(monkeypatch):
 # ── 15:00 사전점검 + 단계적 청산 / 15:15 전량 ─────────────────────────────────
 
 
-def test_V2_precheck_at_1500_is_read_only_and_1515_starts_flatten(session_factory, db):
+def test_V2_precheck_stages_largest_losses_and_1515_flattens_remaining(session_factory, db):
     for sym in ("000001", "000002", "000003"):
         seed_bot_position(db, sym, 1)
     broker = FakeKisPaperBroker({"000001": 1, "000002": 1, "000003": 1})
@@ -1210,13 +1210,10 @@ def test_V2_precheck_at_1500_is_read_only_and_1515_starts_flatten(session_factor
     events: list = []
     out = step(session_factory, broker, kst(15, 0, 5), events=events)
     assert out["phase"] == "EOD_PRECHECK"
-    assert out["reason_code"] == "EOD_PRECHECK_RECONCILED"
-    assert out["lifecycle_state"] == "RECONCILING"
-    assert broker.place_calls == []
+    assert out["orders_submitted_this_step"] == 2
+    assert [o.symbol for o in broker.place_calls] == ["000002", "000003"]
     assert out["summary"]["precheck"]["ok"] is True
     assert any(e["code"] == "KIS_PAPER_EOD_PRECHECK_OK" for e in events)
-    step(session_factory, broker, kst(15, 0, 35))
-    assert broker.place_calls == []
     step(session_factory, broker, kst(15, 15, 0))
     assert {o.symbol for o in broker.place_calls} == {"000001", "000002", "000003"}
 
@@ -1415,8 +1412,8 @@ def test_V3_full_day_clock_injected_integration(session_factory, db):
     assert at("14:29:30")[2] == "IDLE" and at("14:29:30")[3] == 0
     assert at("14:30:00")[1:4] == ("BUY_CUTOFF", "BUY_CUTOFF_ACTIVE", 1)    # 미체결 BUY 취소
     assert at("14:59:30")[4] == 0                                           # 15:00 전 청산 0
-    assert at("15:00:00")[1] == "EOD_PRECHECK" and at("15:00:00")[4] == 0   # read-only 대조
-    assert at("15:00:30")[4] == 0
+    assert at("15:00:00")[1] == "EOD_PRECHECK" and at("15:00:00")[4] == 2
+    assert at("15:00:30")[4] == 3
     assert at("15:15:00")[4] == 3
     assert all(t[4] == 3 for t in timeline if t[0] >= "15:15:00")           # 중복 매도 0
     assert at("15:31:00")[3] == 1                                           # 취소 재요청 0
@@ -1509,6 +1506,25 @@ def test_V3_place_order_timeout_after_kis_accept_no_duplicate(session_factory, d
     step(session_factory, broker, kst(15, 15, 30))
     step(session_factory, broker, kst(15, 16, 0))
     assert len(broker.place_calls) == 1
+
+
+def test_missing_order_number_and_unseen_conclusion_reserves_sell(session_factory, db):
+    seed_bot_position(db, "005930", 3)
+    broker = FakeKisPaperBroker({"005930": 3}, fill_mode="none")
+    original = broker.place_order
+
+    async def lose_response(_order):
+        raise TimeoutError("order response unavailable")
+
+    broker.place_order = lose_response
+    step(session_factory, broker, kst(15, 15))
+    broker.place_order = original
+    result = step(session_factory, broker, kst(15, 16))
+    assert result["summary"]["totals"]["unconfirmed_eod_qty"] == 3
+    assert result["summary"]["totals"]["eod_orders_submitted"] == 0
+    assert broker.place_calls == []
+    result = step(session_factory, broker, kst(15, 30))
+    assert result["state"] == EodState.FLATTEN_INCOMPLETE.value
 
 
 def test_V3_dryrun_synthetic_positions_not_reported_as_kis_success(session_factory, db):
@@ -1712,7 +1728,7 @@ def test_V3_precheck_warns_on_capacity_risk_without_behavior_change(session_fact
                settings=make_settings(kis_rate_limit_calls=1, kis_rate_limit_window_seconds=1.1))
     assert out["summary"]["precheck"]["capacity"]["risk"] == "TIGHT"
     assert any(e["code"] == "KIS_PAPER_EOD_CAPACITY_RISK" and e["level"] == "WARN" for e in events)
-    assert broker.place_calls == []               # 사전점검은 조회만, 매도는 15:15부터
+    assert len(broker.place_calls) == 2
 
 
 def test_eod_valid_session_overrides_global_auto_and_dry_run(session_factory, db, monkeypatch):
@@ -1891,7 +1907,7 @@ def test_PF_run_once_buy_becomes_eod_managed_and_is_liquidated(run_once_env, ses
     pre = step(session_factory, broker, kst(14, 45), settings=s)
     assert pre["summary"]["symbols"]["005930"]["managed_qty"] == 1   # EOD 관리 대상
     st = step(session_factory, broker, kst(15, 0, 5), settings=s, loop_state="PAUSED")
-    assert [(o.side, o.quantity) for o in broker.place_calls] == [(OrderSide.BUY, 1)]
+    assert [(o.side, o.quantity) for o in broker.place_calls] == [(OrderSide.BUY, 1), (OrderSide.SELL, 1)]
     assert st["phase"] == "EOD_PRECHECK"
     step(session_factory, broker, kst(15, 15, 5), settings=s, loop_state="PAUSED")
     assert broker.holdings["005930"] == 0
@@ -1906,7 +1922,7 @@ def test_PF_eod_runs_without_start_button_paused_loop(session_factory, db):
     broker = CountingBroker({"000001": 1, "000002": 1, "000003": 1})
     drv = _day_driver(session_factory, broker, loop_state="PAUSED")
     r1 = asyncio.run(drv.maybe_eod_step(kst(15, 0, 5)))
-    assert r1["phase"] == "EOD_PRECHECK" and broker.calls["place"] == 0
+    assert r1["phase"] == "EOD_PRECHECK" and broker.calls["place"] == 2
     r2 = asyncio.run(drv.maybe_eod_step(kst(15, 15, 5)))
     assert r2["phase"] == "EOD_FLATTEN" and broker.calls["place"] == 3
 
@@ -1918,7 +1934,7 @@ def test_PF_smoke_mode_never_blocks_eod_sell(session_factory, db):
                       kis_paper_smoke_qty=1)
     out = step(session_factory, broker, kst(15, 0, 5), settings=s)
     assert out["summary"]["mode"] == "KIS_REALTIME_SMOKE_TEST"
-    assert broker.place_calls == []
+    assert out["orders_submitted_this_step"] == 1
     out = step(session_factory, broker, kst(15, 15, 5), settings=s)
     assert [(o.side, o.quantity) for o in broker.place_calls] == [(OrderSide.SELL, 1)]
 
@@ -1981,10 +1997,10 @@ def test_PF_rehearsal_second_buy_blocked_but_eod_sell_allowed(run_once_env, sess
         return True, "TEST_OPERATOR_APPROVAL"
     monkeypatch.setattr(one_click_session, "authorize_order", _test_authorized_sell)
     out = step(session_factory, broker, kst(15, 0, 5), settings=_rehearsal())
-    assert out["orders_submitted_this_step"] == 0
+    assert out["orders_submitted_this_step"] == 1
     out = step(session_factory, broker, kst(15, 15, 5), settings=_rehearsal())
     assert [(o.side, o.quantity) for o in broker.place_calls][-1] == (OrderSide.SELL, 1)
-    assert out["orders_submitted_this_step"] == 1
+    assert out["orders_submitted_this_step"] == 0
 
 
 def test_PF_rehearsal_disables_scan_auto_buys_but_not_sells(db, session_factory):

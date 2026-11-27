@@ -451,7 +451,11 @@ async def reconcile(db: Any, broker: Any, *, trading_date: str) -> Reconciliatio
         for r in eod_rows.get(sym, []):
             odno = str(getattr(r, "broker_order_id", "") or "")
             seen = ccld_by_odno.get(odno) if odno else None
-            if bool(getattr(r, "executed", False)) and odno and seen is None:
+            outcome_unknown = (
+                getattr(r, "decision", None) == "APPROVED"
+                and not odno and getattr(r, "broker_status", None) != "REJECTED"
+            )
+            if outcome_unknown or (bool(getattr(r, "executed", False)) and odno and seen is None):
                 unconfirmed += int(getattr(r, "quantity", 0) or 0)
             eod_orders.append({
                 "client_order_id": r.client_order_id, "broker_order_no": odno or None,
@@ -460,6 +464,7 @@ async def reconcile(db: Any, broker: Any, *, trading_date: str) -> Reconciliatio
                 "filled": int((seen or {}).get("filled", getattr(r, "filled_quantity", 0)) or 0),
                 "remaining": int((seen or {}).get("remaining", 0) or 0),
                 "executed": bool(getattr(r, "executed", False)),
+                "accepted": bool(odno and getattr(r, "broker_status", None) != "REJECTED"),
                 "visible_at_kis": seen is not None,
             })
         symbols[sym] = {
@@ -479,7 +484,7 @@ async def reconcile(db: Any, broker: Any, *, trading_date: str) -> Reconciliatio
         "unconfirmed_eod_qty": sum(v["unconfirmed_eod_qty"] for v in symbols.values()),
         "program_open_buy_qty": sum(b["remaining"] for b in program_open_buys),
         "eod_orders_submitted": sum(
-            1 for v in symbols.values() for o in v["eod_orders"] if o["executed"]),
+            1 for v in symbols.values() for o in v["eod_orders"] if o["accepted"]),
         "eod_filled_qty": sum(o["filled"] for v in symbols.values() for o in v["eod_orders"]),
         "unmanaged_symbols": len(unmanaged),
     }
@@ -694,6 +699,7 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
                               else "KIS_PAPER_BALANCE_RECONCILED"),
             "last_broker_order_no": prev_summary.get("last_broker_order_no"),
             "last_order_reason_code": prev_summary.get("last_order_reason_code"),
+            "last_sell_attempt_at": prev_summary.get("last_sell_attempt_at"),
             "last_fill_detected_at": prev_summary.get("last_fill_detected_at"),
             "last_failure_code": prev_summary.get("last_failure_code"),
             "dry_run_planned": prev_summary.get("dry_run_planned", {}),
@@ -752,10 +758,12 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
         # ── 14:30 ~ 15:30 : 강한 긴급정지 → 주문/취소 0 + 수동 청산 경고 ────────
         #   P0-SAFETY-FIX-V1: 새 정책 LEVEL_1(신규 매수만 차단)은 청산·BUY 취소를 계속 한다.
         #   LEVEL_2/3·이전 정책(legacy strict) 정지·루프 EMERGENCY_STOP 만 차단.
-        from app.risk.kill_switch_policy import emergency_order_policy
-        ks = emergency_order_policy(risk)
+        from app.risk.emergency_stop import synchronize_kill_switch_for_order
+        ks = synchronize_kill_switch_for_order(risk, db)
         summary["kill_switch"] = ks.to_dict()
-        emergency = (not ks.allows_eod_forced_exit) or loop_state == "EMERGENCY_STOP"
+        emergency = not ks.allows_eod_forced_exit or (
+            loop_state == "EMERGENCY_STOP" and not ks.active
+        )
         summary["manual_liquidation_required"] = bool(
             emergency and int((summary.get("totals") or {}).get("managed_qty", 0) or 0) > 0)
         if emergency:
@@ -849,8 +857,8 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
             summary["precheck"] = previous_precheck
 
         # ── 15:00~15:15 단계적 / 15:15~ 전량 강제청산 ─────────────────────────
-        may_submit = phase == IntradayPhase.EOD_FLATTEN or (in_auction and allow_auction)
-        staged = False
+        staged = phase == IntradayPhase.EOD_PRECHECK
+        may_submit = staged or phase == IntradayPhase.EOD_FLATTEN or (in_auction and allow_auction)
         submitted = 0
         if may_submit:
             submitted = await _submit_sells(
@@ -867,14 +875,6 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
         remaining = sum(sell_quantity_for(v) for v in rec.symbols.values())
         pending = rec.totals["open_sell_qty"] + rec.totals["unconfirmed_eod_qty"] + submitted
 
-        if phase == IntradayPhase.EOD_PRECHECK:
-            summary["lifecycle_state"] = "RECONCILING"
-            _persist(db, row, state=EodState.WAITING_FOR_FILLS,
-                     reason="EOD_PRECHECK_RECONCILED", now=now, summary=summary,
-                     reconcile_ok=True)
-            return _out(EodState.WAITING_FOR_FILLS, "EOD_PRECHECK_RECONCILED",
-                        lifecycle_state="RECONCILING", summary=summary,
-                        orders_submitted_this_step=0, cancels_sent_this_step=cancels)
         if mode.dry_run:
             state, reason = EodState.FLATTENING, EOD_DRY_RUN
         elif rec.totals["managed_qty"] == 0 and rec.totals["program_open_buy_qty"] == 0:
@@ -890,7 +890,7 @@ async def _run_eod_step_locked(*, now, settings, session_factory, broker, risk,
             state, reason = EodState.WAITING_FOR_FILLS, EOD_IN_PROGRESS
         summary["lifecycle_state"] = (
             "WAITING_FILL" if pending > 0 else
-            "LIQUIDATING" if phase == IntradayPhase.EOD_FLATTEN and remaining > 0 else
+            "LIQUIDATING" if may_submit and remaining > 0 else
             "SCHEDULED"
         )
         _persist(db, row, state=state, reason=reason, now=now, summary=summary,
@@ -996,8 +996,9 @@ async def _submit_sells(db: Any, *, rec: Reconciliation, summary: dict[str, Any]
                                "broker_order_no": result.broker_order_no,
                                "submitted": bool(result.submitted),
                                "client_order_id": coid}
+        summary["last_sell_attempt_at"] = now.isoformat()
         summary["last_order_reason_code"] = result.reason_code
-        if result.submitted:
+        if result.submitted and result.broker_order_no and result.order_status != "REJECTED":
             sent += 1
             info["status"] = "SELL_SUBMITTED"     # RECEIVED ≠ 체결 — 대조로 확인.
             summary["last_broker_order_no"] = result.broker_order_no
